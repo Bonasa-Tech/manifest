@@ -12,12 +12,18 @@ import { genAccDiscriminator } from './utils/discriminator';
 import * as promClient from 'prom-client';
 import { FillLogResult } from './types';
 
+const SIGNATURE_BATCH_SIZE = 10;
+
 // For live monitoring of the fill feed. For a more complete look at fill
 // history stats, need to index all trades.
 const fills = new promClient.Counter({
   name: 'fills',
   help: 'Number of fills',
   labelNames: ['market', 'isGlobal', 'takerIsBuy'] as const,
+});
+const fillLag = new promClient.Gauge({
+  name: 'fill_lag_seconds',
+  help: 'Lag in seconds between now and the block time of the most recent fill',
 });
 
 /**
@@ -110,18 +116,17 @@ export class FillFeed {
         ) {
           continue;
         }
-        for (const signature of signatures) {
-          // Skip if we already processed this signature
-          if (signature.signature === lastSignature) {
-            continue;
-          }
+        const filteredSignatures = signatures.filter((sig) => {
+          return sig.signature !== lastSignature && sig.slot >= lastSlot;
+        });
 
-          // Separately track the last slot. This is necessary because sometimes
-          // gsfa ignores the until param and just gives 1_000 signatures.
-          if (signature.slot < lastSlot) {
-            continue;
-          }
-          await this.handleSignature(signature);
+        for (
+          let i = 0;
+          i < filteredSignatures.length;
+          i += SIGNATURE_BATCH_SIZE
+        ) {
+          const batch = filteredSignatures.slice(i, i + SIGNATURE_BATCH_SIZE);
+          await Promise.all(batch.map((sig) => this.handleSignature(sig)));
         }
 
         console.log(
@@ -234,6 +239,9 @@ export class FillFeed {
         takerIsBuy: deserializedFillLog.takerIsBuy.toString(),
       });
       this.wsManager.broadcast(JSON.stringify(fillResult));
+      if (signature.blockTime) {
+        fillLag.set(Date.now() / 1000 - signature.blockTime);
+      }
     }
   }
 }
