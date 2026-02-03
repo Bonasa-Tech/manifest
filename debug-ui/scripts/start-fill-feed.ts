@@ -81,12 +81,16 @@ const run = async () => {
       console.error('start:feed: error: ', e);
       if (feed) {
         console.log('shutting down feed before restarting...');
-        if (useBlockFeed) {
-          await (feed as FillFeedBlockSub).stop();
-        } else {
-          await (feed as FillFeed).stopParseLogs();
+        try {
+          if (useBlockFeed) {
+            await (feed as FillFeedBlockSub).stop();
+          } else {
+            await (feed as FillFeed).stopParseLogs();
+          }
+          console.log('feed has shut down successfully');
+        } catch (stopErr) {
+          console.warn('Error stopping feed:', stopErr);
         }
-        console.log('feed has shut down successfully');
       }
     } finally {
       console.warn(`sleeping ${timeoutMs / 1000} before restarting`);

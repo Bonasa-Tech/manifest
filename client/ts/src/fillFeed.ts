@@ -62,84 +62,86 @@ export class FillFeed {
    * Parse logs in an endless loop.
    */
   public async parseLogs(endEarly?: boolean) {
-    // Start with a hopefully recent signature.
-    const lastSignatureStatus = (
-      await this.connection.getSignaturesForAddress(
-        PROGRAM_ID,
-        { limit: 1 },
-        'finalized',
-      )
-    )[0];
-    let lastSignature: string | undefined = lastSignatureStatus.signature;
-    let lastSlot: number = lastSignatureStatus.slot;
-
-    // End early is 30 seconds, used for testing.
-    const endTime: Date = endEarly
-      ? new Date(Date.now() + 30_000)
-      : new Date(Date.now() + 1_000_000_000_000);
-
-    // TODO: remove endTime in favor of stopParseLogs for testing
-    while (!this.shouldEnd && new Date(Date.now()) < endTime) {
-      // This sleep was originally implemented to wait until there was enough
-      // transactions to avoid just spamming the RPC. Reduced to just
-      // enough to avoid RPC spam, but not wait too long since the router
-      // integrations give us steady flow.
-      await new Promise((f) => setTimeout(f, 400));
-
-      const signatures: ConfirmedSignatureInfo[] =
+    try {
+      // Start with a hopefully recent signature.
+      const lastSignatureStatus = (
         await this.connection.getSignaturesForAddress(
           PROGRAM_ID,
-          {
-            until: lastSignature,
-          },
+          { limit: 1 },
           'finalized',
+        )
+      )[0];
+      let lastSignature: string | undefined = lastSignatureStatus.signature;
+      let lastSlot: number = lastSignatureStatus.slot;
+
+      // End early is 30 seconds, used for testing.
+      const endTime: Date = endEarly
+        ? new Date(Date.now() + 30_000)
+        : new Date(Date.now() + 1_000_000_000_000);
+
+      // TODO: remove endTime in favor of stopParseLogs for testing
+      while (!this.shouldEnd && new Date(Date.now()) < endTime) {
+        // This sleep was originally implemented to wait until there was enough
+        // transactions to avoid just spamming the RPC. Reduced to just
+        // enough to avoid RPC spam, but not wait too long since the router
+        // integrations give us steady flow.
+        await new Promise((f) => setTimeout(f, 400));
+
+        const signatures: ConfirmedSignatureInfo[] =
+          await this.connection.getSignaturesForAddress(
+            PROGRAM_ID,
+            {
+              until: lastSignature,
+            },
+            'finalized',
+          );
+        // Flip it so we do oldest first.
+        signatures.reverse();
+
+        // Process even single signatures, but handle the edge case differently
+        if (signatures.length === 0) {
+          continue;
+        }
+
+        // If we only got back the same signature we already processed, skip it
+        if (
+          signatures.length === 1 &&
+          signatures[0].signature === lastSignature
+        ) {
+          continue;
+        }
+        for (const signature of signatures) {
+          // Skip if we already processed this signature
+          if (signature.signature === lastSignature) {
+            continue;
+          }
+
+          // Separately track the last slot. This is necessary because sometimes
+          // gsfa ignores the until param and just gives 1_000 signatures.
+          if (signature.slot < lastSlot) {
+            continue;
+          }
+          await this.handleSignature(signature);
+        }
+
+        console.log(
+          'New last signature:',
+          signatures[signatures.length - 1].signature,
+          'New last signature slot:',
+          signatures[signatures.length - 1].slot,
+          'num sigs',
+          signatures.length,
         );
-      // Flip it so we do oldest first.
-      signatures.reverse();
+        lastSignature = signatures[signatures.length - 1].signature;
+        lastSlot = signatures[signatures.length - 1].slot;
 
-      // Process even single signatures, but handle the edge case differently
-      if (signatures.length === 0) {
-        continue;
+        this.lastUpdateUnix = Date.now();
       }
-
-      // If we only got back the same signature we already processed, skip it
-      if (
-        signatures.length === 1 &&
-        signatures[0].signature === lastSignature
-      ) {
-        continue;
-      }
-      for (const signature of signatures) {
-        // Skip if we already processed this signature
-        if (signature.signature === lastSignature) {
-          continue;
-        }
-
-        // Separately track the last slot. This is necessary because sometimes
-        // gsfa ignores the until param and just gives 1_000 signatures.
-        if (signature.slot < lastSlot) {
-          continue;
-        }
-        await this.handleSignature(signature);
-      }
-
-      console.log(
-        'New last signature:',
-        signatures[signatures.length - 1].signature,
-        'New last signature slot:',
-        signatures[signatures.length - 1].slot,
-        'num sigs',
-        signatures.length,
-      );
-      lastSignature = signatures[signatures.length - 1].signature;
-      lastSlot = signatures[signatures.length - 1].slot;
-
-      this.lastUpdateUnix = Date.now();
+    } finally {
+      console.log('ended loop');
+      this.wsManager.close();
+      this.ended = true;
     }
-
-    console.log('ended loop');
-    this.wsManager.close();
-    this.ended = true;
   }
 
   /**
