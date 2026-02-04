@@ -2,8 +2,8 @@
 name = "manifest-dex"
 version = "3.0.9"
 edition = "2021"
-repository = "https://github.com/CKS-systems/manifest"
-authors = ["Britt Cyr <britt@cks.systems>"]
+repository = "https://github.com/Bonasa-Tech/manifest"
+authors = ["Britt Cyr <britt@manifest.trade>"]
 description = "Onchain orderbook optimized for space and accounts"
 license-file = "LICENSE"
 
