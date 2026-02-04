@@ -78,14 +78,14 @@ jobs:
 
       - name: Build all deps
         run: |
-          cargo build-sbf --arch=${{ env.SVM_ARCH }}
+          cargo build-sbf --arch=${{ env.SVM_ARCH }} -- -p manifest-dex -p wrapper -p ui-wrapper
 
       - name: Enforce sbf runtime for program tests
         run: |
           sed -i 's/processor!(manifest::process_instruction)/None/g' 'programs/manifest/tests/program_test/fixtures.rs'
 
       - name: Run sbf tests
-        run: cargo test-sbf --arch=${{ env.SVM_ARCH }} --features test -- --test-threads 1
+        run: cargo test-sbf --arch=${{ env.SVM_ARCH }} --features test -- -p manifest-dex -p wrapper -p ui-wrapper --test-threads 1
 
   coverage:
     name: Coverage
