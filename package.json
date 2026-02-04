@@ -1,5 +1,5 @@
 {
-  "name": "@cks-systems/manifest-sdk",
+  "name": "@bonasa-tech/manifest-sdk",
   "version": "0.2.39",
   "files": [
     "dist/",
