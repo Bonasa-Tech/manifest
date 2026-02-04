@@ -1,6 +1,6 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1764710201207,
-  "repoUrl": "https://github.com/CKS-Systems/manifest",
+  "lastUpdate": 1770229278908,
+  "repoUrl": "https://github.com/Bonasa-Tech/manifest",
   "entries": {
     "CU Benchmark": [
       {
@@ -10457,6 +10457,72 @@ window.BENCHMARK_DATA = {
           {
             "name": "MFX_99",
             "value": 5476,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "107803907+DonDuala@users.noreply.github.com",
+            "name": "DonDuala",
+            "username": "DonDuala"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "8a9ce702e5514b88c0bf29aeb8ceecf35ce1853d",
+          "message": "Update org (#528)\n\n* update org\n\n* update package name\n\n* update cargo.toml\n\n---------\n\nCo-authored-by: DonDuala <john@dual.finance>",
+          "timestamp": "2026-02-04T14:08:59-04:00",
+          "tree_id": "d8c0b8f30d0ac1735c725514450647554ce00d16",
+          "url": "https://github.com/Bonasa-Tech/manifest/commit/8a9ce702e5514b88c0bf29aeb8ceecf35ce1853d"
+        },
+        "date": 1770229276957,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "PHX_50",
+            "value": 6787,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "PHX_95",
+            "value": 13209,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "PHX_99",
+            "value": 13904,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_50",
+            "value": 3222,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_95",
+            "value": 4923,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_99",
+            "value": 5463,
             "range": "",
             "unit": "CU",
             "extra": ""
