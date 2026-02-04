@@ -18,7 +18,7 @@
     "clob"
   ],
   "author": "CKS Systems",
-  "repository": "https://github.com/CKS-Systems/manifest",
+  "repository": "https://github.com/Bonasa-Tech/manifest",
   "main": "./dist/cjs/index.js",
   "module": "./dist/esm/index.js",
   "types": "./dist/types/src/index.d.ts",

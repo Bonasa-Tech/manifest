@@ -18,7 +18,7 @@ export const publicKeyBeet = new BeetArgsStruct<PubkeyWrapper>(
 /**
  * RedBlackTreeHeader deserializer.
  *
- * https://github.com/CKS-Systems/manifest/blob/main/lib/src/red_black_tree.rs
+ * https://github.com/Bonasa-Tech/manifest/blob/main/lib/src/red_black_tree.rs
  */
 export const redBlackTreeHeaderBeet =
   new BeetArgsStruct<RedBlackTreeNodeHeader>(

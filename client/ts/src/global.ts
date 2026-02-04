@@ -163,7 +163,7 @@ export class Global {
    * Deserializes global data from a given mint and returns a `Global` object
    *
    * This includes both the fixed and dynamic parts of the market.
-   * https://github.com/CKS-Systems/manifest/blob/main/programs/manifest/src/state/global.rs
+   * https://github.com/Bonasa-Tech/manifest/blob/main/programs/manifest/src/state/global.rs
    *
    * @param data The data buffer to deserialize
    */

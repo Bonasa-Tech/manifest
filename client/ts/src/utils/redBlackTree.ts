@@ -13,7 +13,7 @@ const NUM_TREE_HEADER_BYTES = 16;
 
 /**
  * Deserializes a RedBlackTree from a given buffer into a list
- * @description This deserializes the RedBlackTree defined in https://github.com/CKS-Systems/manifest/blob/main/src/state/red_black_tree.rs
+ * @description This deserializes the RedBlackTree defined in https://github.com/Bonasa-Tech/manifest/blob/main/src/state/red_black_tree.rs
  *
  * @param data The data buffer to deserialize
  * @param rootIndex Index in the buffer for the root

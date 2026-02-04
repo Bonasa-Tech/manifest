@@ -114,7 +114,7 @@ impl Dex for Manifest {
         // To implement this, if you want to watch all ix on chain for Manifest
         // and find new inits, look for the first by of call data to the
         // manifest ix to be 0x0
-        // (https://github.com/CKS-Systems/manifest/blob/93d78d5ca60ac7d9ea282f7d57ec5ea61f13de48/programs/manifest/src/program/instruction.rs#L20)
+        // (https://github.com/Bonasa-Tech/manifest/blob/93d78d5ca60ac7d9ea282f7d57ec5ea61f13de48/programs/manifest/src/program/instruction.rs#L20)
 
         Ok(())
     }

@@ -586,7 +586,7 @@ export class Market {
    * Deserializes market data from a given buffer and returns a `Market` object
    *
    * This includes both the fixed and dynamic parts of the market.
-   * https://github.com/CKS-Systems/manifest/blob/main/programs/manifest/src/state/market.rs
+   * https://github.com/Bonasa-Tech/manifest/blob/main/programs/manifest/src/state/market.rs
    *
    * @param data The data buffer to deserialize
    * @param currentSlot Number that is the cutoff for order expiration.

@@ -31,7 +31,7 @@ security_txt! {
     contacts: "email:dev@manifest.trade",
     policy: "",
     preferred_languages: "en",
-    source_code: "https://github.com/CKS-Systems/manifest",
+    source_code: "https://github.com/Bonasa-Tech/manifest",
     auditors: ""
 }
 

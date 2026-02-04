@@ -4,8 +4,8 @@
 
 
 [![codecov](https://codecov.io/gh/CKS-Systems/manifest/graph/badge.svg?token=PJ3Y2BVMM8)](https://codecov.io/gh/CKS-Systems/manifest)
-[![Code Review - Rust](https://github.com/CKS-Systems/manifest/actions/workflows/ci-code-review-rust.yml/badge.svg)](https://github.com/CKS-Systems/manifest/actions/workflows/ci-code-review-rust.yml)
-[![Code Review - Typescript](https://github.com/CKS-Systems/manifest/actions/workflows/ci-code-review-ts.yml/badge.svg)](https://github.com/CKS-Systems/manifest/actions/workflows/ci-code-review-ts.yml)
+[![Code Review - Rust](https://github.com/Bonasa-Tech/manifest/actions/workflows/ci-code-review-rust.yml/badge.svg)](https://github.com/Bonasa-Tech/manifest/actions/workflows/ci-code-review-rust.yml)
+[![Code Review - Typescript](https://github.com/Bonasa-Tech/manifest/actions/workflows/ci-code-review-ts.yml/badge.svg)](https://github.com/Bonasa-Tech/manifest/actions/workflows/ci-code-review-ts.yml)
 
 Manifest is the next generation liquidity primitive on Solana.
 No more permissioned markets.
@@ -55,7 +55,7 @@ Read [The Orderbook Manifesto](https://manifest.trade/whitepaper.pdf)
 
 ### Data Structure
 
-The innovation that allows this next leap in onchain trading is the [`hypertree`](https://github.com/CKS-Systems/manifest/tree/main/lib). All data in the market account fits into graph nodes of the same size (80 bytes), which lets independent data structures grow without being fully initialized from the start by interleaving
+The innovation that allows this next leap in onchain trading is the [`hypertree`](https://github.com/Bonasa-Tech/manifest/tree/main/lib). All data in the market account fits into graph nodes of the same size (80 bytes), which lets independent data structures grow without being fully initialized from the start by interleaving
 
 The market account holds all relevant information. It begins with a header that stores all of the fixed information for the market like BaseMint, QuoteMint. All variable data (RestingOrders and ClaimedSeats) are in the dynamic
 byte array after the header. There are 3 RedBlack trees for Bids, Asks,
@@ -114,7 +114,7 @@ sh local-validator-test.sh
 [View Report](https://www.manifest.trade/audit.pdf)
 
 ### Formal Verification
-Instructions for how to run formal verification are in [Certora_README](https://github.com/CKS-Systems/manifest/blob/main/Certora_README.md)
+Instructions for how to run formal verification are in [Certora_README](https://github.com/Bonasa-Tech/manifest/blob/main/Certora_README.md)
 
 From a high level, 4 sets of properties were formally verified
 
@@ -133,7 +133,7 @@ go beyond proving invariants at the end and do it on intermediate steps.
 
 ### Debugging
 A fork of solana explorer with insruction decoding and fill log parsing has been made in
-[this repo](https://github.com/CKS-Systems/explorer/tree/master) which is hosted at
+[this repo](https://github.com/Bonasa-Tech/explorer/tree/master) which is hosted at
 [explorer.manifest.trade](https://explorer.manifest.trade/). Due to the lack of updates from anchor and hacky
 changes to get the explorer to handle parsing a non-anchor program, we are not
 currently going to try to backport our changes.

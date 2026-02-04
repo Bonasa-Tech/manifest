@@ -821,8 +821,8 @@ Formal verification eliminates these risks. It's the highest security standard i
 - **NPM Package**: [@cks-systems/manifest-sdk](https://www.npmjs.com/package/@cks-systems/manifest-sdk)
 - **Whitepaper**: [The Orderbook Manifesto](https://manifest.trade/whitepaper.pdf)
 - **Audit Report**: [manifest.trade/audit.pdf](https://www.manifest.trade/audit.pdf)
-- **Formal Verification**: Detailed in [Certora_README](https://github.com/CKS-Systems/manifest/blob/main/Certora_README.md)
-- **GitHub**: [github.com/CKS-Systems/manifest](https://github.com/CKS-Systems/manifest)
+- **Formal Verification**: Detailed in [Certora_README](https://github.com/Bonasa-Tech/manifest/blob/main/Certora_README.md)
+- **GitHub**: [github.com/Bonasa-Tech/manifest](https://github.com/Bonasa-Tech/manifest)
 - **Explorer**: [explorer.manifest.trade](https://explorer.manifest.trade/)
 
 ### Getting Help

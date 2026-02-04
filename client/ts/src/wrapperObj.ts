@@ -217,7 +217,7 @@ export class Wrapper {
    * Deserializes wrapper data from a given buffer and returns a `Wrapper` object
    *
    * This includes both the fixed and dynamic parts of the market.
-   * https://github.com/CKS-Systems/manifest/blob/main/programs/wrapper/src/wrapper_state.rs
+   * https://github.com/Bonasa-Tech/manifest/blob/main/programs/wrapper/src/wrapper_state.rs
    *
    * @param data The data buffer to deserialize
    *
