@@ -4,13 +4,14 @@
   "main": "index.js",
   "license": "MIT",
   "dependencies": {
-    "@cks-systems/manifest-sdk": "^0.1.56",
+    "@cks-systems/manifest-sdk": "^0.1.77",
     "@solana/web3.js": "^1.89.0",
     "bs58": "^6.0.0",
     "dotenv": "^16.4.7",
     "tsx": "^4.19.1"
   },
   "scripts": {
-    "levels": "tsx src/levels.ts"
+    "levels": "tsx src/levels.ts",
+    "reverse": "tsx src/reverse.ts"
   }
 }
