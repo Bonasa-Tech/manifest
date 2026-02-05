@@ -235,6 +235,7 @@ export class ManifestClient {
    * @param connection Connection
    * @param marketPk PublicKey of the market
    * @param payerKeypair Keypair of the trader
+   * @param wrapperProgram PublicKey of wrapper program to use if payer doesn't have a userWrapper
    *
    * @returns ManifestClient
    */
@@ -242,6 +243,7 @@ export class ManifestClient {
     connection: Connection,
     marketPk: PublicKey,
     payerKeypair: Keypair,
+    wrapperProgram: PublicKey,
   ): Promise<ManifestClient> {
     const marketObject: Market = await Market.loadFromAddress({
       connection: connection,
@@ -294,12 +296,15 @@ export class ManifestClient {
           owner: payerKeypair.publicKey,
           wrapperState: wrapperKeypair.publicKey,
         });
-      const claimSeatIx: TransactionInstruction = createClaimSeatInstruction({
-        manifestProgram: MANIFEST_PROGRAM_ID,
-        owner: payerKeypair.publicKey,
-        market: marketPk,
-        wrapperState: wrapperKeypair.publicKey,
-      });
+      const claimSeatIx: TransactionInstruction = createClaimSeatInstruction(
+        {
+          manifestProgram: MANIFEST_PROGRAM_ID,
+          owner: payerKeypair.publicKey,
+          market: marketPk,
+          wrapperState: wrapperKeypair.publicKey,
+        },
+        wrapperProgram,
+      );
       transaction.add(createAccountIx);
       transaction.add(createWrapperIx);
       transaction.add(claimSeatIx);
