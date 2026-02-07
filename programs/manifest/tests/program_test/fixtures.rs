@@ -19,7 +19,7 @@ use manifest::{
     },
     quantities::WrapperU64,
     state::{GlobalFixed, GlobalValue, MarketFixed, MarketValue, OrderType, RestingOrder},
-    validation::{get_global_address, MintAccountInfo},
+    validation::{get_global_address, get_vault_address, MintAccountInfo},
 };
 use solana_program::{hash::Hash, pubkey::Pubkey, rent::Rent};
 use solana_program_test::{processor, BanksClientError, ProgramTest, ProgramTestContext};
@@ -919,6 +919,102 @@ impl MarketFixture {
         bids_vec.extend(asks_vec);
         bids_vec
     }
+
+    /// Get vault token account balances (base_vault_balance, quote_vault_balance)
+    pub async fn get_vault_balances(&mut self) -> (u64, u64) {
+        self.reload().await;
+        let (base_vault, _) = get_vault_address(&self.key, self.market.get_base_mint());
+        let (quote_vault, _) = get_vault_address(&self.key, self.market.get_quote_mint());
+
+        let base_vault_balance: u64 = self
+            .context
+            .borrow_mut()
+            .banks_client
+            .get_packed_account_data::<spl_token::state::Account>(base_vault)
+            .await
+            .map(|a| a.amount)
+            .unwrap_or(0);
+
+        let quote_vault_balance: u64 = self
+            .context
+            .borrow_mut()
+            .banks_client
+            .get_packed_account_data::<spl_token::state::Account>(quote_vault)
+            .await
+            .map(|a| a.amount)
+            .unwrap_or(0);
+
+        (base_vault_balance, quote_vault_balance)
+    }
+
+    /// Get total base/quote locked in orders.
+    /// Returns (base_locked_in_asks, quote_locked_in_bids)
+    pub async fn get_total_locked_in_orders(&mut self) -> (u64, u64) {
+        self.reload().await;
+        let mut base_locked: u64 = 0;
+        let mut quote_locked: u64 = 0;
+
+        // Bids lock quote (base_atoms * price)
+        for (_, bid) in self.market.get_bids().iter::<RestingOrder>() {
+            let locked_quote = bid
+                .get_num_base_atoms()
+                .checked_mul(bid.get_price(), true)
+                .unwrap()
+                .as_u64();
+            quote_locked += locked_quote;
+        }
+
+        // Asks lock base
+        for (_, ask) in self.market.get_asks().iter::<RestingOrder>() {
+            base_locked += ask.get_num_base_atoms().as_u64();
+        }
+
+        (base_locked, quote_locked)
+    }
+
+    /// Verify that vault balances match seats + orders.
+    /// Takes a slice of trader pubkeys to sum their seat balances.
+    pub async fn verify_vault_balance(&mut self, traders: &[Pubkey]) {
+        self.reload().await;
+
+        // Sum seat balances
+        let mut seats_base: u64 = 0;
+        let mut seats_quote: u64 = 0;
+        for trader in traders {
+            seats_base += self.market.get_trader_balance(trader).0.as_u64();
+            seats_quote += self.market.get_trader_balance(trader).1.as_u64();
+        }
+
+        // Get locked in orders
+        let (base_in_asks, quote_in_bids) = self.get_total_locked_in_orders().await;
+
+        // Get vault balances
+        let (vault_base, vault_quote) = self.get_vault_balances().await;
+
+        // Total expected in vault
+        let expected_base = seats_base + base_in_asks;
+        let expected_quote = seats_quote + quote_in_bids;
+
+        println!(
+            "Vault verification: base_vault={} expected={} (seats={} + asks={})",
+            vault_base, expected_base, seats_base, base_in_asks
+        );
+        println!(
+            "Vault verification: quote_vault={} expected={} (seats={} + bids={})",
+            vault_quote, expected_quote, seats_quote, quote_in_bids
+        );
+
+        assert_eq!(
+            vault_base, expected_base,
+            "Base vault mismatch: vault={}, expected={} (seats={} + asks={})",
+            vault_base, expected_base, seats_base, base_in_asks
+        );
+        assert_eq!(
+            vault_quote, expected_quote,
+            "Quote vault mismatch: vault={}, expected={} (seats={} + bids={})",
+            vault_quote, expected_quote, seats_quote, quote_in_bids
+        );
+    }
 }
 
 #[derive(Clone)]
@@ -989,6 +1085,8 @@ pub struct MintFixture {
     pub context: Rc<RefCell<ProgramTestContext>>,
     pub key: Pubkey,
     pub mint: spl_token::state::Mint,
+    /// Whether this is a Token-2022 mint with extensions (requires different unpacking)
+    pub is_2022_with_extensions: bool,
 }
 
 impl MintFixture {
@@ -1078,6 +1176,91 @@ impl MintFixture {
             context: context_ref,
             key: mint_keypair.pubkey(),
             mint,
+            is_2022_with_extensions: false,
+        }
+    }
+
+    /// Create a Token-2022 mint with TransferFeeConfig extension.
+    /// This is used for tokens like LJITSPS that have transfer fees.
+    ///
+    /// # Arguments
+    /// * `context` - Program test context
+    /// * `mint_decimals` - Number of decimal places for the mint
+    /// * `transfer_fee_bps` - Transfer fee in basis points (e.g., 1000 = 10%)
+    pub async fn new_with_transfer_fee(
+        context: Rc<RefCell<ProgramTestContext>>,
+        mint_decimals: u8,
+        transfer_fee_bps: u16,
+    ) -> MintFixture {
+        let context_ref: Rc<RefCell<ProgramTestContext>> = Rc::clone(&context);
+        let mint_keypair: Keypair = Keypair::new();
+
+        let payer: Keypair = context.borrow().payer.insecure_clone();
+
+        // Calculate space needed for mint with TransferFeeConfig extension
+        let extension_types: Vec<spl_token_2022::extension::ExtensionType> =
+            vec![spl_token_2022::extension::ExtensionType::TransferFeeConfig];
+        let space: usize = spl_token_2022::extension::ExtensionType::try_calculate_account_len::<
+            spl_token_2022::state::Mint,
+        >(&extension_types)
+        .unwrap();
+
+        let mint_rent: u64 = solana_program::sysvar::rent::Rent::default().minimum_balance(space);
+
+        let init_account_ix: Instruction = create_account(
+            &payer.pubkey(),
+            &mint_keypair.pubkey(),
+            mint_rent,
+            space as u64,
+            &spl_token_2022::id(),
+        );
+
+        // Initialize transfer fee config before mint initialization
+        let transfer_fee_ix: Instruction =
+            spl_token_2022::extension::transfer_fee::instruction::initialize_transfer_fee_config(
+                &spl_token_2022::id(),
+                &mint_keypair.pubkey(),
+                None,
+                None,
+                transfer_fee_bps,
+                u64::MAX,
+            )
+            .unwrap();
+
+        let init_mint_ix: Instruction = spl_token_2022::instruction::initialize_mint2(
+            &spl_token_2022::id(),
+            &mint_keypair.pubkey(),
+            &payer.pubkey(),
+            None,
+            mint_decimals,
+        )
+        .unwrap();
+
+        send_tx_with_retry(
+            Rc::clone(&context),
+            &[init_account_ix, transfer_fee_ix, init_mint_ix],
+            Some(&payer.pubkey()),
+            &[&payer, &mint_keypair],
+        )
+        .await
+        .unwrap();
+
+        // For Token-2022 mints with extensions, we can't use spl_token::state::Mint::unpack_unchecked
+        // because the account layout is different. Instead, manually construct the Mint struct
+        // with the known values.
+        let mint = spl_token::state::Mint {
+            mint_authority: solana_program::program_option::COption::Some(payer.pubkey()),
+            supply: 0,
+            decimals: mint_decimals,
+            is_initialized: true,
+            freeze_authority: solana_program::program_option::COption::None,
+        };
+
+        MintFixture {
+            context: context_ref,
+            key: mint_keypair.pubkey(),
+            mint,
+            is_2022_with_extensions: true,
         }
     }
 
@@ -1090,8 +1273,27 @@ impl MintFixture {
             .await
             .unwrap()
             .unwrap();
-        self.mint =
-            spl_token::state::Mint::unpack_unchecked(&mut mint_account.data.as_slice()).unwrap();
+
+        if self.is_2022_with_extensions {
+            // For Token-2022 mints with extensions, use StateWithExtensions to unpack
+            let mint_with_ext = spl_token_2022::extension::StateWithExtensions::<
+                spl_token_2022::state::Mint,
+            >::unpack(&mint_account.data)
+            .unwrap();
+            let mint_2022 = mint_with_ext.base;
+            // Convert to spl_token::state::Mint
+            self.mint = spl_token::state::Mint {
+                mint_authority: mint_2022.mint_authority,
+                supply: mint_2022.supply,
+                decimals: mint_2022.decimals,
+                is_initialized: mint_2022.is_initialized,
+                freeze_authority: mint_2022.freeze_authority,
+            };
+        } else {
+            self.mint =
+                spl_token::state::Mint::unpack_unchecked(&mut mint_account.data.as_slice())
+                    .unwrap();
+        }
     }
 
     pub async fn mint_to(&mut self, dest: &Pubkey, num_atoms: u64) {
@@ -1336,4 +1538,101 @@ pub async fn send_tx_with_retry(
         }
     }
     Ok(())
+}
+
+/// Verify that vault balances match the sum of trader seat balances plus amounts locked in orders.
+/// This is a standalone helper that works with a raw context and market key.
+///
+/// # Arguments
+/// * `context` - The program test context
+/// * `market_key` - The market pubkey
+/// * `traders` - List of trader pubkeys whose seat balances should be summed
+pub async fn verify_vault_balance(
+    context: Rc<RefCell<ProgramTestContext>>,
+    market_key: &Pubkey,
+    traders: &[Pubkey],
+) {
+    use manifest::program::get_dynamic_value;
+    use manifest::state::RestingOrder;
+
+    // Get market data
+    let market_account: Account = context
+        .borrow_mut()
+        .banks_client
+        .get_account(*market_key)
+        .await
+        .unwrap()
+        .unwrap();
+    let market: manifest::state::MarketValue = get_dynamic_value(market_account.data.as_slice());
+
+    // Sum seat balances for all traders
+    let mut seats_base: u64 = 0;
+    let mut seats_quote: u64 = 0;
+    for trader in traders {
+        let balance = market.get_trader_balance(trader);
+        seats_base += balance.0.as_u64();
+        seats_quote += balance.1.as_u64();
+    }
+
+    // Get amounts locked in orders
+    let mut base_in_asks: u64 = 0;
+    let mut quote_in_bids: u64 = 0;
+
+    for (_, bid) in market.get_bids().iter::<RestingOrder>() {
+        let locked_quote = bid
+            .get_num_base_atoms()
+            .checked_mul(bid.get_price(), true)
+            .unwrap()
+            .as_u64();
+        quote_in_bids += locked_quote;
+    }
+
+    for (_, ask) in market.get_asks().iter::<RestingOrder>() {
+        base_in_asks += ask.get_num_base_atoms().as_u64();
+    }
+
+    // Get vault balances
+    let (base_vault, _) = get_vault_address(market_key, market.get_base_mint());
+    let (quote_vault, _) = get_vault_address(market_key, market.get_quote_mint());
+
+    let vault_base: u64 = context
+        .borrow_mut()
+        .banks_client
+        .get_packed_account_data::<spl_token::state::Account>(base_vault)
+        .await
+        .map(|a| a.amount)
+        .unwrap_or(0);
+
+    let vault_quote: u64 = context
+        .borrow_mut()
+        .banks_client
+        .get_packed_account_data::<spl_token::state::Account>(quote_vault)
+        .await
+        .map(|a| a.amount)
+        .unwrap_or(0);
+
+    let expected_base = seats_base + base_in_asks;
+    let expected_quote = seats_quote + quote_in_bids;
+
+    println!(
+        "Vault verification: base_vault={} expected={} (seats={} + asks={})",
+        vault_base, expected_base, seats_base, base_in_asks
+    );
+    println!(
+        "Vault verification: quote_vault={} expected={} (seats={} + bids={})",
+        vault_quote, expected_quote, seats_quote, quote_in_bids
+    );
+
+    assert_eq!(
+        vault_base, expected_base,
+        "Base vault mismatch: vault={}, expected={} (seats={} + asks={})",
+        vault_base, expected_base, seats_base, base_in_asks
+    );
+    assert_eq!(
+        vault_quote, expected_quote,
+        "Quote vault mismatch: vault={}, expected={} (seats={} + bids={})",
+        vault_quote, expected_quote, seats_quote, quote_in_bids
+    );
+
+    println!("Vault verification passed!");
 }
