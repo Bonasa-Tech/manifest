@@ -1545,11 +1545,12 @@ async fn ljitsps_test() -> anyhow::Result<()> {
     //   mint: FxppP7heqS742hvuGoAzHoYYnFk3iTF7cVuDaU3V8dDQ
     //   amountAtoms: 9900000000
     // ============================================================================
+    // Deposit log is wrong because of the transfer fee.
     let deposit_base_ix: Instruction = deposit_instruction(
         &market_keypair.pubkey(),
         payer,
         &base_mint_key,
-        9_900_000_000,
+        10_000_000_000,
         &base_token_account_keypair.pubkey(),
         spl_token_2022::id(),
         None,
