@@ -24,7 +24,7 @@ use manifest::{
 use solana_program::{hash::Hash, pubkey::Pubkey, rent::Rent};
 use solana_program_test::{processor, BanksClientError, ProgramTest, ProgramTestContext};
 use solana_sdk::{
-    account::Account, account_info::AccountInfo, clock::Clock, instruction::Instruction,
+    account::Account, account_info::AccountInfo, clock::Clock, instruction::{AccountMeta, Instruction},
     program_pack::Pack, signature::Keypair, signer::Signer, system_instruction::create_account,
     transaction::Transaction,
 };
@@ -1779,23 +1779,32 @@ pub async fn mint_token_2022(
 pub async fn expand_market(
     context: Rc<RefCell<ProgramTestContext>>,
     market: &Pubkey,
-    count: u32,
+    num_free_blocks: u32,
 ) -> Result<(), BanksClientError> {
-    use manifest::program::expand_market_instruction;
+    use solana_program::system_program;
+    use manifest::program::ManifestInstruction;
 
     let payer_keypair = context.borrow().payer.insecure_clone();
     let payer = payer_keypair.pubkey();
 
-    for _ in 0..count {
-        let expand_ix = expand_market_instruction(market, &payer);
-        send_tx_with_retry(
-            Rc::clone(&context),
-            &[expand_ix],
-            Some(&payer),
-            &[&payer_keypair],
-        )
-        .await?;
-    }
+    // Create instruction with the number of free blocks required as data
+    let expand_ix = Instruction {
+        program_id: manifest::id(),
+        accounts: vec![
+            AccountMeta::new(payer, true),
+            AccountMeta::new(*market, false),
+            AccountMeta::new_readonly(system_program::id(), false),
+        ],
+        data: [ManifestInstruction::Expand.to_vec(), num_free_blocks.to_le_bytes().to_vec()].concat(),
+    };
+
+    send_tx_with_retry(
+        Rc::clone(&context),
+        &[expand_ix],
+        Some(&payer),
+        &[&payer_keypair],
+    )
+    .await?;
 
     Ok(())
 }
