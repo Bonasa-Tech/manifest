@@ -4,8 +4,9 @@ use borsh::BorshSerialize;
 use manifest::{
     program::{
         batch_update::{CancelOrderParams, PlaceOrderParams},
-        batch_update_instruction, global_add_trader_instruction, global_deposit_instruction,
-        global_withdraw_instruction, swap_instruction, ManifestInstruction, SwapParams,
+        batch_update_instruction, expand_market_instruction, global_add_trader_instruction,
+        global_deposit_instruction, global_withdraw_instruction, swap_instruction,
+        ManifestInstruction, SwapParams,
     },
     quantities::{BaseAtoms, WrapperU64},
     state::{constants::NO_EXPIRATION_LAST_VALID_SLOT, OrderType, RestingOrder},
@@ -1279,6 +1280,23 @@ async fn swap_wash_reverse_test() -> anyhow::Result<()> {
     let orders = test_fixture.market_fixture.get_resting_orders().await;
     assert_eq!(orders.len(), 4);
 
+    // Expand the market to ensure there are enough free blocks for reverse orders
+    // when swapping. Each swap against a reverse order needs a free block for the
+    // new reversed order.
+    let payer = test_fixture.payer();
+    let payer_keypair = test_fixture.payer_keypair();
+    for _ in 0..10 {
+        let expand_ix =
+            expand_market_instruction(&test_fixture.market_fixture.key, &payer);
+        send_tx_with_retry(
+            Rc::clone(&test_fixture.context),
+            &[expand_ix],
+            Some(&payer),
+            &[&payer_keypair],
+        )
+        .await?;
+    }
+
     // Mint tokens to payer's external wallet for swapping
     test_fixture
         .sol_mint_fixture
@@ -1329,9 +1347,6 @@ async fn swap_wash_reverse_test() -> anyhow::Result<()> {
     // Cancel all resting orders
     let orders_to_cancel: Vec<RestingOrder> =
         test_fixture.market_fixture.get_resting_orders().await;
-
-    let payer = test_fixture.payer();
-    let payer_keypair = test_fixture.payer_keypair();
 
     let cancels: Vec<CancelOrderParams> = orders_to_cancel
         .iter()
