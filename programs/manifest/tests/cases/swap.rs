@@ -3,12 +3,12 @@ use std::{cell::RefMut, rc::Rc};
 use borsh::BorshSerialize;
 use manifest::{
     program::{
-        batch_update::PlaceOrderParams, batch_update_instruction, global_add_trader_instruction,
-        global_deposit_instruction, global_withdraw_instruction, swap_instruction,
-        ManifestInstruction, SwapParams,
+        batch_update::{CancelOrderParams, PlaceOrderParams},
+        batch_update_instruction, global_add_trader_instruction, global_deposit_instruction,
+        global_withdraw_instruction, swap_instruction, ManifestInstruction, SwapParams,
     },
     quantities::{BaseAtoms, WrapperU64},
-    state::{constants::NO_EXPIRATION_LAST_VALID_SLOT, OrderType},
+    state::{constants::NO_EXPIRATION_LAST_VALID_SLOT, OrderType, RestingOrder},
     validation::get_vault_address,
 };
 use solana_program_test::{tokio, ProgramTestContext};
@@ -1199,6 +1199,245 @@ async fn swap_global_not_backed() -> anyhow::Result<()> {
     assert_eq!(
         test_fixture.payer_usdc_fixture.balance_atoms().await,
         1_000 * USDC_UNIT_SIZE
+    );
+
+    Ok(())
+}
+
+/// Test wash trading with reverse orders.
+/// A single trader posts reverse orders on both sides at two price levels,
+/// then swaps against their own orders in both directions twice, filling
+/// top of book and spilling over to the second level. At the end, verify
+/// token accounts, cancel all orders, and confirm full withdrawal.
+#[tokio::test]
+async fn swap_wash_reverse_test() -> anyhow::Result<()> {
+    let mut test_fixture: TestFixture = TestFixture::new().await;
+
+    // Claim seat and deposit tokens for the trader (default payer)
+    test_fixture.claim_seat().await?;
+
+    let initial_sol: u64 = 100 * SOL_UNIT_SIZE;
+    let initial_usdc: u64 = 100_000 * USDC_UNIT_SIZE;
+
+    test_fixture.deposit(Token::SOL, initial_sol).await?;
+    test_fixture.deposit(Token::USDC, initial_usdc).await?;
+
+    // Place reverse orders on both sides at two price levels each.
+    // Bids: 5 SOL @ 10 USDC/SOL (level 1), 5 SOL @ 8 USDC/SOL (level 2)
+    // Asks: 5 SOL @ 12 USDC/SOL (level 1), 5 SOL @ 14 USDC/SOL (level 2)
+    // Spread of 10% (10_000 in units of 1/100,000)
+
+    // Bid level 1: 5 SOL @ 10 USDC/SOL
+    test_fixture
+        .place_order(
+            Side::Bid,
+            5 * SOL_UNIT_SIZE,
+            10,
+            0,
+            10_000, // 10% spread
+            OrderType::Reverse,
+        )
+        .await?;
+
+    // Bid level 2: 5 SOL @ 8 USDC/SOL
+    test_fixture
+        .place_order(
+            Side::Bid,
+            5 * SOL_UNIT_SIZE,
+            8,
+            0,
+            10_000,
+            OrderType::Reverse,
+        )
+        .await?;
+
+    // Ask level 1: 5 SOL @ 12 USDC/SOL
+    test_fixture
+        .place_order(
+            Side::Ask,
+            5 * SOL_UNIT_SIZE,
+            12,
+            0,
+            10_000,
+            OrderType::Reverse,
+        )
+        .await?;
+
+    // Ask level 2: 5 SOL @ 14 USDC/SOL
+    test_fixture
+        .place_order(
+            Side::Ask,
+            5 * SOL_UNIT_SIZE,
+            14,
+            0,
+            10_000,
+            OrderType::Reverse,
+        )
+        .await?;
+
+    // Verify initial orders are placed (2 bids + 2 asks = 4 orders)
+    let orders = test_fixture.market_fixture.get_resting_orders().await;
+    assert_eq!(orders.len(), 4);
+
+    // Mint tokens to payer's external wallet for swapping
+    test_fixture
+        .sol_mint_fixture
+        .mint_to(&test_fixture.payer_sol_fixture.key, 20 * SOL_UNIT_SIZE)
+        .await;
+    test_fixture
+        .usdc_mint_fixture
+        .mint_to(&test_fixture.payer_usdc_fixture.key, 200 * USDC_UNIT_SIZE)
+        .await;
+
+    // Swap 1: Sell SOL (buy quote) - fill top of book ask and spill to second level
+    // Buying with 140 USDC should fill 5 SOL @ 12 and ~5.7 SOL @ 14
+    // is_base_in=false means we're sending USDC in
+    test_fixture
+        .swap(140 * USDC_UNIT_SIZE, 0, false, true)
+        .await?;
+
+    // Swap 2: Buy SOL (sell quote) - fill top of book bid and spill to second level
+    // Selling 8 SOL should fill orders on the bid side
+    // is_base_in=true means we're sending SOL in
+    test_fixture.swap(8 * SOL_UNIT_SIZE, 0, true, true).await?;
+
+    // Swap 3: Sell SOL again (buy quote)
+    test_fixture.swap(80 * USDC_UNIT_SIZE, 0, false, true).await?;
+
+    // Swap 4: Buy SOL again (sell quote)
+    test_fixture.swap(6 * SOL_UNIT_SIZE, 0, true, true).await?;
+
+    // Verify we have resting orders (reverse orders should have flipped)
+    let orders_after: Vec<RestingOrder> =
+        test_fixture.market_fixture.get_resting_orders().await;
+    assert!(orders_after.len() > 0, "Should have resting orders after swaps");
+
+    // Record balances in wallet token accounts
+    let sol_balance_wallet = test_fixture.payer_sol_fixture.balance_atoms().await;
+    let usdc_balance_wallet = test_fixture.payer_usdc_fixture.balance_atoms().await;
+
+    // Record balances in market
+    let sol_balance_market = test_fixture
+        .market_fixture
+        .get_base_balance_atoms(&test_fixture.payer())
+        .await;
+    let usdc_balance_market = test_fixture
+        .market_fixture
+        .get_quote_balance_atoms(&test_fixture.payer())
+        .await;
+
+    // Cancel all resting orders
+    let orders_to_cancel: Vec<RestingOrder> =
+        test_fixture.market_fixture.get_resting_orders().await;
+
+    let payer = test_fixture.payer();
+    let payer_keypair = test_fixture.payer_keypair();
+
+    let cancels: Vec<CancelOrderParams> = orders_to_cancel
+        .iter()
+        .map(|o| CancelOrderParams::new(o.get_sequence_number()))
+        .collect();
+
+    let cancel_ix = batch_update_instruction(
+        &test_fixture.market_fixture.key,
+        &payer,
+        None,
+        cancels,
+        vec![],
+        None,
+        None,
+        None,
+        None,
+    );
+
+    send_tx_with_retry(
+        Rc::clone(&test_fixture.context),
+        &[cancel_ix],
+        Some(&payer),
+        &[&payer_keypair],
+    )
+    .await?;
+
+    // Verify all orders are cancelled
+    let orders_after_cancel = test_fixture.market_fixture.get_resting_orders().await;
+    assert_eq!(
+        orders_after_cancel.len(),
+        0,
+        "All orders should be cancelled"
+    );
+
+    // Get updated market balances after cancellation (funds should be unlocked)
+    let sol_balance_market_after = test_fixture
+        .market_fixture
+        .get_base_balance_atoms(&test_fixture.payer())
+        .await;
+    let usdc_balance_market_after = test_fixture
+        .market_fixture
+        .get_quote_balance_atoms(&test_fixture.payer())
+        .await;
+
+    // Market balance should be >= what it was before (funds unlocked from cancelled orders)
+    assert!(
+        sol_balance_market_after >= sol_balance_market,
+        "SOL market balance should not decrease after cancel"
+    );
+    assert!(
+        usdc_balance_market_after >= usdc_balance_market,
+        "USDC market balance should not decrease after cancel"
+    );
+
+    // Withdraw all tokens from the market
+    if sol_balance_market_after > 0 {
+        test_fixture
+            .withdraw(Token::SOL, sol_balance_market_after)
+            .await?;
+    }
+    if usdc_balance_market_after > 0 {
+        test_fixture
+            .withdraw(Token::USDC, usdc_balance_market_after)
+            .await?;
+    }
+
+    // Verify market balances are now zero
+    let final_sol_market = test_fixture
+        .market_fixture
+        .get_base_balance_atoms(&test_fixture.payer())
+        .await;
+    let final_usdc_market = test_fixture
+        .market_fixture
+        .get_quote_balance_atoms(&test_fixture.payer())
+        .await;
+    assert_eq!(final_sol_market, 0, "All SOL should be withdrawn");
+    assert_eq!(final_usdc_market, 0, "All USDC should be withdrawn");
+
+    // Verify wallet received the tokens
+    let final_sol_wallet = test_fixture.payer_sol_fixture.balance_atoms().await;
+    let final_usdc_wallet = test_fixture.payer_usdc_fixture.balance_atoms().await;
+
+    assert_eq!(
+        final_sol_wallet,
+        sol_balance_wallet + sol_balance_market_after,
+        "Wallet SOL should increase by withdrawn amount"
+    );
+    assert_eq!(
+        final_usdc_wallet,
+        usdc_balance_wallet + usdc_balance_market_after,
+        "Wallet USDC should increase by withdrawn amount"
+    );
+
+    // Verify total value is conserved (initial deposits + minted - what's in wallet should equal what's on market, which is 0)
+    // Total SOL: initial_sol (deposited) + 20 SOL (minted to wallet)
+    // Total USDC: initial_usdc (deposited) + 200 USDC (minted to wallet)
+    let total_sol = initial_sol + 20 * SOL_UNIT_SIZE;
+    let total_usdc = initial_usdc + 200 * USDC_UNIT_SIZE;
+
+    assert_eq!(
+        final_sol_wallet, total_sol,
+        "Total SOL should be conserved"
+    );
+    assert_eq!(
+        final_usdc_wallet, total_usdc,
+        "Total USDC should be conserved"
     );
 
     Ok(())
