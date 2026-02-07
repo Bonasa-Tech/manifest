@@ -1,10 +1,11 @@
-use std::{cell::RefMut, rc::Rc};
+use std::{cell::RefCell, cell::RefMut, rc::Rc};
 
 use borsh::BorshSerialize;
 use manifest::{
     program::{
         batch_update::{CancelOrderParams, PlaceOrderParams},
-        batch_update_instruction, expand_market_instruction, global_add_trader_instruction,
+        batch_update_instruction, claim_seat_instruction::claim_seat_instruction,
+        deposit_instruction, expand_market_instruction, global_add_trader_instruction,
         global_deposit_instruction, global_withdraw_instruction, swap_instruction,
         ManifestInstruction, SwapParams,
     },
@@ -12,16 +13,18 @@ use manifest::{
     state::{constants::NO_EXPIRATION_LAST_VALID_SLOT, OrderType, RestingOrder},
     validation::get_vault_address,
 };
-use solana_program_test::{tokio, ProgramTestContext};
+use solana_program_test::{processor, tokio, ProgramTest, ProgramTestContext};
 use solana_sdk::{
     instruction::{AccountMeta, Instruction},
+    pubkey::Pubkey,
     signature::{Keypair, Signer},
     transaction::Transaction,
 };
 
 use crate::{
-    send_tx_with_retry, Side, TestFixture, Token, TokenAccountFixture, SOL_UNIT_SIZE,
-    USDC_UNIT_SIZE,
+    create_market_with_mints, create_spl_token_account, create_token_2022_account, expand_market,
+    mint_token_2022, send_tx_with_retry, MintFixture, Side, TestFixture, Token,
+    TokenAccountFixture, RUST_LOG_DEFAULT, SOL_UNIT_SIZE, USDC_UNIT_SIZE,
 };
 
 #[tokio::test]
@@ -1465,12 +1468,6 @@ async fn swap_wash_reverse_test() -> anyhow::Result<()> {
 /// for trader EHeaNkrqdFvkFz5JprgoRbBD4fLH8YHKbBZ9CJ17hFcR.
 #[tokio::test]
 async fn ljitsps_test() -> anyhow::Result<()> {
-    use manifest::program::{claim_seat_instruction, create_market_instructions, deposit_instruction};
-    use solana_program_test::{processor, ProgramTest};
-    use solana_sdk::{program_pack::Pack, rent::Rent, system_instruction::create_account};
-    use std::cell::RefCell;
-    use crate::{MintFixture, RUST_LOG_DEFAULT};
-
     // Set up program test
     let program_test: ProgramTest = ProgramTest::new(
         "manifest",
@@ -1479,12 +1476,11 @@ async fn ljitsps_test() -> anyhow::Result<()> {
     );
     solana_logger::setup_with_default(RUST_LOG_DEFAULT);
 
-    let market_keypair: Keypair = Keypair::new();
-    let context: Rc<RefCell<solana_program_test::ProgramTestContext>> =
+    let context: Rc<RefCell<ProgramTestContext>> =
         Rc::new(RefCell::new(program_test.start_with_context().await));
 
     let payer_keypair: Keypair = context.borrow().payer.insecure_clone();
-    let payer: &solana_sdk::pubkey::Pubkey = &payer_keypair.pubkey();
+    let payer: &Pubkey = &payer_keypair.pubkey();
 
     // Create USDC quote mint (6 decimals, regular SPL token)
     let mut usdc_mint_f: MintFixture =
@@ -1494,23 +1490,33 @@ async fn ljitsps_test() -> anyhow::Result<()> {
     // Matches mainnet mint FxppP7heqS742hvuGoAzHoYYnFk3iTF7cVuDaU3V8dDQ
     let base_mint_f: MintFixture =
         MintFixture::new_with_transfer_fee(Rc::clone(&context), 7, 1_000).await;
-    let base_mint_key: solana_sdk::pubkey::Pubkey = base_mint_f.key;
+    let base_mint_key: Pubkey = base_mint_f.key;
 
     // Create the market with Token-2022 base (7 decimals) and USDC quote (6 decimals)
-    let create_market_ixs: Vec<Instruction> = create_market_instructions(
-        &market_keypair.pubkey(),
-        &base_mint_key,
-        &usdc_mint_f.key,
-        payer,
-    )
-    .unwrap();
-    send_tx_with_retry(
+    let market_keypair =
+        create_market_with_mints(Rc::clone(&context), &base_mint_key, &usdc_mint_f.key).await?;
+
+    // Create base token account (Token-2022) and mint tokens
+    let base_token_account_keypair =
+        create_token_2022_account(Rc::clone(&context), &base_mint_key, payer).await?;
+    mint_token_2022(
         Rc::clone(&context),
-        &create_market_ixs[..],
-        Some(payer),
-        &[&payer_keypair.insecure_clone(), &market_keypair],
+        &base_mint_key,
+        &base_token_account_keypair.pubkey(),
+        1_000_000_000_000_000, // Large amount for testing
     )
     .await?;
+
+    // Create USDC token account and mint tokens
+    let usdc_token_account_keypair =
+        create_spl_token_account(Rc::clone(&context), &usdc_mint_f.key, payer).await?;
+    usdc_mint_f
+        .mint_to(&usdc_token_account_keypair.pubkey(), 1_000_000_000_000)
+        .await;
+
+    // Expand market to ensure enough free blocks for reverse orders (30+ orders)
+    expand_market(Rc::clone(&context), &market_keypair.pubkey(), 30).await?;
+
 
     // ============================================================================
     // Transaction 1: ClaimSeat
@@ -1528,82 +1534,6 @@ async fn ljitsps_test() -> anyhow::Result<()> {
         &[&payer_keypair.insecure_clone()],
     )
     .await?;
-
-    // Create base token account (Token-2022)
-    let base_token_account_keypair: Keypair = Keypair::new();
-    let rent: Rent = context.borrow_mut().banks_client.get_rent().await.unwrap();
-    let create_base_token_account_ix: Instruction = create_account(
-        payer,
-        &base_token_account_keypair.pubkey(),
-        rent.minimum_balance(spl_token_2022::state::Account::LEN + 13),
-        spl_token_2022::state::Account::LEN as u64 + 13,
-        &spl_token_2022::id(),
-    );
-    let init_base_token_account_ix: Instruction = spl_token_2022::instruction::initialize_account(
-        &spl_token_2022::id(),
-        &base_token_account_keypair.pubkey(),
-        &base_mint_key,
-        payer,
-    )
-    .unwrap();
-    send_tx_with_retry(
-        Rc::clone(&context),
-        &[create_base_token_account_ix, init_base_token_account_ix],
-        Some(payer),
-        &[
-            &payer_keypair.insecure_clone(),
-            &base_token_account_keypair.insecure_clone(),
-        ],
-    )
-    .await?;
-
-    // Mint base tokens to the token account
-    let base_mint_to_ix: Instruction = spl_token_2022::instruction::mint_to(
-        &spl_token_2022::ID,
-        &base_mint_key,
-        &base_token_account_keypair.pubkey(),
-        payer,
-        &[payer],
-        1_000_000_000_000_000, // Large amount for testing
-    )
-    .unwrap();
-    send_tx_with_retry(
-        Rc::clone(&context),
-        &[base_mint_to_ix],
-        Some(payer),
-        &[&payer_keypair.insecure_clone()],
-    )
-    .await?;
-
-    // Create USDC token account
-    let usdc_token_account_keypair: Keypair = Keypair::new();
-    let create_usdc_token_account_ix: Instruction = create_account(
-        payer,
-        &usdc_token_account_keypair.pubkey(),
-        rent.minimum_balance(spl_token::state::Account::LEN),
-        spl_token::state::Account::LEN as u64,
-        &spl_token::id(),
-    );
-    let init_usdc_token_account_ix: Instruction = spl_token::instruction::initialize_account(
-        &spl_token::id(),
-        &usdc_token_account_keypair.pubkey(),
-        &usdc_mint_f.key,
-        payer,
-    )
-    .unwrap();
-    send_tx_with_retry(
-        Rc::clone(&context),
-        &[create_usdc_token_account_ix, init_usdc_token_account_ix],
-        Some(payer),
-        &[
-            &payer_keypair.insecure_clone(),
-            &usdc_token_account_keypair.insecure_clone(),
-        ],
-    )
-    .await?;
-
-    // Mint USDC to the token account
-    usdc_mint_f.mint_to(&usdc_token_account_keypair.pubkey(), 1_000_000_000_000).await;
 
     // ============================================================================
     // Transaction 2: Deposit base tokens
@@ -1658,18 +1588,6 @@ async fn ljitsps_test() -> anyhow::Result<()> {
         &[&payer_keypair.insecure_clone()],
     )
     .await?;
-
-    // Expand market to ensure enough free blocks for reverse orders (30+ orders)
-    for _ in 0..30 {
-        let expand_ix = expand_market_instruction(&market_keypair.pubkey(), payer);
-        send_tx_with_retry(
-            Rc::clone(&context),
-            &[expand_ix],
-            Some(payer),
-            &[&payer_keypair.insecure_clone()],
-        )
-        .await?;
-    }
 
     // ============================================================================
     // Transaction 4: Place 10 Reverse orders (seqNum 0-9)

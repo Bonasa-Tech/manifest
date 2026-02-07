@@ -1636,3 +1636,166 @@ pub async fn verify_vault_balance(
 
     println!("Vault verification passed!");
 }
+
+/// Create a market with the given base and quote mints.
+/// Returns the market keypair.
+pub async fn create_market_with_mints(
+    context: Rc<RefCell<ProgramTestContext>>,
+    base_mint: &Pubkey,
+    quote_mint: &Pubkey,
+) -> Result<Keypair, BanksClientError> {
+    let market_keypair = Keypair::new();
+    let payer_keypair = context.borrow().payer.insecure_clone();
+    let payer = payer_keypair.pubkey();
+
+    let create_market_ixs: Vec<Instruction> =
+        create_market_instructions(&market_keypair.pubkey(), base_mint, quote_mint, &payer)
+            .unwrap();
+
+    send_tx_with_retry(
+        Rc::clone(&context),
+        &create_market_ixs[..],
+        Some(&payer),
+        &[&payer_keypair, &market_keypair],
+    )
+    .await?;
+
+    Ok(market_keypair)
+}
+
+/// Create a Token-2022 token account for a mint with transfer fee extension.
+/// Returns the token account keypair.
+pub async fn create_token_2022_account(
+    context: Rc<RefCell<ProgramTestContext>>,
+    mint: &Pubkey,
+    owner: &Pubkey,
+) -> Result<Keypair, BanksClientError> {
+    let token_account_keypair = Keypair::new();
+    let payer_keypair = context.borrow().payer.insecure_clone();
+    let payer = payer_keypair.pubkey();
+
+    let rent: Rent = context.borrow_mut().banks_client.get_rent().await.unwrap();
+    // Token-2022 accounts with transfer fee need extra space
+    let account_size = spl_token_2022::state::Account::LEN + 13;
+
+    let create_account_ix = create_account(
+        &payer,
+        &token_account_keypair.pubkey(),
+        rent.minimum_balance(account_size),
+        account_size as u64,
+        &spl_token_2022::id(),
+    );
+
+    let init_account_ix = spl_token_2022::instruction::initialize_account(
+        &spl_token_2022::id(),
+        &token_account_keypair.pubkey(),
+        mint,
+        owner,
+    )
+    .unwrap();
+
+    send_tx_with_retry(
+        Rc::clone(&context),
+        &[create_account_ix, init_account_ix],
+        Some(&payer),
+        &[&payer_keypair, &token_account_keypair],
+    )
+    .await?;
+
+    Ok(token_account_keypair)
+}
+
+/// Create a regular SPL token account.
+/// Returns the token account keypair.
+pub async fn create_spl_token_account(
+    context: Rc<RefCell<ProgramTestContext>>,
+    mint: &Pubkey,
+    owner: &Pubkey,
+) -> Result<Keypair, BanksClientError> {
+    let token_account_keypair = Keypair::new();
+    let payer_keypair = context.borrow().payer.insecure_clone();
+    let payer = payer_keypair.pubkey();
+
+    let rent: Rent = context.borrow_mut().banks_client.get_rent().await.unwrap();
+
+    let create_account_ix = create_account(
+        &payer,
+        &token_account_keypair.pubkey(),
+        rent.minimum_balance(spl_token::state::Account::LEN),
+        spl_token::state::Account::LEN as u64,
+        &spl_token::id(),
+    );
+
+    let init_account_ix = spl_token::instruction::initialize_account(
+        &spl_token::id(),
+        &token_account_keypair.pubkey(),
+        mint,
+        owner,
+    )
+    .unwrap();
+
+    send_tx_with_retry(
+        Rc::clone(&context),
+        &[create_account_ix, init_account_ix],
+        Some(&payer),
+        &[&payer_keypair, &token_account_keypair],
+    )
+    .await?;
+
+    Ok(token_account_keypair)
+}
+
+/// Mint Token-2022 tokens to a token account.
+pub async fn mint_token_2022(
+    context: Rc<RefCell<ProgramTestContext>>,
+    mint: &Pubkey,
+    token_account: &Pubkey,
+    amount: u64,
+) -> Result<(), BanksClientError> {
+    let payer_keypair = context.borrow().payer.insecure_clone();
+    let payer = payer_keypair.pubkey();
+
+    let mint_to_ix = spl_token_2022::instruction::mint_to(
+        &spl_token_2022::id(),
+        mint,
+        token_account,
+        &payer,
+        &[&payer],
+        amount,
+    )
+    .unwrap();
+
+    send_tx_with_retry(
+        Rc::clone(&context),
+        &[mint_to_ix],
+        Some(&payer),
+        &[&payer_keypair],
+    )
+    .await
+}
+
+/// Expand a market to add more free blocks for orders.
+/// Calls expand_market_instruction `count` times.
+pub async fn expand_market(
+    context: Rc<RefCell<ProgramTestContext>>,
+    market: &Pubkey,
+    count: u32,
+) -> Result<(), BanksClientError> {
+    use manifest::program::expand_market_instruction;
+
+    let payer_keypair = context.borrow().payer.insecure_clone();
+    let payer = payer_keypair.pubkey();
+
+    for _ in 0..count {
+        let expand_ix = expand_market_instruction(market, &payer);
+        send_tx_with_retry(
+            Rc::clone(&context),
+            &[expand_ix],
+            Some(&payer),
+            &[&payer_keypair],
+        )
+        .await?;
+    }
+
+    Ok(())
+}
