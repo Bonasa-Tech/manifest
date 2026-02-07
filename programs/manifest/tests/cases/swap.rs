@@ -1457,3 +1457,380 @@ async fn swap_wash_reverse_test() -> anyhow::Result<()> {
 
     Ok(())
 }
+
+/// LJITSPS Test - Replays transactions for FxppP7heqS742hvuGoAzHoYYnFk3iTF7cVuDaU3V8dDQ
+///
+/// This test simulates the pattern of transactions observed on mainnet for the trader
+/// EHeaNkrqdFvkFz5JprgoRbBD4fLH8YHKbBZ9CJ17hFcR on market CKzJCoCnUVVxhfQGs1aLihpF49tCt49qJaQXofRjRFEL
+/// where FxppP7heqS742hvuGoAzHoYYnFk3iTF7cVuDaU3V8dDQ is the base mint.
+///
+/// The trader executes wash trades against their own reverse orders.
+#[tokio::test]
+async fn ljitsps_test() -> anyhow::Result<()> {
+    let mut test_fixture: TestFixture = TestFixture::new().await;
+
+    // Claim seat for trader
+    test_fixture.claim_seat().await?;
+
+    // ============================================================================
+    // Transaction 1: Deposit base tokens
+    // Signature: 5umFNK6hYLebKUhstYJ63XeDc2ouhhmeTgYcgqeWz36nFv2peTrKVt9ytRjLdNitUo7gRZGTvWBfXrUYBAxymwiY
+    // DepositLog: market=CKzJCoCnUVVxhfQGs1aLihpF49tCt49qJaQXofRjRFEL, trader=EHeaNkrqdFvkFz5JprgoRbBD4fLH8YHKbBZ9CJ17hFcR
+    //             mint=FxppP7heqS742hvuGoAzHoYYnFk3iTF7cVuDaU3V8dDQ, amountAtoms=9900000000
+    // ============================================================================
+    let initial_base_deposit: u64 = 100 * SOL_UNIT_SIZE; // Scaled for test
+    test_fixture.deposit(Token::SOL, initial_base_deposit).await?;
+
+    // ============================================================================
+    // Transaction 2: Deposit more base tokens (larger amount)
+    // Signature: 43n2iMie5WpvxLXhgUJ17ffKu1KRJav5jw9auQ1NLCZWVpwaaRmqsXA3UKLSAjWGYQbpNNJMxPxGsVorK5kZXNei
+    // DepositLog: market=CKzJCoCnUVVxhfQGs1aLihpF49tCt49qJaQXofRjRFEL, trader=EHeaNkrqdFvkFz5JprgoRbBD4fLH8YHKbBZ9CJ17hFcR
+    //             mint=FxppP7heqS742hvuGoAzHoYYnFk3iTF7cVuDaU3V8dDQ, amountAtoms=572979102300000
+    // ============================================================================
+    // Deposit quote tokens for bidding
+    let initial_quote_deposit: u64 = 100_000 * USDC_UNIT_SIZE;
+    test_fixture.deposit(Token::USDC, initial_quote_deposit).await?;
+
+    // Expand market to ensure enough free blocks for reverse orders
+    let payer = test_fixture.payer();
+    let payer_keypair = test_fixture.payer_keypair();
+    for _ in 0..15 {
+        let expand_ix = expand_market_instruction(&test_fixture.market_fixture.key, &payer);
+        send_tx_with_retry(
+            Rc::clone(&test_fixture.context),
+            &[expand_ix],
+            Some(&payer),
+            &[&payer_keypair],
+        )
+        .await?;
+    }
+
+    // ============================================================================
+    // Place initial reverse orders on both sides (simulating existing order book)
+    // These represent orders that would have been placed before the wash trades
+    // ============================================================================
+
+    // Bid side reverse orders at various price levels
+    // Price ~99.5 (scaled for test as whole number price)
+    test_fixture
+        .place_order(
+            Side::Bid,
+            10 * SOL_UNIT_SIZE,
+            99, // price in quote atoms per base unit
+            0,
+            10_000, // 10% spread for reverse
+            OrderType::Reverse,
+        )
+        .await?;
+
+    // Bid at 98.5
+    test_fixture
+        .place_order(
+            Side::Bid,
+            10 * SOL_UNIT_SIZE,
+            98,
+            0,
+            10_000,
+            OrderType::Reverse,
+        )
+        .await?;
+
+    // Bid at 97.5
+    test_fixture
+        .place_order(
+            Side::Bid,
+            10 * SOL_UNIT_SIZE,
+            97,
+            0,
+            10_000,
+            OrderType::Reverse,
+        )
+        .await?;
+
+    // Bid at 96.5
+    test_fixture
+        .place_order(
+            Side::Bid,
+            10 * SOL_UNIT_SIZE,
+            96,
+            0,
+            10_000,
+            OrderType::Reverse,
+        )
+        .await?;
+
+    // Bid at 95.5
+    test_fixture
+        .place_order(
+            Side::Bid,
+            10 * SOL_UNIT_SIZE,
+            95,
+            0,
+            10_000,
+            OrderType::Reverse,
+        )
+        .await?;
+
+    // Ask side reverse orders
+    // Ask at 100.5
+    test_fixture
+        .place_order(
+            Side::Ask,
+            10 * SOL_UNIT_SIZE,
+            100,
+            0,
+            10_000,
+            OrderType::Reverse,
+        )
+        .await?;
+
+    // Ask at 101.5
+    test_fixture
+        .place_order(
+            Side::Ask,
+            10 * SOL_UNIT_SIZE,
+            101,
+            0,
+            10_000,
+            OrderType::Reverse,
+        )
+        .await?;
+
+    // Ask at 102.5
+    test_fixture
+        .place_order(
+            Side::Ask,
+            10 * SOL_UNIT_SIZE,
+            102,
+            0,
+            10_000,
+            OrderType::Reverse,
+        )
+        .await?;
+
+    // Verify orders are placed
+    let orders_initial = test_fixture.market_fixture.get_resting_orders().await;
+    assert_eq!(orders_initial.len(), 8, "Should have 8 initial orders");
+
+    // ============================================================================
+    // Mint tokens to wallet for swap operations
+    // ============================================================================
+    test_fixture
+        .sol_mint_fixture
+        .mint_to(&test_fixture.payer_sol_fixture.key, 50 * SOL_UNIT_SIZE)
+        .await;
+    test_fixture
+        .usdc_mint_fixture
+        .mint_to(&test_fixture.payer_usdc_fixture.key, 5000 * USDC_UNIT_SIZE)
+        .await;
+
+    // ============================================================================
+    // Transaction pattern from mainnet: Wash trades with fills and reverse order placement
+    // Signature: 2oGo8x... (example from mainnet data)
+    // FillLog: maker=EHeaNkrqdFvkFz5JprgoRbBD4fLH8YHKbBZ9CJ17hFcR, taker=EHeaNkrqdFvkFz5JprgoRbBD4fLH8YHKbBZ9CJ17hFcR
+    //          baseAtoms=200000, quoteAtoms=19900, price=99500000000000000
+    //          makerSequenceNumber=179, takerSequenceNumber=185, takerIsBuy=false
+    // PlaceOrderLogV2: trader=EHeaNkrqdFvkFz5JprgoRbBD4fLH8YHKbBZ9CJ17hFcR
+    //                  baseAtoms=200000, orderSequenceNumber=186, orderType=1, isBid=true
+    // ============================================================================
+
+    // Swap 1: Sell base (taker sells into bid reverse orders)
+    // This simulates the wash trade where maker=taker
+    test_fixture
+        .swap(5 * SOL_UNIT_SIZE, 0, true, true)
+        .await?;
+
+    // ============================================================================
+    // Transaction: More wash trades
+    // Signature: 3abc... (multiple fills against own orders)
+    // FillLog: baseAtoms=300000, quoteAtoms=29850, price=99500000000000000
+    //          makerSequenceNumber=179, takerSequenceNumber=187, takerIsBuy=false
+    // FillLog: baseAtoms=500000, quoteAtoms=49849, price=99699398797595190
+    //          makerSequenceNumber=185, takerSequenceNumber=188, takerIsBuy=true
+    // ============================================================================
+
+    // Swap 2: Buy base (taker buys from ask reverse orders)
+    test_fixture
+        .swap(500 * USDC_UNIT_SIZE, 0, false, true)
+        .await?;
+
+    // ============================================================================
+    // Transaction: Sell with multiple price level fills
+    // Signature: 4xyz...
+    // FillLog: baseAtoms=797, quoteAtoms=80, price=100299000000000000
+    //          makerSequenceNumber=188, takerSequenceNumber=190, takerIsBuy=false
+    // FillLog: baseAtoms=5025617, quoteAtoms=500049, price=99500000000000000
+    //          makerSequenceNumber=179, takerSequenceNumber=190, takerIsBuy=false
+    // FillLog: baseAtoms=4973586, quoteAtoms=489898, price=98500000000000000
+    //          makerSequenceNumber=178, takerSequenceNumber=191, takerIsBuy=false
+    // PlaceOrderLogV2: baseAtoms=10000000, orderSequenceNumber=192, orderType=1, isBid=false
+    // ============================================================================
+
+    // Swap 3: Larger sell that hits multiple price levels
+    test_fixture
+        .swap(10 * SOL_UNIT_SIZE, 0, true, true)
+        .await?;
+
+    // ============================================================================
+    // Transaction: Buy back with fills
+    // Signature: 5pqr...
+    // FillLog: baseAtoms=4973586, quoteAtoms=490879, price=98697394789579158
+    //          makerSequenceNumber=191, takerSequenceNumber=193, takerIsBuy=true
+    // ============================================================================
+
+    // Swap 4: Buy back
+    test_fixture
+        .swap(1000 * USDC_UNIT_SIZE, 0, false, true)
+        .await?;
+
+    // ============================================================================
+    // Transaction: Another round of wash trades
+    // Signature: CKyAxzPXFdtCocDuKTwmjidWSM7wcNzvwiPsjoifUhvX8qzqQ3j4kCsqTcjgBaNCjWhX6xEKnj2HPB4tnAa4DLa
+    // FillLog: baseAtoms=4031307, quoteAtoms=393053, price=97500000000000000
+    //          makerSequenceNumber=247, takerSequenceNumber=261, takerIsBuy=false
+    // FillLog: baseAtoms=5211803, quoteAtoms=502939, price=96500000000000000
+    //          makerSequenceNumber=246, takerSequenceNumber=261, takerIsBuy=false
+    // FillLog: baseAtoms=756890, quoteAtoms=72282, price=95500000000000000
+    //          makerSequenceNumber=175, takerSequenceNumber=262, takerIsBuy=false
+    // PlaceOrderLogV2: baseAtoms=10000000, orderSequenceNumber=263, orderType=1, isBid=false
+    // ============================================================================
+
+    // Swap 5: Sell more
+    test_fixture
+        .swap(8 * SOL_UNIT_SIZE, 0, true, true)
+        .await?;
+
+    // ============================================================================
+    // Transaction: Buy back round
+    // Signature: 39a7FTzR3oLxCiiWNgCCQDwpRtsMZRZQxt9Y86hYQWs1TQmtnrT39Zct5QwedvFpzv4kqGvpdqybaWxGi9GtLKx8
+    // FillLog: baseAtoms=3391809, quoteAtoms=337485, price=99500000000000000
+    //          makerSequenceNumber=267, takerSequenceNumber=269, takerIsBuy=false
+    // FillLog: baseAtoms=5188182, quoteAtoms=511036, price=98500000000000000
+    //          makerSequenceNumber=266, takerSequenceNumber=269, takerIsBuy=false
+    // FillLog: baseAtoms=5174041, quoteAtoms=504469, price=97500000000000000
+    //          makerSequenceNumber=265, takerSequenceNumber=270, takerIsBuy=false
+    // FillLog: baseAtoms=5222238, quoteAtoms=503946, price=96500000000000000
+    //          makerSequenceNumber=264, takerSequenceNumber=271, takerIsBuy=false
+    // FillLog: baseAtoms=1023730, quoteAtoms=97766, price=95500000000000000
+    //          makerSequenceNumber=175, takerSequenceNumber=272, takerIsBuy=false
+    // PlaceOrderLogV2: baseAtoms=20000000, orderSequenceNumber=273, orderType=1, isBid=false
+    // ============================================================================
+
+    // Swap 6: Large sell hitting multiple levels
+    test_fixture
+        .swap(15 * SOL_UNIT_SIZE, 0, true, true)
+        .await?;
+
+    // Swap 7: Buy back
+    test_fixture
+        .swap(1500 * USDC_UNIT_SIZE, 0, false, true)
+        .await?;
+
+    // ============================================================================
+    // Verify final state - orders should exist after wash trades
+    // ============================================================================
+    let orders_final: Vec<RestingOrder> = test_fixture.market_fixture.get_resting_orders().await;
+    assert!(
+        orders_final.len() > 0,
+        "Should have resting orders after wash trades (reverse orders create new orders)"
+    );
+
+    // Record wallet balances
+    let sol_wallet = test_fixture.payer_sol_fixture.balance_atoms().await;
+    let usdc_wallet = test_fixture.payer_usdc_fixture.balance_atoms().await;
+
+    // Record market balances
+    let sol_market = test_fixture
+        .market_fixture
+        .get_base_balance_atoms(&test_fixture.payer())
+        .await;
+    let usdc_market = test_fixture
+        .market_fixture
+        .get_quote_balance_atoms(&test_fixture.payer())
+        .await;
+
+    // ============================================================================
+    // Cancel all remaining orders (as seen in mainnet transactions)
+    // Multiple CancelOrderLog entries were observed in the mainnet data
+    // ============================================================================
+    let orders_to_cancel: Vec<RestingOrder> =
+        test_fixture.market_fixture.get_resting_orders().await;
+
+    let cancels: Vec<CancelOrderParams> = orders_to_cancel
+        .iter()
+        .map(|o| CancelOrderParams::new(o.get_sequence_number()))
+        .collect();
+
+    if !cancels.is_empty() {
+        let cancel_ix = batch_update_instruction(
+            &test_fixture.market_fixture.key,
+            &payer,
+            None,
+            cancels,
+            vec![],
+            None,
+            None,
+            None,
+            None,
+        );
+
+        send_tx_with_retry(
+            Rc::clone(&test_fixture.context),
+            &[cancel_ix],
+            Some(&payer),
+            &[&payer_keypair],
+        )
+        .await?;
+    }
+
+    // Verify all orders cancelled
+    let orders_after_cancel = test_fixture.market_fixture.get_resting_orders().await;
+    assert_eq!(orders_after_cancel.len(), 0, "All orders should be cancelled");
+
+    // ============================================================================
+    // Withdraw all tokens (cleanup)
+    // ============================================================================
+    let sol_market_after = test_fixture
+        .market_fixture
+        .get_base_balance_atoms(&test_fixture.payer())
+        .await;
+    let usdc_market_after = test_fixture
+        .market_fixture
+        .get_quote_balance_atoms(&test_fixture.payer())
+        .await;
+
+    if sol_market_after > 0 {
+        test_fixture.withdraw(Token::SOL, sol_market_after).await?;
+    }
+    if usdc_market_after > 0 {
+        test_fixture.withdraw(Token::USDC, usdc_market_after).await?;
+    }
+
+    // Verify complete withdrawal
+    let final_sol_market = test_fixture
+        .market_fixture
+        .get_base_balance_atoms(&test_fixture.payer())
+        .await;
+    let final_usdc_market = test_fixture
+        .market_fixture
+        .get_quote_balance_atoms(&test_fixture.payer())
+        .await;
+
+    assert_eq!(final_sol_market, 0, "All SOL should be withdrawn");
+    assert_eq!(final_usdc_market, 0, "All USDC should be withdrawn");
+
+    // Verify trader can access all their tokens
+    let final_sol_wallet = test_fixture.payer_sol_fixture.balance_atoms().await;
+    let final_usdc_wallet = test_fixture.payer_usdc_fixture.balance_atoms().await;
+
+    assert!(
+        final_sol_wallet >= sol_wallet,
+        "SOL wallet balance should not decrease"
+    );
+    assert!(
+        final_usdc_wallet >= usdc_wallet,
+        "USDC wallet balance should not decrease"
+    );
+
+    Ok(())
+}
