@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1770229278908,
+  "lastUpdate": 1770669038478,
   "repoUrl": "https://github.com/Bonasa-Tech/manifest",
   "entries": {
     "CU Benchmark": [
@@ -10523,6 +10523,72 @@ window.BENCHMARK_DATA = {
           {
             "name": "MFX_99",
             "value": 5463,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "cyrbritt@gmail.com",
+            "name": "Britt Cyr",
+            "username": "brittcyr"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "c8713af90316a66613ff9186a874b4fc50b6ca6d",
+          "message": "Transfer fee handling for swaps and global deposit (#531)\n\n* Transfer fee handling for swaps and global deposit\n\n* fmt\n\n* fmt\n\n* Update since audit\n\n* Update since audit\n\n* typo",
+          "timestamp": "2026-02-09T15:17:37-05:00",
+          "tree_id": "c131f14155cd4862e511590898857f31dee7539b",
+          "url": "https://github.com/Bonasa-Tech/manifest/commit/c8713af90316a66613ff9186a874b4fc50b6ca6d"
+        },
+        "date": 1770669035707,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "PHX_50",
+            "value": 6787,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "PHX_95",
+            "value": 13209,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "PHX_99",
+            "value": 13904,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_50",
+            "value": 3221,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_95",
+            "value": 4926,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_99",
+            "value": 5433,
             "range": "",
             "unit": "CU",
             "extra": ""
