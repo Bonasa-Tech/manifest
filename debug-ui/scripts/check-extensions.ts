@@ -1,7 +1,9 @@
-import { Connection, PublicKey } from "@solana/web3.js";
+import { Connection, PublicKey } from '@solana/web3.js';
 
-const MFX_STATS_URL = "https://mfx-stats-mainnet.fly.dev/tickers";
-const TOKEN_2022_PROGRAM_ID = new PublicKey("TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb");
+const MFX_STATS_URL = 'https://mfx-stats-mainnet.fly.dev/tickers';
+const TOKEN_2022_PROGRAM_ID = new PublicKey(
+  'TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb',
+);
 
 // Extension type discriminators (first byte of each extension in the TLV data)
 enum ExtensionType {
@@ -85,7 +87,14 @@ function parseExtensionsFromAccountData(data: Buffer): {
   // Each TLV entry: 2 bytes type (u16 LE) + 2 bytes length (u16 LE) + N bytes data
 
   if (data.length <= 166) {
-    return { extensions, transferFeeBps, maxFee, transferFeeAuthority, permanentDelegate, transferHookProgramId };
+    return {
+      extensions,
+      transferFeeBps,
+      maxFee,
+      transferFeeAuthority,
+      permanentDelegate,
+      transferHookProgramId,
+    };
   }
 
   let offset = 166; // Skip base mint (82) + padding (83) + account type (1)
@@ -147,7 +156,9 @@ function parseExtensionsFromAccountData(data: Buffer): {
       // TransferHook layout (64 bytes):
       //   authority:   OptionalNonZeroPubkey (32 bytes)
       //   program_id:  Pubkey (32 bytes)
-      const hookProgramId = new PublicKey(data.subarray(offset + 32, offset + 64));
+      const hookProgramId = new PublicKey(
+        data.subarray(offset + 32, offset + 64),
+      );
       if (!hookProgramId.equals(PublicKey.default)) {
         transferHookProgramId = hookProgramId.toBase58();
       }
@@ -156,10 +167,20 @@ function parseExtensionsFromAccountData(data: Buffer): {
     offset += extLen;
   }
 
-  return { extensions, transferFeeBps, maxFee, transferFeeAuthority, permanentDelegate, transferHookProgramId };
+  return {
+    extensions,
+    transferFeeBps,
+    maxFee,
+    transferFeeAuthority,
+    permanentDelegate,
+    transferHookProgramId,
+  };
 }
 
-async function checkMint(connection: Connection, mintStr: string): Promise<ExtensionInfo> {
+async function checkMint(
+  connection: Connection,
+  mintStr: string,
+): Promise<ExtensionInfo> {
   const result: ExtensionInfo = {
     mint: mintStr,
     isToken2022: false,
@@ -197,23 +218,43 @@ async function checkMint(connection: Connection, mintStr: string): Promise<Exten
 
     result.isToken2022 = true;
     const data = accountInfo.data;
-    const { extensions, transferFeeBps, maxFee, transferFeeAuthority, permanentDelegate, transferHookProgramId } =
-      parseExtensionsFromAccountData(Buffer.from(data));
+    const {
+      extensions,
+      transferFeeBps,
+      maxFee,
+      transferFeeAuthority,
+      permanentDelegate,
+      transferHookProgramId,
+    } = parseExtensionsFromAccountData(Buffer.from(data));
 
     result.hasTransferFee = extensions.has(ExtensionType.TransferFeeConfig);
-    result.hasMintCloseAuthority = extensions.has(ExtensionType.MintCloseAuthority);
+    result.hasMintCloseAuthority = extensions.has(
+      ExtensionType.MintCloseAuthority,
+    );
     result.hasNonTransferable = extensions.has(ExtensionType.NonTransferable);
     result.hasCpiGuard = extensions.has(ExtensionType.CpiGuard);
-    result.hasPermanentDelegate = extensions.has(ExtensionType.PermanentDelegate);
+    result.hasPermanentDelegate = extensions.has(
+      ExtensionType.PermanentDelegate,
+    );
     result.hasTransferHook = extensions.has(ExtensionType.TransferHook);
-    result.hasInterestBearing = extensions.has(ExtensionType.InterestBearingConfig);
-    result.hasConfidentialTransfer = extensions.has(ExtensionType.ConfidentialTransferMint);
-    result.hasDefaultAccountState = extensions.has(ExtensionType.DefaultAccountState);
+    result.hasInterestBearing = extensions.has(
+      ExtensionType.InterestBearingConfig,
+    );
+    result.hasConfidentialTransfer = extensions.has(
+      ExtensionType.ConfidentialTransferMint,
+    );
+    result.hasDefaultAccountState = extensions.has(
+      ExtensionType.DefaultAccountState,
+    );
     result.hasMetadataPointer = extensions.has(ExtensionType.MetadataPointer);
     result.hasTokenMetadata = extensions.has(ExtensionType.TokenMetadata);
     result.hasGroupPointer = extensions.has(ExtensionType.GroupPointer);
-    result.hasGroupMemberPointer = extensions.has(ExtensionType.GroupMemberPointer);
-    result.hasScaledUiAmount = extensions.has(ExtensionType.ScaledUiAmountConfig);
+    result.hasGroupMemberPointer = extensions.has(
+      ExtensionType.GroupMemberPointer,
+    );
+    result.hasScaledUiAmount = extensions.has(
+      ExtensionType.ScaledUiAmountConfig,
+    );
 
     if (result.hasTransferFee) {
       result.transferFeeBps = transferFeeBps;
@@ -242,12 +283,14 @@ async function checkMint(connection: Connection, mintStr: string): Promise<Exten
 async function main() {
   const rpcUrl = process.argv[2];
   if (!rpcUrl) {
-    console.error("Usage: npx ts-node check-extensions.ts <RPC_URL>");
-    console.error("  e.g. npx ts-node check-extensions.ts https://api.mainnet-beta.solana.com");
+    console.error('Usage: npx ts-node check-extensions.ts <RPC_URL>');
+    console.error(
+      '  e.g. npx ts-node check-extensions.ts https://api.mainnet-beta.solana.com',
+    );
     process.exit(1);
   }
 
-  console.log("Fetching tickers from mfx-stats...");
+  console.log('Fetching tickers from mfx-stats...');
   const resp = await fetch(MFX_STATS_URL);
   const tickers: Ticker[] = await resp.json();
 
@@ -257,9 +300,11 @@ async function main() {
     mints.add(t.base_currency);
     mints.add(t.target_currency);
   }
-  console.log(`Found ${mints.size} unique mints across ${tickers.length} tickers`);
+  console.log(
+    `Found ${mints.size} unique mints across ${tickers.length} tickers`,
+  );
 
-  const connection = new Connection(rpcUrl, { commitment: "confirmed" });
+  const connection = new Connection(rpcUrl, { commitment: 'confirmed' });
 
   // Batch using getMultipleAccountsInfo for efficiency
   const mintList = [...mints];
@@ -277,7 +322,7 @@ async function main() {
     const progress = Math.min(i + BATCH_SIZE, mintList.length);
     process.stderr.write(`\r  ${progress}/${mintList.length} mints fetched`);
   }
-  process.stderr.write("\n");
+  process.stderr.write('\n');
 
   // Analyze each mint
   const results: ExtensionInfo[] = [];
@@ -319,20 +364,42 @@ async function main() {
       const data = Buffer.from(accountInfo.data);
       const parsed = parseExtensionsFromAccountData(data);
 
-      info.hasTransferFee = parsed.extensions.has(ExtensionType.TransferFeeConfig);
-      info.hasMintCloseAuthority = parsed.extensions.has(ExtensionType.MintCloseAuthority);
-      info.hasNonTransferable = parsed.extensions.has(ExtensionType.NonTransferable);
+      info.hasTransferFee = parsed.extensions.has(
+        ExtensionType.TransferFeeConfig,
+      );
+      info.hasMintCloseAuthority = parsed.extensions.has(
+        ExtensionType.MintCloseAuthority,
+      );
+      info.hasNonTransferable = parsed.extensions.has(
+        ExtensionType.NonTransferable,
+      );
       info.hasCpiGuard = parsed.extensions.has(ExtensionType.CpiGuard);
-      info.hasPermanentDelegate = parsed.extensions.has(ExtensionType.PermanentDelegate);
+      info.hasPermanentDelegate = parsed.extensions.has(
+        ExtensionType.PermanentDelegate,
+      );
       info.hasTransferHook = parsed.extensions.has(ExtensionType.TransferHook);
-      info.hasInterestBearing = parsed.extensions.has(ExtensionType.InterestBearingConfig);
-      info.hasConfidentialTransfer = parsed.extensions.has(ExtensionType.ConfidentialTransferMint);
-      info.hasDefaultAccountState = parsed.extensions.has(ExtensionType.DefaultAccountState);
-      info.hasMetadataPointer = parsed.extensions.has(ExtensionType.MetadataPointer);
-      info.hasTokenMetadata = parsed.extensions.has(ExtensionType.TokenMetadata);
+      info.hasInterestBearing = parsed.extensions.has(
+        ExtensionType.InterestBearingConfig,
+      );
+      info.hasConfidentialTransfer = parsed.extensions.has(
+        ExtensionType.ConfidentialTransferMint,
+      );
+      info.hasDefaultAccountState = parsed.extensions.has(
+        ExtensionType.DefaultAccountState,
+      );
+      info.hasMetadataPointer = parsed.extensions.has(
+        ExtensionType.MetadataPointer,
+      );
+      info.hasTokenMetadata = parsed.extensions.has(
+        ExtensionType.TokenMetadata,
+      );
       info.hasGroupPointer = parsed.extensions.has(ExtensionType.GroupPointer);
-      info.hasGroupMemberPointer = parsed.extensions.has(ExtensionType.GroupMemberPointer);
-      info.hasScaledUiAmount = parsed.extensions.has(ExtensionType.ScaledUiAmountConfig);
+      info.hasGroupMemberPointer = parsed.extensions.has(
+        ExtensionType.GroupMemberPointer,
+      );
+      info.hasScaledUiAmount = parsed.extensions.has(
+        ExtensionType.ScaledUiAmountConfig,
+      );
 
       if (info.hasTransferFee) {
         info.transferFeeBps = parsed.transferFeeBps;
@@ -358,37 +425,42 @@ async function main() {
   const token2022Mints = results.filter((r) => r.isToken2022);
   const splTokenMints = results.filter((r) => !r.isToken2022);
 
-  console.log(`\n${"=".repeat(120)}`);
-  console.log(`RESULTS: ${token2022Mints.length} Token-2022 mints, ${splTokenMints.length} SPL Token mints`);
-  console.log(`${"=".repeat(120)}\n`);
+  console.log(`\n${'='.repeat(120)}`);
+  console.log(
+    `RESULTS: ${token2022Mints.length} Token-2022 mints, ${splTokenMints.length} SPL Token mints`,
+  );
+  console.log(`${'='.repeat(120)}\n`);
 
   // Print Token-2022 mints table
   if (token2022Mints.length > 0) {
-    console.log("TOKEN-2022 MINTS:");
-    console.log("-".repeat(160));
+    console.log('TOKEN-2022 MINTS:');
+    console.log('-'.repeat(160));
     const header = [
-      "Mint".padEnd(46),
-      "XferFee",
-      "NonZero",
-      "Mutable",
-      "PermDlg",
-      "XferHook",
-      "CpiGrd",
-      "CloseAuth",
-      "NonXfer",
-      "Fee(bps)",
-      "Details",
-    ].join(" | ");
+      'Mint'.padEnd(46),
+      'XferFee',
+      'NonZero',
+      'Mutable',
+      'PermDlg',
+      'XferHook',
+      'CpiGrd',
+      'CloseAuth',
+      'NonXfer',
+      'Fee(bps)',
+      'Details',
+    ].join(' | ');
     console.log(header);
-    console.log("-".repeat(160));
+    console.log('-'.repeat(160));
 
     for (const r of token2022Mints) {
-      const yn = (b: boolean) => (b ? "  YES " : "  no  ");
+      const yn = (b: boolean) => (b ? '  YES ' : '  no  ');
       const details: string[] = [];
       if (r.transferFeeBps !== null) details.push(`fee=${r.transferFeeBps}bps`);
-      if (r.transferFeeAuthority) details.push(`feeAuth=${r.transferFeeAuthority.slice(0, 8)}..`);
-      if (r.permanentDelegate) details.push(`delegate=${r.permanentDelegate.slice(0, 8)}..`);
-      if (r.transferHookProgramId) details.push(`hook=${r.transferHookProgramId.slice(0, 8)}..`);
+      if (r.transferFeeAuthority)
+        details.push(`feeAuth=${r.transferFeeAuthority.slice(0, 8)}..`);
+      if (r.permanentDelegate)
+        details.push(`delegate=${r.permanentDelegate.slice(0, 8)}..`);
+      if (r.transferHookProgramId)
+        details.push(`hook=${r.transferHookProgramId.slice(0, 8)}..`);
 
       const row = [
         r.mint.padEnd(46),
@@ -400,24 +472,34 @@ async function main() {
         yn(r.hasCpiGuard),
         yn(r.hasMintCloseAuthority),
         yn(r.hasNonTransferable),
-        r.transferFeeBps !== null ? String(r.transferFeeBps).padStart(8) : "     n/a",
-        details.join(", "),
-      ].join(" | ");
+        r.transferFeeBps !== null
+          ? String(r.transferFeeBps).padStart(8)
+          : '     n/a',
+        details.join(', '),
+      ].join(' | ');
       console.log(row);
     }
-    console.log("-".repeat(160));
+    console.log('-'.repeat(160));
   }
 
   // Summary of concerning extensions
-  console.log("\n--- SUMMARY OF CONCERNING EXTENSIONS ---");
+  console.log('\n--- SUMMARY OF CONCERNING EXTENSIONS ---');
   const withFees = token2022Mints.filter((r) => r.hasNonZeroTransferFee);
-  const withHooks = token2022Mints.filter((r) => r.hasTransferHook && r.transferHookProgramId);
-  const withDelegate = token2022Mints.filter((r) => r.hasPermanentDelegate && r.permanentDelegate);
-  const withNonTransferable = token2022Mints.filter((r) => r.hasNonTransferable);
+  const withHooks = token2022Mints.filter(
+    (r) => r.hasTransferHook && r.transferHookProgramId,
+  );
+  const withDelegate = token2022Mints.filter(
+    (r) => r.hasPermanentDelegate && r.permanentDelegate,
+  );
+  const withNonTransferable = token2022Mints.filter(
+    (r) => r.hasNonTransferable,
+  );
 
   console.log(`\nMints with non-zero transfer fees (${withFees.length}):`);
   for (const r of withFees) {
-    console.log(`  ${r.mint} - ${r.transferFeeBps} bps, mutable=${r.hasMutableTransferFee}`);
+    console.log(
+      `  ${r.mint} - ${r.transferFeeBps} bps, mutable=${r.hasMutableTransferFee}`,
+    );
   }
 
   console.log(`\nMints with active transfer hooks (${withHooks.length}):`);
@@ -435,8 +517,8 @@ async function main() {
 
   // Also output JSON for further processing
   const jsonOut = JSON.stringify(results, null, 2);
-  const fs = await import("fs");
-  fs.writeFileSync("extension-results.json", jsonOut);
+  const fs = await import('fs');
+  fs.writeFileSync('extension-results.json', jsonOut);
   console.log(`\nFull results written to extension-results.json`);
 }
 
