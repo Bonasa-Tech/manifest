@@ -35,7 +35,9 @@ use solana_program::program_error::ProgramError;
 use {
     crate::state::utils::get_now_epoch,
     spl_token_2022::{
-        extension::{transfer_fee::TransferFeeConfig, BaseStateWithExtensions, StateWithExtensions},
+        extension::{
+            transfer_fee::TransferFeeConfig, BaseStateWithExtensions, StateWithExtensions,
+        },
         state::Mint,
     },
 };
@@ -148,7 +150,7 @@ pub(crate) fn process_swap_core(
     let out_atoms_after_transfer_fees: u64 = if !is_exact_in {
         calculate_pre_fee_amount(
             out_atoms,
-            is_base_in,  // Output is opposite of input: if base_in, output is quote; if quote_in, output is base
+            is_base_in, // Output is opposite of input: if base_in, output is quote; if quote_in, output is base
             &token_program_base,
             &token_program_quote,
             &base_mint,
@@ -311,7 +313,7 @@ pub(crate) fn process_swap_core(
     // Transfer tokens
     if is_base_in {
         // Trader is depositing base.
-        
+
         // Summary: This takes extra on edge case of is_exact_in=false and
         // transfer fee != 0.
         // Because of rounding, it is difficult to calculate efficiently the
@@ -372,7 +374,7 @@ pub(crate) fn process_swap_core(
         }
     } else {
         // Trader is depositing quote.
-        
+
         // Same comment as above for why this takes extra on edge case of
         // is_exact_in=false and transfer fee != 0.
         let quote_atoms_to_transfer: u64 = in_atoms.saturating_sub(extra_quote_atoms.as_u64());

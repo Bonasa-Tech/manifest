@@ -36,7 +36,6 @@ pub(crate) fn process_global_deposit(
     let global_deposit_context: GlobalDepositContext = GlobalDepositContext::load(accounts)?;
     let GlobalDepositParams { amount_atoms } = GlobalDepositParams::try_from_slice(data)?;
 
-
     // Due to transfer fees, this might not be what you expect.
     let mut deposited_amount_atoms: u64 = amount_atoms;
 

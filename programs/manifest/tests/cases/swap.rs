@@ -1,10 +1,14 @@
-use std::{cell::RefCell, cell::RefMut, rc::Rc};
+use std::{
+    cell::{RefCell, RefMut},
+    rc::Rc,
+};
 
 use borsh::BorshSerialize;
 use manifest::{
     program::{
         batch_update::{CancelOrderParams, PlaceOrderParams},
-        batch_update_instruction, claim_seat_instruction::claim_seat_instruction,
+        batch_update_instruction,
+        claim_seat_instruction::claim_seat_instruction,
         deposit_instruction, expand_market_instruction, global_add_trader_instruction,
         global_deposit_instruction, global_withdraw_instruction, swap_instruction,
         ManifestInstruction, SwapParams,
@@ -1289,8 +1293,7 @@ async fn swap_wash_reverse_test() -> anyhow::Result<()> {
     let payer = test_fixture.payer();
     let payer_keypair = test_fixture.payer_keypair();
     for _ in 0..10 {
-        let expand_ix =
-            expand_market_instruction(&test_fixture.market_fixture.key, &payer);
+        let expand_ix = expand_market_instruction(&test_fixture.market_fixture.key, &payer);
         send_tx_with_retry(
             Rc::clone(&test_fixture.context),
             &[expand_ix],
@@ -1323,15 +1326,19 @@ async fn swap_wash_reverse_test() -> anyhow::Result<()> {
     test_fixture.swap(8 * SOL_UNIT_SIZE, 0, true, true).await?;
 
     // Swap 3: Sell SOL again (buy quote)
-    test_fixture.swap(80 * USDC_UNIT_SIZE, 0, false, true).await?;
+    test_fixture
+        .swap(80 * USDC_UNIT_SIZE, 0, false, true)
+        .await?;
 
     // Swap 4: Buy SOL again (sell quote)
     test_fixture.swap(6 * SOL_UNIT_SIZE, 0, true, true).await?;
 
     // Verify we have resting orders (reverse orders should have flipped)
-    let orders_after: Vec<RestingOrder> =
-        test_fixture.market_fixture.get_resting_orders().await;
-    assert!(orders_after.len() > 0, "Should have resting orders after swaps");
+    let orders_after: Vec<RestingOrder> = test_fixture.market_fixture.get_resting_orders().await;
+    assert!(
+        orders_after.len() > 0,
+        "Should have resting orders after swaps"
+    );
 
     // Record balances in wallet token accounts
     let sol_balance_wallet = test_fixture.payer_sol_fixture.balance_atoms().await;
@@ -1449,10 +1456,7 @@ async fn swap_wash_reverse_test() -> anyhow::Result<()> {
     let total_sol = initial_sol + 20 * SOL_UNIT_SIZE;
     let total_usdc = initial_usdc + 200 * USDC_UNIT_SIZE;
 
-    assert_eq!(
-        final_sol_wallet, total_sol,
-        "Total SOL should be conserved"
-    );
+    assert_eq!(final_sol_wallet, total_sol, "Total SOL should be conserved");
     assert_eq!(
         final_usdc_wallet, total_usdc,
         "Total USDC should be conserved"
@@ -1778,10 +1782,10 @@ async fn ljitsps_test() -> anyhow::Result<()> {
         None,
         vec![],
         vec![PlaceOrderParams::new(
-            100_000,      // base_atoms
-            1000000000,   // price_mantissa (1e17 = 1e9 * 10^8)
-            -10,          // price_exponent
-            true,         // is_bid
+            100_000,    // base_atoms
+            1000000000, // price_mantissa (1e17 = 1e9 * 10^8)
+            -10,        // price_exponent
+            true,       // is_bid
             OrderType::Limit,
             0,
         )],
@@ -1810,7 +1814,14 @@ async fn ljitsps_test() -> anyhow::Result<()> {
         payer,
         None,
         vec![],
-        vec![PlaceOrderParams::new(50000000, 954250000, -10, false, OrderType::Limit, 0)], // seqNum 55, price=95425000000000000
+        vec![PlaceOrderParams::new(
+            50000000,
+            954250000,
+            -10,
+            false,
+            OrderType::Limit,
+            0,
+        )], // seqNum 55, price=95425000000000000
         None,
         None,
         None,
@@ -1835,7 +1846,14 @@ async fn ljitsps_test() -> anyhow::Result<()> {
         payer,
         None,
         vec![],
-        vec![PlaceOrderParams::new(572160, 953750000, -10, true, OrderType::Limit, 0)], // seqNum 56, price=95375000000000000
+        vec![PlaceOrderParams::new(
+            572160,
+            953750000,
+            -10,
+            true,
+            OrderType::Limit,
+            0,
+        )], // seqNum 56, price=95375000000000000
         None,
         None,
         None,
@@ -1860,7 +1878,14 @@ async fn ljitsps_test() -> anyhow::Result<()> {
         payer,
         None,
         vec![],
-        vec![PlaceOrderParams::new(40000000, 4000000000, -10, false, OrderType::Limit, 0)], // seqNum 57, price=400000000000000000
+        vec![PlaceOrderParams::new(
+            40000000,
+            4000000000,
+            -10,
+            false,
+            OrderType::Limit,
+            0,
+        )], // seqNum 57, price=400000000000000000
         None,
         None,
         None,
@@ -1885,7 +1910,14 @@ async fn ljitsps_test() -> anyhow::Result<()> {
         payer,
         None,
         vec![],
-        vec![PlaceOrderParams::new(9386750, 954250000, -10, false, OrderType::ReverseTight, 0)], // seqNum 58, price=95425000000000000
+        vec![PlaceOrderParams::new(
+            9386750,
+            954250000,
+            -10,
+            false,
+            OrderType::ReverseTight,
+            0,
+        )], // seqNum 58, price=95425000000000000
         None,
         None,
         None,
@@ -1910,7 +1942,14 @@ async fn ljitsps_test() -> anyhow::Result<()> {
         payer,
         None,
         vec![],
-        vec![PlaceOrderParams::new(49899800, 953750000, -10, true, OrderType::ReverseTight, 0)], // seqNum 59, price=95375000000000000
+        vec![PlaceOrderParams::new(
+            49899800,
+            953750000,
+            -10,
+            true,
+            OrderType::ReverseTight,
+            0,
+        )], // seqNum 59, price=95375000000000000
         None,
         None,
         None,
@@ -1938,7 +1977,14 @@ async fn ljitsps_test() -> anyhow::Result<()> {
         payer,
         None,
         vec![],
-        vec![PlaceOrderParams::new(10000000, 953750000, -10, false, OrderType::Limit, 0)], // seqNum 62, price=95375000000000000
+        vec![PlaceOrderParams::new(
+            10000000,
+            953750000,
+            -10,
+            false,
+            OrderType::Limit,
+            0,
+        )], // seqNum 62, price=95375000000000000
         None,
         None,
         None,
@@ -1964,7 +2010,14 @@ async fn ljitsps_test() -> anyhow::Result<()> {
         payer,
         None,
         vec![],
-        vec![PlaceOrderParams::new(10000000, 953750000, -10, true, OrderType::Limit, 0)], // seqNum 63, price=95375000000000000
+        vec![PlaceOrderParams::new(
+            10000000,
+            953750000,
+            -10,
+            true,
+            OrderType::Limit,
+            0,
+        )], // seqNum 63, price=95375000000000000
         None,
         None,
         None,
@@ -1990,7 +2043,14 @@ async fn ljitsps_test() -> anyhow::Result<()> {
         payer,
         None,
         vec![],
-        vec![PlaceOrderParams::new(30000000, 953750000, -10, false, OrderType::Limit, 0)], // seqNum 65, price=95375000000000000
+        vec![PlaceOrderParams::new(
+            30000000,
+            953750000,
+            -10,
+            false,
+            OrderType::Limit,
+            0,
+        )], // seqNum 65, price=95375000000000000
         None,
         None,
         None,
@@ -2017,7 +2077,14 @@ async fn ljitsps_test() -> anyhow::Result<()> {
         payer,
         None,
         vec![],
-        vec![PlaceOrderParams::new(50000000, 953750000, -10, false, OrderType::Limit, 398311171)], // seqNum 66, price=95375000000000000
+        vec![PlaceOrderParams::new(
+            50000000,
+            953750000,
+            -10,
+            false,
+            OrderType::Limit,
+            398311171,
+        )], // seqNum 66, price=95375000000000000
         None,
         None,
         None,
@@ -2042,7 +2109,14 @@ async fn ljitsps_test() -> anyhow::Result<()> {
         payer,
         None,
         vec![],
-        vec![PlaceOrderParams::new(40000000, 953250000, -10, true, OrderType::Limit, 0)], // seqNum 67
+        vec![PlaceOrderParams::new(
+            40000000,
+            953250000,
+            -10,
+            true,
+            OrderType::Limit,
+            0,
+        )], // seqNum 67
         None,
         None,
         None,
@@ -2069,7 +2143,14 @@ async fn ljitsps_test() -> anyhow::Result<()> {
         payer,
         None,
         vec![],
-        vec![PlaceOrderParams::new(30000000, 953250000, -10, false, OrderType::Limit, 0)], // seqNum 69, price=95325000000000000
+        vec![PlaceOrderParams::new(
+            30000000,
+            953250000,
+            -10,
+            false,
+            OrderType::Limit,
+            0,
+        )], // seqNum 69, price=95325000000000000
         None,
         None,
         None,
@@ -2095,7 +2176,14 @@ async fn ljitsps_test() -> anyhow::Result<()> {
         payer,
         None,
         vec![],
-        vec![PlaceOrderParams::new(30000000, 953250000, -10, false, OrderType::Limit, 0)], // seqNum 70, price=95325000000000000
+        vec![PlaceOrderParams::new(
+            30000000,
+            953250000,
+            -10,
+            false,
+            OrderType::Limit,
+            0,
+        )], // seqNum 70, price=95325000000000000
         None,
         None,
         None,
@@ -2121,7 +2209,14 @@ async fn ljitsps_test() -> anyhow::Result<()> {
         payer,
         None,
         vec![],
-        vec![PlaceOrderParams::new(20000000, 952750000, -10, false, OrderType::Limit, 0)], // seqNum 72, price=95275000000000000
+        vec![PlaceOrderParams::new(
+            20000000,
+            952750000,
+            -10,
+            false,
+            OrderType::Limit,
+            0,
+        )], // seqNum 72, price=95275000000000000
         None,
         None,
         None,
@@ -2146,7 +2241,14 @@ async fn ljitsps_test() -> anyhow::Result<()> {
         payer,
         None,
         vec![],
-        vec![PlaceOrderParams::new(40000000, 952250000, -10, true, OrderType::Limit, 0)], // seqNum 73
+        vec![PlaceOrderParams::new(
+            40000000,
+            952250000,
+            -10,
+            true,
+            OrderType::Limit,
+            0,
+        )], // seqNum 73
         None,
         None,
         None,
@@ -2195,7 +2297,14 @@ async fn ljitsps_test() -> anyhow::Result<()> {
         payer,
         None,
         vec![],
-        vec![PlaceOrderParams::new(7770000000, 952750000, -10, false, OrderType::ReverseTight, 0)], // seqNum 74
+        vec![PlaceOrderParams::new(
+            7770000000,
+            952750000,
+            -10,
+            false,
+            OrderType::ReverseTight,
+            0,
+        )], // seqNum 74
         None,
         None,
         None,
@@ -2220,7 +2329,14 @@ async fn ljitsps_test() -> anyhow::Result<()> {
         payer,
         None,
         vec![],
-        vec![PlaceOrderParams::new(10000000, 952250000, -10, true, OrderType::ReverseTight, 0)], // seqNum 75
+        vec![PlaceOrderParams::new(
+            10000000,
+            952250000,
+            -10,
+            true,
+            OrderType::ReverseTight,
+            0,
+        )], // seqNum 75
         None,
         None,
         None,
@@ -2251,7 +2367,14 @@ async fn ljitsps_test() -> anyhow::Result<()> {
         payer,
         None,
         vec![],
-        vec![PlaceOrderParams::new(52294060, 950750000, -10, false, OrderType::Limit, 0)], // seqNum 81, price=95075000000000000
+        vec![PlaceOrderParams::new(
+            52294060,
+            950750000,
+            -10,
+            false,
+            OrderType::Limit,
+            0,
+        )], // seqNum 81, price=95075000000000000
         None,
         None,
         None,
@@ -2276,7 +2399,14 @@ async fn ljitsps_test() -> anyhow::Result<()> {
         payer,
         None,
         vec![],
-        vec![PlaceOrderParams::new(50199999, 950250000, -10, true, OrderType::ReverseTight, 0)], // seqNum 82
+        vec![PlaceOrderParams::new(
+            50199999,
+            950250000,
+            -10,
+            true,
+            OrderType::ReverseTight,
+            0,
+        )], // seqNum 82
         None,
         None,
         None,
@@ -2301,7 +2431,14 @@ async fn ljitsps_test() -> anyhow::Result<()> {
         payer,
         None,
         vec![],
-        vec![PlaceOrderParams::new(7800574870, 953156313, -10, false, OrderType::ReverseTight, 0)], // seqNum 83
+        vec![PlaceOrderParams::new(
+            7800574870,
+            953156313,
+            -10,
+            false,
+            OrderType::ReverseTight,
+            0,
+        )], // seqNum 83
         None,
         None,
         None,
@@ -2326,7 +2463,14 @@ async fn ljitsps_test() -> anyhow::Result<()> {
         payer,
         None,
         vec![],
-        vec![PlaceOrderParams::new(574270, 950250000, -10, true, OrderType::Limit, 0)], // seqNum 84
+        vec![PlaceOrderParams::new(
+            574270,
+            950250000,
+            -10,
+            true,
+            OrderType::Limit,
+            0,
+        )], // seqNum 84
         None,
         None,
         None,
@@ -2351,7 +2495,14 @@ async fn ljitsps_test() -> anyhow::Result<()> {
         payer,
         None,
         vec![],
-        vec![PlaceOrderParams::new(15601149740, 953156313, -10, false, OrderType::Limit, 0)], // seqNum 85
+        vec![PlaceOrderParams::new(
+            15601149740,
+            953156313,
+            -10,
+            false,
+            OrderType::Limit,
+            0,
+        )], // seqNum 85
         None,
         None,
         None,
@@ -2378,7 +2529,14 @@ async fn ljitsps_test() -> anyhow::Result<()> {
         payer,
         None,
         vec![],
-        vec![PlaceOrderParams::new(574270, 950250000, -10, false, OrderType::Limit, 0)], // seqNum 88, price=95025000000000000
+        vec![PlaceOrderParams::new(
+            574270,
+            950250000,
+            -10,
+            false,
+            OrderType::Limit,
+            0,
+        )], // seqNum 88, price=95025000000000000
         None,
         None,
         None,
@@ -2403,7 +2561,14 @@ async fn ljitsps_test() -> anyhow::Result<()> {
         payer,
         None,
         vec![],
-        vec![PlaceOrderParams::new(15601724010, 953156313, -10, false, OrderType::Limit, 0)], // seqNum 89
+        vec![PlaceOrderParams::new(
+            15601724010,
+            953156313,
+            -10,
+            false,
+            OrderType::Limit,
+            0,
+        )], // seqNum 89
         None,
         None,
         None,
@@ -2504,7 +2669,14 @@ async fn ljitsps_test() -> anyhow::Result<()> {
         payer,
         None,
         vec![],
-        vec![PlaceOrderParams::new(574270, 950250000, -10, true, OrderType::Limit, 0)], // seqNum 90, price=95025000000000000
+        vec![PlaceOrderParams::new(
+            574270,
+            950250000,
+            -10,
+            true,
+            OrderType::Limit,
+            0,
+        )], // seqNum 90, price=95025000000000000
         None,
         None,
         None,
@@ -2529,7 +2701,14 @@ async fn ljitsps_test() -> anyhow::Result<()> {
         payer,
         None,
         vec![],
-        vec![PlaceOrderParams::new(574270, 950250000, -10, true, OrderType::Limit, 0)], // seqNum 91
+        vec![PlaceOrderParams::new(
+            574270,
+            950250000,
+            -10,
+            true,
+            OrderType::Limit,
+            0,
+        )], // seqNum 91
         None,
         None,
         None,
@@ -2554,7 +2733,14 @@ async fn ljitsps_test() -> anyhow::Result<()> {
         payer,
         None,
         vec![],
-        vec![PlaceOrderParams::new(574270, 950250000, -10, true, OrderType::ReverseTight, 0)],
+        vec![PlaceOrderParams::new(
+            574270,
+            950250000,
+            -10,
+            true,
+            OrderType::ReverseTight,
+            0,
+        )],
         None,
         None,
         None,
@@ -2747,7 +2933,14 @@ async fn ljitsps_test() -> anyhow::Result<()> {
         payer,
         None,
         vec![],
-        vec![PlaceOrderParams::new(40000000, 953564000, -10, false, OrderType::Limit, 0)], // seqNum 93, price=95356400000000000
+        vec![PlaceOrderParams::new(
+            40000000,
+            953564000,
+            -10,
+            false,
+            OrderType::Limit,
+            0,
+        )], // seqNum 93, price=95356400000000000
         None,
         None,
         None,
@@ -2773,7 +2966,14 @@ async fn ljitsps_test() -> anyhow::Result<()> {
         payer,
         None,
         vec![],
-        vec![PlaceOrderParams::new(40000000, 953564000, -10, true, OrderType::ReverseTight, 0)], // seqNum 94
+        vec![PlaceOrderParams::new(
+            40000000,
+            953564000,
+            -10,
+            true,
+            OrderType::ReverseTight,
+            0,
+        )], // seqNum 94
         None,
         None,
         None,
@@ -2798,7 +2998,14 @@ async fn ljitsps_test() -> anyhow::Result<()> {
         payer,
         None,
         vec![],
-        vec![PlaceOrderParams::new(40000000, 953603000, -10, false, OrderType::ReverseTight, 0)], // seqNum 95
+        vec![PlaceOrderParams::new(
+            40000000,
+            953603000,
+            -10,
+            false,
+            OrderType::ReverseTight,
+            0,
+        )], // seqNum 95
         None,
         None,
         None,
@@ -2823,7 +3030,14 @@ async fn ljitsps_test() -> anyhow::Result<()> {
         payer,
         None,
         vec![],
-        vec![PlaceOrderParams::new(40000000, 953403000, -10, true, OrderType::ReverseTight, 0)], // seqNum 96
+        vec![PlaceOrderParams::new(
+            40000000,
+            953403000,
+            -10,
+            true,
+            OrderType::ReverseTight,
+            0,
+        )], // seqNum 96
         None,
         None,
         None,
@@ -2898,7 +3112,14 @@ async fn ljitsps_test() -> anyhow::Result<()> {
         payer,
         None,
         vec![],
-        vec![PlaceOrderParams::new(9900000, 953564000, -10, false, OrderType::ReverseTight, 0)], // seqNum 97
+        vec![PlaceOrderParams::new(
+            9900000,
+            953564000,
+            -10,
+            false,
+            OrderType::ReverseTight,
+            0,
+        )], // seqNum 97
         None,
         None,
         None,
@@ -2924,7 +3145,14 @@ async fn ljitsps_test() -> anyhow::Result<()> {
         payer,
         None,
         vec![],
-        vec![PlaceOrderParams::new(9900000, 953564000, -10, true, OrderType::ReverseTight, 0)], // seqNum 99
+        vec![PlaceOrderParams::new(
+            9900000,
+            953564000,
+            -10,
+            true,
+            OrderType::ReverseTight,
+            0,
+        )], // seqNum 99
         None,
         None,
         None,
@@ -2949,7 +3177,14 @@ async fn ljitsps_test() -> anyhow::Result<()> {
         payer,
         None,
         vec![],
-        vec![PlaceOrderParams::new(9900000, 953564000, -10, true, OrderType::ReverseTight, 0)], // seqNum 100
+        vec![PlaceOrderParams::new(
+            9900000,
+            953564000,
+            -10,
+            true,
+            OrderType::ReverseTight,
+            0,
+        )], // seqNum 100
         None,
         None,
         None,
@@ -2976,7 +3211,14 @@ async fn ljitsps_test() -> anyhow::Result<()> {
         payer,
         None,
         vec![],
-        vec![PlaceOrderParams::new(9900000, 953564000, -10, false, OrderType::Limit, 0)], // seqNum 102
+        vec![PlaceOrderParams::new(
+            9900000,
+            953564000,
+            -10,
+            false,
+            OrderType::Limit,
+            0,
+        )], // seqNum 102
         None,
         None,
         None,
@@ -3002,7 +3244,14 @@ async fn ljitsps_test() -> anyhow::Result<()> {
         payer,
         None,
         vec![],
-        vec![PlaceOrderParams::new(9900000, 953564000, -10, true, OrderType::Limit, 0)], // seqNum 103
+        vec![PlaceOrderParams::new(
+            9900000,
+            953564000,
+            -10,
+            true,
+            OrderType::Limit,
+            0,
+        )], // seqNum 103
         None,
         None,
         None,
@@ -3027,7 +3276,14 @@ async fn ljitsps_test() -> anyhow::Result<()> {
         payer,
         None,
         vec![],
-        vec![PlaceOrderParams::new(19799990, 953564000, -10, true, OrderType::Limit, 0)], // seqNum 104
+        vec![PlaceOrderParams::new(
+            19799990,
+            953564000,
+            -10,
+            true,
+            OrderType::Limit,
+            0,
+        )], // seqNum 104
         None,
         None,
         None,
@@ -3078,7 +3334,14 @@ async fn ljitsps_test() -> anyhow::Result<()> {
         payer,
         None,
         vec![],
-        vec![PlaceOrderParams::new(10000000, 1000000000, -10, false, OrderType::ReverseTight, 0)], // seqNum 105, price=100000000000000000
+        vec![PlaceOrderParams::new(
+            10000000,
+            1000000000,
+            -10,
+            false,
+            OrderType::ReverseTight,
+            0,
+        )], // seqNum 105, price=100000000000000000
         None,
         None,
         None,
@@ -3104,7 +3367,14 @@ async fn ljitsps_test() -> anyhow::Result<()> {
         payer,
         None,
         vec![],
-        vec![PlaceOrderParams::new(10000000, 1999900000, -10, true, OrderType::ReverseTight, 0)], // seqNum 107, price=199990000000000000
+        vec![PlaceOrderParams::new(
+            10000000,
+            1999900000,
+            -10,
+            true,
+            OrderType::ReverseTight,
+            0,
+        )], // seqNum 107, price=199990000000000000
         None,
         None,
         None,
@@ -3130,7 +3400,14 @@ async fn ljitsps_test() -> anyhow::Result<()> {
         payer,
         None,
         vec![],
-        vec![PlaceOrderParams::new(10000000, 1000000000, -10, false, OrderType::Limit, 0)], // seqNum 109, price=100000000000000000
+        vec![PlaceOrderParams::new(
+            10000000,
+            1000000000,
+            -10,
+            false,
+            OrderType::Limit,
+            0,
+        )], // seqNum 109, price=100000000000000000
         None,
         None,
         None,
@@ -3192,7 +3469,14 @@ async fn ljitsps_test() -> anyhow::Result<()> {
         payer,
         None,
         vec![],
-        vec![PlaceOrderParams::new(12038460, 1005000000, -10, true, OrderType::ReverseTight, 0)], // seqNum 117
+        vec![PlaceOrderParams::new(
+            12038460,
+            1005000000,
+            -10,
+            true,
+            OrderType::ReverseTight,
+            0,
+        )], // seqNum 117
         None,
         None,
         None,
@@ -3217,7 +3501,14 @@ async fn ljitsps_test() -> anyhow::Result<()> {
         payer,
         None,
         vec![],
-        vec![PlaceOrderParams::new(4018480, 1005000000, -10, true, OrderType::ReverseTight, 0)], // seqNum 118
+        vec![PlaceOrderParams::new(
+            4018480,
+            1005000000,
+            -10,
+            true,
+            OrderType::ReverseTight,
+            0,
+        )], // seqNum 118
         None,
         None,
         None,
@@ -3242,7 +3533,14 @@ async fn ljitsps_test() -> anyhow::Result<()> {
         payer,
         None,
         vec![],
-        vec![PlaceOrderParams::new(16061020, 1015000000, -10, false, OrderType::ReverseTight, 0)], // seqNum 119
+        vec![PlaceOrderParams::new(
+            16061020,
+            1015000000,
+            -10,
+            false,
+            OrderType::ReverseTight,
+            0,
+        )], // seqNum 119
         None,
         None,
         None,
@@ -3268,7 +3566,14 @@ async fn ljitsps_test() -> anyhow::Result<()> {
         payer,
         None,
         vec![],
-        vec![PlaceOrderParams::new(2018850, 1015000000, -10, true, OrderType::Limit, 0)], // seqNum 121
+        vec![PlaceOrderParams::new(
+            2018850,
+            1015000000,
+            -10,
+            true,
+            OrderType::Limit,
+            0,
+        )], // seqNum 121
         None,
         None,
         None,
@@ -3296,7 +3601,14 @@ async fn ljitsps_test() -> anyhow::Result<()> {
         payer,
         None,
         vec![],
-        vec![PlaceOrderParams::new(18060650, 1025000000, -10, true, OrderType::Limit, 0)], // seqNum 124
+        vec![PlaceOrderParams::new(
+            18060650,
+            1025000000,
+            -10,
+            true,
+            OrderType::Limit,
+            0,
+        )], // seqNum 124
         None,
         None,
         None,
@@ -3324,7 +3636,14 @@ async fn ljitsps_test() -> anyhow::Result<()> {
         payer,
         None,
         vec![],
-        vec![PlaceOrderParams::new(20087540, 1005000000, -10, false, OrderType::Limit, 0)], // seqNum 128
+        vec![PlaceOrderParams::new(
+            20087540,
+            1005000000,
+            -10,
+            false,
+            OrderType::Limit,
+            0,
+        )], // seqNum 128
         None,
         None,
         None,
@@ -3353,7 +3672,14 @@ async fn ljitsps_test() -> anyhow::Result<()> {
         payer,
         None,
         vec![],
-        vec![PlaceOrderParams::new(6061029, 1002990000, -10, false, OrderType::ImmediateOrCancel, 0)], // seqNum 131
+        vec![PlaceOrderParams::new(
+            6061029,
+            1002990000,
+            -10,
+            false,
+            OrderType::ImmediateOrCancel,
+            0,
+        )], // seqNum 131
         None,
         None,
         None,
@@ -3382,7 +3708,14 @@ async fn ljitsps_test() -> anyhow::Result<()> {
         payer,
         None,
         vec![],
-        vec![PlaceOrderParams::new(22122040, 1015000000, -10, true, OrderType::ImmediateOrCancel, 0)], // seqNum 136
+        vec![PlaceOrderParams::new(
+            22122040,
+            1015000000,
+            -10,
+            true,
+            OrderType::ImmediateOrCancel,
+            0,
+        )], // seqNum 136
         None,
         None,
         None,
@@ -3411,7 +3744,14 @@ async fn ljitsps_test() -> anyhow::Result<()> {
         payer,
         None,
         vec![],
-        vec![PlaceOrderParams::new(7969590, 1045000000, -10, true, OrderType::Limit, 0)], // seqNum 140
+        vec![PlaceOrderParams::new(
+            7969590,
+            1045000000,
+            -10,
+            true,
+            OrderType::Limit,
+            0,
+        )], // seqNum 140
         None,
         None,
         None,
@@ -3443,7 +3783,14 @@ async fn ljitsps_test() -> anyhow::Result<()> {
         payer,
         None,
         vec![],
-        vec![PlaceOrderParams::new(28065030, 1005000000, -10, false, OrderType::Limit, 0)], // seqNum 147
+        vec![PlaceOrderParams::new(
+            28065030,
+            1005000000,
+            -10,
+            false,
+            OrderType::Limit,
+            0,
+        )], // seqNum 147
         None,
         None,
         None,
@@ -3474,7 +3821,14 @@ async fn ljitsps_test() -> anyhow::Result<()> {
         payer,
         None,
         vec![],
-        vec![PlaceOrderParams::new(26098819, 1035000000, -10, true, OrderType::Limit, 0)], // seqNum 153
+        vec![PlaceOrderParams::new(
+            26098819,
+            1035000000,
+            -10,
+            true,
+            OrderType::Limit,
+            0,
+        )], // seqNum 153
         None,
         None,
         None,
@@ -3603,7 +3957,14 @@ async fn ljitsps_test() -> anyhow::Result<()> {
         payer,
         None,
         vec![],
-        vec![PlaceOrderParams::new(30284700, 1025000000, -10, false, OrderType::ReverseTight, 0)], // seqNum 164
+        vec![PlaceOrderParams::new(
+            30284700,
+            1025000000,
+            -10,
+            false,
+            OrderType::ReverseTight,
+            0,
+        )], // seqNum 164
         None,
         None,
         None,
@@ -3813,7 +4174,13 @@ async fn ljitsps_test() -> anyhow::Result<()> {
     .await?;
 
     // This always succeeds even before the fix. Just here for logging and debugging.
-    crate::verify_vault_balance(Rc::clone(&context), &market_keypair.pubkey(), &[*payer], true).await;
+    crate::verify_vault_balance(
+        Rc::clone(&context),
+        &market_keypair.pubkey(),
+        &[*payer],
+        true,
+    )
+    .await;
 
     // ============================================================================
     // Transaction 82: Swap selling base (1 FillLog)
@@ -3875,7 +4242,13 @@ async fn ljitsps_test() -> anyhow::Result<()> {
     )
     .await?;
 
-    crate::verify_vault_balance(Rc::clone(&context), &market_keypair.pubkey(), &[*payer], true).await;
+    crate::verify_vault_balance(
+        Rc::clone(&context),
+        &market_keypair.pubkey(),
+        &[*payer],
+        true,
+    )
+    .await;
 
     // ============================================================================
     // New TX for test coverage of !isExactIn
@@ -3887,10 +4260,10 @@ async fn ljitsps_test() -> anyhow::Result<()> {
         &usdc_mint_f.key,
         &base_token_account_keypair.pubkey(),
         &usdc_token_account_keypair.pubkey(),
-        1_000_000,   // inAtoms
-        1_000,       // outAtoms
-        true,        // isBaseIn
-        false,       // isExactIn
+        1_000_000, // inAtoms
+        1_000,     // outAtoms
+        true,      // isBaseIn
+        false,     // isExactIn
         spl_token_2022::id(),
         spl_token::id(),
         false,
@@ -3913,10 +4286,10 @@ async fn ljitsps_test() -> anyhow::Result<()> {
         &usdc_mint_f.key,
         &base_token_account_keypair.pubkey(),
         &usdc_token_account_keypair.pubkey(),
-        1_000_000,   // inAtoms
-        1_000,       // outAtoms
-        true,        // isBaseIn
-        false,       // isExactIn
+        1_000_000, // inAtoms
+        1_000,     // outAtoms
+        true,      // isBaseIn
+        false,     // isExactIn
         spl_token_2022::id(),
         spl_token::id(),
         false,
@@ -3929,7 +4302,13 @@ async fn ljitsps_test() -> anyhow::Result<()> {
     )
     .await?;
 
-    crate::verify_vault_balance(Rc::clone(&context), &market_keypair.pubkey(), &[*payer], false).await;
+    crate::verify_vault_balance(
+        Rc::clone(&context),
+        &market_keypair.pubkey(),
+        &[*payer],
+        false,
+    )
+    .await;
 
     Ok(())
 }

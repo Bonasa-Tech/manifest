@@ -24,8 +24,14 @@ use manifest::{
 use solana_program::{hash::Hash, pubkey::Pubkey, rent::Rent};
 use solana_program_test::{processor, BanksClientError, ProgramTest, ProgramTestContext};
 use solana_sdk::{
-    account::Account, account_info::AccountInfo, clock::Clock, instruction::{AccountMeta, Instruction},
-    program_pack::Pack, signature::Keypair, signer::Signer, system_instruction::create_account,
+    account::Account,
+    account_info::AccountInfo,
+    clock::Clock,
+    instruction::{AccountMeta, Instruction},
+    program_pack::Pack,
+    signature::Keypair,
+    signer::Signer,
+    system_instruction::create_account,
     transaction::Transaction,
 };
 use spl_token_2022::state::Mint;
@@ -1020,12 +1026,18 @@ impl MarketFixture {
             assert!(
                 vault_base >= expected_base,
                 "Base vault insufficient: vault={}, expected at least {} (seats={} + asks={})",
-                vault_base, expected_base, seats_base, base_in_asks
+                vault_base,
+                expected_base,
+                seats_base,
+                base_in_asks
             );
             assert!(
                 vault_quote >= expected_quote,
                 "Quote vault insufficient: vault={}, expected at least {} (seats={} + bids={})",
-                vault_quote, expected_quote, seats_quote, quote_in_bids
+                vault_quote,
+                expected_quote,
+                seats_quote,
+                quote_in_bids
             );
         }
     }
@@ -1304,9 +1316,8 @@ impl MintFixture {
                 freeze_authority: mint_2022.freeze_authority,
             };
         } else {
-            self.mint =
-                spl_token::state::Mint::unpack_unchecked(&mut mint_account.data.as_slice())
-                    .unwrap();
+            self.mint = spl_token::state::Mint::unpack_unchecked(&mut mint_account.data.as_slice())
+                .unwrap();
         }
     }
 
@@ -1662,8 +1673,7 @@ pub async fn verify_vault_balance(
     traders: &[Pubkey],
     exact: bool,
 ) {
-    use manifest::program::get_dynamic_value;
-    use manifest::state::RestingOrder;
+    use manifest::{program::get_dynamic_value, state::RestingOrder};
 
     // Get market data
     let market_account: Account = context
@@ -1735,12 +1745,18 @@ pub async fn verify_vault_balance(
         assert!(
             vault_base >= expected_base,
             "Base vault insufficient: vault={}, expected at least {} (seats={} + asks={})",
-            vault_base, expected_base, seats_base, base_in_asks
+            vault_base,
+            expected_base,
+            seats_base,
+            base_in_asks
         );
         assert!(
             vault_quote >= expected_quote,
             "Quote vault insufficient: vault={}, expected at least {} (seats={} + bids={})",
-            vault_quote, expected_quote, seats_quote, quote_in_bids
+            vault_quote,
+            expected_quote,
+            seats_quote,
+            quote_in_bids
         );
     }
 
@@ -1891,8 +1907,8 @@ pub async fn expand_market(
     market: &Pubkey,
     num_free_blocks: u32,
 ) -> Result<(), BanksClientError> {
-    use solana_program::system_program;
     use manifest::program::ManifestInstruction;
+    use solana_program::system_program;
 
     let payer_keypair = context.borrow().payer.insecure_clone();
     let payer = payer_keypair.pubkey();
@@ -1905,7 +1921,11 @@ pub async fn expand_market(
             AccountMeta::new(*market, false),
             AccountMeta::new_readonly(system_program::id(), false),
         ],
-        data: [ManifestInstruction::Expand.to_vec(), num_free_blocks.to_le_bytes().to_vec()].concat(),
+        data: [
+            ManifestInstruction::Expand.to_vec(),
+            num_free_blocks.to_le_bytes().to_vec(),
+        ]
+        .concat(),
     };
 
     send_tx_with_retry(
