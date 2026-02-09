@@ -31,6 +31,14 @@ use {
 
 use crate::validation::{MintAccountInfo, Signer, TokenAccountInfo, TokenProgram};
 use solana_program::program_error::ProgramError;
+#[cfg(not(feature = "certora"))]
+use {
+    crate::state::utils::get_now_epoch,
+    spl_token_2022::{
+        extension::{transfer_fee::TransferFeeConfig, BaseStateWithExtensions, StateWithExtensions},
+        state::Mint,
+    },
+};
 
 #[derive(BorshDeserialize, BorshSerialize)]
 pub struct SwapParams {
@@ -124,7 +132,33 @@ pub(crate) fn process_swap_core(
         is_exact_in,
     } = params;
 
-    trace!("swap in_atoms:{in_atoms} out_atoms:{out_atoms} is_base_in:{is_base_in} is_exact_in:{is_exact_in}");
+    // Calculate in_atoms_after_transfer_fees after transfer fees for Token-2022 tokens.
+    // This is the amount that will actually arrive at the vault.
+    let in_atoms_after_transfer_fees: u64 = calculate_post_fee_amount(
+        in_atoms,
+        is_base_in,
+        &token_program_base,
+        &token_program_quote,
+        &base_mint,
+        &quote_mint,
+    )?;
+
+    // For exact_out (!is_exact_in), calculate how much the market needs to give
+    // so that after transfer fees, the trader receives their desired out_atoms.
+    let out_atoms_after_transfer_fees: u64 = if !is_exact_in {
+        calculate_pre_fee_amount(
+            out_atoms,
+            is_base_in,  // Output is opposite of input: if base_in, output is quote; if quote_in, output is base
+            &token_program_base,
+            &token_program_quote,
+            &base_mint,
+            &quote_mint,
+        )?
+    } else {
+        out_atoms
+    };
+
+    trace!("swap in_atoms:{in_atoms} in_atoms_after_transfer_fees:{in_atoms_after_transfer_fees} out_atoms:{out_atoms} out_atoms_after_transfer_fees:{out_atoms_after_transfer_fees} is_base_in:{is_base_in} is_exact_in:{is_exact_in}");
 
     // This check is redundant with the check that will be done within token
     // program on deposit, but it is done here to future proof in case we later
@@ -135,42 +169,44 @@ pub(crate) fn process_swap_core(
     if is_exact_in {
         if is_base_in {
             require!(
-                in_atoms <= trader_base_account.get_balance_atoms(),
+                in_atoms_after_transfer_fees <= trader_base_account.get_balance_atoms(),
                 ManifestError::Overflow,
                 "Insufficient base in atoms for swap has: {} requires: {}",
                 trader_base_account.get_balance_atoms(),
-                in_atoms,
+                in_atoms_after_transfer_fees,
             )?;
         } else {
             require!(
-                in_atoms <= trader_quote_account.get_balance_atoms(),
+                in_atoms_after_transfer_fees <= trader_quote_account.get_balance_atoms(),
                 ManifestError::Overflow,
                 "Insufficient quote in atoms for swap has: {} requires: {}",
                 trader_quote_account.get_balance_atoms(),
-                in_atoms,
+                in_atoms_after_transfer_fees,
             )?;
         }
     }
 
     // this is a virtual credit to ensure matching always proceeds
     // net token transfers will be handled later
-    dynamic_account.deposit(trader_index, in_atoms, is_base_in)?;
+    // Use in_atoms_after_transfer_fees (post-fee) to account for Token-2022 transfer fees
+    dynamic_account.deposit(trader_index, in_atoms_after_transfer_fees, is_base_in)?;
 
     // 4 cases:
     // 1. Exact in base. Simplest case, just use the base atoms given.
     // 2. Exact in quote. Search the asks for the number of base atoms in bids to match.
     // 3. Exact out quote. Search the bids for the number of base atoms needed to match to get the right quote out.
     // 4. Exact out base. Use the number of out atoms as the number of atoms to place_order against.
+    // Note: For exact_in cases, we use in_atoms_after_transfer_fees (post-fee) since that's what's available to trade.
     let base_atoms: BaseAtoms = if is_exact_in {
         if is_base_in {
             // input=desired(base) output=min(quote)
-            BaseAtoms::new(in_atoms)
+            BaseAtoms::new(in_atoms_after_transfer_fees)
         } else {
             // input=desired(quote)* output=min(base)
             // round down base amount to not cross quote limit
             dynamic_account.impact_base_atoms(
                 true,
-                QuoteAtoms::new(in_atoms),
+                QuoteAtoms::new(in_atoms_after_transfer_fees),
                 &global_trade_accounts_opts,
             )?
         }
@@ -178,14 +214,16 @@ pub(crate) fn process_swap_core(
         if is_base_in {
             // input=max(base) output=desired(quote)
             // round up base amount to ensure not staying below quote limit
+            // Use out_atoms_after_transfer_fees to account for transfer fees on output
             dynamic_account.impact_base_atoms(
                 false,
-                QuoteAtoms::new(out_atoms),
+                QuoteAtoms::new(out_atoms_after_transfer_fees),
                 &global_trade_accounts_opts,
             )?
         } else {
             // input=max(quote) output=desired(base)
-            BaseAtoms::new(out_atoms)
+            // Use out_atoms_after_transfer_fees to account for transfer fees on output
+            BaseAtoms::new(out_atoms_after_transfer_fees)
         }
     };
 
@@ -240,6 +278,9 @@ pub(crate) fn process_swap_core(
         } else {
             base_atoms_traded.as_u64()
         };
+        // Note that we define the spec as the out amount verified against is
+        // the amount taken from the market, not the amount actually received.
+        // These are the same except when there are transfer fees.
         require!(
             out_atoms <= out_atoms_traded,
             ManifestError::InsufficientOut,
@@ -270,12 +311,18 @@ pub(crate) fn process_swap_core(
     // Transfer tokens
     if is_base_in {
         // Trader is depositing base.
-
-        // In order to make the trade, we previously credited the seat with the
-        // maximum they could possibly need,
-        // The amount to take from them is repaying the full credit, minus the
-        // unused amount.
-        let initial_credit_base_atoms: BaseAtoms = BaseAtoms::new(in_atoms);
+        
+        // Summary: This takes extra on edge case of is_exact_in=false and
+        // transfer fee != 0.
+        // Because of rounding, it is difficult to calculate efficiently the
+        // amount that should be taken when is_exact_in = false and transfer
+        // fees. In that case, the we calculated the matching with all of the
+        // input after fees. The result here is that we will take extra from the
+        // user and be lost to the vault in the amount of the fees on
+        // extra_base_atoms. This cannot be simply subtracted due to rounding
+        // issues possibly going against the vault and resulting in loss of
+        // funds.
+        let base_atoms_to_transfer: u64 = in_atoms.saturating_sub(extra_base_atoms.as_u64());
 
         if *token_program_base.key == spl_token_2022::id() {
             spl_token_2022_transfer_from_trader_to_vault(
@@ -285,7 +332,7 @@ pub(crate) fn process_swap_core(
                 dynamic_account.fixed.get_base_mint(),
                 &base_vault,
                 &owner,
-                (initial_credit_base_atoms.checked_sub(extra_base_atoms)?).as_u64(),
+                base_atoms_to_transfer,
                 dynamic_account.fixed.get_base_mint_decimals(),
             )?;
         } else {
@@ -294,7 +341,7 @@ pub(crate) fn process_swap_core(
                 &trader_base_account,
                 &base_vault,
                 &owner,
-                (initial_credit_base_atoms.checked_sub(extra_base_atoms)?).as_u64(),
+                base_atoms_to_transfer,
             )?;
         }
 
@@ -325,12 +372,11 @@ pub(crate) fn process_swap_core(
         }
     } else {
         // Trader is depositing quote.
+        
+        // Same comment as above for why this takes extra on edge case of
+        // is_exact_in=false and transfer fee != 0.
+        let quote_atoms_to_transfer: u64 = in_atoms.saturating_sub(extra_quote_atoms.as_u64());
 
-        // In order to make the trade, we previously credited the seat with the
-        // maximum they could possibly need.
-        // The amount to take from them is repaying the full credit, minus the
-        // unused amount.
-        let initial_credit_quote_atoms: QuoteAtoms = QuoteAtoms::new(in_atoms);
         if *token_program_quote.key == spl_token_2022::id() {
             spl_token_2022_transfer_from_trader_to_vault(
                 &token_program_quote,
@@ -339,7 +385,7 @@ pub(crate) fn process_swap_core(
                 dynamic_account.fixed.get_quote_mint(),
                 &quote_vault,
                 &owner,
-                (initial_credit_quote_atoms.checked_sub(extra_quote_atoms)?).as_u64(),
+                quote_atoms_to_transfer,
                 dynamic_account.fixed.get_quote_mint_decimals(),
             )?;
         } else {
@@ -348,7 +394,7 @@ pub(crate) fn process_swap_core(
                 &trader_quote_account,
                 &quote_vault,
                 &owner,
-                (initial_credit_quote_atoms.checked_sub(extra_quote_atoms)?).as_u64(),
+                quote_atoms_to_transfer,
             )?;
         }
 
@@ -605,4 +651,119 @@ fn spl_token_2022_transfer_from_vault_to_trader<'a, 'info>(
     _vault_bump: u8,
 ) -> ProgramResult {
     spl_token_2022_transfer(vault.info, trader_account.info, vault.info, amount)
+}
+
+/// Calculate the amount that will arrive at the vault after transfer fees.
+/// For Token-2022 tokens with TransferFeeConfig, this accounts for the fee.
+/// For regular SPL tokens or Token-2022 without fees, returns the original amount.
+#[cfg(not(feature = "certora"))]
+fn calculate_post_fee_amount<'a, 'info>(
+    amount: u64,
+    is_base_in: bool,
+    token_program_base: &TokenProgram<'a, 'info>,
+    token_program_quote: &TokenProgram<'a, 'info>,
+    base_mint: &Option<MintAccountInfo<'a, 'info>>,
+    quote_mint: &Option<MintAccountInfo<'a, 'info>>,
+) -> Result<u64, ProgramError> {
+    let (token_program, mint_opt) = if is_base_in {
+        (token_program_base, base_mint)
+    } else {
+        (token_program_quote, quote_mint)
+    };
+
+    // Only Token-2022 can have transfer fees
+    if *token_program.key != spl_token_2022::id() {
+        return Ok(amount);
+    }
+
+    // If no mint info provided, assume no fee
+    let Some(mint_info) = mint_opt else {
+        return Ok(amount);
+    };
+
+    let mint_data = mint_info.info.data.borrow();
+    let mint_state = StateWithExtensions::<Mint>::unpack(&mint_data)?;
+
+    // Check for TransferFeeConfig extension
+    if let Ok(fee_config) = mint_state.get_extension::<TransferFeeConfig>() {
+        let epoch_fee = fee_config.get_epoch_fee(get_now_epoch());
+        // calculate_post_fee_amount returns the amount after fee is deducted
+        if let Some(post_fee_amount) = epoch_fee.calculate_post_fee_amount(amount) {
+            return Ok(post_fee_amount);
+        }
+    }
+
+    Ok(amount)
+}
+
+#[cfg(feature = "certora")]
+fn calculate_post_fee_amount<'a, 'info>(
+    amount: u64,
+    _is_base_in: bool,
+    _token_program_base: &TokenProgram<'a, 'info>,
+    _token_program_quote: &TokenProgram<'a, 'info>,
+    _base_mint: &Option<MintAccountInfo<'a, 'info>>,
+    _quote_mint: &Option<MintAccountInfo<'a, 'info>>,
+) -> Result<u64, ProgramError> {
+    // For certora verification, assume no transfer fees
+    Ok(amount)
+}
+
+/// Calculate the amount that must be sent for a specific amount to arrive after transfer fees.
+/// This is used for the output side of swaps to ensure the trader receives their desired amount.
+/// For Token-2022 tokens with TransferFeeConfig, this accounts for the fee.
+/// For regular SPL tokens or Token-2022 without fees, returns the original amount.
+/// Note: is_base_in refers to input direction; output is the opposite (if base_in, output is quote).
+#[cfg(not(feature = "certora"))]
+fn calculate_pre_fee_amount<'a, 'info>(
+    desired_amount: u64,
+    is_base_in: bool,
+    token_program_base: &TokenProgram<'a, 'info>,
+    token_program_quote: &TokenProgram<'a, 'info>,
+    base_mint: &Option<MintAccountInfo<'a, 'info>>,
+    quote_mint: &Option<MintAccountInfo<'a, 'info>>,
+) -> Result<u64, ProgramError> {
+    // Output token is opposite of input: if is_base_in, output is quote; otherwise output is base
+    let (token_program, mint_opt) = if is_base_in {
+        (token_program_quote, quote_mint)
+    } else {
+        (token_program_base, base_mint)
+    };
+
+    // Only Token-2022 can have transfer fees
+    if *token_program.key != spl_token_2022::id() {
+        return Ok(desired_amount);
+    }
+
+    // If no mint info provided, assume no fee
+    let Some(mint_info) = mint_opt else {
+        return Ok(desired_amount);
+    };
+
+    let mint_data = mint_info.info.data.borrow();
+    let mint_state = StateWithExtensions::<Mint>::unpack(&mint_data)?;
+
+    // Check for TransferFeeConfig extension
+    if let Ok(fee_config) = mint_state.get_extension::<TransferFeeConfig>() {
+        let epoch_fee = fee_config.get_epoch_fee(get_now_epoch());
+        // calculate_pre_fee_amount returns the amount to send to get desired_amount after fee
+        if let Some(pre_fee_amount) = epoch_fee.calculate_pre_fee_amount(desired_amount) {
+            return Ok(pre_fee_amount);
+        }
+    }
+
+    Ok(desired_amount)
+}
+
+#[cfg(feature = "certora")]
+fn calculate_pre_fee_amount<'a, 'info>(
+    desired_amount: u64,
+    _is_base_in: bool,
+    _token_program_base: &TokenProgram<'a, 'info>,
+    _token_program_quote: &TokenProgram<'a, 'info>,
+    _base_mint: &Option<MintAccountInfo<'a, 'info>>,
+    _quote_mint: &Option<MintAccountInfo<'a, 'info>>,
+) -> Result<u64, ProgramError> {
+    // For certora verification, assume no transfer fees
+    Ok(desired_amount)
 }

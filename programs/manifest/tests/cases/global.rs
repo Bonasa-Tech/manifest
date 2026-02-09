@@ -1300,6 +1300,89 @@ async fn global_stop_without_global() -> anyhow::Result<()> {
 }
 
 #[tokio::test]
+async fn global_deposit_with_transfer_fee() -> anyhow::Result<()> {
+    let test_fixture: TestFixture = TestFixture::new().await;
+    let payer: Pubkey = test_fixture.payer();
+    let payer_keypair: Keypair = test_fixture.payer_keypair().insecure_clone();
+
+    // Create a Token-2022 mint with 10% transfer fee (1000 basis points)
+    let transfer_fee_bps: u16 = 1000; // 10%
+    let mut mint_fixture: MintFixture = MintFixture::new_with_transfer_fee(
+        Rc::clone(&test_fixture.context),
+        9, // decimals
+        transfer_fee_bps,
+    )
+    .await;
+
+    let mut global_fixture: GlobalFixture = GlobalFixture::new_with_token_program(
+        Rc::clone(&test_fixture.context),
+        &mint_fixture.key,
+        &spl_token_2022::id(),
+    )
+    .await;
+
+    send_tx_with_retry(
+        Rc::clone(&test_fixture.context),
+        &[global_add_trader_instruction(&global_fixture.key, &payer)],
+        Some(&payer),
+        &[&payer_keypair],
+    )
+    .await?;
+
+    // Create a Token-2022 token account for the mint with transfer fee
+    // These accounts need the TransferFeeAmount extension
+    let token_account_keypair: Keypair = Keypair::new();
+    let token_account_fixture: TokenAccountFixture =
+        TokenAccountFixture::new_with_keypair_2022_transfer_fee(
+            Rc::clone(&test_fixture.context),
+            &mint_fixture.key,
+            &payer,
+            &token_account_keypair,
+        )
+        .await;
+
+    // Mint 1_000_000 tokens
+    let deposit_amount: u64 = 1_000_000;
+    mint_fixture
+        .mint_to_2022(&token_account_fixture.key, deposit_amount)
+        .await;
+
+    // Deposit to global
+    send_tx_with_retry(
+        Rc::clone(&test_fixture.context),
+        &[global_deposit_instruction(
+            &mint_fixture.key,
+            &payer,
+            &token_account_fixture.key,
+            &spl_token_2022::id(),
+            deposit_amount,
+        )],
+        Some(&payer),
+        &[&payer_keypair],
+    )
+    .await?;
+
+    global_fixture.reload().await;
+    let global_dynamic_account: &DynamicAccount<GlobalFixed, Vec<u8>> = &global_fixture.global;
+
+    // With 10% transfer fee, the vault should receive 90% of the deposited amount
+    // Transfer fee calculation: fee = amount * fee_bps / 10000
+    // fee = 1_000_000 * 1000 / 10000 = 100_000
+    // amount_after_fee = 1_000_000 - 100_000 = 900_000
+    let expected_balance: u64 = deposit_amount - (deposit_amount * transfer_fee_bps as u64 / 10000);
+    let balance_atoms: GlobalAtoms = global_dynamic_account.get_balance_atoms(&payer);
+    assert_eq!(
+        balance_atoms,
+        GlobalAtoms::new(expected_balance),
+        "Balance should be {} after 10% transfer fee, but got {}",
+        expected_balance,
+        balance_atoms.as_u64()
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn global_crash_without_global() -> anyhow::Result<()> {
     let mut test_fixture: TestFixture = TestFixture::new().await;
     test_fixture.claim_seat().await?;

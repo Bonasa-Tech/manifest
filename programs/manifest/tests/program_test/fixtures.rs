@@ -19,12 +19,12 @@ use manifest::{
     },
     quantities::WrapperU64,
     state::{GlobalFixed, GlobalValue, MarketFixed, MarketValue, OrderType, RestingOrder},
-    validation::{get_global_address, MintAccountInfo},
+    validation::{get_global_address, get_vault_address, MintAccountInfo},
 };
 use solana_program::{hash::Hash, pubkey::Pubkey, rent::Rent};
 use solana_program_test::{processor, BanksClientError, ProgramTest, ProgramTestContext};
 use solana_sdk::{
-    account::Account, account_info::AccountInfo, clock::Clock, instruction::Instruction,
+    account::Account, account_info::AccountInfo, clock::Clock, instruction::{AccountMeta, Instruction},
     program_pack::Pack, signature::Keypair, signer::Signer, system_instruction::create_account,
     transaction::Transaction,
 };
@@ -919,6 +919,116 @@ impl MarketFixture {
         bids_vec.extend(asks_vec);
         bids_vec
     }
+
+    /// Get vault token account balances (base_vault_balance, quote_vault_balance)
+    pub async fn get_vault_balances(&mut self) -> (u64, u64) {
+        self.reload().await;
+        let (base_vault, _) = get_vault_address(&self.key, self.market.get_base_mint());
+        let (quote_vault, _) = get_vault_address(&self.key, self.market.get_quote_mint());
+
+        let base_vault_balance: u64 = self
+            .context
+            .borrow_mut()
+            .banks_client
+            .get_packed_account_data::<spl_token::state::Account>(base_vault)
+            .await
+            .map(|a| a.amount)
+            .unwrap_or(0);
+
+        let quote_vault_balance: u64 = self
+            .context
+            .borrow_mut()
+            .banks_client
+            .get_packed_account_data::<spl_token::state::Account>(quote_vault)
+            .await
+            .map(|a| a.amount)
+            .unwrap_or(0);
+
+        (base_vault_balance, quote_vault_balance)
+    }
+
+    /// Get total base/quote locked in orders.
+    /// Returns (base_locked_in_asks, quote_locked_in_bids)
+    pub async fn get_total_locked_in_orders(&mut self) -> (u64, u64) {
+        self.reload().await;
+        let mut base_locked: u64 = 0;
+        let mut quote_locked: u64 = 0;
+
+        // Bids lock quote (base_atoms * price)
+        for (_, bid) in self.market.get_bids().iter::<RestingOrder>() {
+            let locked_quote = bid
+                .get_num_base_atoms()
+                .checked_mul(bid.get_price(), true)
+                .unwrap()
+                .as_u64();
+            quote_locked += locked_quote;
+        }
+
+        // Asks lock base
+        for (_, ask) in self.market.get_asks().iter::<RestingOrder>() {
+            base_locked += ask.get_num_base_atoms().as_u64();
+        }
+
+        (base_locked, quote_locked)
+    }
+
+    /// Verify that vault balances match seats + orders.
+    /// Takes a slice of trader pubkeys to sum their seat balances.
+    /// When exact is true, checks exact equality; when false, checks vault has at least expected.
+    pub async fn verify_vault_balance(&mut self, traders: &[Pubkey], exact: bool) {
+        self.reload().await;
+
+        // Sum seat balances
+        let mut seats_base: u64 = 0;
+        let mut seats_quote: u64 = 0;
+        for trader in traders {
+            seats_base += self.market.get_trader_balance(trader).0.as_u64();
+            seats_quote += self.market.get_trader_balance(trader).1.as_u64();
+        }
+
+        // Get locked in orders
+        let (base_in_asks, quote_in_bids) = self.get_total_locked_in_orders().await;
+
+        // Get vault balances
+        let (vault_base, vault_quote) = self.get_vault_balances().await;
+
+        // Total expected in vault
+        let expected_base = seats_base + base_in_asks;
+        let expected_quote = seats_quote + quote_in_bids;
+
+        println!(
+            "Vault verification: base_vault={} expected={} (seats={} + asks={})",
+            vault_base, expected_base, seats_base, base_in_asks
+        );
+        println!(
+            "Vault verification: quote_vault={} expected={} (seats={} + bids={})",
+            vault_quote, expected_quote, seats_quote, quote_in_bids
+        );
+
+        if exact {
+            assert_eq!(
+                vault_base, expected_base,
+                "Base vault mismatch: vault={}, expected={} (seats={} + asks={})",
+                vault_base, expected_base, seats_base, base_in_asks
+            );
+            assert_eq!(
+                vault_quote, expected_quote,
+                "Quote vault mismatch: vault={}, expected={} (seats={} + bids={})",
+                vault_quote, expected_quote, seats_quote, quote_in_bids
+            );
+        } else {
+            assert!(
+                vault_base >= expected_base,
+                "Base vault insufficient: vault={}, expected at least {} (seats={} + asks={})",
+                vault_base, expected_base, seats_base, base_in_asks
+            );
+            assert!(
+                vault_quote >= expected_quote,
+                "Quote vault insufficient: vault={}, expected at least {} (seats={} + bids={})",
+                vault_quote, expected_quote, seats_quote, quote_in_bids
+            );
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -989,6 +1099,8 @@ pub struct MintFixture {
     pub context: Rc<RefCell<ProgramTestContext>>,
     pub key: Pubkey,
     pub mint: spl_token::state::Mint,
+    /// Whether this is a Token-2022 mint with extensions (requires different unpacking)
+    pub is_2022_with_extensions: bool,
 }
 
 impl MintFixture {
@@ -1078,6 +1190,91 @@ impl MintFixture {
             context: context_ref,
             key: mint_keypair.pubkey(),
             mint,
+            is_2022_with_extensions: false,
+        }
+    }
+
+    /// Create a Token-2022 mint with TransferFeeConfig extension.
+    /// This is used for tokens like LJITSPS that have transfer fees.
+    ///
+    /// # Arguments
+    /// * `context` - Program test context
+    /// * `mint_decimals` - Number of decimal places for the mint
+    /// * `transfer_fee_bps` - Transfer fee in basis points (e.g., 1000 = 10%)
+    pub async fn new_with_transfer_fee(
+        context: Rc<RefCell<ProgramTestContext>>,
+        mint_decimals: u8,
+        transfer_fee_bps: u16,
+    ) -> MintFixture {
+        let context_ref: Rc<RefCell<ProgramTestContext>> = Rc::clone(&context);
+        let mint_keypair: Keypair = Keypair::new();
+
+        let payer: Keypair = context.borrow().payer.insecure_clone();
+
+        // Calculate space needed for mint with TransferFeeConfig extension
+        let extension_types: Vec<spl_token_2022::extension::ExtensionType> =
+            vec![spl_token_2022::extension::ExtensionType::TransferFeeConfig];
+        let space: usize = spl_token_2022::extension::ExtensionType::try_calculate_account_len::<
+            spl_token_2022::state::Mint,
+        >(&extension_types)
+        .unwrap();
+
+        let mint_rent: u64 = solana_program::sysvar::rent::Rent::default().minimum_balance(space);
+
+        let init_account_ix: Instruction = create_account(
+            &payer.pubkey(),
+            &mint_keypair.pubkey(),
+            mint_rent,
+            space as u64,
+            &spl_token_2022::id(),
+        );
+
+        // Initialize transfer fee config before mint initialization
+        let transfer_fee_ix: Instruction =
+            spl_token_2022::extension::transfer_fee::instruction::initialize_transfer_fee_config(
+                &spl_token_2022::id(),
+                &mint_keypair.pubkey(),
+                None,
+                None,
+                transfer_fee_bps,
+                u64::MAX,
+            )
+            .unwrap();
+
+        let init_mint_ix: Instruction = spl_token_2022::instruction::initialize_mint2(
+            &spl_token_2022::id(),
+            &mint_keypair.pubkey(),
+            &payer.pubkey(),
+            None,
+            mint_decimals,
+        )
+        .unwrap();
+
+        send_tx_with_retry(
+            Rc::clone(&context),
+            &[init_account_ix, transfer_fee_ix, init_mint_ix],
+            Some(&payer.pubkey()),
+            &[&payer, &mint_keypair],
+        )
+        .await
+        .unwrap();
+
+        // For Token-2022 mints with extensions, we can't use spl_token::state::Mint::unpack_unchecked
+        // because the account layout is different. Instead, manually construct the Mint struct
+        // with the known values.
+        let mint = spl_token::state::Mint {
+            mint_authority: solana_program::program_option::COption::Some(payer.pubkey()),
+            supply: 0,
+            decimals: mint_decimals,
+            is_initialized: true,
+            freeze_authority: solana_program::program_option::COption::None,
+        };
+
+        MintFixture {
+            context: context_ref,
+            key: mint_keypair.pubkey(),
+            mint,
+            is_2022_with_extensions: true,
         }
     }
 
@@ -1090,8 +1287,27 @@ impl MintFixture {
             .await
             .unwrap()
             .unwrap();
-        self.mint =
-            spl_token::state::Mint::unpack_unchecked(&mut mint_account.data.as_slice()).unwrap();
+
+        if self.is_2022_with_extensions {
+            // For Token-2022 mints with extensions, use StateWithExtensions to unpack
+            let mint_with_ext = spl_token_2022::extension::StateWithExtensions::<
+                spl_token_2022::state::Mint,
+            >::unpack(&mint_account.data)
+            .unwrap();
+            let mint_2022 = mint_with_ext.base;
+            // Convert to spl_token::state::Mint
+            self.mint = spl_token::state::Mint {
+                mint_authority: mint_2022.mint_authority,
+                supply: mint_2022.supply,
+                decimals: mint_2022.decimals,
+                is_initialized: mint_2022.is_initialized,
+                freeze_authority: mint_2022.freeze_authority,
+            };
+        } else {
+            self.mint =
+                spl_token::state::Mint::unpack_unchecked(&mut mint_account.data.as_slice())
+                    .unwrap();
+        }
     }
 
     pub async fn mint_to(&mut self, dest: &Pubkey, num_atoms: u64) {
@@ -1208,6 +1424,42 @@ impl TokenAccountFixture {
         [init_account_ix, init_token_ix]
     }
 
+    /// Create instructions for a Token-2022 account that supports transfer fee extension.
+    /// Token accounts for mints with TransferFeeConfig need the TransferFeeAmount extension.
+    async fn create_ixs_2022_with_transfer_fee(
+        rent: Rent,
+        mint_pk: &Pubkey,
+        payer_pk: &Pubkey,
+        owner_pk: &Pubkey,
+        keypair: &Keypair,
+    ) -> [Instruction; 2] {
+        // Calculate account size with TransferFeeAmount extension
+        let extension_types: Vec<spl_token_2022::extension::ExtensionType> =
+            vec![spl_token_2022::extension::ExtensionType::TransferFeeAmount];
+        let space: usize = spl_token_2022::extension::ExtensionType::try_calculate_account_len::<
+            spl_token_2022::state::Account,
+        >(&extension_types)
+        .unwrap();
+
+        let init_account_ix: Instruction = create_account(
+            payer_pk,
+            &keypair.pubkey(),
+            rent.minimum_balance(space),
+            space as u64,
+            &spl_token_2022::id(),
+        );
+
+        let init_token_ix: Instruction = spl_token_2022::instruction::initialize_account(
+            &spl_token_2022::id(),
+            &keypair.pubkey(),
+            mint_pk,
+            owner_pk,
+        )
+        .unwrap();
+
+        [init_account_ix, init_token_ix]
+    }
+
     pub async fn new_with_keypair_2022(
         context: Rc<RefCell<ProgramTestContext>>,
         mint_pk: &Pubkey,
@@ -1219,6 +1471,36 @@ impl TokenAccountFixture {
         let payer_keypair: Keypair = context.borrow().payer.insecure_clone();
         let instructions: [Instruction; 2] =
             Self::create_ixs_2022(rent, mint_pk, &payer, owner_pk, keypair).await;
+
+        send_tx_with_retry(
+            Rc::clone(&context),
+            &instructions[..],
+            Some(&payer),
+            &[&payer_keypair, keypair],
+        )
+        .await
+        .unwrap();
+
+        let context_ref: Rc<RefCell<ProgramTestContext>> = context.clone();
+        Self {
+            context: context_ref.clone(),
+            key: keypair.pubkey(),
+        }
+    }
+
+    /// Create a Token-2022 account for a mint with TransferFeeConfig extension.
+    /// These token accounts need the TransferFeeAmount extension.
+    pub async fn new_with_keypair_2022_transfer_fee(
+        context: Rc<RefCell<ProgramTestContext>>,
+        mint_pk: &Pubkey,
+        owner_pk: &Pubkey,
+        keypair: &Keypair,
+    ) -> Self {
+        let rent: Rent = context.borrow_mut().banks_client.get_rent().await.unwrap();
+        let payer: Pubkey = context.borrow().payer.pubkey();
+        let payer_keypair: Keypair = context.borrow().payer.insecure_clone();
+        let instructions: [Instruction; 2] =
+            Self::create_ixs_2022_with_transfer_fee(rent, mint_pk, &payer, owner_pk, keypair).await;
 
         send_tx_with_retry(
             Rc::clone(&context),
@@ -1335,5 +1617,304 @@ pub async fn send_tx_with_retry(
             }
         }
     }
+    Ok(())
+}
+
+/// Get the balance of a token account, handling both SPL Token and Token-2022.
+async fn get_token_account_balance(
+    context: Rc<RefCell<ProgramTestContext>>,
+    token_account: Pubkey,
+) -> u64 {
+    use spl_token_2022::extension::StateWithExtensionsOwned;
+
+    let account = context
+        .borrow_mut()
+        .banks_client
+        .get_account(token_account)
+        .await
+        .unwrap()
+        .unwrap();
+
+    // Check account owner to determine token program
+    if account.owner == spl_token::id() {
+        spl_token::state::Account::unpack(&account.data)
+            .map(|a| a.amount)
+            .unwrap_or(0)
+    } else {
+        // Token-2022
+        StateWithExtensionsOwned::<spl_token_2022::state::Account>::unpack(account.data)
+            .map(|a| a.base.amount)
+            .unwrap_or(0)
+    }
+}
+
+/// Verify that vault balances match the sum of trader seat balances plus amounts locked in orders.
+/// This is a standalone helper that works with a raw context and market key.
+///
+/// # Arguments
+/// * `context` - The program test context
+/// * `market_key` - The market pubkey
+/// * `traders` - List of trader pubkeys whose seat balances should be summed
+/// * `exact` - When true, checks exact equality; when false, checks vault has at least expected
+pub async fn verify_vault_balance(
+    context: Rc<RefCell<ProgramTestContext>>,
+    market_key: &Pubkey,
+    traders: &[Pubkey],
+    exact: bool,
+) {
+    use manifest::program::get_dynamic_value;
+    use manifest::state::RestingOrder;
+
+    // Get market data
+    let market_account: Account = context
+        .borrow_mut()
+        .banks_client
+        .get_account(*market_key)
+        .await
+        .unwrap()
+        .unwrap();
+    let market: manifest::state::MarketValue = get_dynamic_value(market_account.data.as_slice());
+
+    // Sum seat balances for all traders
+    let mut seats_base: u64 = 0;
+    let mut seats_quote: u64 = 0;
+    for trader in traders {
+        let balance = market.get_trader_balance(trader);
+        seats_base += balance.0.as_u64();
+        seats_quote += balance.1.as_u64();
+    }
+
+    // Get amounts locked in orders
+    let mut base_in_asks: u64 = 0;
+    let mut quote_in_bids: u64 = 0;
+
+    for (_, bid) in market.get_bids().iter::<RestingOrder>() {
+        let locked_quote = bid
+            .get_num_base_atoms()
+            .checked_mul(bid.get_price(), true)
+            .unwrap()
+            .as_u64();
+        quote_in_bids += locked_quote;
+    }
+
+    for (_, ask) in market.get_asks().iter::<RestingOrder>() {
+        base_in_asks += ask.get_num_base_atoms().as_u64();
+    }
+
+    // Get vault balances (handles both SPL Token and Token-2022)
+    let (base_vault, _) = get_vault_address(market_key, market.get_base_mint());
+    let (quote_vault, _) = get_vault_address(market_key, market.get_quote_mint());
+
+    let vault_base: u64 = get_token_account_balance(Rc::clone(&context), base_vault).await;
+    let vault_quote: u64 = get_token_account_balance(Rc::clone(&context), quote_vault).await;
+
+    let expected_base = seats_base + base_in_asks;
+    let expected_quote = seats_quote + quote_in_bids;
+
+    println!(
+        "Vault verification: base_vault={} expected={} (seats={} + asks={})",
+        vault_base, expected_base, seats_base, base_in_asks
+    );
+    println!(
+        "Vault verification: quote_vault={} expected={} (seats={} + bids={})",
+        vault_quote, expected_quote, seats_quote, quote_in_bids
+    );
+
+    if exact {
+        assert_eq!(
+            vault_base, expected_base,
+            "Base vault mismatch: vault={}, expected={} (seats={} + asks={})",
+            vault_base, expected_base, seats_base, base_in_asks
+        );
+        assert_eq!(
+            vault_quote, expected_quote,
+            "Quote vault mismatch: vault={}, expected={} (seats={} + bids={})",
+            vault_quote, expected_quote, seats_quote, quote_in_bids
+        );
+    } else {
+        assert!(
+            vault_base >= expected_base,
+            "Base vault insufficient: vault={}, expected at least {} (seats={} + asks={})",
+            vault_base, expected_base, seats_base, base_in_asks
+        );
+        assert!(
+            vault_quote >= expected_quote,
+            "Quote vault insufficient: vault={}, expected at least {} (seats={} + bids={})",
+            vault_quote, expected_quote, seats_quote, quote_in_bids
+        );
+    }
+
+    println!("Vault verification passed!");
+}
+
+/// Create a market with the given base and quote mints.
+/// Returns the market keypair.
+pub async fn create_market_with_mints(
+    context: Rc<RefCell<ProgramTestContext>>,
+    base_mint: &Pubkey,
+    quote_mint: &Pubkey,
+) -> Result<Keypair, BanksClientError> {
+    let market_keypair = Keypair::new();
+    let payer_keypair = context.borrow().payer.insecure_clone();
+    let payer = payer_keypair.pubkey();
+
+    let create_market_ixs: Vec<Instruction> =
+        create_market_instructions(&market_keypair.pubkey(), base_mint, quote_mint, &payer)
+            .unwrap();
+
+    send_tx_with_retry(
+        Rc::clone(&context),
+        &create_market_ixs[..],
+        Some(&payer),
+        &[&payer_keypair, &market_keypair],
+    )
+    .await?;
+
+    Ok(market_keypair)
+}
+
+/// Create a Token-2022 token account for a mint with transfer fee extension.
+/// Returns the token account keypair.
+pub async fn create_token_2022_account(
+    context: Rc<RefCell<ProgramTestContext>>,
+    mint: &Pubkey,
+    owner: &Pubkey,
+) -> Result<Keypair, BanksClientError> {
+    let token_account_keypair = Keypair::new();
+    let payer_keypair = context.borrow().payer.insecure_clone();
+    let payer = payer_keypair.pubkey();
+
+    let rent: Rent = context.borrow_mut().banks_client.get_rent().await.unwrap();
+    // Token-2022 accounts with transfer fee need extra space
+    let account_size = spl_token_2022::state::Account::LEN + 13;
+
+    let create_account_ix = create_account(
+        &payer,
+        &token_account_keypair.pubkey(),
+        rent.minimum_balance(account_size),
+        account_size as u64,
+        &spl_token_2022::id(),
+    );
+
+    let init_account_ix = spl_token_2022::instruction::initialize_account(
+        &spl_token_2022::id(),
+        &token_account_keypair.pubkey(),
+        mint,
+        owner,
+    )
+    .unwrap();
+
+    send_tx_with_retry(
+        Rc::clone(&context),
+        &[create_account_ix, init_account_ix],
+        Some(&payer),
+        &[&payer_keypair, &token_account_keypair],
+    )
+    .await?;
+
+    Ok(token_account_keypair)
+}
+
+/// Create a regular SPL token account.
+/// Returns the token account keypair.
+pub async fn create_spl_token_account(
+    context: Rc<RefCell<ProgramTestContext>>,
+    mint: &Pubkey,
+    owner: &Pubkey,
+) -> Result<Keypair, BanksClientError> {
+    let token_account_keypair = Keypair::new();
+    let payer_keypair = context.borrow().payer.insecure_clone();
+    let payer = payer_keypair.pubkey();
+
+    let rent: Rent = context.borrow_mut().banks_client.get_rent().await.unwrap();
+
+    let create_account_ix = create_account(
+        &payer,
+        &token_account_keypair.pubkey(),
+        rent.minimum_balance(spl_token::state::Account::LEN),
+        spl_token::state::Account::LEN as u64,
+        &spl_token::id(),
+    );
+
+    let init_account_ix = spl_token::instruction::initialize_account(
+        &spl_token::id(),
+        &token_account_keypair.pubkey(),
+        mint,
+        owner,
+    )
+    .unwrap();
+
+    send_tx_with_retry(
+        Rc::clone(&context),
+        &[create_account_ix, init_account_ix],
+        Some(&payer),
+        &[&payer_keypair, &token_account_keypair],
+    )
+    .await?;
+
+    Ok(token_account_keypair)
+}
+
+/// Mint Token-2022 tokens to a token account.
+pub async fn mint_token_2022(
+    context: Rc<RefCell<ProgramTestContext>>,
+    mint: &Pubkey,
+    token_account: &Pubkey,
+    amount: u64,
+) -> Result<(), BanksClientError> {
+    let payer_keypair = context.borrow().payer.insecure_clone();
+    let payer = payer_keypair.pubkey();
+
+    let mint_to_ix = spl_token_2022::instruction::mint_to(
+        &spl_token_2022::id(),
+        mint,
+        token_account,
+        &payer,
+        &[&payer],
+        amount,
+    )
+    .unwrap();
+
+    send_tx_with_retry(
+        Rc::clone(&context),
+        &[mint_to_ix],
+        Some(&payer),
+        &[&payer_keypair],
+    )
+    .await
+}
+
+/// Expand a market to add more free blocks for orders.
+/// Calls expand_market_instruction `count` times.
+pub async fn expand_market(
+    context: Rc<RefCell<ProgramTestContext>>,
+    market: &Pubkey,
+    num_free_blocks: u32,
+) -> Result<(), BanksClientError> {
+    use solana_program::system_program;
+    use manifest::program::ManifestInstruction;
+
+    let payer_keypair = context.borrow().payer.insecure_clone();
+    let payer = payer_keypair.pubkey();
+
+    // Create instruction with the number of free blocks required as data
+    let expand_ix = Instruction {
+        program_id: manifest::id(),
+        accounts: vec![
+            AccountMeta::new(payer, true),
+            AccountMeta::new(*market, false),
+            AccountMeta::new_readonly(system_program::id(), false),
+        ],
+        data: [ManifestInstruction::Expand.to_vec(), num_free_blocks.to_le_bytes().to_vec()].concat(),
+    };
+
+    send_tx_with_retry(
+        Rc::clone(&context),
+        &[expand_ix],
+        Some(&payer),
+        &[&payer_keypair],
+    )
+    .await?;
+
     Ok(())
 }

@@ -35,6 +35,8 @@ pub(crate) fn process_global_deposit(
 ) -> ProgramResult {
     let global_deposit_context: GlobalDepositContext = GlobalDepositContext::load(accounts)?;
     let GlobalDepositParams { amount_atoms } = GlobalDepositParams::try_from_slice(data)?;
+
+
     // Due to transfer fees, this might not be what you expect.
     let mut deposited_amount_atoms: u64 = amount_atoms;
 
@@ -47,11 +49,7 @@ pub(crate) fn process_global_deposit(
         token_program,
     } = global_deposit_context;
 
-    let global_data: &mut RefMut<&mut [u8]> = &mut global.try_borrow_mut_data()?;
-    let mut global_dynamic_account: GlobalRefMut = get_mut_dynamic_account(global_data);
-    global_dynamic_account.deposit_global(payer.key, GlobalAtoms::new(amount_atoms))?;
-
-    // Do the token transfer
+    // Do the token transfer first to determine actual received amount
     if *global_vault.owner == spl_token_2022::id() {
         let before_vault_balance_atoms: u64 = global_vault.get_balance_atoms();
         invoke(
@@ -96,6 +94,11 @@ pub(crate) fn process_global_deposit(
             ],
         )?;
     }
+
+    // Now deposit the actual received amount (which may be less than requested due to transfer fees)
+    let global_data: &mut RefMut<&mut [u8]> = &mut global.try_borrow_mut_data()?;
+    let mut global_dynamic_account: GlobalRefMut = get_mut_dynamic_account(global_data);
+    global_dynamic_account.deposit_global(payer.key, GlobalAtoms::new(deposited_amount_atoms))?;
 
     emit_stack(GlobalDepositLog {
         global: *global.key,

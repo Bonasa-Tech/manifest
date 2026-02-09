@@ -1,26 +1,30 @@
-use std::{cell::RefMut, rc::Rc};
+use std::{cell::RefCell, cell::RefMut, rc::Rc};
 
 use borsh::BorshSerialize;
 use manifest::{
     program::{
-        batch_update::PlaceOrderParams, batch_update_instruction, global_add_trader_instruction,
+        batch_update::{CancelOrderParams, PlaceOrderParams},
+        batch_update_instruction, claim_seat_instruction::claim_seat_instruction,
+        deposit_instruction, expand_market_instruction, global_add_trader_instruction,
         global_deposit_instruction, global_withdraw_instruction, swap_instruction,
         ManifestInstruction, SwapParams,
     },
     quantities::{BaseAtoms, WrapperU64},
-    state::{constants::NO_EXPIRATION_LAST_VALID_SLOT, OrderType},
+    state::{constants::NO_EXPIRATION_LAST_VALID_SLOT, OrderType, RestingOrder},
     validation::get_vault_address,
 };
-use solana_program_test::{tokio, ProgramTestContext};
+use solana_program_test::{processor, tokio, ProgramTest, ProgramTestContext};
 use solana_sdk::{
     instruction::{AccountMeta, Instruction},
+    pubkey::Pubkey,
     signature::{Keypair, Signer},
     transaction::Transaction,
 };
 
 use crate::{
-    send_tx_with_retry, Side, TestFixture, Token, TokenAccountFixture, SOL_UNIT_SIZE,
-    USDC_UNIT_SIZE,
+    create_market_with_mints, create_spl_token_account, create_token_2022_account, expand_market,
+    mint_token_2022, send_tx_with_retry, MintFixture, Side, TestFixture, Token,
+    TokenAccountFixture, RUST_LOG_DEFAULT, SOL_UNIT_SIZE, USDC_UNIT_SIZE,
 };
 
 #[tokio::test]
@@ -1200,6 +1204,2732 @@ async fn swap_global_not_backed() -> anyhow::Result<()> {
         test_fixture.payer_usdc_fixture.balance_atoms().await,
         1_000 * USDC_UNIT_SIZE
     );
+
+    Ok(())
+}
+
+/// Test wash trading with reverse orders.
+/// A single trader posts reverse orders on both sides at two price levels,
+/// then swaps against their own orders in both directions twice, filling
+/// top of book and spilling over to the second level. At the end, verify
+/// token accounts, cancel all orders, and confirm full withdrawal.
+#[tokio::test]
+async fn swap_wash_reverse_test() -> anyhow::Result<()> {
+    let mut test_fixture: TestFixture = TestFixture::new().await;
+
+    // Claim seat and deposit tokens for the trader (default payer)
+    test_fixture.claim_seat().await?;
+
+    let initial_sol: u64 = 100 * SOL_UNIT_SIZE;
+    let initial_usdc: u64 = 100_000 * USDC_UNIT_SIZE;
+
+    test_fixture.deposit(Token::SOL, initial_sol).await?;
+    test_fixture.deposit(Token::USDC, initial_usdc).await?;
+
+    // Place reverse orders on both sides at two price levels each.
+    // Bids: 5 SOL @ 10 USDC/SOL (level 1), 5 SOL @ 8 USDC/SOL (level 2)
+    // Asks: 5 SOL @ 12 USDC/SOL (level 1), 5 SOL @ 14 USDC/SOL (level 2)
+    // Spread of 10% (10_000 in units of 1/100,000)
+
+    // Bid level 1: 5 SOL @ 10 USDC/SOL
+    test_fixture
+        .place_order(
+            Side::Bid,
+            5 * SOL_UNIT_SIZE,
+            10,
+            0,
+            10_000, // 10% spread
+            OrderType::Reverse,
+        )
+        .await?;
+
+    // Bid level 2: 5 SOL @ 8 USDC/SOL
+    test_fixture
+        .place_order(
+            Side::Bid,
+            5 * SOL_UNIT_SIZE,
+            8,
+            0,
+            10_000,
+            OrderType::Reverse,
+        )
+        .await?;
+
+    // Ask level 1: 5 SOL @ 12 USDC/SOL
+    test_fixture
+        .place_order(
+            Side::Ask,
+            5 * SOL_UNIT_SIZE,
+            12,
+            0,
+            10_000,
+            OrderType::Reverse,
+        )
+        .await?;
+
+    // Ask level 2: 5 SOL @ 14 USDC/SOL
+    test_fixture
+        .place_order(
+            Side::Ask,
+            5 * SOL_UNIT_SIZE,
+            14,
+            0,
+            10_000,
+            OrderType::Reverse,
+        )
+        .await?;
+
+    // Verify initial orders are placed (2 bids + 2 asks = 4 orders)
+    let orders = test_fixture.market_fixture.get_resting_orders().await;
+    assert_eq!(orders.len(), 4);
+
+    // Expand the market to ensure there are enough free blocks for reverse orders
+    // when swapping. Each swap against a reverse order needs a free block for the
+    // new reversed order.
+    let payer = test_fixture.payer();
+    let payer_keypair = test_fixture.payer_keypair();
+    for _ in 0..10 {
+        let expand_ix =
+            expand_market_instruction(&test_fixture.market_fixture.key, &payer);
+        send_tx_with_retry(
+            Rc::clone(&test_fixture.context),
+            &[expand_ix],
+            Some(&payer),
+            &[&payer_keypair],
+        )
+        .await?;
+    }
+
+    // Mint tokens to payer's external wallet for swapping
+    test_fixture
+        .sol_mint_fixture
+        .mint_to(&test_fixture.payer_sol_fixture.key, 20 * SOL_UNIT_SIZE)
+        .await;
+    test_fixture
+        .usdc_mint_fixture
+        .mint_to(&test_fixture.payer_usdc_fixture.key, 200 * USDC_UNIT_SIZE)
+        .await;
+
+    // Swap 1: Sell SOL (buy quote) - fill top of book ask and spill to second level
+    // Buying with 140 USDC should fill 5 SOL @ 12 and ~5.7 SOL @ 14
+    // is_base_in=false means we're sending USDC in
+    test_fixture
+        .swap(140 * USDC_UNIT_SIZE, 0, false, true)
+        .await?;
+
+    // Swap 2: Buy SOL (sell quote) - fill top of book bid and spill to second level
+    // Selling 8 SOL should fill orders on the bid side
+    // is_base_in=true means we're sending SOL in
+    test_fixture.swap(8 * SOL_UNIT_SIZE, 0, true, true).await?;
+
+    // Swap 3: Sell SOL again (buy quote)
+    test_fixture.swap(80 * USDC_UNIT_SIZE, 0, false, true).await?;
+
+    // Swap 4: Buy SOL again (sell quote)
+    test_fixture.swap(6 * SOL_UNIT_SIZE, 0, true, true).await?;
+
+    // Verify we have resting orders (reverse orders should have flipped)
+    let orders_after: Vec<RestingOrder> =
+        test_fixture.market_fixture.get_resting_orders().await;
+    assert!(orders_after.len() > 0, "Should have resting orders after swaps");
+
+    // Record balances in wallet token accounts
+    let sol_balance_wallet = test_fixture.payer_sol_fixture.balance_atoms().await;
+    let usdc_balance_wallet = test_fixture.payer_usdc_fixture.balance_atoms().await;
+
+    // Record balances in market
+    let sol_balance_market = test_fixture
+        .market_fixture
+        .get_base_balance_atoms(&test_fixture.payer())
+        .await;
+    let usdc_balance_market = test_fixture
+        .market_fixture
+        .get_quote_balance_atoms(&test_fixture.payer())
+        .await;
+
+    // Cancel all resting orders
+    let orders_to_cancel: Vec<RestingOrder> =
+        test_fixture.market_fixture.get_resting_orders().await;
+
+    let cancels: Vec<CancelOrderParams> = orders_to_cancel
+        .iter()
+        .map(|o| CancelOrderParams::new(o.get_sequence_number()))
+        .collect();
+
+    let cancel_ix = batch_update_instruction(
+        &test_fixture.market_fixture.key,
+        &payer,
+        None,
+        cancels,
+        vec![],
+        None,
+        None,
+        None,
+        None,
+    );
+
+    send_tx_with_retry(
+        Rc::clone(&test_fixture.context),
+        &[cancel_ix],
+        Some(&payer),
+        &[&payer_keypair],
+    )
+    .await?;
+
+    // Verify all orders are cancelled
+    let orders_after_cancel = test_fixture.market_fixture.get_resting_orders().await;
+    assert_eq!(
+        orders_after_cancel.len(),
+        0,
+        "All orders should be cancelled"
+    );
+
+    // Get updated market balances after cancellation (funds should be unlocked)
+    let sol_balance_market_after = test_fixture
+        .market_fixture
+        .get_base_balance_atoms(&test_fixture.payer())
+        .await;
+    let usdc_balance_market_after = test_fixture
+        .market_fixture
+        .get_quote_balance_atoms(&test_fixture.payer())
+        .await;
+
+    // Market balance should be >= what it was before (funds unlocked from cancelled orders)
+    assert!(
+        sol_balance_market_after >= sol_balance_market,
+        "SOL market balance should not decrease after cancel"
+    );
+    assert!(
+        usdc_balance_market_after >= usdc_balance_market,
+        "USDC market balance should not decrease after cancel"
+    );
+
+    // Withdraw all tokens from the market
+    if sol_balance_market_after > 0 {
+        test_fixture
+            .withdraw(Token::SOL, sol_balance_market_after)
+            .await?;
+    }
+    if usdc_balance_market_after > 0 {
+        test_fixture
+            .withdraw(Token::USDC, usdc_balance_market_after)
+            .await?;
+    }
+
+    // Verify market balances are now zero
+    let final_sol_market = test_fixture
+        .market_fixture
+        .get_base_balance_atoms(&test_fixture.payer())
+        .await;
+    let final_usdc_market = test_fixture
+        .market_fixture
+        .get_quote_balance_atoms(&test_fixture.payer())
+        .await;
+    assert_eq!(final_sol_market, 0, "All SOL should be withdrawn");
+    assert_eq!(final_usdc_market, 0, "All USDC should be withdrawn");
+
+    // Verify wallet received the tokens
+    let final_sol_wallet = test_fixture.payer_sol_fixture.balance_atoms().await;
+    let final_usdc_wallet = test_fixture.payer_usdc_fixture.balance_atoms().await;
+
+    assert_eq!(
+        final_sol_wallet,
+        sol_balance_wallet + sol_balance_market_after,
+        "Wallet SOL should increase by withdrawn amount"
+    );
+    assert_eq!(
+        final_usdc_wallet,
+        usdc_balance_wallet + usdc_balance_market_after,
+        "Wallet USDC should increase by withdrawn amount"
+    );
+
+    // Verify total value is conserved (initial deposits + minted - what's in wallet should equal what's on market, which is 0)
+    // Total SOL: initial_sol (deposited) + 20 SOL (minted to wallet)
+    // Total USDC: initial_usdc (deposited) + 200 USDC (minted to wallet)
+    let total_sol = initial_sol + 20 * SOL_UNIT_SIZE;
+    let total_usdc = initial_usdc + 200 * USDC_UNIT_SIZE;
+
+    assert_eq!(
+        final_sol_wallet, total_sol,
+        "Total SOL should be conserved"
+    );
+    assert_eq!(
+        final_usdc_wallet, total_usdc,
+        "Total USDC should be conserved"
+    );
+
+    Ok(())
+}
+
+/// LJITSPS Test - Replays transactions for FxppP7heqS742hvuGoAzHoYYnFk3iTF7cVuDaU3V8dDQ
+///
+/// This test uses Token-2022 with TransferFeeConfig and 7 decimals to match the mainnet base token.
+/// Replays the full transaction sequence from market CKzJCoCnUVVxhfQGs1aLihpF49tCt49qJaQXofRjRFEL
+/// for trader EHeaNkrqdFvkFz5JprgoRbBD4fLH8YHKbBZ9CJ17hFcR.
+#[tokio::test]
+async fn ljitsps_test() -> anyhow::Result<()> {
+    // Set up program test
+    let program_test: ProgramTest = ProgramTest::new(
+        "manifest",
+        manifest::ID,
+        processor!(manifest::process_instruction),
+    );
+    solana_logger::setup_with_default(RUST_LOG_DEFAULT);
+
+    let context: Rc<RefCell<ProgramTestContext>> =
+        Rc::new(RefCell::new(program_test.start_with_context().await));
+
+    let payer_keypair: Keypair = context.borrow().payer.insecure_clone();
+    let payer: &Pubkey = &payer_keypair.pubkey();
+
+    // Create USDC quote mint (6 decimals, regular SPL token)
+    let mut usdc_mint_f: MintFixture =
+        MintFixture::new_with_version(Rc::clone(&context), Some(6), false).await;
+
+    // Create Token-2022 base mint with 7 decimals and TransferFeeConfig (10% = 1000 bps)
+    // Matches mainnet mint FxppP7heqS742hvuGoAzHoYYnFk3iTF7cVuDaU3V8dDQ
+    let base_mint_f: MintFixture =
+        MintFixture::new_with_transfer_fee(Rc::clone(&context), 7, 1_000).await;
+    let base_mint_key: Pubkey = base_mint_f.key;
+
+    // Create the market with Token-2022 base (7 decimals) and USDC quote (6 decimals)
+    let market_keypair =
+        create_market_with_mints(Rc::clone(&context), &base_mint_key, &usdc_mint_f.key).await?;
+
+    // Create base token account (Token-2022) and mint tokens
+    let base_token_account_keypair =
+        create_token_2022_account(Rc::clone(&context), &base_mint_key, payer).await?;
+    mint_token_2022(
+        Rc::clone(&context),
+        &base_mint_key,
+        &base_token_account_keypair.pubkey(),
+        1_000_000_000_000_000, // Large amount for testing
+    )
+    .await?;
+
+    // Create USDC token account and mint tokens
+    let usdc_token_account_keypair =
+        create_spl_token_account(Rc::clone(&context), &usdc_mint_f.key, payer).await?;
+    usdc_mint_f
+        .mint_to(&usdc_token_account_keypair.pubkey(), 1_000_000_000_000)
+        .await;
+
+    // Expand market to ensure enough free blocks for reverse orders (30+ orders placed,
+    // plus additional blocks needed for reversed orders created during swaps)
+    // Each reverse order that matches creates a new order, so we need 30 for original orders,
+    // plus 30 for reversed orders, plus buffer for the remaining resting order
+    expand_market(Rc::clone(&context), &market_keypair.pubkey(), 100).await?;
+
+    // ============================================================================
+    // Transaction 1: ClaimSeat
+    // Signature: 5ygHPCrV9ijKnCst2Kxvuky9qRt6tYJoZKa5ygb4kSZxnigWT1dsyRoELiDtaevezf6zfz2w8TrUog8DK9LUmqbe
+    // Slot: 398091113, BlockTime: 2026-02-04T22:13:28.000Z
+    // ClaimSeatLog:
+    //   market: CKzJCoCnUVVxhfQGs1aLihpF49tCt49qJaQXofRjRFEL
+    //   trader: EHeaNkrqdFvkFz5JprgoRbBD4fLH8YHKbBZ9CJ17hFcR
+    // ============================================================================
+    let claim_seat_ix: Instruction = claim_seat_instruction(&market_keypair.pubkey(), payer);
+    send_tx_with_retry(
+        Rc::clone(&context),
+        &[claim_seat_ix],
+        Some(payer),
+        &[&payer_keypair.insecure_clone()],
+    )
+    .await?;
+
+    // ============================================================================
+    // Transaction 2: Deposit base tokens
+    // Signature: 5umFNK6hYLebKUhstYJ63XeDc2ouhhmeTgYcgqeWz36nFv2peTrKVt9ytRjLdNitUo7gRZGTvWBfXrUYBAxymwiY
+    // Slot: 398091542, BlockTime: 2026-02-04T22:16:19.000Z
+    // DepositLog:
+    //   market: CKzJCoCnUVVxhfQGs1aLihpF49tCt49qJaQXofRjRFEL
+    //   trader: EHeaNkrqdFvkFz5JprgoRbBD4fLH8YHKbBZ9CJ17hFcR
+    //   mint: FxppP7heqS742hvuGoAzHoYYnFk3iTF7cVuDaU3V8dDQ
+    //   amountAtoms: 9900000000
+    // ============================================================================
+    // Deposit log is wrong because of the transfer fee.
+    let deposit_base_ix: Instruction = deposit_instruction(
+        &market_keypair.pubkey(),
+        payer,
+        &base_mint_key,
+        10_000_000_000,
+        &base_token_account_keypair.pubkey(),
+        spl_token_2022::id(),
+        None,
+    );
+    send_tx_with_retry(
+        Rc::clone(&context),
+        &[deposit_base_ix],
+        Some(payer),
+        &[&payer_keypair.insecure_clone()],
+    )
+    .await?;
+
+    // ============================================================================
+    // Transaction 3: Deposit quote tokens (USDC)
+    // Signature: 4NAzomYS5kCgJzZFdatuYL2j5Mhg4SuLTtN8FrNEqytXB6ZgcFx4UFTcG5bEjy1MWCUALPvTFFMiHU4bBrrPjRX6
+    // Slot: 398091551, BlockTime: 2026-02-04T22:16:22.000Z
+    // DepositLog:
+    //   market: CKzJCoCnUVVxhfQGs1aLihpF49tCt49qJaQXofRjRFEL
+    //   trader: EHeaNkrqdFvkFz5JprgoRbBD4fLH8YHKbBZ9CJ17hFcR
+    //   mint: EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v (USDC)
+    //   amountAtoms: 5456983
+    // ============================================================================
+    let deposit_usdc_ix: Instruction = deposit_instruction(
+        &market_keypair.pubkey(),
+        payer,
+        &usdc_mint_f.key,
+        5_456_983,
+        &usdc_token_account_keypair.pubkey(),
+        spl_token::id(),
+        None,
+    );
+    send_tx_with_retry(
+        Rc::clone(&context),
+        &[deposit_usdc_ix],
+        Some(payer),
+        &[&payer_keypair.insecure_clone()],
+    )
+    .await?;
+
+    // ============================================================================
+    // Transaction 4: Place 10 Reverse orders (seqNum 0-9)
+    // Signature: 438ZTYdKJnN7z8pc2nV8C5qz1avagJxs8KR4LGxojHtHmZ8hcUXwV5YXHWcMmmPHhm6uB5U4vT6Lb5acNMAtdeDf
+    // Slot: 398091568, BlockTime: 2026-02-04T22:16:29.000Z
+    // PlaceOrderLog (10 orders, seqNum 0-9, orderType=4 (Reverse), isBid=true)
+    //   baseAtoms: 574268, 573966, 573664, 573363, 573062, 572761, 572460, 572160, 571860, 571561
+    //   lastValidSlot: 200 for all
+    // ============================================================================
+    // Using batch_update to place multiple orders
+    // Prices derived from PlaceOrderLog: internal price = mantissa * 10^(18 + exponent)
+    // seqNum 0: price 95025000000000000 = 950250000 * 10^8, so mantissa=950250000, exponent=-10
+    // seqNum n: mantissa = 950250000 + 500000*n, exponent = -10
+    let place_orders_batch1: Vec<PlaceOrderParams> = vec![
+        PlaceOrderParams::new(574268, 950250000, -10, true, OrderType::Reverse, 200), // seqNum 0, price=95025000000000000
+        PlaceOrderParams::new(573966, 950750000, -10, true, OrderType::Reverse, 200), // seqNum 1, price=95075000000000000
+        PlaceOrderParams::new(573664, 951250000, -10, true, OrderType::Reverse, 200), // seqNum 2, price=95125000000000000
+        PlaceOrderParams::new(573363, 951750000, -10, true, OrderType::Reverse, 200), // seqNum 3, price=95175000000000000
+        PlaceOrderParams::new(573062, 952250000, -10, true, OrderType::Reverse, 200), // seqNum 4, price=95225000000000000
+        PlaceOrderParams::new(572761, 952750000, -10, true, OrderType::Reverse, 200), // seqNum 5, price=95275000000000000
+        PlaceOrderParams::new(572460, 953250000, -10, true, OrderType::Reverse, 200), // seqNum 6, price=95325000000000000
+        PlaceOrderParams::new(572160, 953750000, -10, true, OrderType::Reverse, 200), // seqNum 7, price=95375000000000000
+        PlaceOrderParams::new(571860, 954250000, -10, true, OrderType::Reverse, 200), // seqNum 8, price=95425000000000000
+        PlaceOrderParams::new(571561, 954750000, -10, true, OrderType::Reverse, 200), // seqNum 9, price=95475000000000000
+    ];
+    let batch1_ix = batch_update_instruction(
+        &market_keypair.pubkey(),
+        payer,
+        None,
+        vec![],
+        place_orders_batch1,
+        None,
+        None,
+        None,
+        None,
+    );
+    send_tx_with_retry(
+        Rc::clone(&context),
+        &[batch1_ix],
+        Some(payer),
+        &[&payer_keypair.insecure_clone()],
+    )
+    .await?;
+
+    // ============================================================================
+    // Transaction 5: Place 10 more Reverse orders (seqNum 10-19)
+    // Signature: 4X4e5QpMSveQJM5Zw4FfNFfqL8dJrkTsuKUW4mjWcecdbDkYLy2xq1ksesrWi1E6KPTgFDa1E6GxR945XoJVJabc
+    // Slot: 398091608, BlockTime: 2026-02-04T22:16:44.000Z
+    // PlaceOrderLog (10 orders, seqNum 10-19, orderType=4 (Reverse), isBid=true)
+    //   baseAtoms: 571262, 570963, 570664, 570366, 570068, 569771, 569473, 569176, 568880, 568583
+    // ============================================================================
+    // seqNum 10-19: mantissa = 950250000 + 500000*n, exponent = -10
+    let place_orders_batch2: Vec<PlaceOrderParams> = vec![
+        PlaceOrderParams::new(571262, 955250000, -10, true, OrderType::Reverse, 200), // seqNum 10, price=95525000000000000
+        PlaceOrderParams::new(570963, 955750000, -10, true, OrderType::Reverse, 200), // seqNum 11, price=95575000000000000
+        PlaceOrderParams::new(570664, 956250000, -10, true, OrderType::Reverse, 200), // seqNum 12, price=95625000000000000
+        PlaceOrderParams::new(570366, 956750000, -10, true, OrderType::Reverse, 200), // seqNum 13, price=95675000000000000
+        PlaceOrderParams::new(570068, 957250000, -10, true, OrderType::Reverse, 200), // seqNum 14, price=95725000000000000
+        PlaceOrderParams::new(569771, 957750000, -10, true, OrderType::Reverse, 200), // seqNum 15, price=95775000000000000
+        PlaceOrderParams::new(569473, 958250000, -10, true, OrderType::Reverse, 200), // seqNum 16, price=95825000000000000
+        PlaceOrderParams::new(569176, 958750000, -10, true, OrderType::Reverse, 200), // seqNum 17, price=95875000000000000
+        PlaceOrderParams::new(568880, 959250000, -10, true, OrderType::Reverse, 200), // seqNum 18, price=95925000000000000
+        PlaceOrderParams::new(568583, 959750000, -10, true, OrderType::Reverse, 200), // seqNum 19, price=95975000000000000
+    ];
+    let batch2_ix = batch_update_instruction(
+        &market_keypair.pubkey(),
+        payer,
+        None,
+        vec![],
+        place_orders_batch2,
+        None,
+        None,
+        None,
+        None,
+    );
+    send_tx_with_retry(
+        Rc::clone(&context),
+        &[batch2_ix],
+        Some(payer),
+        &[&payer_keypair.insecure_clone()],
+    )
+    .await?;
+
+    // ============================================================================
+    // Transaction 6: Place 10 more Reverse orders (seqNum 20-29)
+    // Signature: 5YdXi2iY2wXTJXSog4NFYLn6QaNWGb8owg49zrRJ6TubYyUxKYbmvnfPTckss2DsoyLSvf79UwuuAVSa9N3ZGtqW
+    // Slot: 398091617, BlockTime: 2026-02-04T22:16:47.000Z
+    // PlaceOrderLog (10 orders, seqNum 20-29, orderType=4 (Reverse), isBid=true)
+    //   baseAtoms: 568287, 567992, 567696, 567401, 567106, 566812, 566517, 566223, 565930, 565637
+    // ============================================================================
+    // seqNum 20-29: mantissa = 950250000 + 500000*n, exponent = -10
+    let place_orders_batch3: Vec<PlaceOrderParams> = vec![
+        PlaceOrderParams::new(568287, 960250000, -10, true, OrderType::Reverse, 200), // seqNum 20, price=96025000000000000
+        PlaceOrderParams::new(567992, 960750000, -10, true, OrderType::Reverse, 200), // seqNum 21, price=96075000000000000
+        PlaceOrderParams::new(567696, 961250000, -10, true, OrderType::Reverse, 200), // seqNum 22, price=96125000000000000
+        PlaceOrderParams::new(567401, 961750000, -10, true, OrderType::Reverse, 200), // seqNum 23, price=96175000000000000
+        PlaceOrderParams::new(567106, 962250000, -10, true, OrderType::Reverse, 200), // seqNum 24, price=96225000000000000
+        PlaceOrderParams::new(566812, 962750000, -10, true, OrderType::Reverse, 200), // seqNum 25, price=96275000000000000
+        PlaceOrderParams::new(566517, 963250000, -10, true, OrderType::Reverse, 200), // seqNum 26, price=96325000000000000
+        PlaceOrderParams::new(566223, 963750000, -10, true, OrderType::Reverse, 200), // seqNum 27, price=96375000000000000
+        PlaceOrderParams::new(565930, 964250000, -10, true, OrderType::Reverse, 200), // seqNum 28, price=96425000000000000
+        PlaceOrderParams::new(565637, 964750000, -10, true, OrderType::Reverse, 200), // seqNum 29, price=96475000000000000
+    ];
+    let batch3_ix = batch_update_instruction(
+        &market_keypair.pubkey(),
+        payer,
+        None,
+        vec![],
+        place_orders_batch3,
+        None,
+        None,
+        None,
+        None,
+    );
+    send_tx_with_retry(
+        Rc::clone(&context),
+        &[batch3_ix],
+        Some(payer),
+        &[&payer_keypair.insecure_clone()],
+    )
+    .await?;
+
+    // ============================================================================
+    // Transaction 7: First wash trade (22 FillLogs + 1 PlaceOrderLog)
+    // Signature: 4bvUgaLiGam7SPkm2ExdqWp1a1p5AZjpQCcXdcugMsSFQGRdcRxWdhSULv1KC4zZRiZgoyWMbr38GALZbN2eDKeE
+    // Slot: 398092028, BlockTime: 2026-02-04T22:19:29.000Z
+    //
+    // On mainnet this was a batch_update through wrapper program
+    // (wMNFSTkir3HgyZTsB7uqu3i7FA73grFCptPXgrZjksL), NOT a swap instruction.
+    //
+    // Instruction data from mainnet:
+    //   - Price: 954250000e-10 (inner: 95425000000000000, matches seqNum 8's price)
+    //   - This only matches bids at seqNum 8-29 (prices >= 95425e12)
+    //   - Orders 0-7 have prices below 95425e12 and were NOT matched
+    //
+    // Mainnet logs:
+    //   - 22 FillLogs (seqNum 29 down to 8), takerIsBuy=false
+    //   - PlaceOrderLog: baseAtoms=12512230, seqNum=52, isBid=false, orderType=0
+    //
+    // Note: batch_update requires base tokens deposited in the market first.
+    // On mainnet, the wrapper program handles this. This test needs a base deposit
+    // before this instruction (or switch back to swap instruction).
+    // ============================================================================
+    let batch7_ix = batch_update_instruction(
+        &market_keypair.pubkey(),
+        payer,
+        None,
+        vec![],
+        vec![PlaceOrderParams::new(
+            12_512_230, // base_atoms (resting from PlaceOrderLog)
+            954250000,  // price_mantissa
+            -10,        // price_exponent
+            false,      // is_bid
+            OrderType::Limit,
+            0,
+        )],
+        None,
+        None,
+        None,
+        None,
+    );
+    send_tx_with_retry(
+        Rc::clone(&context),
+        &[batch7_ix],
+        Some(payer),
+        &[&payer_keypair.insecure_clone()],
+    )
+    .await?;
+
+    // ============================================================================
+    // Transaction 8: Batch update placing a bid (2 FillLogs + 1 PlaceOrderLog)
+    // Signature: 5SrXBQp7vTX9uajZuyBJL7rGEMLmGzntgXZkSSioQ3hdEvcwMZs8FruwhHHJfrpKi9UQZXeViPQmXbWFp2NahaPr
+    // Slot: 398092361, BlockTime: 2026-02-04T22:21:39.000Z
+    //
+    // On mainnet this was a batch_update through wrapper program.
+    //
+    // Mainnet logs:
+    //   - FillLog: baseAtoms=2, makerSeqNum=52, takerIsBuy=true
+    //   - FillLog: baseAtoms=99998, makerSeqNum=51, takerIsBuy=true
+    //   - PlaceOrderLog: baseAtoms=100000, seqNum=54, isBid=true, orderType=0, price=100000000000000000
+    // ============================================================================
+    let batch8_ix = batch_update_instruction(
+        &market_keypair.pubkey(),
+        payer,
+        None,
+        vec![],
+        vec![PlaceOrderParams::new(
+            100_000,      // base_atoms
+            1000000000,   // price_mantissa (1e17 = 1e9 * 10^8)
+            -10,          // price_exponent
+            true,         // is_bid
+            OrderType::Limit,
+            0,
+        )],
+        None,
+        None,
+        None,
+        None,
+    );
+    send_tx_with_retry(
+        Rc::clone(&context),
+        &[batch8_ix],
+        Some(payer),
+        &[&payer_keypair.insecure_clone()],
+    )
+    .await?;
+
+    // ============================================================================
+    // Transaction 9: Swap selling base (1 FillLog + 1 PlaceOrderLog)
+    // Signature: 4VprY8WzSJiHqm5Nfs5YDboZ3WtGi3fiC5oUf9Z1A4WTuuXsR7WQUWkEBMABTrTCVndXs36TZe6UZHJQFPDYoqmi
+    // Slot: 398092560, BlockTime: 2026-02-04T22:22:56.000Z
+    // FillLog: baseAtoms=100204, makerSeqNum=53, takerSeqNum=55, takerIsBuy=false
+    // PlaceOrderLog: baseAtoms=50000000, price=95425000000000000, seqNum=55, lastValidSlot=0, isBid=false, orderType=0
+    // ============================================================================
+    let batch9_ix = batch_update_instruction(
+        &market_keypair.pubkey(),
+        payer,
+        None,
+        vec![],
+        vec![PlaceOrderParams::new(50000000, 954250000, -10, false, OrderType::Limit, 0)], // seqNum 55, price=95425000000000000
+        None,
+        None,
+        None,
+        None,
+    );
+    send_tx_with_retry(
+        Rc::clone(&context),
+        &[batch9_ix],
+        Some(payer),
+        &[&payer_keypair.insecure_clone()],
+    )
+    .await?;
+
+    // ============================================================================
+    // Transaction 10: Place bid order
+    // Signature: 4Rv8UJ8Zy4BdDUQ5BsUoZuVsybeApziAcv9r5mnZSx1TCZX4uevMq1w929y11jijwwMAD6LKNaRTxZgYK7kUQy7X
+    // Slot: 398092800, BlockTime: 2026-02-04T22:24:29.000Z
+    // PlaceOrderLog: baseAtoms=572160, price=95375000000000000, seqNum=56, lastValidSlot=0, isBid=true, orderType=0
+    // ============================================================================
+    let batch10_ix = batch_update_instruction(
+        &market_keypair.pubkey(),
+        payer,
+        None,
+        vec![],
+        vec![PlaceOrderParams::new(572160, 953750000, -10, true, OrderType::Limit, 0)], // seqNum 56, price=95375000000000000
+        None,
+        None,
+        None,
+        None,
+    );
+    send_tx_with_retry(
+        Rc::clone(&context),
+        &[batch10_ix],
+        Some(payer),
+        &[&payer_keypair.insecure_clone()],
+    )
+    .await?;
+
+    // ============================================================================
+    // Transaction 11: Place ask order
+    // Signature: 67PdKf5YNQWHaJj7CtdFscMTM6LeEttG8HNm54uNaMDhXfD4XLCFb93kXfGmYX3Kfx49ELEpCUo2vBQbhd3hYevz
+    // Slot: 398092936, BlockTime: 2026-02-04T22:25:22.000Z
+    // PlaceOrderLog: baseAtoms=40000000, price=400000000000000000, seqNum=57, isBid=false, orderType=0
+    // ============================================================================
+    let batch11_ix = batch_update_instruction(
+        &market_keypair.pubkey(),
+        payer,
+        None,
+        vec![],
+        vec![PlaceOrderParams::new(40000000, 4000000000, -10, false, OrderType::Limit, 0)], // seqNum 57, price=400000000000000000
+        None,
+        None,
+        None,
+        None,
+    );
+    send_tx_with_retry(
+        Rc::clone(&context),
+        &[batch11_ix],
+        Some(payer),
+        &[&payer_keypair.insecure_clone()],
+    )
+    .await?;
+
+    // ============================================================================
+    // Transaction 12: Place ReverseLimit ask order
+    // Signature: 2FDyG5w6XKLiZkPEqaGLB5psqDx7sX7WgvVeMUP9DivEQp2DbQaKdGYvhbMsFt359kspLMFFxNUdvonUQ9Cx2iQF
+    // Slot: 398093952, BlockTime: 2026-02-04T22:32:01.000Z
+    // PlaceOrderLog: baseAtoms=9386750, price=95425000000000000, seqNum=58, lastValidSlot=0, isBid=false, orderType=5
+    // ============================================================================
+    let batch12_ix = batch_update_instruction(
+        &market_keypair.pubkey(),
+        payer,
+        None,
+        vec![],
+        vec![PlaceOrderParams::new(9386750, 954250000, -10, false, OrderType::ReverseTight, 0)], // seqNum 58, price=95425000000000000
+        None,
+        None,
+        None,
+        None,
+    );
+    send_tx_with_retry(
+        Rc::clone(&context),
+        &[batch12_ix],
+        Some(payer),
+        &[&payer_keypair.insecure_clone()],
+    )
+    .await?;
+
+    // ============================================================================
+    // Transaction 13: Place ReverseLimit bid order
+    // Signature: 4Key3TFmVB2kJYe1TiBhBcSrJL5nSFm4baEDJkfpdw3LQzYdCeZ2LTcpdgjQFvEGh43j12du6HCQoqxXs5TrnyHn
+    // Slot: 398094284, BlockTime: 2026-02-04T22:34:11.000Z
+    // PlaceOrderLog: baseAtoms=49899800, price=95375000000000000, seqNum=59, lastValidSlot=0, isBid=true, orderType=5
+    // ============================================================================
+    let batch13_ix = batch_update_instruction(
+        &market_keypair.pubkey(),
+        payer,
+        None,
+        vec![],
+        vec![PlaceOrderParams::new(49899800, 953750000, -10, true, OrderType::ReverseTight, 0)], // seqNum 59, price=95375000000000000
+        None,
+        None,
+        None,
+        None,
+    );
+    send_tx_with_retry(
+        Rc::clone(&context),
+        &[batch13_ix],
+        Some(payer),
+        &[&payer_keypair.insecure_clone()],
+    )
+    .await?;
+
+    // ============================================================================
+    // Transaction 14: Swap selling base (3 FillLogs + 1 PlaceOrderLog)
+    // Signature: Jh8Kpa8saVY9715mzgpLyhNY2L15D5wk9mCH24vFDydfeiciw2oTfyRZdYcbkGXD1zhXAcywuV1XW7UJ9t8pKUv
+    // Slot: 398094545, BlockTime: 2026-02-04T22:35:55.000Z
+    // FillLog: baseAtoms=572160, makerSeqNum=7, takerSeqNum=60, takerIsBuy=false
+    // FillLog: baseAtoms=572160, makerSeqNum=56, takerSeqNum=61, takerIsBuy=false
+    // FillLog: baseAtoms=8855680, makerSeqNum=59, takerSeqNum=61, takerIsBuy=false
+    // PlaceOrderLog: baseAtoms=10000000, price=95375000000000000, seqNum=62, lastValidSlot=0, isBid=false, orderType=0
+    // ============================================================================
+    let batch14_ix = batch_update_instruction(
+        &market_keypair.pubkey(),
+        payer,
+        None,
+        vec![],
+        vec![PlaceOrderParams::new(10000000, 953750000, -10, false, OrderType::Limit, 0)], // seqNum 62, price=95375000000000000
+        None,
+        None,
+        None,
+        None,
+    );
+    send_tx_with_retry(
+        Rc::clone(&context),
+        &[batch14_ix],
+        Some(payer),
+        &[&payer_keypair.insecure_clone()],
+    )
+    .await?;
+
+    // ============================================================================
+    // Transaction 15: Swap buying base (1 FillLog + 1 PlaceOrderLog)
+    // Signature: XFp6NQQbrejL6Fqa6M8pJDgrm1CxptqoFz3TpkZq3KEmh3DXccmsE3oSvFvHFineP2HpqXgywfVtMtvXGRTHvp9
+    // Slot: 398094740, BlockTime: 2026-02-04T22:37:13.000Z
+    // FillLog: baseAtoms=8855680, makerSeqNum=61, takerSeqNum=63, takerIsBuy=true
+    // PlaceOrderLog: baseAtoms=10000000, price=95375000000000000, seqNum=63, lastValidSlot=0, isBid=true, orderType=0
+    // ============================================================================
+    let batch15_ix = batch_update_instruction(
+        &market_keypair.pubkey(),
+        payer,
+        None,
+        vec![],
+        vec![PlaceOrderParams::new(10000000, 953750000, -10, true, OrderType::Limit, 0)], // seqNum 63, price=95375000000000000
+        None,
+        None,
+        None,
+        None,
+    );
+    send_tx_with_retry(
+        Rc::clone(&context),
+        &[batch15_ix],
+        Some(payer),
+        &[&payer_keypair.insecure_clone()],
+    )
+    .await?;
+
+    // ============================================================================
+    // Transaction 16: Swap selling base (1 FillLog + 1 PlaceOrderLog)
+    // Signature: 5BsAE7gkfUJBNNULAdsGntQKuGF59KNB1WZGYDK3AykG8KaAUJRnGrHcuxoUgdEaaWxhSNHrSAp7v9AY2cs9vSnC
+    // Slot: 398094907, BlockTime: 2026-02-04T22:38:21.000Z
+    // FillLog: baseAtoms=30000000, makerSeqNum=59, takerSeqNum=64, takerIsBuy=false
+    // PlaceOrderLog: baseAtoms=30000000, price=95375000000000000, seqNum=65, lastValidSlot=0, isBid=false, orderType=0
+    // ============================================================================
+    let batch16_ix = batch_update_instruction(
+        &market_keypair.pubkey(),
+        payer,
+        None,
+        vec![],
+        vec![PlaceOrderParams::new(30000000, 953750000, -10, false, OrderType::Limit, 0)], // seqNum 65, price=95375000000000000
+        None,
+        None,
+        None,
+        None,
+    );
+    send_tx_with_retry(
+        Rc::clone(&context),
+        &[batch16_ix],
+        Some(payer),
+        &[&payer_keypair.insecure_clone()],
+    )
+    .await?;
+
+    // ============================================================================
+    // Transaction 17: Swap selling base with expire (2 FillLogs + 1 PlaceOrderLog)
+    // Signature: 38gRpWgKdjQAqRn3infgpvsSYGcdBFVJyQ7XzNYAr5Y2mcf6k1cbgVHBGsBzi1pqkPCRr9tGdrpj9kGuTL7auPhu
+    // Slot: 398095179, BlockTime: 2026-02-04T22:40:10.000Z
+    // FillLog: baseAtoms=19899794, makerSeqNum=59, takerSeqNum=66
+    // FillLog: baseAtoms=1144320, makerSeqNum=63, takerSeqNum=66
+    // PlaceOrderLog: baseAtoms=50000000, price=95375000000000000, seqNum=66, lastValidSlot=398311171, isBid=false, orderType=0
+    // ============================================================================
+    let batch17_ix = batch_update_instruction(
+        &market_keypair.pubkey(),
+        payer,
+        None,
+        vec![],
+        vec![PlaceOrderParams::new(50000000, 953750000, -10, false, OrderType::Limit, 398311171)], // seqNum 66, price=95375000000000000
+        None,
+        None,
+        None,
+        None,
+    );
+    send_tx_with_retry(
+        Rc::clone(&context),
+        &[batch17_ix],
+        Some(payer),
+        &[&payer_keypair.insecure_clone()],
+    )
+    .await?;
+
+    // ============================================================================
+    // Transaction 18: Place bid order
+    // Signature: 3CkzspGdTgyqcjUiPy7Q3NrBNZM9ZJZ6UEoGdSzvEmGbKp2u5DTdjwEmE8csxqpX9oP1EZwuXXxNGppVbECvm7ys
+    // Slot: 398095437, BlockTime: 2026-02-04T22:41:51.000Z
+    // PlaceOrderLog: baseAtoms=40000000, price=95325000000000000, seqNum=67, lastValidSlot=0, isBid=true, orderType=0
+    // ============================================================================
+    let batch18_ix = batch_update_instruction(
+        &market_keypair.pubkey(),
+        payer,
+        None,
+        vec![],
+        vec![PlaceOrderParams::new(40000000, 953250000, -10, true, OrderType::Limit, 0)], // seqNum 67
+        None,
+        None,
+        None,
+        None,
+    );
+    send_tx_with_retry(
+        Rc::clone(&context),
+        &[batch18_ix],
+        Some(payer),
+        &[&payer_keypair.insecure_clone()],
+    )
+    .await?;
+
+    // ============================================================================
+    // Transaction 19: Swap selling base (2 FillLogs + 1 PlaceOrderLog)
+    // Signature: 2c3NsqVbxpG8VYkhBaVnbBDLZDtfAJRqxjouuNYx8qaCsr79Z5j1Aur5fuGvnUxswmnknb4orGzafAeMUJxQQtMg
+    // Slot: 398095462, BlockTime: 2026-02-04T22:42:01.000Z
+    // FillLog: baseAtoms=572460, makerSeqNum=6, takerSeqNum=68
+    // FillLog: baseAtoms=29427540, makerSeqNum=67, takerSeqNum=69
+    // PlaceOrderLog: baseAtoms=30000000, price=95325000000000000, seqNum=69, lastValidSlot=0, isBid=false, orderType=0
+    // ============================================================================
+    let batch19_ix = batch_update_instruction(
+        &market_keypair.pubkey(),
+        payer,
+        None,
+        vec![],
+        vec![PlaceOrderParams::new(30000000, 953250000, -10, false, OrderType::Limit, 0)], // seqNum 69, price=95325000000000000
+        None,
+        None,
+        None,
+        None,
+    );
+    send_tx_with_retry(
+        Rc::clone(&context),
+        &[batch19_ix],
+        Some(payer),
+        &[&payer_keypair.insecure_clone()],
+    )
+    .await?;
+
+    // ============================================================================
+    // Transaction 20: Swap selling base (1 FillLog + 1 PlaceOrderLog)
+    // Signature: 4BaxKNppr7Nsqcy1WPyXducDy6ADYDG3skw95DuqFdL4eERgKFPy6Fpgmd4K96UTERbvHv88daaT9eYCAd31Fzcd
+    // Slot: 398095480, BlockTime: 2026-02-04T22:42:08.000Z
+    // FillLog: baseAtoms=10572460, makerSeqNum=67, takerSeqNum=70
+    // PlaceOrderLog: baseAtoms=30000000, price=95325000000000000, seqNum=70, lastValidSlot=0, isBid=false, orderType=0
+    // ============================================================================
+    let batch20_ix = batch_update_instruction(
+        &market_keypair.pubkey(),
+        payer,
+        None,
+        vec![],
+        vec![PlaceOrderParams::new(30000000, 953250000, -10, false, OrderType::Limit, 0)], // seqNum 70, price=95325000000000000
+        None,
+        None,
+        None,
+        None,
+    );
+    send_tx_with_retry(
+        Rc::clone(&context),
+        &[batch20_ix],
+        Some(payer),
+        &[&payer_keypair.insecure_clone()],
+    )
+    .await?;
+
+    // ============================================================================
+    // Transaction 21: Swap selling base (1 FillLog + 1 PlaceOrderLog)
+    // Signature: 2uV2r78ygbcGHtyCY2jM7z9stFjG9Hmi9fFnRKLbxgaDM35PBu1GUxkgnBMqWfRzwvVMnHnyPr2bDzP6JNNxSJic
+    // Slot: 398095515, BlockTime: 2026-02-04T22:42:21.000Z
+    // FillLog: baseAtoms=572761, makerSeqNum=5, takerSeqNum=71
+    // PlaceOrderLog: baseAtoms=20000000, price=95275000000000000, seqNum=72, lastValidSlot=0, isBid=false, orderType=0
+    // ============================================================================
+    let batch21_ix = batch_update_instruction(
+        &market_keypair.pubkey(),
+        payer,
+        None,
+        vec![],
+        vec![PlaceOrderParams::new(20000000, 952750000, -10, false, OrderType::Limit, 0)], // seqNum 72, price=95275000000000000
+        None,
+        None,
+        None,
+        None,
+    );
+    send_tx_with_retry(
+        Rc::clone(&context),
+        &[batch21_ix],
+        Some(payer),
+        &[&payer_keypair.insecure_clone()],
+    )
+    .await?;
+
+    // ============================================================================
+    // Transaction 22: Place bid order
+    // Signature: hwMhbGJ2gyhQAti4JJEVv9etJEknixZXnkHQ1PbkYNyRoqDNYDanr7BG976Eaky9SphwsZZTLezQE6XHmEQRK6D
+    // Slot: 398095541, BlockTime: 2026-02-04T22:42:30.000Z
+    // PlaceOrderLog: baseAtoms=40000000, price=95225000000000000, seqNum=73, lastValidSlot=0, isBid=true, orderType=0
+    // ============================================================================
+    let batch22_ix = batch_update_instruction(
+        &market_keypair.pubkey(),
+        payer,
+        None,
+        vec![],
+        vec![PlaceOrderParams::new(40000000, 952250000, -10, true, OrderType::Limit, 0)], // seqNum 73
+        None,
+        None,
+        None,
+        None,
+    );
+    send_tx_with_retry(
+        Rc::clone(&context),
+        &[batch22_ix],
+        Some(payer),
+        &[&payer_keypair.insecure_clone()],
+    )
+    .await?;
+
+    // ============================================================================
+    // Transaction 23: Deposit base tokens (large deposit)
+    // Signature: 43n2iMie5WpvxLXhgUJ17ffKu1KRJav5jw9auQ1NLCZWVpwaaRmqsXA3UKLSAjWGYQbpNNJMxPxGsVorK5kZXNei
+    // Slot: 398134844, BlockTime: 2026-02-05T03:00:28.000Z
+    // DepositLog: mint=base, amountAtoms=572979102300000
+    // ============================================================================
+    // Deposit log does not match because of transfer fee
+    let deposit_ix23: Instruction = deposit_instruction(
+        &market_keypair.pubkey(),
+        payer,
+        &base_mint_key,
+        578766770000000,
+        &base_token_account_keypair.pubkey(),
+        spl_token_2022::id(),
+        None,
+    );
+    send_tx_with_retry(
+        Rc::clone(&context),
+        &[deposit_ix23],
+        Some(payer),
+        &[&payer_keypair.insecure_clone()],
+    )
+    .await?;
+
+    // ============================================================================
+    // Transaction 24: Place ReverseTight ask order
+    // Signature: 4mnsPiQLUoxLaY3YLMGFtCYr6i5UFtV2ckcsupmefbD5F3dCnoPUnhzQFDtiiH9J2s3e1ACZSeWBVTYHGpdDmQVG
+    // Slot: 398135458, BlockTime: 2026-02-05T03:04:30.000Z
+    // PlaceOrderLog: baseAtoms=7770000000, price=95275000000000000, seqNum=74, lastValidSlot=0, isBid=false, orderType=5
+    // ============================================================================
+    let batch24_ix = batch_update_instruction(
+        &market_keypair.pubkey(),
+        payer,
+        None,
+        vec![],
+        vec![PlaceOrderParams::new(7770000000, 952750000, -10, false, OrderType::ReverseTight, 0)], // seqNum 74
+        None,
+        None,
+        None,
+        None,
+    );
+    send_tx_with_retry(
+        Rc::clone(&context),
+        &[batch24_ix],
+        Some(payer),
+        &[&payer_keypair.insecure_clone()],
+    )
+    .await?;
+
+    // ============================================================================
+    // Transaction 25: Place ReverseTight bid order
+    // Signature: 4m3Uf48gQEpC7HGAXGhjcnXEji3Fraec6LRnteSgco7YzjJ2s74m3xdiuqQGGzZPnTp5U9oZh5EKKH1PooePHpXR
+    // Slot: 398135876, BlockTime: 2026-02-05T03:07:17.000Z
+    // PlaceOrderLog: baseAtoms=10000000, price=95225000000000000, seqNum=75, lastValidSlot=0, isBid=true, orderType=5
+    // ============================================================================
+    let batch25_ix = batch_update_instruction(
+        &market_keypair.pubkey(),
+        payer,
+        None,
+        vec![],
+        vec![PlaceOrderParams::new(10000000, 952250000, -10, true, OrderType::ReverseTight, 0)], // seqNum 75
+        None,
+        None,
+        None,
+        None,
+    );
+    send_tx_with_retry(
+        Rc::clone(&context),
+        &[batch25_ix],
+        Some(payer),
+        &[&payer_keypair.insecure_clone()],
+    )
+    .await?;
+
+    // ============================================================================
+    // Transaction 26: Swap selling base (6 FillLogs + 1 PlaceOrderLog)
+    // Signature: 3KPv7Nxe98PGvk9WcsfRrvVGZM9Gjbr2Dz1YNUWDWCFvGe5f7uyP9PKkpe1JMgKQkA5JeMackJb4xCVrJSfEX5By
+    // Slot: 398136337, BlockTime: 2026-02-05T03:10:20.000Z
+    // FillLog: baseAtoms=573062, makerSeqNum=4, takerSeqNum=76
+    // FillLog: baseAtoms=40000000, makerSeqNum=73, takerSeqNum=77
+    // FillLog: baseAtoms=10000000, makerSeqNum=75, takerSeqNum=77
+    // FillLog: baseAtoms=573363, makerSeqNum=3, takerSeqNum=78
+    // FillLog: baseAtoms=573664, makerSeqNum=2, takerSeqNum=79
+    // FillLog: baseAtoms=573966, makerSeqNum=1, takerSeqNum=80
+    // PlaceOrderLog: baseAtoms=52294060, price=95075000000000000, seqNum=81, lastValidSlot=0, isBid=false, orderType=0
+    // ============================================================================
+    let batch26_ix = batch_update_instruction(
+        &market_keypair.pubkey(),
+        payer,
+        None,
+        vec![],
+        vec![PlaceOrderParams::new(52294060, 950750000, -10, false, OrderType::Limit, 0)], // seqNum 81, price=95075000000000000
+        None,
+        None,
+        None,
+        None,
+    );
+    send_tx_with_retry(
+        Rc::clone(&context),
+        &[batch26_ix],
+        Some(payer),
+        &[&payer_keypair.insecure_clone()],
+    )
+    .await?;
+
+    // ============================================================================
+    // Transaction 27: Place ReverseTight bid order
+    // Signature: a8LVjB6aF8thTJcfNNzug87jU6cR9XqG8nYJb8jL2VKBHwJgjM76NRWEUkJx7yCfNorCCUNerp4DMrvbDbwADwH
+    // Slot: 398136896, BlockTime: 2026-02-05T03:13:59.000Z
+    // PlaceOrderLog: baseAtoms=50199999, price=95025000000000000, seqNum=82, lastValidSlot=0, isBid=true, orderType=5
+    // ============================================================================
+    let batch27_ix = batch_update_instruction(
+        &market_keypair.pubkey(),
+        payer,
+        None,
+        vec![],
+        vec![PlaceOrderParams::new(50199999, 950250000, -10, true, OrderType::ReverseTight, 0)], // seqNum 82
+        None,
+        None,
+        None,
+        None,
+    );
+    send_tx_with_retry(
+        Rc::clone(&context),
+        &[batch27_ix],
+        Some(payer),
+        &[&payer_keypair.insecure_clone()],
+    )
+    .await?;
+
+    // ============================================================================
+    // Transaction 28: Place ReverseTight ask order
+    // Signature: 4hvuvjyNn8nhL9Y5z9B8oPwykWLqMGtrWBq7ockTH2EvgYXsK9pgwz7eBuxCNY897bdS2j691ifwFKCc5wR7wdox
+    // Slot: 398137340, BlockTime: 2026-02-05T03:16:53.000Z
+    // PlaceOrderLog: baseAtoms=7800574870, price=95315631300000000, seqNum=83, lastValidSlot=0, isBid=false, orderType=5
+    // ============================================================================
+    let batch28_ix = batch_update_instruction(
+        &market_keypair.pubkey(),
+        payer,
+        None,
+        vec![],
+        vec![PlaceOrderParams::new(7800574870, 953156313, -10, false, OrderType::ReverseTight, 0)], // seqNum 83
+        None,
+        None,
+        None,
+        None,
+    );
+    send_tx_with_retry(
+        Rc::clone(&context),
+        &[batch28_ix],
+        Some(payer),
+        &[&payer_keypair.insecure_clone()],
+    )
+    .await?;
+
+    // ============================================================================
+    // Transaction 29: Place Limit bid order
+    // Signature: YNU364QWESzJDWMnVfZtoTY5S33ihnZx9r6Jsv7o5rdB5cETNYmkNFA47SmRfQJfSAR664H6p7ZRfJgRLSEzoLe
+    // Slot: 398137583, BlockTime: 2026-02-05T03:18:29.000Z
+    // PlaceOrderLog: baseAtoms=574270, price=95025000000000000, seqNum=84, lastValidSlot=0, isBid=true, orderType=0
+    // ============================================================================
+    let batch29_ix = batch_update_instruction(
+        &market_keypair.pubkey(),
+        payer,
+        None,
+        vec![],
+        vec![PlaceOrderParams::new(574270, 950250000, -10, true, OrderType::Limit, 0)], // seqNum 84
+        None,
+        None,
+        None,
+        None,
+    );
+    send_tx_with_retry(
+        Rc::clone(&context),
+        &[batch29_ix],
+        Some(payer),
+        &[&payer_keypair.insecure_clone()],
+    )
+    .await?;
+
+    // ============================================================================
+    // Transaction 30: Place Limit ask order
+    // Signature: 572pLem7vK8oaovdZFiC9N9zLpb6NKrjxsXQvgMJNYzySHN3zYZiH4kuaKM1qtFSyzfJ5syLaWsX1jnoPKEanEix
+    // Slot: 398137845, BlockTime: 2026-02-05T03:20:12.000Z
+    // PlaceOrderLog: baseAtoms=15601149740, price=95315631300000000, seqNum=85, lastValidSlot=0, isBid=false, orderType=0
+    // ============================================================================
+    let batch30_ix = batch_update_instruction(
+        &market_keypair.pubkey(),
+        payer,
+        None,
+        vec![],
+        vec![PlaceOrderParams::new(15601149740, 953156313, -10, false, OrderType::Limit, 0)], // seqNum 85
+        None,
+        None,
+        None,
+        None,
+    );
+    send_tx_with_retry(
+        Rc::clone(&context),
+        &[batch30_ix],
+        Some(payer),
+        &[&payer_keypair.insecure_clone()],
+    )
+    .await?;
+
+    // ============================================================================
+    // Transaction 31: Swap selling base (2 FillLogs + 1 PlaceOrderLog)
+    // Signature: 27TSnWKcJZwdzLG5uR274G3GqUNJ5WwCsXJMhMq7typcRgwwS9vhCKaEyiEwR8vATkRENEBfjggnnCTqWxaFnyV7
+    // Slot: 398138633, BlockTime: 2026-02-05T03:25:21.000Z
+    // FillLog: baseAtoms=574268, makerSeqNum=0, takerSeqNum=86
+    // FillLog: baseAtoms=2, makerSeqNum=82, takerSeqNum=87
+    // PlaceOrderLog: baseAtoms=574270, price=95025000000000000, seqNum=88, lastValidSlot=0, isBid=false, orderType=0
+    // ============================================================================
+    let batch31_ix = batch_update_instruction(
+        &market_keypair.pubkey(),
+        payer,
+        None,
+        vec![],
+        vec![PlaceOrderParams::new(574270, 950250000, -10, false, OrderType::Limit, 0)], // seqNum 88, price=95025000000000000
+        None,
+        None,
+        None,
+        None,
+    );
+    send_tx_with_retry(
+        Rc::clone(&context),
+        &[batch31_ix],
+        Some(payer),
+        &[&payer_keypair.insecure_clone()],
+    )
+    .await?;
+
+    // ============================================================================
+    // Transaction 32: Place Limit ask order
+    // Signature: 3qKKGtuje7vWa3dkKrnbZx7r32eNLGpJK7grjKppBzZiL6xhQatPmuX7sHhuFAwan1HTiW18zGLjNSf2XBGgqPB
+    // Slot: 398139540, BlockTime: 2026-02-05T03:31:16.000Z
+    // PlaceOrderLog: baseAtoms=15601724010, price=95315631300000000, seqNum=89, lastValidSlot=0, isBid=false, orderType=0
+    // ============================================================================
+    let batch32_ix = batch_update_instruction(
+        &market_keypair.pubkey(),
+        payer,
+        None,
+        vec![],
+        vec![PlaceOrderParams::new(15601724010, 953156313, -10, false, OrderType::Limit, 0)], // seqNum 89
+        None,
+        None,
+        None,
+        None,
+    );
+    send_tx_with_retry(
+        Rc::clone(&context),
+        &[batch32_ix],
+        Some(payer),
+        &[&payer_keypair.insecure_clone()],
+    )
+    .await?;
+
+    // ============================================================================
+    // Transaction 33: Cancel order
+    // Signature: 3jZs6Kp9PqboRX5ngBHoo48SNGHRj1tfSAhJFKbFj9U1qXzaGPJELUuarAVR7RViYG9jLJicZ3pwui2dUjSLSSHs
+    // Slot: 398144682, BlockTime: 2026-02-05T04:04:53.000Z
+    // CancelOrderLog: seqNum=85
+    // ============================================================================
+    let batch33_ix = batch_update_instruction(
+        &market_keypair.pubkey(),
+        payer,
+        None,
+        vec![CancelOrderParams::new(85)],
+        vec![],
+        None,
+        None,
+        None,
+        None,
+    );
+    send_tx_with_retry(
+        Rc::clone(&context),
+        &[batch33_ix],
+        Some(payer),
+        &[&payer_keypair.insecure_clone()],
+    )
+    .await?;
+
+    // ============================================================================
+    // Transaction 34: Cancel order
+    // Signature: 3stRrsFfyvZ1yb16BWXb3EtYknhidv68EncaWsJSHn5ghdC8ZLQUxrxwqr9xFH2iaLKa8YAHxc8oAxs16VeSpH2C
+    // Slot: 398144845, BlockTime: 2026-02-05T04:05:57.000Z
+    // CancelOrderLog: seqNum=74
+    // ============================================================================
+    let batch35_ix = batch_update_instruction(
+        &market_keypair.pubkey(),
+        payer,
+        None,
+        vec![CancelOrderParams::new(74)],
+        vec![],
+        None,
+        None,
+        None,
+        None,
+    );
+    send_tx_with_retry(
+        Rc::clone(&context),
+        &[batch35_ix],
+        Some(payer),
+        &[&payer_keypair.insecure_clone()],
+    )
+    .await?;
+
+    // ============================================================================
+    // Transaction 35: Cancel order
+    // Signature: 66j27Vng1kJGUdn3QGgjYjr2EXYCTKV2x8zsSkhXSm1nQoX32bYvEdtoxGdDaxcarbV81GCgcK4bpFB2KpPz5U3P
+    // Slot: 398145008, BlockTime: 2026-02-05T04:07:01.000Z
+    // CancelOrderLog: seqNum=82
+    // ============================================================================
+    let batch35_ix = batch_update_instruction(
+        &market_keypair.pubkey(),
+        payer,
+        None,
+        vec![CancelOrderParams::new(82)],
+        vec![],
+        None,
+        None,
+        None,
+        None,
+    );
+    send_tx_with_retry(
+        Rc::clone(&context),
+        &[batch35_ix],
+        Some(payer),
+        &[&payer_keypair.insecure_clone()],
+    )
+    .await?;
+
+    // ============================================================================
+    // Transaction 36: Swap buying base (1 FillLog + 1 PlaceOrderLog)
+    // Signature: 4ygKsuxgpYnighLSJJn1ox5gCQLAKWRk6zXqTNvTKyJm1CSUuSRfRdCH6dtzNq7bVUetU4Kfs2au5BLVB84psxXR
+    // Slot: 398147856, BlockTime: 2026-02-05T04:25:37.000Z
+    // FillLog: baseAtoms=2, quoteAtoms=0, price=95025000000000000, makerSeqNum=87, takerSeqNum=90, takerIsBuy=true
+    // PlaceOrderLog: baseAtoms=574270, price=95025000000000000, seqNum=90, lastValidSlot=0, isBid=true, orderType=0
+    // ============================================================================
+    let batch36_ix = batch_update_instruction(
+        &market_keypair.pubkey(),
+        payer,
+        None,
+        vec![],
+        vec![PlaceOrderParams::new(574270, 950250000, -10, true, OrderType::Limit, 0)], // seqNum 90, price=95025000000000000
+        None,
+        None,
+        None,
+        None,
+    );
+    send_tx_with_retry(
+        Rc::clone(&context),
+        &[batch36_ix],
+        Some(payer),
+        &[&payer_keypair.insecure_clone()],
+    )
+    .await?;
+
+    // ============================================================================
+    // Transaction 37: Place Limit bid order
+    // Signature: 5xRYQoNWtm8Kv8UCYKSjRSpei5AiKprWSwXgVoU44k3zBo1aBqg8hfSUzNXUNj395BJLMXdyFuiGpcgLHEfc98MD
+    // Slot: 398148119, BlockTime: 2026-02-05T04:27:20.000Z
+    // PlaceOrderLog: baseAtoms=574270, price=95025000000000000, seqNum=91, lastValidSlot=0, isBid=true, orderType=0
+    // ============================================================================
+    let batch37_ix = batch_update_instruction(
+        &market_keypair.pubkey(),
+        payer,
+        None,
+        vec![],
+        vec![PlaceOrderParams::new(574270, 950250000, -10, true, OrderType::Limit, 0)], // seqNum 91
+        None,
+        None,
+        None,
+        None,
+    );
+    send_tx_with_retry(
+        Rc::clone(&context),
+        &[batch37_ix],
+        Some(payer),
+        &[&payer_keypair.insecure_clone()],
+    )
+    .await?;
+
+    // ============================================================================
+    // Transaction 38: Place ReverseTight bid order
+    // Signature: 2ooa8LSFW5bv97jzqSk1W5hLtjcm2oy13pNhZRddnViMzX25EtsgfEQSfe7JB8BtNrz2jF119smn5THCYZGQ1Qa5
+    // Slot: 398148312, BlockTime: 2026-02-05T04:28:37.000Z
+    // PlaceOrderLog: baseAtoms=574270, price=95025000000000000, isBid=true, orderType=5
+    // ============================================================================
+    let batch38_ix = batch_update_instruction(
+        &market_keypair.pubkey(),
+        payer,
+        None,
+        vec![],
+        vec![PlaceOrderParams::new(574270, 950250000, -10, true, OrderType::ReverseTight, 0)],
+        None,
+        None,
+        None,
+        None,
+    );
+    send_tx_with_retry(
+        Rc::clone(&context),
+        &[batch38_ix],
+        Some(payer),
+        &[&payer_keypair.insecure_clone()],
+    )
+    .await?;
+
+    // ============================================================================
+    // Transaction 39: Cancel 2 orders
+    // Signature: 3gTqQ1BuWHYjYsxHkn6XnGuNVe6YG8FEJkzUrdMLPW6ZuYvGcB6rdTTrbQ92ceiZzrUdiEuU5EB58XjBWAL2fddt
+    // Slot: 398148664, BlockTime: 2026-02-05T04:30:54.000Z
+    // CancelOrderLog: seqNum=30, 57
+    // ============================================================================
+    let batch39_ix = batch_update_instruction(
+        &market_keypair.pubkey(),
+        payer,
+        None,
+        vec![CancelOrderParams::new(30), CancelOrderParams::new(57)],
+        vec![],
+        None,
+        None,
+        None,
+        None,
+    );
+    send_tx_with_retry(
+        Rc::clone(&context),
+        &[batch39_ix],
+        Some(payer),
+        &[&payer_keypair.insecure_clone()],
+    )
+    .await?;
+
+    // ============================================================================
+    // Transaction 40: Cancel 20 orders
+    // Signature: 4dP96FBXDTe1ss3Cc8jnCNsCyoAYqtwgLkxy8mMuMxanq93iXKmW8Z71xQZLBjWAD5CeWsWiBxfhgvmvy3hndGNw
+    // Slot: 398148731, BlockTime: 2026-02-05T04:31:21.000Z
+    // CancelOrderLog: seqNum=92, 91, 90, 84, 31-46
+    // ============================================================================
+    let batch40_ix = batch_update_instruction(
+        &market_keypair.pubkey(),
+        payer,
+        None,
+        vec![
+            CancelOrderParams::new(92),
+            CancelOrderParams::new(91),
+            CancelOrderParams::new(90),
+            CancelOrderParams::new(84),
+            CancelOrderParams::new(31),
+            CancelOrderParams::new(32),
+            CancelOrderParams::new(33),
+            CancelOrderParams::new(34),
+            CancelOrderParams::new(35),
+            CancelOrderParams::new(36),
+            CancelOrderParams::new(37),
+            CancelOrderParams::new(38),
+            CancelOrderParams::new(39),
+            CancelOrderParams::new(40),
+            CancelOrderParams::new(41),
+            CancelOrderParams::new(42),
+            CancelOrderParams::new(43),
+            CancelOrderParams::new(44),
+            CancelOrderParams::new(45),
+            CancelOrderParams::new(46),
+        ],
+        vec![],
+        None,
+        None,
+        None,
+        None,
+    );
+    send_tx_with_retry(
+        Rc::clone(&context),
+        &[batch40_ix],
+        Some(payer),
+        &[&payer_keypair.insecure_clone()],
+    )
+    .await?;
+
+    // ============================================================================
+    // Transaction 41: Cancel 20 orders
+    // Signature: 55ip2XqMHgU98kw3K8qfozcPMaPw3UEnqbZNrzMWWFC813PLQENTNfieoJ9umyc5LoNt4cv7VJzg4jSAZZUzERd1
+    // Slot: 398148741, BlockTime: 2026-02-05T04:31:25.000Z
+    // CancelOrderLog: seqNum=47-51, 60, 68, 71, 58, 55, 76, 66, 64, 78, 70, 89, 83, 79, 72, 80
+    // ============================================================================
+    let batch41_ix = batch_update_instruction(
+        &market_keypair.pubkey(),
+        payer,
+        None,
+        vec![
+            CancelOrderParams::new(47),
+            CancelOrderParams::new(48),
+            CancelOrderParams::new(49),
+            CancelOrderParams::new(50),
+            CancelOrderParams::new(51),
+            CancelOrderParams::new(60),
+            CancelOrderParams::new(68),
+            CancelOrderParams::new(71),
+            CancelOrderParams::new(58),
+            CancelOrderParams::new(55),
+            CancelOrderParams::new(76),
+            CancelOrderParams::new(66),
+            CancelOrderParams::new(64),
+            CancelOrderParams::new(78),
+            CancelOrderParams::new(70),
+            CancelOrderParams::new(89),
+            CancelOrderParams::new(83),
+            CancelOrderParams::new(79),
+            CancelOrderParams::new(72),
+            CancelOrderParams::new(80),
+        ],
+        vec![],
+        None,
+        None,
+        None,
+        None,
+    );
+    send_tx_with_retry(
+        Rc::clone(&context),
+        &[batch41_ix],
+        Some(payer),
+        &[&payer_keypair.insecure_clone()],
+    )
+    .await?;
+
+    // ============================================================================
+    // Transaction 42: Cancel 2 orders
+    // Signature: SimbV1eFXB1uHfm9kt5s78FofLLrWEJDEN9JYbQRyJmeoPh1n86yoo152T4Tm6NSTvDpRKbPsmQSFq7jByfWUXA
+    // Slot: 398148928, BlockTime: 2026-02-05T04:32:39.000Z
+    // CancelOrderLog: seqNum=86
+    // CancelOrderLog: seqNum=77
+    // ============================================================================
+    let batch42_ix = batch_update_instruction(
+        &market_keypair.pubkey(),
+        payer,
+        None,
+        vec![CancelOrderParams::new(86), CancelOrderParams::new(77)],
+        vec![],
+        None,
+        None,
+        None,
+        None,
+    );
+    send_tx_with_retry(
+        Rc::clone(&context),
+        &[batch42_ix],
+        Some(payer),
+        &[&payer_keypair.insecure_clone()],
+    )
+    .await?;
+
+    // ============================================================================
+    // Transaction 43: Cancel order
+    // Signature: 5AFB9rQrvJrVmDAtq8yfCJjmLVCrmeLXqC5ynvjY7TWAucZ43rF56Hg2jRyend2114oJr1YXsctGTTokn6Jk9Lqf
+    // Slot: 398148969, BlockTime: 2026-02-05T04:32:54.000Z
+    // CancelOrderLog: seqNum=81
+    // ============================================================================
+    let batch43_ix = batch_update_instruction(
+        &market_keypair.pubkey(),
+        payer,
+        None,
+        vec![CancelOrderParams::new(81)],
+        vec![],
+        None,
+        None,
+        None,
+        None,
+    );
+    send_tx_with_retry(
+        Rc::clone(&context),
+        &[batch43_ix],
+        Some(payer),
+        &[&payer_keypair.insecure_clone()],
+    )
+    .await?;
+
+    // ============================================================================
+    // Transaction 44: Place Limit ask order
+    // Signature: ws4cZywM1cXZ6919BCHak3QbN1x3mfDwTfatynPRKheMHeSH7rFmD4hHK4L3K4c1iyBXzhvx8Z4tm9KxXUutf3d
+    // Slot: 398218384, BlockTime: 2026-02-05T12:05:39.000Z
+    // PlaceOrderLog: baseAtoms=40000000, price=95356400000000000, seqNum=93, lastValidSlot=0, isBid=false, orderType=0
+    // ============================================================================
+    let batch44_ix = batch_update_instruction(
+        &market_keypair.pubkey(),
+        payer,
+        None,
+        vec![],
+        vec![PlaceOrderParams::new(40000000, 953564000, -10, false, OrderType::Limit, 0)], // seqNum 93, price=95356400000000000
+        None,
+        None,
+        None,
+        None,
+    );
+    send_tx_with_retry(
+        Rc::clone(&context),
+        &[batch44_ix],
+        Some(payer),
+        &[&payer_keypair.insecure_clone()],
+    )
+    .await?;
+
+    // ============================================================================
+    // Transaction 45: Place ReverseTight bid order (1 FillLog + 1 PlaceOrderLog)
+    // Signature: gcj3A6zv643wKEDD8W3H2xPZ82tD3jBvJCG56rCA7zUZ7rdKEh1Nu2jiG4g9Gf2zgaB6czT6qDmac2ofZGc1hHw
+    // Slot: 398225028, BlockTime: 2026-02-05T12:49:07.000Z
+    // FillLog: baseAtoms=40000000, quoteAtoms=3814256, price=95356400000000000, makerSeqNum=93, takerSeqNum=94, takerIsBuy=true
+    // PlaceOrderLog: baseAtoms=40000000, price=95356400000000000, seqNum=94, lastValidSlot=0, isBid=true, orderType=5
+    // ============================================================================
+    let batch45_ix = batch_update_instruction(
+        &market_keypair.pubkey(),
+        payer,
+        None,
+        vec![],
+        vec![PlaceOrderParams::new(40000000, 953564000, -10, true, OrderType::ReverseTight, 0)], // seqNum 94
+        None,
+        None,
+        None,
+        None,
+    );
+    send_tx_with_retry(
+        Rc::clone(&context),
+        &[batch45_ix],
+        Some(payer),
+        &[&payer_keypair.insecure_clone()],
+    )
+    .await?;
+
+    // ============================================================================
+    // Transaction 46: Place ReverseTight ask order
+    // Signature: 5p7AvXeJR4FH1T99MhK7TzUxuagkZrw2pJ13zVRRaJTYoZ1ys3HRQmfnTV1Q9RSGhHxAigCVndKMcTvGVEdz59P4
+    // Slot: 398225477, BlockTime: 2026-02-05T12:52:02.000Z
+    // PlaceOrderLog: baseAtoms=40000000, price=95360300000000000, seqNum=95, lastValidSlot=0, isBid=false, orderType=5
+    // ============================================================================
+    let batch46_ix = batch_update_instruction(
+        &market_keypair.pubkey(),
+        payer,
+        None,
+        vec![],
+        vec![PlaceOrderParams::new(40000000, 953603000, -10, false, OrderType::ReverseTight, 0)], // seqNum 95
+        None,
+        None,
+        None,
+        None,
+    );
+    send_tx_with_retry(
+        Rc::clone(&context),
+        &[batch46_ix],
+        Some(payer),
+        &[&payer_keypair.insecure_clone()],
+    )
+    .await?;
+
+    // ============================================================================
+    // Transaction 47: Place ReverseTight bid order
+    // Signature: 3PFD8PwfJktLAJ4cjur74nbcvvj9ciszdmJQWCQEg7QLTA35AcmNrmgsDJb8p7Pr4VGrvgtuLV5HCjxyrU6JKALo
+    // Slot: 398225555, BlockTime: 2026-02-05T12:52:32.000Z
+    // PlaceOrderLog: baseAtoms=40000000, price=95340300000000000, seqNum=96, lastValidSlot=0, isBid=true, orderType=5
+    // ============================================================================
+    let batch47_ix = batch_update_instruction(
+        &market_keypair.pubkey(),
+        payer,
+        None,
+        vec![],
+        vec![PlaceOrderParams::new(40000000, 953403000, -10, true, OrderType::ReverseTight, 0)], // seqNum 96
+        None,
+        None,
+        None,
+        None,
+    );
+    send_tx_with_retry(
+        Rc::clone(&context),
+        &[batch47_ix],
+        Some(payer),
+        &[&payer_keypair.insecure_clone()],
+    )
+    .await?;
+
+    // ============================================================================
+    // Transaction 48: Cancel order
+    // Signature: 4d2oWffEcypYLzMY3Lgztn7HABeFE6q1wTSgFNDGbYDNXf9j6bgLocTsSYh9uxygPgbiiVM4JqasfDjHg9y8k87
+    // Slot: 398226094, BlockTime: 2026-02-05T12:56:02.000Z
+    // CancelOrderLog: seqNum=96
+    // ============================================================================
+    let batch48_ix = batch_update_instruction(
+        &market_keypair.pubkey(),
+        payer,
+        None,
+        vec![CancelOrderParams::new(96)],
+        vec![],
+        None,
+        None,
+        None,
+        None,
+    );
+    send_tx_with_retry(
+        Rc::clone(&context),
+        &[batch48_ix],
+        Some(payer),
+        &[&payer_keypair.insecure_clone()],
+    )
+    .await?;
+
+    // ============================================================================
+    // Transaction 49: Cancel order
+    // Signature: PaKUvooFRmp2YNqnFrdWqzCC3AGraJjBuQhC8QbBiMfpWPxBjy6dDVz3xs1yX9Y6doiUTyHWGepMb3A1UX6dpcK
+    // Slot: 398226141, BlockTime: 2026-02-05T12:56:20.000Z
+    // CancelOrderLog: seqNum=95
+    // ============================================================================
+    let batch49_ix = batch_update_instruction(
+        &market_keypair.pubkey(),
+        payer,
+        None,
+        vec![CancelOrderParams::new(95)],
+        vec![],
+        None,
+        None,
+        None,
+        None,
+    );
+    send_tx_with_retry(
+        Rc::clone(&context),
+        &[batch49_ix],
+        Some(payer),
+        &[&payer_keypair.insecure_clone()],
+    )
+    .await?;
+
+    // ============================================================================
+    // Transaction 50: Place ReverseTight ask order
+    // Signature: 4Gc5Jkr2W6gyc3aAtWHQ1ifpXKGwE4CuSF2QpSSCmaNGCVb3YSwT44jK1zYhPu3esKNosx5krpc7TCrXKan2q7hq
+    // Slot: 398226389, BlockTime: 2026-02-05T12:57:57.000Z
+    // PlaceOrderLog: baseAtoms=9900000, price=95356400000000000, seqNum=97, lastValidSlot=0, isBid=false, orderType=5
+    // ============================================================================
+    let batch50_ix = batch_update_instruction(
+        &market_keypair.pubkey(),
+        payer,
+        None,
+        vec![],
+        vec![PlaceOrderParams::new(9900000, 953564000, -10, false, OrderType::ReverseTight, 0)], // seqNum 97
+        None,
+        None,
+        None,
+        None,
+    );
+    send_tx_with_retry(
+        Rc::clone(&context),
+        &[batch50_ix],
+        Some(payer),
+        &[&payer_keypair.insecure_clone()],
+    )
+    .await?;
+
+    // ============================================================================
+    // Transaction 51: Place ReverseTight bid order (1 FillLog + 1 PlaceOrderLog)
+    // Signature: 4Nukk19VSdRxMzUggAbpJfFMNJom6EXtcxkCMphNThb79TkTuiDrbf5qozCbdqeeEonJWUhAVgvkSj93KhtSWu8r
+    // Slot: 398226430, BlockTime: 2026-02-05T12:58:12.000Z
+    // FillLog: baseAtoms=9900000, quoteAtoms=944028, price=95356400000000000, makerSeqNum=97, takerSeqNum=98, takerIsBuy=true
+    // PlaceOrderLog: baseAtoms=9900000, price=95356400000000000, seqNum=99, lastValidSlot=0, isBid=true, orderType=5
+    // ============================================================================
+    let batch51_ix = batch_update_instruction(
+        &market_keypair.pubkey(),
+        payer,
+        None,
+        vec![],
+        vec![PlaceOrderParams::new(9900000, 953564000, -10, true, OrderType::ReverseTight, 0)], // seqNum 99
+        None,
+        None,
+        None,
+        None,
+    );
+    send_tx_with_retry(
+        Rc::clone(&context),
+        &[batch51_ix],
+        Some(payer),
+        &[&payer_keypair.insecure_clone()],
+    )
+    .await?;
+
+    // ============================================================================
+    // Transaction 52: Place ReverseTight bid order
+    // Signature: 2cf5pYjWn61PZiedkN1wAaKZVE7QCn9oWeJ2igPFQYC9Q2TpvT8vhiosu5Q3CKDLTH5MigFWrAQGEogounbPoCwr
+    // Slot: 398226512, BlockTime: 2026-02-05T12:58:44.000Z
+    // PlaceOrderLog: baseAtoms=9900000, price=95356400000000000, seqNum=100, lastValidSlot=0, isBid=true, orderType=5
+    // ============================================================================
+    let batch52_ix = batch_update_instruction(
+        &market_keypair.pubkey(),
+        payer,
+        None,
+        vec![],
+        vec![PlaceOrderParams::new(9900000, 953564000, -10, true, OrderType::ReverseTight, 0)], // seqNum 100
+        None,
+        None,
+        None,
+        None,
+    );
+    send_tx_with_retry(
+        Rc::clone(&context),
+        &[batch52_ix],
+        Some(payer),
+        &[&payer_keypair.insecure_clone()],
+    )
+    .await?;
+
+    // ============================================================================
+    // Transaction 53: Swap selling base (2 FillLogs + 1 PlaceOrderLog)
+    // Signature: 2Zxj7voVtbSVYEFtnHtaJQXzk1VaU6cqQmWbABm1NBWZa6LW8XzYrENEYcD8gRS1wa15UxAzEVuH9SHZDY7mjXuv
+    // Slot: 398226603, BlockTime: 2026-02-05T12:59:19.000Z
+    // FillLog: baseAtoms=9899996, quoteAtoms=944028, price=95356400000000000, makerSeqNum=98, takerSeqNum=101, takerIsBuy=false
+    // FillLog: baseAtoms=4, quoteAtoms=0, price=95356400000000000, makerSeqNum=100, takerSeqNum=102, takerIsBuy=false
+    // PlaceOrderLog: baseAtoms=9900000, price=95356400000000000, seqNum=102, lastValidSlot=0, isBid=false, orderType=0
+    // ============================================================================
+    let batch53_ix = batch_update_instruction(
+        &market_keypair.pubkey(),
+        payer,
+        None,
+        vec![],
+        vec![PlaceOrderParams::new(9900000, 953564000, -10, false, OrderType::Limit, 0)], // seqNum 102
+        None,
+        None,
+        None,
+        None,
+    );
+    send_tx_with_retry(
+        Rc::clone(&context),
+        &[batch53_ix],
+        Some(payer),
+        &[&payer_keypair.insecure_clone()],
+    )
+    .await?;
+
+    // ============================================================================
+    // Transaction 54: Swap buying base (1 FillLog + 1 PlaceOrderLog)
+    // Signature: 4PE17NgYGDd1JWU5bjQY2fwzg8WxZdNtWJPtwoKL5X4XCN6K1RK2aMJ7E63qxvPTE8S5nscw8bAEA9NJd7Wuxcov
+    // Slot: 398227372, BlockTime: 2026-02-05T13:04:19.000Z
+    // FillLog: baseAtoms=9900000, quoteAtoms=944028, price=95356400000000000, makerSeqNum=101, takerSeqNum=103, takerIsBuy=true
+    // PlaceOrderLog: baseAtoms=9900000, price=95356400000000000, seqNum=103, lastValidSlot=0, isBid=true, orderType=0
+    // ============================================================================
+    let batch54_ix = batch_update_instruction(
+        &market_keypair.pubkey(),
+        payer,
+        None,
+        vec![],
+        vec![PlaceOrderParams::new(9900000, 953564000, -10, true, OrderType::Limit, 0)], // seqNum 103
+        None,
+        None,
+        None,
+        None,
+    );
+    send_tx_with_retry(
+        Rc::clone(&context),
+        &[batch54_ix],
+        Some(payer),
+        &[&payer_keypair.insecure_clone()],
+    )
+    .await?;
+
+    // ============================================================================
+    // Transaction 55: Place Limit bid order
+    // Signature: 4nbGWogKgi17yc8Wrk1jfgiFGvNBQnTWKE8GncgbVwuTU3RctbD4vsHVN3q7JPbbqq83pHzDRXCeK3DZFZtMq363
+    // Slot: 398227564, BlockTime: 2026-02-05T13:05:34.000Z
+    // PlaceOrderLog: baseAtoms=19799990, price=95356400000000000, seqNum=104, lastValidSlot=0, isBid=true, orderType=0
+    // ============================================================================
+    let batch55_ix = batch_update_instruction(
+        &market_keypair.pubkey(),
+        payer,
+        None,
+        vec![],
+        vec![PlaceOrderParams::new(19799990, 953564000, -10, true, OrderType::Limit, 0)], // seqNum 104
+        None,
+        None,
+        None,
+        None,
+    );
+    send_tx_with_retry(
+        Rc::clone(&context),
+        &[batch55_ix],
+        Some(payer),
+        &[&payer_keypair.insecure_clone()],
+    )
+    .await?;
+
+    // ============================================================================
+    // Transaction 56: Cancel 2 orders
+    // Signature: NRigbYdixyPEYJVJQ8RUDmVd4ZMvj8cGWcGSa1FuddXedwSD71NU5tWQ3G9tmEwdRb8SvwbUqEebs7e5EpzmUrC
+    // Slot: 398227945, BlockTime: 2026-02-05T13:08:03.000Z
+    // CancelOrderLog: seqNum=100
+    // CancelOrderLog: seqNum=104
+    // ============================================================================
+    let batch56_ix = batch_update_instruction(
+        &market_keypair.pubkey(),
+        payer,
+        None,
+        vec![CancelOrderParams::new(100), CancelOrderParams::new(104)],
+        vec![],
+        None,
+        None,
+        None,
+        None,
+    );
+    send_tx_with_retry(
+        Rc::clone(&context),
+        &[batch56_ix],
+        Some(payer),
+        &[&payer_keypair.insecure_clone()],
+    )
+    .await?;
+
+    // ============================================================================
+    // Transaction 57: Place ReverseTight ask order
+    // Signature: 79RqPnzuDgaKeJcm6f3QQ467xs5SCsQMe1YeXh6fvEm8HXLYw494ZeVeKpoKHozDEF6Q6988VLh2KpF5FGNd35F
+    // Slot: 398229564, BlockTime: 2026-02-05T13:18:35.000Z
+    // PlaceOrderLog: baseAtoms=10000000, price=100000000000000000, seqNum=105, lastValidSlot=0, isBid=false, orderType=5
+    // ============================================================================
+    let batch57_ix = batch_update_instruction(
+        &market_keypair.pubkey(),
+        payer,
+        None,
+        vec![],
+        vec![PlaceOrderParams::new(10000000, 1000000000, -10, false, OrderType::ReverseTight, 0)], // seqNum 105, price=100000000000000000
+        None,
+        None,
+        None,
+        None,
+    );
+    send_tx_with_retry(
+        Rc::clone(&context),
+        &[batch57_ix],
+        Some(payer),
+        &[&payer_keypair.insecure_clone()],
+    )
+    .await?;
+
+    // ============================================================================
+    // Transaction 58: Swap buying base (1 FillLog + 1 PlaceOrderLog)
+    // Signature: 3VQy2wQ1jcTfgWra8ZywBegj1W84CCUB2JsiRc7SBxbK6yftZ9pw4qGztq1TaDLrG2ufbqwSWWe2tmj1jv35wdWz
+    // Slot: 398229644, BlockTime: 2026-02-05T13:19:07.000Z
+    // FillLog: baseAtoms=10000000, quoteAtoms=1000000, price=100000000000000000, makerSeqNum=105, takerSeqNum=106, takerIsBuy=true
+    // PlaceOrderLog: baseAtoms=10000000, price=199990000000000000, seqNum=107, lastValidSlot=0, isBid=true, orderType=5
+    // ============================================================================
+    let batch58_ix = batch_update_instruction(
+        &market_keypair.pubkey(),
+        payer,
+        None,
+        vec![],
+        vec![PlaceOrderParams::new(10000000, 1999900000, -10, true, OrderType::ReverseTight, 0)], // seqNum 107, price=199990000000000000
+        None,
+        None,
+        None,
+        None,
+    );
+    send_tx_with_retry(
+        Rc::clone(&context),
+        &[batch58_ix],
+        Some(payer),
+        &[&payer_keypair.insecure_clone()],
+    )
+    .await?;
+
+    // ============================================================================
+    // Transaction 59: Swap selling base (1 FillLog + 1 PlaceOrderLog)
+    // Signature: 3YpaJFMTT1bk7CLgX1R9dVRbmqqpc9YsnF3LpYgtSbBkWomjeJJzd9q5ihTPVZQvf9NXzeSGJ1WT8bELA4c4mpw2
+    // Slot: 398229740, BlockTime: 2026-02-05T13:19:45.000Z
+    // FillLog: baseAtoms=10000000, quoteAtoms=1000000, price=100000000000000000, makerSeqNum=106, takerSeqNum=108, takerIsBuy=false
+    // PlaceOrderLog: baseAtoms=10000000, price=100000000000000000, seqNum=109, lastValidSlot=0, isBid=false, orderType=0
+    // ============================================================================
+    let batch59_ix = batch_update_instruction(
+        &market_keypair.pubkey(),
+        payer,
+        None,
+        vec![],
+        vec![PlaceOrderParams::new(10000000, 1000000000, -10, false, OrderType::Limit, 0)], // seqNum 109, price=100000000000000000
+        None,
+        None,
+        None,
+        None,
+    );
+    send_tx_with_retry(
+        Rc::clone(&context),
+        &[batch59_ix],
+        Some(payer),
+        &[&payer_keypair.insecure_clone()],
+    )
+    .await?;
+
+    // ============================================================================
+    // Transaction 60: Place 5 Reverse ask orders
+    // Signature: 3UqT6Av2kfFAPMehQGBwiFFbdQjCULLiFFuVk3M4ksVH12RRVHssJ4gvGfZSJLJLMjby4KmtC4vFqh6BnGcLHZD7
+    // Slot: 398231036, BlockTime: 2026-02-05T13:28:11.000Z
+    // PlaceOrderLog: baseAtoms=2038458, price=100500000000000000, seqNum=110, lastValidSlot=200, isBid=false, orderType=4
+    // PlaceOrderLog: baseAtoms=2018852, price=101500000000000000, seqNum=111, lastValidSlot=200, isBid=false, orderType=4
+    // PlaceOrderLog: baseAtoms=1999628, price=102500000000000000, seqNum=112, lastValidSlot=200, isBid=false, orderType=4
+    // PlaceOrderLog: baseAtoms=1980776, price=103500000000000000, seqNum=113, lastValidSlot=200, isBid=false, orderType=4
+    // PlaceOrderLog: baseAtoms=1962284, price=104500000000000000, seqNum=114, lastValidSlot=200, isBid=false, orderType=4
+    // ============================================================================
+    let batch60_ix = batch_update_instruction(
+        &market_keypair.pubkey(),
+        payer,
+        None,
+        vec![],
+        vec![
+            PlaceOrderParams::new(2038458, 1005000000, -10, false, OrderType::Reverse, 200), // seqNum 110
+            PlaceOrderParams::new(2018852, 1015000000, -10, false, OrderType::Reverse, 200), // seqNum 111
+            PlaceOrderParams::new(1999628, 1025000000, -10, false, OrderType::Reverse, 200), // seqNum 112
+            PlaceOrderParams::new(1980776, 1035000000, -10, false, OrderType::Reverse, 200), // seqNum 113
+            PlaceOrderParams::new(1962284, 1045000000, -10, false, OrderType::Reverse, 200), // seqNum 114
+        ],
+        None,
+        None,
+        None,
+        None,
+    );
+    send_tx_with_retry(
+        Rc::clone(&context),
+        &[batch60_ix],
+        Some(payer),
+        &[&payer_keypair.insecure_clone()],
+    )
+    .await?;
+
+    // ============================================================================
+    // Transaction 61: Swap buying base (2 FillLogs + 1 PlaceOrderLog)
+    // Signature: 49UKQgL6oDdxCszqxEfrdMaRHD8Haa1q7mpXV9jVupF3X5ZSEDH4r2jEFGCuBGuwMNbP316q9NSk6hm6KmVmpurB
+    // Slot: 398231404, BlockTime: 2026-02-05T13:30:34.000Z
+    // FillLog: baseAtoms=10000000, quoteAtoms=1000000, price=100000000000000000, makerSeqNum=108, takerSeqNum=115, takerIsBuy=true
+    // FillLog: baseAtoms=2038458, quoteAtoms=204865, price=100500000000000000, makerSeqNum=110, takerSeqNum=116, takerIsBuy=true
+    // PlaceOrderLog: baseAtoms=12038460, price=100500000000000000, seqNum=117, lastValidSlot=0, isBid=true, orderType=5
+    // ============================================================================
+    let batch61_ix = batch_update_instruction(
+        &market_keypair.pubkey(),
+        payer,
+        None,
+        vec![],
+        vec![PlaceOrderParams::new(12038460, 1005000000, -10, true, OrderType::ReverseTight, 0)], // seqNum 117
+        None,
+        None,
+        None,
+        None,
+    );
+    send_tx_with_retry(
+        Rc::clone(&context),
+        &[batch61_ix],
+        Some(payer),
+        &[&payer_keypair.insecure_clone()],
+    )
+    .await?;
+
+    // ============================================================================
+    // Transaction 62: Place ReverseTight bid order
+    // Signature: 2snjLC9quYRYc3tmo74fVuoV1HZBWuzBeffGN9ck8RfvSPdXEE1xzd5JvCb8jajYqXJBSLj46tdo6nBYLDV4eA4R
+    // Slot: 398231571, BlockTime: 2026-02-05T13:31:39.000Z
+    // PlaceOrderLog: baseAtoms=4018480, price=100500000000000000, seqNum=118, lastValidSlot=0, isBid=true, orderType=5
+    // ============================================================================
+    let batch62_ix = batch_update_instruction(
+        &market_keypair.pubkey(),
+        payer,
+        None,
+        vec![],
+        vec![PlaceOrderParams::new(4018480, 1005000000, -10, true, OrderType::ReverseTight, 0)], // seqNum 118
+        None,
+        None,
+        None,
+        None,
+    );
+    send_tx_with_retry(
+        Rc::clone(&context),
+        &[batch62_ix],
+        Some(payer),
+        &[&payer_keypair.insecure_clone()],
+    )
+    .await?;
+
+    // ============================================================================
+    // Transaction 63: Place ReverseTight ask order
+    // Signature: 33KSthnn8gE4SDMdUwZFuLjk9JatvGUwEAJLP7di9NVFQ3xpN1ZHNorAAfzPU79BRd6FQawdHsVmRnerns8FYGbR
+    // Slot: 398231698, BlockTime: 2026-02-05T13:32:28.000Z
+    // PlaceOrderLog: baseAtoms=16061020, price=101500000000000000, seqNum=119, lastValidSlot=0, isBid=false, orderType=5
+    // ============================================================================
+    let batch63_ix = batch_update_instruction(
+        &market_keypair.pubkey(),
+        payer,
+        None,
+        vec![],
+        vec![PlaceOrderParams::new(16061020, 1015000000, -10, false, OrderType::ReverseTight, 0)], // seqNum 119
+        None,
+        None,
+        None,
+        None,
+    );
+    send_tx_with_retry(
+        Rc::clone(&context),
+        &[batch63_ix],
+        Some(payer),
+        &[&payer_keypair.insecure_clone()],
+    )
+    .await?;
+
+    // ============================================================================
+    // Transaction 64: Swap buying base (1 FillLog + 1 PlaceOrderLog)
+    // Signature: uv6hQJaAcSXS6k2BwCa3AGGfSULhXX1BxU3FGDrQmHFrW9NHqTyMJFR7UFd33vEQ64iQbiFpavWwsURRaDNXHJs
+    // Slot: 398231768, BlockTime: 2026-02-05T13:32:56.000Z
+    // FillLog: baseAtoms=2018850, quoteAtoms=204914, price=101500000000000000, makerSeqNum=111, takerSeqNum=120, takerIsBuy=true
+    // PlaceOrderLog: baseAtoms=2018850, price=101500000000000000, seqNum=121, lastValidSlot=0, isBid=true, orderType=0
+    // ============================================================================
+    let batch64_ix = batch_update_instruction(
+        &market_keypair.pubkey(),
+        payer,
+        None,
+        vec![],
+        vec![PlaceOrderParams::new(2018850, 1015000000, -10, true, OrderType::Limit, 0)], // seqNum 121
+        None,
+        None,
+        None,
+        None,
+    );
+    send_tx_with_retry(
+        Rc::clone(&context),
+        &[batch64_ix],
+        Some(payer),
+        &[&payer_keypair.insecure_clone()],
+    )
+    .await?;
+
+    // ============================================================================
+    // Transaction 65: Swap buying base (4 FillLogs + 1 PlaceOrderLog)
+    // Signature: 3BjTYthFyt4QauN6k5tHYRjJ1ruWwVqeSNLdFfTwASMHywXeLH8MxiESTMh2VoYyYqi1nfPZ8ktv6BKvSWJpS1Hx
+    // Slot: 398231860, BlockTime: 2026-02-05T13:33:32.000Z
+    // FillLog: baseAtoms=2, quoteAtoms=0, price=101500000000000000, makerSeqNum=111, takerSeqNum=122, takerIsBuy=true
+    // FillLog: baseAtoms=16061020, quoteAtoms=1630193, price=101500000000000000, makerSeqNum=119, takerSeqNum=122, takerIsBuy=true
+    // FillLog: baseAtoms=1999628, quoteAtoms=204961, price=102500000000000000, makerSeqNum=112, takerSeqNum=123, takerIsBuy=true
+    // PlaceOrderLog: baseAtoms=18060650, price=102500000000000000, seqNum=124, lastValidSlot=0, isBid=true, orderType=0
+    // ============================================================================
+    let batch65_ix = batch_update_instruction(
+        &market_keypair.pubkey(),
+        payer,
+        None,
+        vec![],
+        vec![PlaceOrderParams::new(18060650, 1025000000, -10, true, OrderType::Limit, 0)], // seqNum 124
+        None,
+        None,
+        None,
+        None,
+    );
+    send_tx_with_retry(
+        Rc::clone(&context),
+        &[batch65_ix],
+        Some(payer),
+        &[&payer_keypair.insecure_clone()],
+    )
+    .await?;
+
+    // ============================================================================
+    // Transaction 66: Swap selling base (3 FillLogs + 1 PlaceOrderLog)
+    // Signature: 56Cm7LvYBK1g8z3JNihBU23ZQraLSKd7ushQCSx2ZtQWcKxu5kUaccU9T6jhtkhy1DZeU6Z7Sxf8JMYfJ8GWpzre
+    // Slot: 398231902, BlockTime: 2026-02-05T13:33:48.000Z
+    // FillLog: baseAtoms=2003626, quoteAtoms=204961, price=102295000000000000, makerSeqNum=123, takerSeqNum=125, takerIsBuy=false
+    // FillLog: baseAtoms=16061014, quoteAtoms=1630193, price=101500000000000000, makerSeqNum=122, takerSeqNum=126, takerIsBuy=false
+    // FillLog: baseAtoms=2022900, quoteAtoms=204913, price=101297000000000000, makerSeqNum=120, takerSeqNum=127, takerIsBuy=false
+    // PlaceOrderLog: baseAtoms=20087540, price=100500000000000000, seqNum=128, lastValidSlot=0, isBid=false, orderType=0
+    // ============================================================================
+    let batch66_ix = batch_update_instruction(
+        &market_keypair.pubkey(),
+        payer,
+        None,
+        vec![],
+        vec![PlaceOrderParams::new(20087540, 1005000000, -10, false, OrderType::Limit, 0)], // seqNum 128
+        None,
+        None,
+        None,
+        None,
+    );
+    send_tx_with_retry(
+        Rc::clone(&context),
+        &[batch66_ix],
+        Some(payer),
+        &[&payer_keypair.insecure_clone()],
+    )
+    .await?;
+
+    // ============================================================================
+    // Transaction 67: Swap selling base (4 FillLogs + 1 PlaceOrderLog)
+    // Signature: 2yKwgK5b4wKLtgWNjqZDPBN5GuTPguWzmideZXqL8exbj16Zd4oVyXe3mVfiNHMKynjm6mtdBTGaTbRDmEaLAE8a
+    // Slot: 398232186, BlockTime: 2026-02-05T13:35:39.000Z
+    // FillLog: baseAtoms=2, quoteAtoms=1, price=101297000000000000, makerSeqNum=120, takerSeqNum=129, takerIsBuy=false
+    // FillLog: baseAtoms=2, quoteAtoms=1, price=100500000000000000, makerSeqNum=117, takerSeqNum=129, takerIsBuy=false
+    // FillLog: baseAtoms=4018480, quoteAtoms=403858, price=100500000000000000, makerSeqNum=118, takerSeqNum=130, takerIsBuy=false
+    // FillLog: baseAtoms=2042542, quoteAtoms=204865, price=100299000000000000, makerSeqNum=116, takerSeqNum=130, takerIsBuy=false
+    // PlaceOrderLog: baseAtoms=6061029, price=100299000000000000, seqNum=131, lastValidSlot=0, isBid=false, orderType=1
+    // ============================================================================
+    let batch67_ix = batch_update_instruction(
+        &market_keypair.pubkey(),
+        payer,
+        None,
+        vec![],
+        vec![PlaceOrderParams::new(6061029, 1002990000, -10, false, OrderType::ImmediateOrCancel, 0)], // seqNum 131
+        None,
+        None,
+        None,
+        None,
+    );
+    send_tx_with_retry(
+        Rc::clone(&context),
+        &[batch67_ix],
+        Some(payer),
+        &[&payer_keypair.insecure_clone()],
+    )
+    .await?;
+
+    // ============================================================================
+    // Transaction 68: Swap buying base (4 FillLogs + 1 PlaceOrderLog)
+    // Signature: 2wxoQ1p1ZzHQDxiLALX9SNLdSsp5bcabiBdU8yx3Qj6nKcrWkcZt4WMf7p1fLj2JCS7NxJX3Ra6Br3dh2AHEibB5
+    // Slot: 398232220, BlockTime: 2026-02-05T13:35:53.000Z
+    // FillLog: baseAtoms=4018482, quoteAtoms=403857, price=100500000000000000, makerSeqNum=129, takerSeqNum=132, takerIsBuy=true
+    // FillLog: baseAtoms=2042542, quoteAtoms=205275, price=100500000000000000, makerSeqNum=130, takerSeqNum=133, takerIsBuy=true
+    // FillLog: baseAtoms=16061014, quoteAtoms=1630192, price=101500000000000000, makerSeqNum=126, takerSeqNum=134, takerIsBuy=true
+    // FillLog: baseAtoms=2, quoteAtoms=1, price=101500000000000000, makerSeqNum=127, takerSeqNum=135, takerIsBuy=true
+    // PlaceOrderLog: baseAtoms=22122040, price=101500000000000000, seqNum=136, lastValidSlot=0, isBid=true, orderType=1
+    // ============================================================================
+    let batch68_ix = batch_update_instruction(
+        &market_keypair.pubkey(),
+        payer,
+        None,
+        vec![],
+        vec![PlaceOrderParams::new(22122040, 1015000000, -10, true, OrderType::ImmediateOrCancel, 0)], // seqNum 136
+        None,
+        None,
+        None,
+        None,
+    );
+    send_tx_with_retry(
+        Rc::clone(&context),
+        &[batch68_ix],
+        Some(payer),
+        &[&payer_keypair.insecure_clone()],
+    )
+    .await?;
+
+    // ============================================================================
+    // Transaction 69: Swap buying base (4 FillLogs + 1 PlaceOrderLog)
+    // Signature: 5FJeBfWRj5RjfZbyhhi3mJ7LYthgemFH4mjqc7Hu1B4GEY2Wh9GuArHpR4csCvfdA3FQdeHLjvcofTmQCKV56CJR
+    // Slot: 398232304, BlockTime: 2026-02-05T13:36:24.000Z
+    // FillLog: baseAtoms=2022900, quoteAtoms=205324, price=101500000000000000, makerSeqNum=127, takerSeqNum=137, takerIsBuy=true
+    // FillLog: baseAtoms=2003626, quoteAtoms=205371, price=102500000000000000, makerSeqNum=125, takerSeqNum=137, takerIsBuy=true
+    // FillLog: baseAtoms=1980776, quoteAtoms=205010, price=103500000000000000, makerSeqNum=113, takerSeqNum=138, takerIsBuy=true
+    // FillLog: baseAtoms=1962284, quoteAtoms=205058, price=104500000000000000, makerSeqNum=114, takerSeqNum=139, takerIsBuy=true
+    // PlaceOrderLog: baseAtoms=7969590, price=104500000000000000, seqNum=140, lastValidSlot=0, isBid=true, orderType=0
+    // ============================================================================
+    let batch69_ix = batch_update_instruction(
+        &market_keypair.pubkey(),
+        payer,
+        None,
+        vec![],
+        vec![PlaceOrderParams::new(7969590, 1045000000, -10, true, OrderType::Limit, 0)], // seqNum 140
+        None,
+        None,
+        None,
+        None,
+    );
+    send_tx_with_retry(
+        Rc::clone(&context),
+        &[batch69_ix],
+        Some(payer),
+        &[&payer_keypair.insecure_clone()],
+    )
+    .await?;
+
+    // ============================================================================
+    // Transaction 70: Swap selling base (7 FillLogs + 1 PlaceOrderLog)
+    // Signature: 4pV9xmHiPaymvRcjh82cJpt4oCUZPuUQ3b8BfgAJEEKExLfXoYhL9U8hisEPh8V6vivxdwG4YB4hL26sXeWsC3RV
+    // Slot: 398232344, BlockTime: 2026-02-05T13:36:40.000Z
+    // FillLog: baseAtoms=4, quoteAtoms=1, price=104500000000000000, makerSeqNum=140, takerSeqNum=141, takerIsBuy=false
+    // FillLog: baseAtoms=1966209, quoteAtoms=205058, price=104291000000000000, makerSeqNum=139, takerSeqNum=141, takerIsBuy=false
+    // FillLog: baseAtoms=1984742, quoteAtoms=205010, price=103293000000000000, makerSeqNum=138, takerSeqNum=142, takerIsBuy=false
+    // FillLog: baseAtoms=2007634, quoteAtoms=205371, price=102295000000000000, makerSeqNum=137, takerSeqNum=143, takerIsBuy=false
+    // FillLog: baseAtoms=16061004, quoteAtoms=1630192, price=101500000000000000, makerSeqNum=134, takerSeqNum=144, takerIsBuy=false
+    // FillLog: baseAtoms=2026959, quoteAtoms=205325, price=101297000000000000, makerSeqNum=135, takerSeqNum=145, takerIsBuy=false
+    // FillLog: baseAtoms=4018477, quoteAtoms=403857, price=100500000000000000, makerSeqNum=132, takerSeqNum=146, takerIsBuy=false
+    // PlaceOrderLog: baseAtoms=28065030, price=100500000000000000, seqNum=147, lastValidSlot=0, isBid=false, orderType=0
+    // ============================================================================
+    let batch70_ix = batch_update_instruction(
+        &market_keypair.pubkey(),
+        payer,
+        None,
+        vec![],
+        vec![PlaceOrderParams::new(28065030, 1005000000, -10, false, OrderType::Limit, 0)], // seqNum 147
+        None,
+        None,
+        None,
+        None,
+    );
+    send_tx_with_retry(
+        Rc::clone(&context),
+        &[batch70_ix],
+        Some(payer),
+        &[&payer_keypair.insecure_clone()],
+    )
+    .await?;
+
+    // ============================================================================
+    // Transaction 71: Swap buying base (6 FillLogs + 1 PlaceOrderLog)
+    // Signature: 32JWtQQ8FTNeXHiLDdDdZKdPSphbhBeptvdgWB2CzKcwieJ1yia1m62enTdeAzxSadvArP3Rq1TjEKLjv7yEhxUb
+    // Slot: 398232505, BlockTime: 2026-02-05T13:37:43.000Z
+    // FillLog: baseAtoms=4018477, quoteAtoms=403856, price=100500000000000000, makerSeqNum=146, takerSeqNum=148, takerIsBuy=true
+    // FillLog: baseAtoms=1, quoteAtoms=0, price=100500000000000000, makerSeqNum=147, takerSeqNum=149, takerIsBuy=true
+    // FillLog: baseAtoms=16061004, quoteAtoms=1630191, price=101500000000000000, makerSeqNum=144, takerSeqNum=149, takerIsBuy=true
+    // FillLog: baseAtoms=2026959, quoteAtoms=205736, price=101500000000000000, makerSeqNum=145, takerSeqNum=150, takerIsBuy=true
+    // FillLog: baseAtoms=2007634, quoteAtoms=205782, price=102500000000000000, makerSeqNum=143, takerSeqNum=151, takerIsBuy=true
+    // FillLog: baseAtoms=1984742, quoteAtoms=205420, price=103500000000000000, makerSeqNum=142, takerSeqNum=152, takerIsBuy=true
+    // PlaceOrderLog: baseAtoms=26098819, price=103500000000000000, seqNum=153, lastValidSlot=0, isBid=true, orderType=0
+    // ============================================================================
+    let batch71_ix = batch_update_instruction(
+        &market_keypair.pubkey(),
+        payer,
+        None,
+        vec![],
+        vec![PlaceOrderParams::new(26098819, 1035000000, -10, true, OrderType::Limit, 0)], // seqNum 153
+        None,
+        None,
+        None,
+        None,
+    );
+    send_tx_with_retry(
+        Rc::clone(&context),
+        &[batch71_ix],
+        Some(payer),
+        &[&payer_keypair.insecure_clone()],
+    )
+    .await?;
+
+    // ============================================================================
+    // Transaction 72: Cancel 8 orders
+    // Signature: WEFicMYskmFs8c8QZkQFfgwY8ue9xNsPGQrYdFEKaTGF5VSbjtyuQrrfstaeFABim4mJRJ5g56ypSVAUz9Lo8q6
+    // Slot: 398233753, BlockTime: 2026-02-05T13:45:57.000Z
+    // CancelOrderLog: seqNum=153, 152, 151, 149, 150, 148, 133, 141
+    // ============================================================================
+    let batch72_ix = batch_update_instruction(
+        &market_keypair.pubkey(),
+        payer,
+        None,
+        vec![
+            CancelOrderParams::new(153),
+            CancelOrderParams::new(152),
+            CancelOrderParams::new(151),
+            CancelOrderParams::new(149),
+            CancelOrderParams::new(150),
+            CancelOrderParams::new(148),
+            CancelOrderParams::new(133),
+            CancelOrderParams::new(141),
+        ],
+        vec![],
+        None,
+        None,
+        None,
+        None,
+    );
+    send_tx_with_retry(
+        Rc::clone(&context),
+        &[batch72_ix],
+        Some(payer),
+        &[&payer_keypair.insecure_clone()],
+    )
+    .await?;
+
+    // ============================================================================
+    // Transaction 73: Cancel order
+    // Signature: 4EfbZw9bXJoJ1NW7YJ3s4bVGnt6DijF2zYC51rjnuEE3Mq4yLa9LPKuL98GNMmxf5BTP4LvN5TsH4PL2FGaTqAZ1
+    // Slot: 398233783, BlockTime: 2026-02-05T13:46:08.000Z
+    // CancelOrderLog: seqNum=115
+    // ============================================================================
+    let batch73_ix = batch_update_instruction(
+        &market_keypair.pubkey(),
+        payer,
+        None,
+        vec![CancelOrderParams::new(115)],
+        vec![],
+        None,
+        None,
+        None,
+        None,
+    );
+    send_tx_with_retry(
+        Rc::clone(&context),
+        &[batch73_ix],
+        Some(payer),
+        &[&payer_keypair.insecure_clone()],
+    )
+    .await?;
+
+    // ============================================================================
+    // Transaction 74: Place 10 Reverse orders (5 bids + 5 asks)
+    // Signature: 38jAc5CbjrnxgcavnZdSHotW1tuP33qGvEU8JhAV9jAryR9cSnwe425SaAfQ3AHuFJcaH2QBxBoGR2XT5dTpcbtE
+    // Slot: 398241390, BlockTime: 2026-02-05T14:35:54.000Z
+    // PlaceOrderLog: baseAtoms=11427087, price=95500000000000000, seqNum=154, lastValidSlot=200, isBid=true, orderType=4
+    // PlaceOrderLog: baseAtoms=11308672, price=96500000000000000, seqNum=155, lastValidSlot=200, isBid=true, orderType=4
+    // PlaceOrderLog: baseAtoms=11192685, price=97500000000000000, seqNum=156, lastValidSlot=200, isBid=true, orderType=4
+    // PlaceOrderLog: baseAtoms=11079054, price=98500000000000000, seqNum=157, lastValidSlot=200, isBid=true, orderType=4
+    // PlaceOrderLog: baseAtoms=10967707, price=99500000000000000, seqNum=158, lastValidSlot=200, isBid=true, orderType=4
+    // PlaceOrderLog: baseAtoms=10192293, price=100500000000000000, seqNum=159, lastValidSlot=200, isBid=false, orderType=4
+    // PlaceOrderLog: baseAtoms=10094261, price=101500000000000000, seqNum=160, lastValidSlot=200, isBid=false, orderType=4
+    // PlaceOrderLog: baseAtoms=9998142, price=102500000000000000, seqNum=161, lastValidSlot=200, isBid=false, orderType=4
+    // PlaceOrderLog: baseAtoms=9903880, price=103500000000000000, seqNum=162, lastValidSlot=200, isBid=false, orderType=4
+    // PlaceOrderLog: baseAtoms=9811422, price=104500000000000000, seqNum=163, lastValidSlot=200, isBid=false, orderType=4
+    // ============================================================================
+    let batch74_ix = batch_update_instruction(
+        &market_keypair.pubkey(),
+        payer,
+        None,
+        vec![],
+        vec![
+            PlaceOrderParams::new(11427087, 955000000, -10, true, OrderType::Reverse, 200), // seqNum 154
+            PlaceOrderParams::new(11308672, 965000000, -10, true, OrderType::Reverse, 200), // seqNum 155
+            PlaceOrderParams::new(11192685, 975000000, -10, true, OrderType::Reverse, 200), // seqNum 156
+            PlaceOrderParams::new(11079054, 985000000, -10, true, OrderType::Reverse, 200), // seqNum 157
+            PlaceOrderParams::new(10967707, 995000000, -10, true, OrderType::Reverse, 200), // seqNum 158
+            PlaceOrderParams::new(10192293, 1005000000, -10, false, OrderType::Reverse, 200), // seqNum 159
+            PlaceOrderParams::new(10094261, 1015000000, -10, false, OrderType::Reverse, 200), // seqNum 160
+            PlaceOrderParams::new(9998142, 1025000000, -10, false, OrderType::Reverse, 200), // seqNum 161
+            PlaceOrderParams::new(9903880, 1035000000, -10, false, OrderType::Reverse, 200), // seqNum 162
+            PlaceOrderParams::new(9811422, 1045000000, -10, false, OrderType::Reverse, 200), // seqNum 163
+        ],
+        None,
+        None,
+        None,
+        None,
+    );
+    send_tx_with_retry(
+        Rc::clone(&context),
+        &[batch74_ix],
+        Some(payer),
+        &[&payer_keypair.insecure_clone()],
+    )
+    .await?;
+
+    // ============================================================================
+    // Transaction 75: Place ReverseTight ask order
+    // Signature: 3Z1YDiyebZq3vwjoAPmZtEX1oG5mk6aM7SgJo7YibiyuV3E3SUa7bWwTqcMP7726zkXXCYVsrNYJhCzJNRw8khP7
+    // Slot: 398242358, BlockTime: 2026-02-05T14:42:15.000Z
+    // PlaceOrderLog: baseAtoms=30284700, price=102500000000000000, seqNum=164, lastValidSlot=0, isBid=false, orderType=5
+    // ============================================================================
+    let batch75_ix = batch_update_instruction(
+        &market_keypair.pubkey(),
+        payer,
+        None,
+        vec![],
+        vec![PlaceOrderParams::new(30284700, 1025000000, -10, false, OrderType::ReverseTight, 0)], // seqNum 164
+        None,
+        None,
+        None,
+        None,
+    );
+    send_tx_with_retry(
+        Rc::clone(&context),
+        &[batch75_ix],
+        Some(payer),
+        &[&payer_keypair.insecure_clone()],
+    )
+    .await?;
+
+    // ============================================================================
+    // Transaction 76: Cancel 8 orders
+    // Signature: 3ib3eqvu35aX6nr1kPWP6vcLzsopSBXfScyA8sysPDKWAkGA5xZMSHvLRwBAXS7EfdCwhpzMxwhHke55rJesjuUD
+    // Slot: 398284836, BlockTime: 2026-02-05T19:20:27.000Z
+    // CancelOrderLog: seqNum=158, 157, 159, 160, 161, 164, 162, 163
+    // ============================================================================
+    let batch76_ix = batch_update_instruction(
+        &market_keypair.pubkey(),
+        payer,
+        None,
+        vec![
+            CancelOrderParams::new(158),
+            CancelOrderParams::new(157),
+            CancelOrderParams::new(159),
+            CancelOrderParams::new(160),
+            CancelOrderParams::new(161),
+            CancelOrderParams::new(164),
+            CancelOrderParams::new(162),
+            CancelOrderParams::new(163),
+        ],
+        vec![],
+        None,
+        None,
+        None,
+        None,
+    );
+    send_tx_with_retry(
+        Rc::clone(&context),
+        &[batch76_ix],
+        Some(payer),
+        &[&payer_keypair.insecure_clone()],
+    )
+    .await?;
+
+    // ============================================================================
+    // Transaction 77: Cancel 3 orders
+    // Signature: 2QHuKZngb6bmS1gqTYf2GV4YiQktRfbZPgXa5m3hvZ9LX6jUyG958t2SURGc5jadsyjYdyEipY1ryAL6NVjcokXQ
+    // Slot: 398284879, BlockTime: 2026-02-05T19:20:44.000Z
+    // CancelOrderLog: seqNum=156, 155, 154
+    // ============================================================================
+    let batch77_ix = batch_update_instruction(
+        &market_keypair.pubkey(),
+        payer,
+        None,
+        vec![
+            CancelOrderParams::new(156),
+            CancelOrderParams::new(155),
+            CancelOrderParams::new(154),
+        ],
+        vec![],
+        None,
+        None,
+        None,
+        None,
+    );
+    send_tx_with_retry(
+        Rc::clone(&context),
+        &[batch77_ix],
+        Some(payer),
+        &[&payer_keypair.insecure_clone()],
+    )
+    .await?;
+
+    // ============================================================================
+    // Transaction 78: Place 10 Reverse orders (5 bids + 5 asks)
+    // Signature: 3HpsouKvDzqerHesww4rTd5EendbSVjjRSeBhHKq5SQxWPZDkZVxJjJRBkXoYvZYLFGeR3A6WadbQo3N9ULDwLaM
+    // Slot: 398496346, BlockTime: 2026-02-06T18:22:49.000Z
+    // PlaceOrderLog: baseAtoms=11427087, price=95500000000000000, seqNum=165, lastValidSlot=200, isBid=true, orderType=4
+    // PlaceOrderLog: baseAtoms=11308672, price=96500000000000000, seqNum=166, lastValidSlot=200, isBid=true, orderType=4
+    // PlaceOrderLog: baseAtoms=11192685, price=97500000000000000, seqNum=167, lastValidSlot=200, isBid=true, orderType=4
+    // PlaceOrderLog: baseAtoms=11079054, price=98500000000000000, seqNum=168, lastValidSlot=200, isBid=true, orderType=4
+    // PlaceOrderLog: baseAtoms=10967707, price=99500000000000000, seqNum=169, lastValidSlot=200, isBid=true, orderType=4
+    // PlaceOrderLog: baseAtoms=10192293, price=100500000000000000, seqNum=170, lastValidSlot=200, isBid=false, orderType=4
+    // PlaceOrderLog: baseAtoms=10094261, price=101500000000000000, seqNum=171, lastValidSlot=200, isBid=false, orderType=4
+    // PlaceOrderLog: baseAtoms=9998142, price=102500000000000000, seqNum=172, lastValidSlot=200, isBid=false, orderType=4
+    // PlaceOrderLog: baseAtoms=9903880, price=103500000000000000, seqNum=173, lastValidSlot=200, isBid=false, orderType=4
+    // PlaceOrderLog: baseAtoms=9811422, price=104500000000000000, seqNum=174, lastValidSlot=200, isBid=false, orderType=4
+    // ============================================================================
+    let batch78_ix = batch_update_instruction(
+        &market_keypair.pubkey(),
+        payer,
+        None,
+        vec![],
+        vec![
+            PlaceOrderParams::new(11427087, 955000000, -10, true, OrderType::Reverse, 200), // seqNum 165
+            PlaceOrderParams::new(11308672, 965000000, -10, true, OrderType::Reverse, 200), // seqNum 166
+            PlaceOrderParams::new(11192685, 975000000, -10, true, OrderType::Reverse, 200), // seqNum 167
+            PlaceOrderParams::new(11079054, 985000000, -10, true, OrderType::Reverse, 200), // seqNum 168
+            PlaceOrderParams::new(10967707, 995000000, -10, true, OrderType::Reverse, 200), // seqNum 169
+            PlaceOrderParams::new(10192293, 1005000000, -10, false, OrderType::Reverse, 200), // seqNum 170
+            PlaceOrderParams::new(10094261, 1015000000, -10, false, OrderType::Reverse, 200), // seqNum 171
+            PlaceOrderParams::new(9998142, 1025000000, -10, false, OrderType::Reverse, 200), // seqNum 172
+            PlaceOrderParams::new(9903880, 1035000000, -10, false, OrderType::Reverse, 200), // seqNum 173
+            PlaceOrderParams::new(9811422, 1045000000, -10, false, OrderType::Reverse, 200), // seqNum 174
+        ],
+        None,
+        None,
+        None,
+        None,
+    );
+    send_tx_with_retry(
+        Rc::clone(&context),
+        &[batch78_ix],
+        Some(payer),
+        &[&payer_keypair.insecure_clone()],
+    )
+    .await?;
+
+    // ============================================================================
+    // Transaction 79: Cancel 10 orders
+    // Signature: NwDH5mBUnNKH98i4gvU7dbSvyWDafvCsfS4MG95J32N2tJczgCViBwQDWtpYs6hr9iAsJKDh63bN5wLjsnu5aSz
+    // Slot: 398496491, BlockTime: 2026-02-06T18:23:45.000Z
+    // CancelOrderLog: seqNum=165, 166, 167, 168, 169, 174, 173, 172, 171, 170
+    // ============================================================================
+    let batch79_ix = batch_update_instruction(
+        &market_keypair.pubkey(),
+        payer,
+        None,
+        vec![
+            CancelOrderParams::new(165),
+            CancelOrderParams::new(166),
+            CancelOrderParams::new(167),
+            CancelOrderParams::new(168),
+            CancelOrderParams::new(169),
+            CancelOrderParams::new(174),
+            CancelOrderParams::new(173),
+            CancelOrderParams::new(172),
+            CancelOrderParams::new(171),
+            CancelOrderParams::new(170),
+        ],
+        vec![],
+        None,
+        None,
+        None,
+        None,
+    );
+    send_tx_with_retry(
+        Rc::clone(&context),
+        &[batch79_ix],
+        Some(payer),
+        &[&payer_keypair.insecure_clone()],
+    )
+    .await?;
+
+    // ============================================================================
+    // Transaction 80: FAILED - No logs
+    // Signature: 2ueBmKXrByEg7jkmoD6vWRqY3SEqJmiZ2nEHSHeD8GkuizHAFzAKD9h9G2gFykWFQofEtcgTUDBExx2rnSeqj2RA
+    // Slot: 398507897, BlockTime: 2026-02-06T19:38:21.000Z
+    // ============================================================================
+
+    // ============================================================================
+    // Transaction 81: Place 10 Reverse orders (5 bids + 5 asks)
+    // Signature: srRf3h6Ar4ywt7AfSXEKiRGTiyNfbfBvc6PTuM8cNXt5m3qhWhvo9dqGG3ywSL3KMn9ipq5pTnsDpJyANueEBJm
+    // Slot: 398510207, BlockTime: 2026-02-06T19:53:25.000Z
+    // PlaceOrderLog: baseAtoms=5235078, price=95500000000000000, seqNum=175, lastValidSlot=200, isBid=true, orderType=4
+    // PlaceOrderLog: baseAtoms=5180829, price=96500000000000000, seqNum=176, lastValidSlot=200, isBid=true, orderType=4
+    // PlaceOrderLog: baseAtoms=5127692, price=97500000000000000, seqNum=177, lastValidSlot=200, isBid=true, orderType=4
+    // PlaceOrderLog: baseAtoms=5075634, price=98500000000000000, seqNum=178, lastValidSlot=200, isBid=true, orderType=4
+    // PlaceOrderLog: baseAtoms=5024623, price=99500000000000000, seqNum=179, lastValidSlot=200, isBid=true, orderType=4
+    // PlaceOrderLog: baseAtoms=10192293, price=100500000000000000, seqNum=180, lastValidSlot=200, isBid=false, orderType=4
+    // PlaceOrderLog: baseAtoms=10094261, price=101500000000000000, seqNum=181, lastValidSlot=200, isBid=false, orderType=4
+    // PlaceOrderLog: baseAtoms=9998142, price=102500000000000000, seqNum=182, lastValidSlot=200, isBid=false, orderType=4
+    // PlaceOrderLog: baseAtoms=9903880, price=103500000000000000, seqNum=183, lastValidSlot=200, isBid=false, orderType=4
+    // PlaceOrderLog: baseAtoms=9811422, price=104500000000000000, seqNum=184, lastValidSlot=200, isBid=false, orderType=4
+    // ============================================================================
+    let batch81_ix = batch_update_instruction(
+        &market_keypair.pubkey(),
+        payer,
+        None,
+        vec![],
+        vec![
+            PlaceOrderParams::new(5235078, 955000000, -10, true, OrderType::Reverse, 200), // seqNum 175
+            PlaceOrderParams::new(5180829, 965000000, -10, true, OrderType::Reverse, 200), // seqNum 176
+            PlaceOrderParams::new(5127692, 975000000, -10, true, OrderType::Reverse, 200), // seqNum 177
+            PlaceOrderParams::new(5075634, 985000000, -10, true, OrderType::Reverse, 200), // seqNum 178
+            PlaceOrderParams::new(5024623, 995000000, -10, true, OrderType::Reverse, 200), // seqNum 179
+            PlaceOrderParams::new(10192293, 1005000000, -10, false, OrderType::Reverse, 200), // seqNum 180
+            PlaceOrderParams::new(10094261, 1015000000, -10, false, OrderType::Reverse, 200), // seqNum 181
+            PlaceOrderParams::new(9998142, 1025000000, -10, false, OrderType::Reverse, 200), // seqNum 182
+            PlaceOrderParams::new(9903880, 1035000000, -10, false, OrderType::Reverse, 200), // seqNum 183
+            PlaceOrderParams::new(9811422, 1045000000, -10, false, OrderType::Reverse, 200), // seqNum 184
+        ],
+        None,
+        None,
+        None,
+        None,
+    );
+    send_tx_with_retry(
+        Rc::clone(&context),
+        &[batch81_ix],
+        Some(payer),
+        &[&payer_keypair.insecure_clone()],
+    )
+    .await?;
+
+    // This always succeeds even before the fix. Just here for logging and debugging.
+    crate::verify_vault_balance(Rc::clone(&context), &market_keypair.pubkey(), &[*payer], true).await;
+
+    // ============================================================================
+    // Transaction 82: Swap selling base (1 FillLog)
+    // Signature: 2DQT5C61fEzU7yRpohbcYMqeqbnWXWJ3rABv4p7hPLFNmMVpgVpXMnSz6SgVaFH8pZAQwKKrh8vbTkXaosLnYWXV
+    // Slot: 398515144, BlockTime: 2026-02-06T20:25:50.000Z
+    // FillLog: baseAtoms=200000, quoteAtoms=19900, price=99500000000000000, makerSeqNum=179, takerSeqNum=185, takerIsBuy=false
+    // SwapParams: inAtoms=200000, outAtoms=0, isBaseIn=true, isExactIn=true
+    // ============================================================================
+    let swap82_ix = swap_instruction(
+        &market_keypair.pubkey(),
+        payer,
+        &base_mint_key,
+        &usdc_mint_f.key,
+        &base_token_account_keypair.pubkey(),
+        &usdc_token_account_keypair.pubkey(),
+        200_000, // inAtoms
+        0,       // outAtoms
+        true,    // isBaseIn
+        true,    // isExactIn
+        spl_token_2022::id(),
+        spl_token::id(),
+        false,
+    );
+    send_tx_with_retry(
+        Rc::clone(&context),
+        &[swap82_ix],
+        Some(payer),
+        &[&payer_keypair.insecure_clone()],
+    )
+    .await?;
+
+    // ============================================================================
+    // Transaction 83: Swap selling base (1 FillLog)
+    // Signature: 4ToujBEBBmDzR8MbZ8g6eV4PohzuT9Xr3KyWbLH257Lx5XVSWfWxr1M3duzg5ycNdDKfaNnuk1CJvukEdEa5w1Zs
+    // Slot: 398516397, BlockTime: 2026-02-06T20:34:06.000Z
+    // FillLog: baseAtoms=300000, quoteAtoms=29850, price=99500000000000000, makerSeqNum=179, takerSeqNum=187, takerIsBuy=false
+    // SwapParams: inAtoms=300000, outAtoms=1, isBaseIn=true, isExactIn=true
+    // ============================================================================
+    let swap83_ix = swap_instruction(
+        &market_keypair.pubkey(),
+        payer,
+        &base_mint_key,
+        &usdc_mint_f.key,
+        &base_token_account_keypair.pubkey(),
+        &usdc_token_account_keypair.pubkey(),
+        300_000, // inAtoms
+        1,       // outAtoms
+        true,    // isBaseIn
+        true,    // isExactIn
+        spl_token_2022::id(),
+        spl_token::id(),
+        false,
+    );
+    send_tx_with_retry(
+        Rc::clone(&context),
+        &[swap83_ix],
+        Some(payer),
+        &[&payer_keypair.insecure_clone()],
+    )
+    .await?;
+
+    crate::verify_vault_balance(Rc::clone(&context), &market_keypair.pubkey(), &[*payer], true).await;
+
+    // ============================================================================
+    // New TX for test coverage of !isExactIn
+    // ============================================================================
+    let swap84_ix = swap_instruction(
+        &market_keypair.pubkey(),
+        payer,
+        &base_mint_key,
+        &usdc_mint_f.key,
+        &base_token_account_keypair.pubkey(),
+        &usdc_token_account_keypair.pubkey(),
+        1_000_000,   // inAtoms
+        1_000,       // outAtoms
+        true,        // isBaseIn
+        false,       // isExactIn
+        spl_token_2022::id(),
+        spl_token::id(),
+        false,
+    );
+    send_tx_with_retry(
+        Rc::clone(&context),
+        &[swap84_ix],
+        Some(payer),
+        &[&payer_keypair.insecure_clone()],
+    )
+    .await?;
+
+    // ============================================================================
+    // New TX for test coverage of !isExactIn
+    // ============================================================================
+    let swap85_ix = swap_instruction(
+        &market_keypair.pubkey(),
+        payer,
+        &base_mint_key,
+        &usdc_mint_f.key,
+        &base_token_account_keypair.pubkey(),
+        &usdc_token_account_keypair.pubkey(),
+        1_000_000,   // inAtoms
+        1_000,       // outAtoms
+        true,        // isBaseIn
+        false,       // isExactIn
+        spl_token_2022::id(),
+        spl_token::id(),
+        false,
+    );
+    send_tx_with_retry(
+        Rc::clone(&context),
+        &[swap85_ix],
+        Some(payer),
+        &[&payer_keypair.insecure_clone()],
+    )
+    .await?;
+
+    crate::verify_vault_balance(Rc::clone(&context), &market_keypair.pubkey(), &[*payer], false).await;
 
     Ok(())
 }
