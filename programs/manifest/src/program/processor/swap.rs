@@ -318,9 +318,9 @@ pub(crate) fn process_swap_core(
         // transfer fee != 0.
         // Because of rounding, it is difficult to calculate efficiently the
         // amount that should be taken when is_exact_in = false and transfer
-        // fees. In that case, the we calculated the matching with all of the
-        // input after fees. The result here is that we will take extra from the
-        // user and be lost to the vault in the amount of the fees on
+        // fees. In that case, we calculated the matching with all of the input
+        // after fees. The result here is that we will take extra from the user
+        // and be lost to the vault in the amount of the fees on
         // extra_base_atoms. This cannot be simply subtracted due to rounding
         // issues possibly going against the vault and resulting in loss of
         // funds.
