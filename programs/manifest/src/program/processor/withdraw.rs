@@ -69,8 +69,11 @@ pub(crate) fn process_withdraw_core(
     let mut dynamic_account: MarketRefMut = get_mut_dynamic_account(market_data);
 
     // Validation verifies that the mint is either base or quote.
-    let is_base: bool =
-        &trader_token.try_borrow_data()?[0..32] == dynamic_account.get_base_mint().as_ref();
+    // SECURITY FIX: Use safe token account deserialization instead of unsafe indexing
+    use spl_token::state::Account as TokenAccount;
+    let trader_token_data = trader_token.try_borrow_data()?;
+    let trader_token_account = TokenAccount::unpack(&trader_token_data)?;
+    let is_base: bool = trader_token_account.mint == *dynamic_account.get_base_mint();
 
     let mint_key: &Pubkey = if is_base {
         dynamic_account.get_base_mint()
