@@ -108,6 +108,9 @@ export class ManifestStatsServer {
   private discordWebhookUrl: string | undefined;
   private lastErrorAlertSentTimeMs: number = Date.now();
 
+  // Allquiet alerting
+  private allquietWebhookUrl: string | undefined;
+
   constructor(
     rpcUrl: string,
     isReadOnly: boolean,
@@ -133,6 +136,7 @@ export class ManifestStatsServer {
     this.dbQueryCount = metrics.dbQueryCount;
     this.dbQueryDuration = metrics.dbQueryDuration;
     this.discordWebhookUrl = process.env.DISCORD_WEBHOOK_URL;
+    this.allquietWebhookUrl = process.env.ALLQUIET_WEBHOOK_URL;
 
     this.pool = new Pool({
       connectionString: databaseUrl,
@@ -190,33 +194,70 @@ export class ManifestStatsServer {
   }
 
   /**
-   * Send Discord alert for database error
+   * Send alert to allquiet.app for database error
+   */
+  private async sendAllquietAlert(error: any): Promise<void> {
+    if (!this.allquietWebhookUrl) {
+      return;
+    }
+
+    try {
+      const response = await fetch(this.allquietWebhookUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          alertName: 'Manifest Stats Server Database Error',
+          alertStatus: 'firing',
+          description: `Database error occurred: ${error.code || 'unknown'} - ${error.message || 'No message'}`,
+        }),
+      });
+
+      if (!response.ok) {
+        console.error(
+          `Failed to send allquiet alert: ${response.status} ${response.statusText}`,
+        );
+      } else {
+        console.log('Allquiet alert sent for database error');
+      }
+    } catch (alertError) {
+      console.error('Error sending allquiet alert:', alertError);
+    }
+  }
+
+  /**
+   * Send alerts for database error (allquiet.app and Discord)
+   * Rate limited to at most once per hour to avoid spam.
    */
   private async sendDatabaseErrorAlert(error: any): Promise<void> {
-    // Only send the alert once an hour to avoid spam.
+    // Only send alerts once an hour to avoid spam.
     const now_ms: number = Date.now();
-    if (
-      !this.discordWebhookUrl ||
-      now_ms - this.lastErrorAlertSentTimeMs < 60 * 60 * 1_000
-    ) {
+    if (now_ms - this.lastErrorAlertSentTimeMs < 60 * 60 * 1_000) {
       return;
     }
 
     this.lastErrorAlertSentTimeMs = Date.now();
 
-    const message = `**Database Alert**
+    // Send to allquiet.app (rate limited by check above)
+    await this.sendAllquietAlert(error);
+
+    // Send to Discord if configured (rate limited by check above)
+    if (this.discordWebhookUrl) {
+      const message = `**Database Alert**
 **Error Details:**
 - Code: ${error.code}
 - Message: ${error.message}
 - Time: ${new Date().toISOString()}
 `;
 
-    await sendDiscordNotification(this.discordWebhookUrl, message, {
-      title: '🚨 Database Error Detected',
-      timestamp: true,
-    });
+      await sendDiscordNotification(this.discordWebhookUrl, message, {
+        title: '🚨 Database Error Detected',
+        timestamp: true,
+      });
 
-    console.error('Discord alert sent for database error');
+      console.error('Discord alert sent for database error');
+    }
   }
 
   /**
