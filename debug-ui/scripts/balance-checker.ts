@@ -182,8 +182,8 @@ const run = async () => {
         `Vault actual ${actualVaultAtoms} expected ${totalExpectedAtoms} difference ${difference} seats ${deposits.length}`,
       );
 
-      // Check if there's a mismatch
-      if (Math.abs(difference) > 1 || totalExpectedAtoms > actualVaultAtoms) {
+      // Check if vault has less than expected (loss of funds)
+      if (totalExpectedAtoms > actualVaultAtoms) {
         console.log('MISMATCH DETECTED - Listing all seats:');
         console.log('=====================================');
 
