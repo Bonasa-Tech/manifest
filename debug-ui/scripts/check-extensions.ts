@@ -280,12 +280,33 @@ async function checkMint(
   return result;
 }
 
+async function sendDiscordMessage(
+  webhookUrl: string,
+  content: string,
+): Promise<void> {
+  try {
+    const response = await fetch(webhookUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content }),
+    });
+    if (!response.ok) {
+      console.error(
+        `Failed to send Discord message: ${response.status} ${response.statusText}`,
+      );
+    }
+  } catch (error) {
+    console.error('Error sending Discord message:', error);
+  }
+}
+
 async function main() {
-  const rpcUrl = process.argv[2];
+  const rpcUrl = process.env.RPC_URL || process.argv[2];
+  const discordWebhookUrl = process.env.DISCORD_WEBHOOK_URL;
+
   if (!rpcUrl) {
-    console.error('Usage: npx ts-node check-extensions.ts <RPC_URL>');
     console.error(
-      '  e.g. npx ts-node check-extensions.ts https://api.mainnet-beta.solana.com',
+      'Usage: RPC_URL=<url> npx ts-node check-extensions.ts or npx ts-node check-extensions.ts <RPC_URL>',
     );
     process.exit(1);
   }
@@ -520,6 +541,58 @@ async function main() {
   const fs = await import('fs');
   fs.writeFileSync('extension-results.json', jsonOut);
   console.log(`\nFull results written to extension-results.json`);
+
+  // Send Discord notification if webhook URL is configured
+  if (discordWebhookUrl) {
+    let message = `**Token Extensions Check Report**\n`;
+    message += `Checked ${mints.size} unique mints across ${tickers.length} markets\n`;
+    message += `- Token-2022 mints: ${token2022Mints.length}\n`;
+    message += `- SPL Token mints: ${splTokenMints.length}\n\n`;
+
+    if (withFees.length > 0) {
+      message += `**Mints with non-zero transfer fees (${withFees.length}):**\n`;
+      for (const r of withFees) {
+        message += `• \`${r.mint.slice(0, 8)}...\` - ${r.transferFeeBps} bps, mutable=${r.hasMutableTransferFee}\n`;
+      }
+      message += '\n';
+    }
+
+    if (withHooks.length > 0) {
+      message += `**Mints with active transfer hooks (${withHooks.length}):**\n`;
+      for (const r of withHooks) {
+        message += `• \`${r.mint.slice(0, 8)}...\` - hook: \`${r.transferHookProgramId?.slice(0, 8)}...\`\n`;
+      }
+      message += '\n';
+    }
+
+    if (withDelegate.length > 0) {
+      message += `**Mints with permanent delegate (${withDelegate.length}):**\n`;
+      for (const r of withDelegate) {
+        message += `• \`${r.mint.slice(0, 8)}...\` - delegate: \`${r.permanentDelegate?.slice(0, 8)}...\`\n`;
+      }
+      message += '\n';
+    }
+
+    if (withNonTransferable.length > 0) {
+      message += `**Non-transferable mints (${withNonTransferable.length}):**\n`;
+      for (const r of withNonTransferable) {
+        message += `• \`${r.mint.slice(0, 8)}...\`\n`;
+      }
+      message += '\n';
+    }
+
+    if (
+      withFees.length === 0 &&
+      withHooks.length === 0 &&
+      withDelegate.length === 0 &&
+      withNonTransferable.length === 0
+    ) {
+      message += `No concerning extensions found.`;
+    }
+
+    await sendDiscordMessage(discordWebhookUrl, message);
+    console.log('Discord notification sent');
+  }
 }
 
 main().catch(console.error);

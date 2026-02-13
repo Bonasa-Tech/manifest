@@ -28,3 +28,29 @@ jobs:
         run: yarn tsx scripts/balance-checker.ts
         env:
           RPC_URL: ${{ secrets.RPC_URL }}
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+
+  extensions:
+    name: Token Extensions Check
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./debug-ui
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'yarn'
+
+      - name: Install dependencies
+        run: yarn install --frozen-lockfile
+
+      - name: Check token extensions
+        run: yarn tsx scripts/check-extensions.ts
+        env:
+          RPC_URL: ${{ secrets.RPC_URL }}
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
