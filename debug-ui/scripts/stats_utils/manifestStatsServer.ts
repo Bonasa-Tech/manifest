@@ -2133,10 +2133,18 @@ export class ManifestStatsServer {
         this.baseVolumeAtomsCheckpoints.set(market, baseCheckpoints);
         this.quoteVolumeAtomsCheckpoints.set(market, quoteCheckpoints);
         this.checkpointTimestamps.set(market, timestamps);
+        // Initialize "since last checkpoint" counters for loaded markets
+        // These start at 0 because we're resuming from a saved checkpoint
+        this.baseVolumeAtomsSinceLastCheckpoint.set(market, 0);
+        this.quoteVolumeAtomsSinceLastCheckpoint.set(market, 0);
         if (row.last_price) {
           this.lastPriceByMarket.set(market, Number(row.last_price));
         }
       }
+
+      console.log(
+        `Loaded ${marketCheckpointsResult.rowCount} market checkpoints from database`,
+      );
 
       console.log('State loaded successfully from database');
       return true;
