@@ -10,10 +10,29 @@ import {
 } from '@solana/web3.js';
 import bs58 from 'bs58';
 
-const { RPC_URL } = process.env;
+const { RPC_URL, DISCORD_WEBHOOK_URL } = process.env;
 
 if (!RPC_URL) {
   throw new Error('RPC_URL missing from env');
+}
+
+async function sendDiscordMessage(content: string): Promise<void> {
+  if (!DISCORD_WEBHOOK_URL) return;
+
+  try {
+    const response = await fetch(DISCORD_WEBHOOK_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content }),
+    });
+    if (!response.ok) {
+      console.error(
+        `Failed to send Discord message: ${response.status} ${response.statusText}`,
+      );
+    }
+  } catch (error) {
+    console.error('Error sending Discord message:', error);
+  }
 }
 
 const run = async () => {
@@ -216,11 +235,21 @@ const run = async () => {
   }
 
   if (foundMismatch) {
-    throw new Error();
+    await sendDiscordMessage(
+      `**Balance Checker Alert**\nBalance mismatch detected! Check the logs for details.`,
+    );
+    throw new Error('Balance mismatch detected');
   }
+
+  await sendDiscordMessage(
+    `**Balance Checker Report**\nAll ${marketPks.length} markets and ${globalPublicKeys.length} global accounts passed balance verification.`,
+  );
 };
 
-run().catch((e) => {
+run().catch(async (e) => {
   console.error('fatal error', e);
+  await sendDiscordMessage(
+    `**Balance Checker Error**\nFatal error occurred: ${e.message || e}`,
+  );
   throw e;
 });
