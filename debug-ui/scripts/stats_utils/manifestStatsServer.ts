@@ -6,6 +6,10 @@ import {
   GetProgramAccountsResponse,
   PublicKey,
 } from '@solana/web3.js';
+
+const WRAPPER_PROGRAM_ID = new PublicKey(
+  'wMNFSTkir3HgyZTsB7uqu3i7FA73grFCptPXgrZjksL',
+);
 import {
   FillLogResult,
   ManifestClient,
@@ -110,6 +114,9 @@ export class ManifestStatsServer {
 
   // Allquiet alerting
   private allquietWebhookUrl: string | undefined;
+
+  // Wrapper cache: owner pubkey -> wrapper pubkey
+  private wrapperCache: Map<string, string> = new Map();
 
   constructor(
     rpcUrl: string,
@@ -581,10 +588,57 @@ export class ManifestStatsServer {
   }
 
   /**
+   * Load all wrapper accounts and build the owner -> wrapper cache.
+   * Wrapper account layout:
+   *   - Bytes 0-7: Discriminant (8 bytes)
+   *   - Bytes 8-39: Trader/owner pubkey (32 bytes)
+   */
+  private async loadWrapperCache(): Promise<void> {
+    console.log('Loading wrapper accounts...');
+    try {
+      const wrapperAccounts = await this.connection.getProgramAccounts(
+        WRAPPER_PROGRAM_ID,
+        {
+          commitment: 'confirmed',
+        },
+      );
+
+      for (const { pubkey, account } of wrapperAccounts) {
+        if (account.data.length >= 40) {
+          // Extract trader pubkey from bytes 8-40
+          const traderPubkey = new PublicKey(account.data.subarray(8, 40));
+          this.wrapperCache.set(traderPubkey.toBase58(), pubkey.toBase58());
+        }
+      }
+
+      console.log(`Loaded ${this.wrapperCache.size} wrapper accounts`);
+    } catch (error) {
+      console.error('Error loading wrapper accounts:', error);
+      // Continue without wrapper cache - it's not critical
+    }
+  }
+
+  /**
+   * Get wrapper pubkey for a given owner pubkey.
+   * Returns null if no wrapper found.
+   */
+  getWrapper(ownerPubkey: string): string | null {
+    return this.wrapperCache.get(ownerPubkey) || null;
+  }
+
+  /**
+   * Get all wrapper mappings (owner -> wrapper).
+   */
+  getAllWrappers(): { [owner: string]: string } {
+    return Object.fromEntries(this.wrapperCache);
+  }
+
+  /**
    * Initialize at the start with a get program accounts.
    */
   async initialize(): Promise<void> {
     await this.loadState();
+    await this.loadWrapperCache();
 
     const marketProgramAccounts: GetProgramAccountsResponse =
       await fetchMarketProgramAccounts(this.connection);

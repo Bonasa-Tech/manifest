@@ -252,6 +252,25 @@ const run = async () => {
     }
   };
 
+  const wrapperHandler: RequestHandler = (req, res) => {
+    const owner = req.query.owner as string;
+    if (!owner) {
+      res.status(400).send({ error: 'owner parameter is required' });
+      return;
+    }
+
+    const wrapper = statsServer.getWrapper(owner);
+    if (wrapper) {
+      res.send({ owner, wrapper });
+    } else {
+      res.status(404).send({ error: 'No wrapper found for owner', owner });
+    }
+  };
+
+  const wrappersHandler: RequestHandler = (_req, res) => {
+    res.send(statsServer.getAllWrappers());
+  };
+
   const app = express();
   app.use(cors());
 
@@ -281,6 +300,8 @@ const run = async () => {
   app.get('/notional', notionalHandler);
   app.get('/checkpoints', checkpointsHandler);
   app.get('/backfill', backfillHandler);
+  app.get('/wrapper', wrapperHandler);
+  app.get('/wrappers', wrappersHandler);
 
   // Add health check endpoint for Fly.io
   app.get('/health', (_req, res) => {

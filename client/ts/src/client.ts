@@ -86,7 +86,8 @@ export class ManifestClient {
   }
 
   /**
-   * fetches all user wrapper accounts and returns the first or null if none are found
+   * fetches all user wrapper accounts and returns the first or null if none are found.
+   * First tries the stats server API for faster lookup, falls back to getProgramAccounts.
    *
    * @param connection Connection
    * @param payerPub PublicKey of the trader
@@ -97,6 +98,30 @@ export class ManifestClient {
     connection: Connection,
     payerPub: PublicKey,
   ): Promise<WrapperResponse | null> {
+    // First try the stats server API for faster lookup
+    try {
+      const response = await fetch(
+        `https://mfx-stats-mainnet.fly.dev/wrapper?owner=${payerPub.toBase58()}`,
+      );
+      if (response.ok) {
+        const data = (await response.json()) as {
+          owner: string;
+          wrapper: string;
+        };
+        const wrapperPubkey = new PublicKey(data.wrapper);
+        const accountInfo = await connection.getAccountInfo(wrapperPubkey);
+        if (accountInfo) {
+          return {
+            pubkey: wrapperPubkey,
+            account: accountInfo,
+          };
+        }
+      }
+    } catch {
+      // API call failed, fall back to getProgramAccounts
+    }
+
+    // Fall back to getProgramAccounts
     const existingWrappers = await connection.getProgramAccounts(
       WRAPPER_PROGRAM_ID,
       {
