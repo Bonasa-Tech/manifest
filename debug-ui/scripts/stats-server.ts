@@ -230,6 +230,9 @@ const run = async () => {
   const checkpointsHandler: RequestHandler = (_req, res) => {
     res.send(statsServer.getCheckpoints());
   };
+  const checkpointStatusHandler: RequestHandler = (_req, res) => {
+    res.send(statsServer.getCheckpointStatus());
+  };
 
   const backfillHandler: RequestHandler = async (req, res) => {
     try {
@@ -299,6 +302,7 @@ const run = async () => {
   app.get('/alts', altsHandler);
   app.get('/notional', notionalHandler);
   app.get('/checkpoints', checkpointsHandler);
+  app.get('/checkpointStatus', checkpointStatusHandler);
   app.get('/backfill', backfillHandler);
   app.get('/wrapper', wrapperHandler);
   app.get('/wrappers', wrappersHandler);

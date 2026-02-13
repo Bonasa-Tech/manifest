@@ -118,6 +118,13 @@ export class ManifestStatsServer {
   // Wrapper cache: owner pubkey -> wrapper pubkey
   private wrapperCache: Map<string, string> = new Map();
 
+  // Checkpoint protection: track how many checkpoint advances have occurred since startup
+  // to prevent overwriting good database data before new data has accumulated
+  private checkpointAdvancesSinceStartup: number = 0;
+  // Minimum number of checkpoint advances required before allowing database save
+  // With 5-minute checkpoint intervals, 12 advances = 1 hour of accumulated data
+  private readonly MIN_CHECKPOINT_ADVANCES_BEFORE_SAVE: number = 12;
+
   constructor(
     rpcUrl: string,
     isReadOnly: boolean,
@@ -805,6 +812,12 @@ export class ManifestStatsServer {
           quoteVolume,
         );
       });
+
+      // Track checkpoint advances to prevent premature database overwrites
+      this.checkpointAdvancesSinceStartup++;
+      console.log(
+        `Checkpoint advances since startup: ${this.checkpointAdvancesSinceStartup}/${this.MIN_CHECKPOINT_ADVANCES_BEFORE_SAVE}`,
+      );
     });
   }
 
@@ -1068,6 +1081,52 @@ export class ManifestStatsServer {
     });
 
     return checkpointsByMarket;
+  }
+
+  /**
+   * Get checkpoint health status for debugging.
+   * Returns information about checkpoint data quality and save readiness.
+   */
+  getCheckpointStatus(): {
+    checkpointAdvancesSinceStartup: number;
+    minRequiredAdvances: number;
+    readyToSave: boolean;
+    uptimeSeconds: number;
+    totalMarkets: number;
+    marketsWithData: number;
+    oldestTimestamp: number;
+    newestTimestamp: number;
+  } {
+    const now: number = Math.floor(Date.now() / 1000);
+    let oldestTimestamp: number = now;
+    let newestTimestamp: number = 0;
+    let marketsWithData: number = 0;
+
+    this.checkpointTimestamps.forEach((timestamps: number[]) => {
+      const nonZeroTimestamps: number[] = timestamps.filter(
+        (t: number) => t > 0,
+      );
+      if (nonZeroTimestamps.length > 0) {
+        marketsWithData++;
+        const minTs: number = Math.min(...nonZeroTimestamps);
+        const maxTs: number = Math.max(...nonZeroTimestamps);
+        if (minTs < oldestTimestamp) oldestTimestamp = minTs;
+        if (maxTs > newestTimestamp) newestTimestamp = maxTs;
+      }
+    });
+
+    return {
+      checkpointAdvancesSinceStartup: this.checkpointAdvancesSinceStartup,
+      minRequiredAdvances: this.MIN_CHECKPOINT_ADVANCES_BEFORE_SAVE,
+      readyToSave:
+        this.checkpointAdvancesSinceStartup >=
+        this.MIN_CHECKPOINT_ADVANCES_BEFORE_SAVE,
+      uptimeSeconds: Math.floor((Date.now() - this.startTime) / 1000),
+      totalMarkets: this.markets.size,
+      marketsWithData,
+      oldestTimestamp: oldestTimestamp === now ? 0 : oldestTimestamp,
+      newestTimestamp,
+    };
   }
 
   /**
@@ -1990,11 +2049,25 @@ export class ManifestStatsServer {
   }
 
   /**
-   * Save current state to database
+   * Save current state to database.
+   * Protected to prevent overwriting good checkpoint data before new data has accumulated.
    */
   async saveState(): Promise<void> {
     if (this.isReadOnly) {
       console.log('Skipping state save (read-only mode)');
+      return;
+    }
+
+    // Protect against overwriting good checkpoint data before we've accumulated enough new data.
+    // This prevents data loss when the server restarts frequently.
+    if (
+      this.checkpointAdvancesSinceStartup <
+      this.MIN_CHECKPOINT_ADVANCES_BEFORE_SAVE
+    ) {
+      console.log(
+        `Skipping state save: only ${this.checkpointAdvancesSinceStartup}/${this.MIN_CHECKPOINT_ADVANCES_BEFORE_SAVE} checkpoint advances since startup. ` +
+          `Waiting for more data to accumulate before overwriting database.`,
+      );
       return;
     }
 
@@ -2014,7 +2087,7 @@ export class ManifestStatsServer {
       await this.cleanupOldCheckpoints(checkpointId);
 
       console.log('All state saved successfully to database');
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('Error saving state to database:', error);
       await this.sendDatabaseErrorAlert(error);
       // Don't re-throw - we want to continue operation even after errors
