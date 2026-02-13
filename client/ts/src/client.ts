@@ -104,7 +104,10 @@ export class ManifestClient {
         `https://mfx-stats-mainnet.fly.dev/wrapper?owner=${payerPub.toBase58()}`,
       );
       if (response.ok) {
-        const data = (await response.json()) as { owner: string; wrapper: string };
+        const data = (await response.json()) as {
+          owner: string;
+          wrapper: string;
+        };
         const wrapperPubkey = new PublicKey(data.wrapper);
         const accountInfo = await connection.getAccountInfo(wrapperPubkey);
         if (accountInfo) {
