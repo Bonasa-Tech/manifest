@@ -176,7 +176,7 @@ impl TestFixture {
         let usdc_mint_f: MintFixture = MintFixture::new(Rc::clone(&context), Some(6)).await;
         let sol_mint_f: MintFixture = MintFixture::new(Rc::clone(&context), Some(9)).await;
         let mut market_fixture: MarketFixture =
-            MarketFixture::new(Rc::clone(&context), &sol_mint_f.key, &usdc_mint_f.key).await;
+            MarketFixture::new(Rc::clone(&context), 0, 9, &usdc_mint_f.key).await;
 
         let mut global_fixture: GlobalFixture =
             GlobalFixture::new(Rc::clone(&context), &usdc_mint_f.key).await;
@@ -261,15 +261,24 @@ impl TestFixture {
 
     pub async fn create_new_market(
         &self,
-        base_mint: &Pubkey,
+        base_mint_index: u8,
+        base_mint_decimals: u8,
         quote_mint: &Pubkey,
     ) -> anyhow::Result<Pubkey, BanksClientError> {
-        let (market_key, _) = get_market_address(base_mint, quote_mint);
+        let (market_key, _) = get_market_address(base_mint_index, quote_mint);
         let payer: Pubkey = self.context.borrow().payer.pubkey();
         let payer_keypair: Keypair = self.context.borrow().payer.insecure_clone();
 
         let create_market_ixs: Vec<Instruction> =
-            create_market_instructions(base_mint, quote_mint, &payer);
+            create_market_instructions(
+                base_mint_index,
+                base_mint_decimals,
+                quote_mint,
+                &payer,
+                1000,
+                500,
+                Pubkey::default(),
+            );
 
         send_tx_with_retry(
             Rc::clone(&self.context),
@@ -779,7 +788,7 @@ impl TestFixture {
             trader_index_hint,
             cancels,
             orders,
-            Some(*self.market_fixture.market.get_base_mint()),
+            None, // no physical base mint in perps
             None,
             Some(*self.market_fixture.market.get_quote_mint()),
             None,
@@ -805,14 +814,23 @@ pub struct MarketFixture {
 impl MarketFixture {
     pub async fn new(
         context: Rc<RefCell<ProgramTestContext>>,
-        base_mint: &Pubkey,
+        base_mint_index: u8,
+        base_mint_decimals: u8,
         quote_mint: &Pubkey,
     ) -> Self {
-        let (market_key, _) = get_market_address(base_mint, quote_mint);
+        let (market_key, _) = get_market_address(base_mint_index, quote_mint);
         let payer: Pubkey = context.borrow().payer.pubkey();
         let payer_keypair: Keypair = context.borrow().payer.insecure_clone();
         let create_market_ixs: Vec<Instruction> =
-            create_market_instructions(base_mint, quote_mint, &payer);
+            create_market_instructions(
+                base_mint_index,
+                base_mint_decimals,
+                quote_mint,
+                &payer,
+                1000, // initial_margin_bps (10%)
+                500,  // maintenance_margin_bps (5%)
+                Pubkey::default(), // pyth_feed_account
+            );
 
         send_tx_with_retry(
             Rc::clone(&context),
@@ -826,32 +844,11 @@ impl MarketFixture {
         let context_ref: Rc<RefCell<ProgramTestContext>> = Rc::clone(&context);
 
         let mut lamports: u64 = 0;
-        let base_mint: MintAccountInfo = MintAccountInfo {
+        let quote_mint_ai: MintAccountInfo = MintAccountInfo {
             mint: Mint {
                 mint_authority: None.into(),
                 supply: 0,
                 decimals: 6,
-                is_initialized: true,
-                freeze_authority: None.into(),
-            },
-            info: &AccountInfo {
-                key: &Pubkey::new_unique(),
-                lamports: Rc::new(RefCell::new(&mut lamports)),
-                data: Rc::new(RefCell::new(&mut [])),
-                owner: &Pubkey::new_unique(),
-                rent_epoch: 0,
-                is_signer: false,
-                is_writable: false,
-                executable: false,
-            },
-        };
-
-        let mut lamports: u64 = 0;
-        let quote_mint: MintAccountInfo = MintAccountInfo {
-            mint: Mint {
-                mint_authority: None.into(),
-                supply: 0,
-                decimals: 9,
                 is_initialized: true,
                 freeze_authority: None.into(),
             },
@@ -871,7 +868,7 @@ impl MarketFixture {
             context: context_ref,
             key: market_key,
             market: MarketValue {
-                fixed: MarketFixed::new_empty(&base_mint, &quote_mint, &market_key),
+                fixed: MarketFixed::new_empty(base_mint_index, base_mint_decimals, &quote_mint_ai),
                 dynamic: Vec::new(),
             },
         }
@@ -925,19 +922,10 @@ impl MarketFixture {
     }
 
     /// Get vault token account balances (base_vault_balance, quote_vault_balance)
+    /// In perps, base is virtual so base_vault_balance is always 0.
     pub async fn get_vault_balances(&mut self) -> (u64, u64) {
         self.reload().await;
-        let (base_vault, _) = get_vault_address(&self.key, self.market.get_base_mint());
         let (quote_vault, _) = get_vault_address(&self.key, self.market.get_quote_mint());
-
-        let base_vault_balance: u64 = self
-            .context
-            .borrow_mut()
-            .banks_client
-            .get_packed_account_data::<spl_token::state::Account>(base_vault)
-            .await
-            .map(|a| a.amount)
-            .unwrap_or(0);
 
         let quote_vault_balance: u64 = self
             .context
@@ -948,7 +936,7 @@ impl MarketFixture {
             .map(|a| a.amount)
             .unwrap_or(0);
 
-        (base_vault_balance, quote_vault_balance)
+        (0, quote_vault_balance)
     }
 
     /// Get total base/quote locked in orders.
@@ -1709,11 +1697,10 @@ pub async fn verify_vault_balance(
         base_in_asks += ask.get_num_base_atoms().as_u64();
     }
 
-    // Get vault balances (handles both SPL Token and Token-2022)
-    let (base_vault, _) = get_vault_address(market_key, market.get_base_mint());
+    // Get vault balances — in perps, only quote vault exists (base is virtual)
     let (quote_vault, _) = get_vault_address(market_key, market.get_quote_mint());
 
-    let vault_base: u64 = get_token_account_balance(Rc::clone(&context), base_vault).await;
+    let vault_base: u64 = 0; // no physical base vault in perps
     let vault_quote: u64 = get_token_account_balance(Rc::clone(&context), quote_vault).await;
 
     let expected_base = seats_base + base_in_asks;
@@ -1761,19 +1748,28 @@ pub async fn verify_vault_balance(
     println!("Vault verification passed!");
 }
 
-/// Create a market with the given base and quote mints.
+/// Create a market with the given base mint index and quote mint.
 /// Returns the market PDA pubkey.
 pub async fn create_market_with_mints(
     context: Rc<RefCell<ProgramTestContext>>,
-    base_mint: &Pubkey,
+    base_mint_index: u8,
+    base_mint_decimals: u8,
     quote_mint: &Pubkey,
 ) -> Result<Pubkey, BanksClientError> {
-    let (market_key, _) = get_market_address(base_mint, quote_mint);
+    let (market_key, _) = get_market_address(base_mint_index, quote_mint);
     let payer_keypair = context.borrow().payer.insecure_clone();
     let payer = payer_keypair.pubkey();
 
     let create_market_ixs: Vec<Instruction> =
-        create_market_instructions(base_mint, quote_mint, &payer);
+        create_market_instructions(
+            base_mint_index,
+            base_mint_decimals,
+            quote_mint,
+            &payer,
+            1000,
+            500,
+            Pubkey::default(),
+        );
 
     send_tx_with_retry(
         Rc::clone(&context),

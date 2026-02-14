@@ -196,7 +196,17 @@ pub struct MarketFixed {
     /// Maintenance margin in basis points (e.g., 500 = 5%)
     maintenance_margin_bps: u64,
     #[cfg(feature = "certora")]
-    _padding3: [u64; 14],
+    pyth_feed_account: Pubkey,
+    #[cfg(feature = "certora")]
+    oracle_price_mantissa: u64,
+    #[cfg(feature = "certora")]
+    oracle_price_expo_and_pad: u64,
+    #[cfg(feature = "certora")]
+    last_funding_timestamp: u64,
+    #[cfg(feature = "certora")]
+    cumulative_funding: u64,
+    #[cfg(feature = "certora")]
+    _padding3: [u64; 6],
 
     /// Initial margin in basis points (e.g., 1000 = 10% = 10x leverage)
     #[cfg(not(feature = "certora"))]
@@ -210,8 +220,23 @@ pub struct MarketFixed {
     /// Total open short position in base atoms across all traders
     #[cfg(not(feature = "certora"))]
     total_short_base_atoms: u64,
+    /// Pyth price feed account expected for this market
     #[cfg(not(feature = "certora"))]
-    _padding3: [u64; 16],
+    pyth_feed_account: Pubkey,
+    /// Cached oracle price mantissa (updated by CrankFunding)
+    #[cfg(not(feature = "certora"))]
+    oracle_price_mantissa: u64,
+    /// Cached oracle price exponent in lower 32 bits (i32), upper 32 bits padding
+    #[cfg(not(feature = "certora"))]
+    oracle_price_expo_and_pad: u64,
+    /// Unix timestamp of last funding crank
+    #[cfg(not(feature = "certora"))]
+    last_funding_timestamp: u64,
+    /// Cumulative funding per base atom, scaled by 1e9. Stored as u64, interpret as i64.
+    #[cfg(not(feature = "certora"))]
+    cumulative_funding: u64,
+    #[cfg(not(feature = "certora"))]
+    _padding3: [u64; 8],
 }
 const_assert_eq!(
     size_of::<MarketFixed>(),
@@ -275,7 +300,17 @@ impl MarketFixed {
             #[cfg(not(feature = "certora"))]
             total_short_base_atoms: 0,
             #[cfg(not(feature = "certora"))]
-            _padding3: [0; 16],
+            pyth_feed_account: Pubkey::default(),
+            #[cfg(not(feature = "certora"))]
+            oracle_price_mantissa: 0,
+            #[cfg(not(feature = "certora"))]
+            oracle_price_expo_and_pad: 0,
+            #[cfg(not(feature = "certora"))]
+            last_funding_timestamp: 0,
+            #[cfg(not(feature = "certora"))]
+            cumulative_funding: 0,
+            #[cfg(not(feature = "certora"))]
+            _padding3: [0; 8],
             #[cfg(feature = "certora")]
             withdrawable_base_atoms: BaseAtoms::new(0),
             #[cfg(feature = "certora")]
@@ -289,7 +324,17 @@ impl MarketFixed {
             #[cfg(feature = "certora")]
             maintenance_margin_bps: 0,
             #[cfg(feature = "certora")]
-            _padding3: [0; 14],
+            pyth_feed_account: Pubkey::default(),
+            #[cfg(feature = "certora")]
+            oracle_price_mantissa: 0,
+            #[cfg(feature = "certora")]
+            oracle_price_expo_and_pad: 0,
+            #[cfg(feature = "certora")]
+            last_funding_timestamp: 0,
+            #[cfg(feature = "certora")]
+            cumulative_funding: 0,
+            #[cfg(feature = "certora")]
+            _padding3: [0; 6],
         }
     }
 
@@ -322,7 +367,12 @@ impl MarketFixed {
             orderbook_quote_atoms: QuoteAtoms::new(nondet()),
             initial_margin_bps: 0,
             maintenance_margin_bps: 0,
-            _padding3: [0; 14],
+            pyth_feed_account: Pubkey::default(),
+            oracle_price_mantissa: 0,
+            oracle_price_expo_and_pad: 0,
+            last_funding_timestamp: 0,
+            cumulative_funding: 0,
+            _padding3: [0; 6],
         }
     }
 
@@ -354,6 +404,9 @@ impl MarketFixed {
     }
     pub(crate) fn get_asks_best_index(&self) -> DataIndex {
         self.asks_best_index
+    }
+    pub(crate) fn get_claimed_seats_root_index(&self) -> DataIndex {
+        self.claimed_seats_root_index
     }
 
     #[cfg(feature = "certora")]
@@ -407,6 +460,35 @@ impl MarketFixed {
     #[cfg(not(feature = "certora"))]
     pub fn set_total_short_base_atoms(&mut self, val: u64) {
         self.total_short_base_atoms = val;
+    }
+
+    pub fn get_pyth_feed(&self) -> &Pubkey {
+        &self.pyth_feed_account
+    }
+    pub fn set_pyth_feed(&mut self, feed: Pubkey) {
+        self.pyth_feed_account = feed;
+    }
+    pub fn get_oracle_price_mantissa(&self) -> u64 {
+        self.oracle_price_mantissa
+    }
+    pub fn get_oracle_price_expo(&self) -> i32 {
+        self.oracle_price_expo_and_pad as i32
+    }
+    pub fn set_oracle_price(&mut self, mantissa: u64, expo: i32) {
+        self.oracle_price_mantissa = mantissa;
+        self.oracle_price_expo_and_pad = expo as u32 as u64;
+    }
+    pub fn get_last_funding_timestamp(&self) -> i64 {
+        self.last_funding_timestamp as i64
+    }
+    pub fn set_last_funding_timestamp(&mut self, ts: i64) {
+        self.last_funding_timestamp = ts as u64;
+    }
+    pub fn get_cumulative_funding(&self) -> i64 {
+        self.cumulative_funding as i64
+    }
+    pub fn set_cumulative_funding(&mut self, val: i64) {
+        self.cumulative_funding = val as u64;
     }
 }
 
@@ -1922,15 +2004,6 @@ pub fn update_perps_position(
     }
 
     Ok(())
-}
-
-fn record_volume_by_trader_index(
-    dynamic: &mut [u8],
-    trader_index: DataIndex,
-    amount_atoms: QuoteAtoms,
-) {
-    let claimed_seat: &mut ClaimedSeat = get_mut_helper_seat(dynamic, trader_index).get_mut_value();
-    claimed_seat.quote_volume = claimed_seat.quote_volume.wrapping_add(amount_atoms);
 }
 
 #[inline(always)]

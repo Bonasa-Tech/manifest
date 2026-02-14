@@ -1498,7 +1498,7 @@ async fn ljitsps_test() -> anyhow::Result<()> {
 
     // Create the market with Token-2022 base (7 decimals) and USDC quote (6 decimals)
     let market_key =
-        create_market_with_mints(Rc::clone(&context), &base_mint_key, &usdc_mint_f.key).await?;
+        create_market_with_mints(Rc::clone(&context), 1, 7, &usdc_mint_f.key).await?;
 
     // Create base token account (Token-2022) and mint tokens
     let base_token_account_keypair =

@@ -808,6 +808,48 @@ impl<'a, 'info> GlobalCleanContext<'a, 'info> {
     }
 }
 
+/// CrankFunding account infos
+pub(crate) struct CrankFundingContext<'a, 'info> {
+    pub payer: Signer<'a, 'info>,
+    pub market: ManifestAccountInfo<'a, 'info, MarketFixed>,
+    pub pyth_price_feed: &'a AccountInfo<'info>,
+}
+
+impl<'a, 'info> CrankFundingContext<'a, 'info> {
+    pub fn load(accounts: &'a [AccountInfo<'info>]) -> Result<Self, ProgramError> {
+        let account_iter: &mut Iter<AccountInfo<'info>> = &mut accounts.iter();
+
+        let payer: Signer = Signer::new_payer(next_account_info(account_iter)?)?;
+        let market_info: &'a AccountInfo<'info> = next_account_info(account_iter)?;
+        let market: ManifestAccountInfo<MarketFixed> =
+            ManifestAccountInfo::<MarketFixed>::new(market_info)
+                .or_else(|_| ManifestAccountInfo::<MarketFixed>::new_delegated(market_info))?;
+
+        let pyth_price_feed: &'a AccountInfo<'info> = next_account_info(account_iter)?;
+
+        // Validate pyth feed matches the one stored on the market
+        {
+            let market_fixed: std::cell::Ref<MarketFixed> = market.get_fixed()?;
+            require!(
+                *pyth_price_feed.key == *market_fixed.get_pyth_feed(),
+                ManifestError::IncorrectAccount,
+                "Pyth feed account does not match market's oracle",
+            )?;
+            require!(
+                *market_fixed.get_pyth_feed() != Pubkey::default(),
+                ManifestError::InvalidPerpsOperation,
+                "Market has no oracle configured",
+            )?;
+        }
+
+        Ok(Self {
+            payer,
+            market,
+            pyth_price_feed,
+        })
+    }
+}
+
 /// Liquidate account infos
 pub(crate) struct LiquidateContext<'a, 'info> {
     pub liquidator: Signer<'a, 'info>,

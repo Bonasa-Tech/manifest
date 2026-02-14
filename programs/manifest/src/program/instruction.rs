@@ -186,6 +186,12 @@ pub enum ManifestInstruction {
     #[account(1, writable, name = "market", desc = "Perps market account")]
     #[account(2, name = "system_program", desc = "System program")]
     Liquidate = 16,
+
+    /// Crank funding rate using oracle price.
+    #[account(0, writable, signer, name = "payer", desc = "Payer / cranker")]
+    #[account(1, writable, name = "market", desc = "Perps market account")]
+    #[account(2, name = "pyth_price_feed", desc = "Pyth price feed account")]
+    CrankFunding = 17,
 }
 
 impl ManifestInstruction {
@@ -196,7 +202,7 @@ impl ManifestInstruction {
 
 #[test]
 fn test_instruction_serialization() {
-    let num_instructions: u8 = 16;
+    let num_instructions: u8 = 17;
     for i in 0..=255 {
         let instruction: ManifestInstruction = match ManifestInstruction::try_from(i) {
             Ok(j) => {

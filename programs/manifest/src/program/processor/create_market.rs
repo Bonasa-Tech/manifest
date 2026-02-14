@@ -31,6 +31,7 @@ pub struct CreateMarketParams {
     pub base_mint_decimals: u8,
     pub initial_margin_bps: u64,
     pub maintenance_margin_bps: u64,
+    pub pyth_feed_account: Pubkey,
 }
 
 impl CreateMarketParams {
@@ -39,12 +40,14 @@ impl CreateMarketParams {
         base_mint_decimals: u8,
         initial_margin_bps: u64,
         maintenance_margin_bps: u64,
+        pyth_feed_account: Pubkey,
     ) -> Self {
         CreateMarketParams {
             base_mint_index,
             base_mint_decimals,
             initial_margin_bps,
             maintenance_margin_bps,
+            pyth_feed_account,
         }
     }
 }
@@ -207,6 +210,9 @@ pub(crate) fn process_create_market(
             params.initial_margin_bps,
             params.maintenance_margin_bps,
         );
+
+        // Set the Pyth oracle feed account
+        empty_market_fixed.set_pyth_feed(params.pyth_feed_account);
 
         assert_eq!(market.info.data_len(), size_of::<MarketFixed>());
 

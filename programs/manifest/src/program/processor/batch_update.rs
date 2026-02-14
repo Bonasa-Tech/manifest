@@ -353,6 +353,52 @@ pub(crate) fn process_batch_update_core(
                 ..
             } = add_order_to_market_result;
 
+            // Initial margin check after order placement
+            #[cfg(not(feature = "certora"))]
+            {
+                let claimed_seat: &crate::state::claimed_seat::ClaimedSeat =
+                    get_helper::<hypertree::RBNode<crate::state::claimed_seat::ClaimedSeat>>(
+                        &dynamic_account.dynamic,
+                        trader_index,
+                    )
+                    .get_value();
+                let position_size: i64 = claimed_seat.get_position_size();
+                if position_size != 0 {
+                    let abs_position: u64 = position_size.unsigned_abs();
+                    let mark_price =
+                        super::liquidate::compute_mark_price(&dynamic_account)?;
+                    let notional: u64 = mark_price
+                        .checked_quote_for_base(
+                            crate::quantities::BaseAtoms::new(abs_position),
+                            false,
+                        )?
+                        .as_u64();
+                    let initial_margin_bps: u64 =
+                        dynamic_account.fixed.get_initial_margin_bps();
+                    let required_margin: u64 = notional
+                        .checked_mul(initial_margin_bps)
+                        .unwrap_or(u64::MAX)
+                        / 10000;
+
+                    let cost_basis = claimed_seat.get_quote_cost_basis();
+                    let unrealized_pnl: i64 = if position_size > 0 {
+                        (notional as i64).wrapping_sub(cost_basis as i64)
+                    } else {
+                        (cost_basis as i64).wrapping_sub(notional as i64)
+                    };
+
+                    let margin: u64 = claimed_seat.quote_withdrawable_balance.as_u64();
+                    let equity: i128 = (margin as i128) + (unrealized_pnl as i128);
+                    crate::require!(
+                        equity >= required_margin as i128,
+                        crate::program::ManifestError::InsufficientMargin,
+                        "Initial margin check failed: equity {} < required {}",
+                        equity,
+                        required_margin,
+                    )?;
+                }
+            }
+
             emit_stack(PlaceOrderLog {
                 market: *market.key,
                 trader: *payer.key,

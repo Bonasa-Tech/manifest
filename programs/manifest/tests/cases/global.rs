@@ -551,7 +551,8 @@ async fn global_match_22() -> anyhow::Result<()> {
 
     let mut market_fixture: MarketFixture = MarketFixture::new(
         Rc::clone(&test_fixture.context),
-        &test_fixture.sol_mint_fixture.key,
+        1, // different index to avoid PDA collision with default market
+        9,
         &usdc_mint_fixture.key,
     )
     .await;
@@ -580,8 +581,8 @@ async fn global_match_22() -> anyhow::Result<()> {
             OrderType::Global,
             NO_EXPIRATION_LAST_VALID_SLOT,
         )],
-        Some(*market_fixture.market.get_base_mint()),
-        Some(spl_token::id()),
+        None, // no physical base mint in perps
+        None,
         Some(*market_fixture.market.get_quote_mint()),
         Some(spl_token_2022::id()),
     );

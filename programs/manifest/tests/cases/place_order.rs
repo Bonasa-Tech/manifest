@@ -586,22 +586,11 @@ async fn match_limit_orders_with_large_deposits_test() -> anyhow::Result<()> {
         user_balance_base += ask_balance_base;
     }
 
-    let (vault_address_base, _) = get_vault_address(
-        &test_fixture.market_fixture.key,
-        test_fixture.market_fixture.market.get_base_mint(),
-    );
+    // In perps, base is virtual — no physical base vault
     let (vault_address_quote, _) = get_vault_address(
         &test_fixture.market_fixture.key,
         test_fixture.market_fixture.market.get_quote_mint(),
     );
-    let vault_balance_base: u64 = test_fixture
-        .context
-        .borrow_mut()
-        .banks_client
-        .get_packed_account_data::<spl_token::state::Account>(vault_address_base)
-        .await
-        .expect("base vault")
-        .amount;
     let vault_balance_quote: u64 = test_fixture
         .context
         .borrow_mut()
@@ -611,7 +600,6 @@ async fn match_limit_orders_with_large_deposits_test() -> anyhow::Result<()> {
         .expect("quote vault")
         .amount;
 
-    assert_eq!(user_balance_base, vault_balance_base);
     assert_eq!(user_balance_quote, vault_balance_quote);
 
     Ok(())

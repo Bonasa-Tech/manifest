@@ -401,10 +401,6 @@ impl<'a, 'b, 'info> AddSingleOrderCtx<'a, 'b, 'info> {
             },
         )?;
 
-        // record maker & taker volume
-        record_volume_by_trader_index(dynamic, other_trader_index, quote_atoms_traded);
-        record_volume_by_trader_index(dynamic, trader_index, quote_atoms_traded);
-
         emit_stack(FillLog {
             market,
             maker,

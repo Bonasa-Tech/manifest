@@ -1,6 +1,7 @@
 pub mod batch_update;
 pub mod claim_seat;
 pub mod commit_market;
+pub mod crank_funding;
 pub mod create_market;
 pub mod delegate_market;
 pub mod deposit;

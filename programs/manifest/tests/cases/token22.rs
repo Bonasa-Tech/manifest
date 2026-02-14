@@ -49,9 +49,9 @@ async fn token22_base() -> anyhow::Result<()> {
     let spl_mint_key: Pubkey = spl_mint_f.key;
 
     // Create the market with SPL as base which is 2022, USDC as quote which is normal.
-    let (market_key, _) = get_market_address(&spl_mint_f.key, &usdc_mint_f.key);
+    let (market_key, _) = get_market_address(0, &usdc_mint_f.key);
     let create_market_ixs: Vec<Instruction> =
-        create_market_instructions(&spl_mint_f.key, &usdc_mint_f.key, payer);
+        create_market_instructions(0, 9, &usdc_mint_f.key, payer, 1000, 500, Pubkey::default());
     send_tx_with_retry(
         Rc::clone(&context),
         &create_market_ixs[..],
@@ -325,9 +325,9 @@ async fn token22_quote() -> anyhow::Result<()> {
     let spl_mint_key: Pubkey = spl_mint_f.key;
 
     // Create the market with SPL as base which is normal, USDC as quote which is 2022.
-    let (market_key, _) = get_market_address(&spl_mint_f.key, &usdc_mint_f.key);
+    let (market_key, _) = get_market_address(0, &usdc_mint_f.key);
     let create_market_ixs: Vec<Instruction> =
-        create_market_instructions(&spl_mint_f.key, &usdc_mint_f.key, payer);
+        create_market_instructions(0, 9, &usdc_mint_f.key, payer, 1000, 500, Pubkey::default());
     send_tx_with_retry(
         Rc::clone(&context),
         &create_market_ixs[..],
@@ -624,9 +624,9 @@ async fn token22_deposit_transfer_fee() -> anyhow::Result<()> {
     let spl_mint_key: Pubkey = spl_mint_keypair.pubkey();
 
     // Create the market with SPL as base which is 2022, USDC as quote which is normal.
-    let (market_key, _) = get_market_address(&spl_mint_key, &usdc_mint_f.key);
+    let (market_key, _) = get_market_address(0, &usdc_mint_f.key);
     let create_market_ixs: Vec<Instruction> =
-        create_market_instructions(&spl_mint_key, &usdc_mint_f.key, payer);
+        create_market_instructions(0, 9, &usdc_mint_f.key, payer, 1000, 500, Pubkey::default());
     send_tx_with_retry(
         Rc::clone(&context),
         &create_market_ixs[..],
