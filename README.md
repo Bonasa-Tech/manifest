@@ -31,7 +31,7 @@ Read [The Orderbook Manifesto](https://manifest.trade/whitepaper.pdf)
 | License|GPL |Business |GPL|
 | Read optimized| Yes | No | Yes |
 | Swap accounts| 16 | 8 | 8 |
-| [CU](https://cks-systems.github.io/manifest/dev/bench/) | :white_check_mark: | :white_check_mark: | :white_check_mark: :white_check_mark: |
+| [CU](https://bonasa-tech.github.io/manifest/dev/bench/) | :white_check_mark: | :white_check_mark: | :white_check_mark: :white_check_mark: |
 | Token 22                                                | No                 | No                 | Yes                                   |
 | Composable wrapper                                      | No                 | No                 | Yes                                   |
 | Capital Efficient                                       | No                 | No                 | Yes                                   |
@@ -108,7 +108,7 @@ sh local-validator-test.sh
 ```
 ## Resources
 ### Client SDK
-  [NPM Package](https://www.npmjs.com/package/@cks-systems/manifest-sdk)
+  [NPM Package](https://www.npmjs.com/package/@bonasa-tech/manifest-sdk)
 
 ### Audit
 [View Report](https://www.manifest.trade/audit.pdf)
