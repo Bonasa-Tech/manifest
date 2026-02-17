@@ -31,6 +31,8 @@ const PYTH_MIN_DATA_LEN: usize = 240;
 const FUNDING_PERIOD_SECS: i64 = 3600;
 /// Funding rate scaling factor (1e9)
 const FUNDING_SCALE: i64 = 1_000_000_000;
+/// Maximum funding rate per period: 1% of FUNDING_SCALE (caps at 1% per hour)
+const MAX_FUNDING_RATE_PER_PERIOD: i64 = FUNDING_SCALE / 100;
 
 #[derive(BorshDeserialize, BorshSerialize)]
 pub struct CrankFundingParams {}
@@ -126,10 +128,13 @@ pub(crate) fn process_crank_funding(
         return Ok(());
     }
 
-    let time_elapsed = now.saturating_sub(last_funding_ts);
-    if time_elapsed <= 0 {
+    let raw_time_elapsed = now.saturating_sub(last_funding_ts);
+    if raw_time_elapsed <= 0 {
         return Ok(());
     }
+    // Cap time_elapsed to one funding period to prevent multi-period accumulation
+    // in a single crank. Crankers should call more frequently for accurate funding.
+    let time_elapsed = raw_time_elapsed.min(FUNDING_PERIOD_SECS);
 
     // Compute mark price BEFORE updating oracle cache.
     // Mark price reflects what the market was pricing at (old cached oracle or orderbook).
@@ -183,8 +188,12 @@ pub(crate) fn process_crank_funding(
 
     // Funding rate = (mark - oracle) / oracle * time_elapsed / FUNDING_PERIOD * FUNDING_SCALE
     let price_diff = mark_quote - oracle_quote_i128;
-    let funding_rate_scaled: i64 = ((price_diff * FUNDING_SCALE as i128 * time_elapsed as i128)
-        / (oracle_quote_i128 * FUNDING_PERIOD_SECS as i128)) as i64;
+    let funding_rate_raw: i128 = (price_diff * FUNDING_SCALE as i128 * time_elapsed as i128)
+        / (oracle_quote_i128 * FUNDING_PERIOD_SECS as i128);
+    // Clamp to prevent extreme funding rates from manipulated mark prices
+    let funding_rate_scaled: i64 = funding_rate_raw
+        .max(-(MAX_FUNDING_RATE_PER_PERIOD as i128))
+        .min(MAX_FUNDING_RATE_PER_PERIOD as i128) as i64;
 
     // Update global cumulative funding rate (lazy settlement — no per-seat iteration).
     // Individual traders' funding is settled lazily on their next interaction

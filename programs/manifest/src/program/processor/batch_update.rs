@@ -403,14 +403,15 @@ pub(crate) fn process_batch_update_core(
                         / 10000;
 
                     let cost_basis = claimed_seat.get_quote_cost_basis();
-                    let unrealized_pnl: i64 = if position_size > 0 {
-                        (notional as i64).wrapping_sub(cost_basis as i64)
+                    // Use i128 to avoid overflow on large u64 values cast to i64
+                    let unrealized_pnl: i128 = if position_size > 0 {
+                        (notional as i128) - (cost_basis as i128)
                     } else {
-                        (cost_basis as i64).wrapping_sub(notional as i64)
+                        (cost_basis as i128) - (notional as i128)
                     };
 
                     let margin: u64 = claimed_seat.quote_withdrawable_balance.as_u64();
-                    let equity: i128 = (margin as i128) + (unrealized_pnl as i128);
+                    let equity: i128 = (margin as i128) + unrealized_pnl;
                     crate::require!(
                         equity >= required_margin as i128,
                         crate::program::ManifestError::InsufficientMargin,

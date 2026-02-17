@@ -122,14 +122,15 @@ pub(crate) fn process_withdraw_core(
                 .as_u64();
 
             let quote_cost_basis: u64 = claimed_seat.get_quote_cost_basis();
-            let unrealized_pnl: i64 = if position_size > 0 {
-                (current_value as i64).wrapping_sub(quote_cost_basis as i64)
+            // Use i128 to avoid overflow on large u64 values cast to i64
+            let unrealized_pnl: i128 = if position_size > 0 {
+                (current_value as i128) - (quote_cost_basis as i128)
             } else {
-                (quote_cost_basis as i64).wrapping_sub(current_value as i64)
+                (quote_cost_basis as i128) - (current_value as i128)
             };
 
             let remaining_margin: u64 = claimed_seat.quote_withdrawable_balance.as_u64();
-            let equity: i128 = (remaining_margin as i128) + (unrealized_pnl as i128);
+            let equity: i128 = (remaining_margin as i128) + unrealized_pnl;
 
             let maintenance_margin_bps: u64 =
                 dynamic_account.fixed.get_maintenance_margin_bps();

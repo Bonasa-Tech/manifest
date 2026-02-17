@@ -65,6 +65,34 @@ pub(crate) fn process_create_market(
     data: &[u8],
 ) -> ProgramResult {
     let params: CreateMarketParams = CreateMarketParams::try_from_slice(data)?;
+
+    // Validate perps parameters
+    require!(
+        params.maintenance_margin_bps > 0,
+        crate::program::ManifestError::InvalidPerpsOperation,
+        "Maintenance margin must be > 0",
+    )?;
+    require!(
+        params.initial_margin_bps >= params.maintenance_margin_bps,
+        crate::program::ManifestError::InvalidPerpsOperation,
+        "Initial margin must be >= maintenance margin",
+    )?;
+    require!(
+        params.initial_margin_bps <= 50000,
+        crate::program::ManifestError::InvalidPerpsOperation,
+        "Initial margin cannot exceed 500%",
+    )?;
+    require!(
+        params.taker_fee_bps <= 1000,
+        crate::program::ManifestError::InvalidPerpsOperation,
+        "Taker fee cannot exceed 10%",
+    )?;
+    require!(
+        params.liquidation_buffer_bps < params.maintenance_margin_bps,
+        crate::program::ManifestError::InvalidPerpsOperation,
+        "Liquidation buffer must be < maintenance margin",
+    )?;
+
     trace!("process_create_market accs={accounts:?}");
     let create_market_context: CreateMarketContext = CreateMarketContext::load(accounts)?;
 

@@ -10,12 +10,15 @@ use borsh::{BorshDeserialize, BorshSerialize};
 use hypertree::{get_helper, get_mut_helper, DataIndex, HyperTreeValueIteratorTrait, RBNode};
 use solana_program::{
     account_info::AccountInfo, entrypoint::ProgramResult, program_error::ProgramError,
-    pubkey::Pubkey,
+    pubkey::Pubkey, sysvar::Sysvar,
 };
 use std::cell::RefMut;
 
 /// Liquidator reward in basis points of closed notional (2.5%)
 const LIQUIDATOR_REWARD_BPS: u64 = 250;
+/// Minimum position size in base atoms to keep after partial liquidation.
+/// If the remaining position would be smaller, do a full liquidation instead.
+const MIN_POSITION_SIZE_ATOMS: u64 = 1000;
 
 #[derive(BorshDeserialize, BorshSerialize)]
 pub struct LiquidateParams {
@@ -45,6 +48,13 @@ pub(crate) fn process_liquidate(
 
     let market_data: &mut RefMut<&mut [u8]> = &mut market.try_borrow_mut_data()?;
     let mut dynamic_account: MarketRefMut = get_mut_dynamic_account(market_data);
+
+    // Prevent self-liquidation (extracting insurance fund via self-reward)
+    require!(
+        *liquidator.key != params.trader_to_liquidate,
+        ManifestError::InvalidPerpsOperation,
+        "Cannot liquidate your own position",
+    )?;
 
     // Find the trader's seat
     let trader_index: DataIndex =
@@ -108,6 +118,21 @@ pub(crate) fn process_liquidate(
         seat.quote_withdrawable_balance.as_u64()
     };
 
+    // Require oracle has been updated recently (within 1 hour = 3600 seconds).
+    // This prevents liquidation at stale cached prices.
+    {
+        let last_funding_ts: i64 = dynamic_account.fixed.get_last_funding_timestamp();
+        let clock = solana_program::clock::Clock::get()?;
+        let now = clock.unix_timestamp;
+        let staleness = now.saturating_sub(last_funding_ts);
+        require!(
+            last_funding_ts > 0 && staleness <= 3600,
+            ManifestError::InvalidPerpsOperation,
+            "Oracle price is stale: last updated {} seconds ago",
+            staleness,
+        )?;
+    }
+
     // Compute mark price (prefers oracle, falls back to orderbook)
     let mark_price: QuoteAtomsPerBaseAtom = compute_mark_price(&dynamic_account)?;
 
@@ -117,15 +142,15 @@ pub(crate) fn process_liquidate(
         .checked_quote_for_base(BaseAtoms::new(abs_position), false)?
         .as_u64();
 
-    // Compute unrealized PnL
-    let unrealized_pnl: i64 = if position_size > 0 {
-        (current_value as i64).wrapping_sub(quote_cost_basis as i64)
+    // Compute unrealized PnL using i128 to avoid overflow on large u64 values
+    let unrealized_pnl: i128 = if position_size > 0 {
+        (current_value as i128) - (quote_cost_basis as i128)
     } else {
-        (quote_cost_basis as i64).wrapping_sub(current_value as i64)
+        (quote_cost_basis as i128) - (current_value as i128)
     };
 
     // Equity = margin + unrealized_pnl
-    let equity: i128 = (margin_balance as i128) + (unrealized_pnl as i128);
+    let equity: i128 = (margin_balance as i128) + unrealized_pnl;
 
     // Maintenance margin = current_value * maintenance_margin_bps / 10000
     let maintenance_margin_bps: u64 = dynamic_account.fixed.get_maintenance_margin_bps();
@@ -186,6 +211,13 @@ pub(crate) fn process_liquidate(
         return Ok(());
     }
 
+    // Round up to full liquidation if remaining position would be dust
+    let close_amount: u64 = if abs_position.saturating_sub(close_amount) < MIN_POSITION_SIZE_ATOMS {
+        abs_position
+    } else {
+        close_amount
+    };
+
     let is_full_liquidation: bool = close_amount >= abs_position;
 
     // Proportional cost basis for the closed portion
@@ -200,11 +232,11 @@ pub(crate) fn process_liquidate(
         .checked_quote_for_base(BaseAtoms::new(close_amount), false)?
         .as_u64();
 
-    // PnL on the closed portion
-    let closed_pnl: i64 = if position_size > 0 {
-        (closed_notional as i64).wrapping_sub(closed_cost_basis as i64)
+    // PnL on the closed portion (use i128 to avoid overflow)
+    let closed_pnl: i128 = if position_size > 0 {
+        (closed_notional as i128) - (closed_cost_basis as i128)
     } else {
-        (closed_cost_basis as i64).wrapping_sub(closed_notional as i64)
+        (closed_cost_basis as i128) - (closed_notional as i128)
     };
 
     // Liquidator reward = % of closed notional (always incentivizes liquidation)
@@ -214,7 +246,7 @@ pub(crate) fn process_liquidate(
         / 10000;
 
     // Settlement: apply PnL to margin, deduct reward
-    let margin_after_pnl: i128 = margin_balance as i128 + closed_pnl as i128;
+    let margin_after_pnl: i128 = margin_balance as i128 + closed_pnl;
     let margin_after_reward: i128 = margin_after_pnl - liquidator_reward as i128;
 
     // Insurance fund draw: if margin goes negative, there's bad debt
@@ -308,7 +340,7 @@ pub(crate) fn process_liquidate(
         trader: params.trader_to_liquidate,
         position_size: abs_position,
         settlement_price: current_value,
-        pnl: closed_pnl as u64,
+        pnl: closed_pnl as i64 as u64,
         close_amount,
     })?;
 
@@ -365,11 +397,11 @@ pub(crate) fn compute_mark_price(market: &MarketRefMut) -> Result<QuoteAtomsPerB
             get_helper::<RBNode<RestingOrder>>(&market.dynamic, best_bid_index).get_value();
         let best_ask: &RestingOrder =
             get_helper::<RBNode<RestingOrder>>(&market.dynamic, best_ask_index).get_value();
-        if best_bid.get_price() <= best_ask.get_price() {
-            Ok(best_bid.get_price())
-        } else {
-            Ok(best_ask.get_price())
-        }
+        // Use midpoint of bid and ask for a fair mark price
+        let bid_inner = crate::quantities::u64_slice_to_u128(best_bid.get_price().inner);
+        let ask_inner = crate::quantities::u64_slice_to_u128(best_ask.get_price().inner);
+        let mid_inner = (bid_inner / 2) + (ask_inner / 2) + ((bid_inner % 2 + ask_inner % 2) / 2);
+        Ok(QuoteAtomsPerBaseAtom { inner: [mid_inner as u64, (mid_inner >> 64) as u64] })
     } else if best_bid_index != hypertree::NIL {
         let best_bid: &RestingOrder =
             get_helper::<RBNode<RestingOrder>>(&market.dynamic, best_bid_index).get_value();

@@ -1150,7 +1150,16 @@ impl<
 
                 let current_margin: u64 = claimed_seat.quote_withdrawable_balance.as_u64();
                 let new_margin: u64 = if funding_owed >= 0 {
-                    current_margin.saturating_sub(funding_owed as u64)
+                    let owed: u64 = funding_owed as u64;
+                    if owed <= current_margin {
+                        current_margin - owed
+                    } else {
+                        // Funding exceeds margin — draw deficit from insurance fund.
+                        // This prevents silent vault insolvency.
+                        let deficit: u64 = owed - current_margin;
+                        fixed.draw_from_insurance_fund(deficit);
+                        0
+                    }
                 } else {
                     current_margin.saturating_add(funding_owed.unsigned_abs())
                 };

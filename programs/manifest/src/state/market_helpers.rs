@@ -375,18 +375,18 @@ impl<'a, 'b, 'info> AddSingleOrderCtx<'a, 'b, 'info> {
             },
         )?;
         // Increase maker from the matched amount in the trade.
-        update_balance(
-            fixed,
-            dynamic,
-            other_trader_index,
-            !is_bid,
-            true,
-            if is_bid {
-                quote_atoms_traded.into()
-            } else {
-                base_atoms_traded.into()
-            },
-        )?;
+        // In perps, only credit quote to maker. Skip base credits since base
+        // is virtual and base_withdrawable_balance stores cumulative funding.
+        if is_bid {
+            update_balance(
+                fixed,
+                dynamic,
+                other_trader_index,
+                false, // quote side
+                true,
+                quote_atoms_traded.into(),
+            )?;
+        }
         // Increase taker
         update_balance(
             fixed,
@@ -399,6 +399,24 @@ impl<'a, 'b, 'info> AddSingleOrderCtx<'a, 'b, 'info> {
             } else {
                 quote_atoms_traded.into()
             },
+        )?;
+
+        // Update perps position tracking for maker and taker
+        update_perps_position(
+            fixed,
+            dynamic,
+            other_trader_index,
+            base_atoms_traded.as_u64(),
+            quote_atoms_traded.as_u64(),
+            !is_bid,
+        )?;
+        update_perps_position(
+            fixed,
+            dynamic,
+            trader_index,
+            base_atoms_traded.as_u64(),
+            quote_atoms_traded.as_u64(),
+            is_bid,
         )?;
 
         emit_stack(FillLog {

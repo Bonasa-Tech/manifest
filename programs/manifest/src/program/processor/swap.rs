@@ -309,14 +309,15 @@ pub(crate) fn process_swap_core(
 
             let cost_basis = claimed_seat.get_quote_cost_basis();
             let current_value: u64 = notional;
-            let unrealized_pnl: i64 = if position_size > 0 {
-                (current_value as i64).wrapping_sub(cost_basis as i64)
+            // Use i128 to avoid overflow on large u64 values cast to i64
+            let unrealized_pnl: i128 = if position_size > 0 {
+                (current_value as i128) - (cost_basis as i128)
             } else {
-                (cost_basis as i64).wrapping_sub(current_value as i64)
+                (cost_basis as i128) - (current_value as i128)
             };
 
             let margin: u64 = claimed_seat.quote_withdrawable_balance.as_u64();
-            let equity: i128 = (margin as i128) + (unrealized_pnl as i128);
+            let equity: i128 = (margin as i128) + unrealized_pnl;
             require!(
                 equity >= required_margin as i128,
                 ManifestError::InsufficientMargin,
