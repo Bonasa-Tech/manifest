@@ -47,6 +47,71 @@ const DELEGATION_PROGRAM_ID: &str = "DELeGGvXpWV2fqJUhqcF5ZSYMS4JTLjteaAMARRSaeS
 /// Pyth V2 SOL/USD devnet price account
 const PYTH_SOL_USD_DEVNET: &str = "J83w4HKfqxwcq3BEMMkPFSppX3gqekLyLJBexebFVkix";
 
+// ─── persisted config ────────────────────────────────────────────────────────
+
+/// Persisted config file at ~/.config/manifest-cli/config (key=value, one per line).
+#[derive(Debug, Default)]
+struct CliConfig {
+    url: Option<String>,
+    keypair: Option<String>,
+}
+
+fn config_path() -> std::path::PathBuf {
+    let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
+    std::path::PathBuf::from(home)
+        .join(".config")
+        .join("manifest-cli")
+        .join("config")
+}
+
+impl CliConfig {
+    fn load() -> Self {
+        let path = config_path();
+        let mut cfg = CliConfig::default();
+        let Ok(contents) = std::fs::read_to_string(&path) else {
+            return cfg;
+        };
+        for line in contents.lines() {
+            let line = line.trim();
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+            if let Some((k, v)) = line.split_once('=') {
+                match k.trim() {
+                    "url"     => cfg.url     = Some(v.trim().to_string()),
+                    "keypair" => cfg.keypair = Some(v.trim().to_string()),
+                    _ => {}
+                }
+            }
+        }
+        cfg
+    }
+
+    fn save(&self) -> Result<()> {
+        let path = config_path();
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let mut out = String::new();
+        if let Some(u) = &self.url     { out.push_str(&format!("url={u}\n")); }
+        if let Some(k) = &self.keypair { out.push_str(&format!("keypair={k}\n")); }
+        std::fs::write(&path, out)?;
+        Ok(())
+    }
+
+    /// Effective URL: CLI flag > config file > hardcoded default.
+    fn resolve_url<'a>(&'a self, flag: Option<&'a str>) -> &'a str {
+        flag
+            .or(self.url.as_deref())
+            .unwrap_or(DEFAULT_URL)
+    }
+
+    /// Effective keypair path: CLI flag > config file > default.
+    fn resolve_keypair<'a>(&'a self, flag: Option<&'a str>) -> Option<&'a str> {
+        flag.or(self.keypair.as_deref())
+    }
+}
+
 // ─── CLI definition ──────────────────────────────────────────────────────────
 
 #[derive(Parser)]
@@ -56,11 +121,11 @@ const PYTH_SOL_USD_DEVNET: &str = "J83w4HKfqxwcq3BEMMkPFSppX3gqekLyLJBexebFVkix"
     version
 )]
 struct Cli {
-    /// Solana RPC URL (use 'er' for MagicBlock Ephemeral Rollup)
-    #[arg(short, long, default_value = DEFAULT_URL)]
-    url: String,
+    /// Solana RPC URL — overrides config. Use 'er' for MagicBlock ER.
+    #[arg(short, long)]
+    url: Option<String>,
 
-    /// Path to the payer keypair JSON file
+    /// Path to the payer keypair JSON file — overrides config.
     #[arg(short, long)]
     keypair: Option<String>,
 
@@ -261,6 +326,27 @@ enum Commands {
         /// Taker fee bps
         #[arg(long, default_value = "5")]
         taker_fee_bps: u64,
+    },
+
+    /// Read or write the persistent CLI config (~/.config/manifest-cli/config)
+    Config {
+        #[command(subcommand)]
+        action: ConfigAction,
+    },
+}
+
+#[derive(Subcommand)]
+enum ConfigAction {
+    /// Print current config (file values + active defaults)
+    Get,
+    /// Set config values (omit a flag to leave it unchanged)
+    Set {
+        /// Default RPC URL (e.g. https://api.devnet.solana.com or 'er')
+        #[arg(long)]
+        url: Option<String>,
+        /// Default keypair path
+        #[arg(long)]
+        keypair: Option<String>,
     },
 }
 
@@ -896,9 +982,43 @@ fn cmd_setup(
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
+    let cfg = CliConfig::load();
 
-    let payer = load_keypair(cli.keypair.as_deref())?;
-    let client = rpc(&cli.url);
+    // Handle config commands before touching the network or keypair
+    if let Commands::Config { action } = cli.command {
+        match action {
+            ConfigAction::Get => {
+                let path = config_path();
+                println!("Config file : {}", path.display());
+                println!("url         : {}", cfg.url.as_deref().unwrap_or("<default>"));
+                println!("keypair     : {}", cfg.keypair.as_deref().unwrap_or("<default>"));
+                println!("\nActive values (flag > config > default):");
+                println!("  url     = {}", cfg.resolve_url(cli.url.as_deref()));
+                let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
+                let default_kp = format!("{home}/.config/solana/id.json");
+                let kp = cfg.resolve_keypair(cli.keypair.as_deref())
+                    .unwrap_or(&default_kp);
+                println!("  keypair = {kp}");
+            }
+            ConfigAction::Set { url, keypair } => {
+                let mut updated = CliConfig {
+                    url: cfg.url,
+                    keypair: cfg.keypair,
+                };
+                if let Some(u) = url     { updated.url     = Some(u); }
+                if let Some(k) = keypair { updated.keypair = Some(k); }
+                updated.save()?;
+                println!("Saved to {}", config_path().display());
+                if let Some(u) = &updated.url     { println!("  url     = {u}"); }
+                if let Some(k) = &updated.keypair { println!("  keypair = {k}"); }
+            }
+        }
+        return Ok(());
+    }
+
+    let url = cfg.resolve_url(cli.url.as_deref());
+    let payer = load_keypair(cfg.resolve_keypair(cli.keypair.as_deref()))?;
+    let client = rpc(url);
 
     // ER client (needed for Setup; individual commands use --url er)
     let er = RpcClient::new_with_commitment(ER_URL.to_string(), CommitmentConfig::confirmed());
@@ -1018,6 +1138,9 @@ fn main() -> Result<()> {
                 base_mint_index, initial_margin_bps, maintenance_margin_bps, taker_fee_bps,
             )?;
         }
+
+        // Handled above before the network/keypair setup; unreachable here.
+        Commands::Config { .. } => unreachable!(),
     }
 
     Ok(())
