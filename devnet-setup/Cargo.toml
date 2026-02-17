@@ -1,0 +1,19 @@
+[package]
+name = "devnet-setup"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "manifest-cli"
+path = "src/main.rs"
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+manifest-dex      = { path = "../programs/manifest", features = [] }
+solana-client     = "=2.2"
+solana-sdk        = { workspace = true }
+solana-program    = { workspace = true }
+spl-token         = { workspace = true }
+spl-associated-token-account = { version = "7", features = ["no-entrypoint"] }
+borsh             = { workspace = true }
+anyhow            = { workspace = true }

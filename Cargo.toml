@@ -7,6 +7,7 @@ members = [
   "programs/manifest",
   "programs/wrapper",
   "programs/ui-wrapper",
+  "devnet-setup",
 ]
 
 [workspace.dependencies]
