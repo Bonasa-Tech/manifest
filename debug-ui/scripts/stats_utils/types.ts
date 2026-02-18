@@ -10,6 +10,8 @@ export interface CompleteFillsQueryOptions {
   taker?: string;
   /** Filter by maker address */
   maker?: string;
+  /** Filter by wallet address (matches either taker OR maker) */
+  wallet?: string;
   /** Filter by transaction signature */
   signature?: string;
   /** Maximum number of results to return (default: 100) */

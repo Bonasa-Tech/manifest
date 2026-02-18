@@ -203,6 +203,7 @@ const run = async () => {
         market: req.query.market as string,
         taker: req.query.taker as string,
         maker: req.query.maker as string,
+        wallet: req.query.wallet as string,
         signature: req.query.signature as string,
         limit: parseInt(req.query.limit as string) || 100,
         offset: parseInt(req.query.offset as string) || 0,

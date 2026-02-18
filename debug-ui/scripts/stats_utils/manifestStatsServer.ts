@@ -1475,6 +1475,7 @@ export class ManifestStatsServer {
       market,
       taker,
       maker,
+      wallet,
       signature,
       limit = 100,
       offset = 0,
@@ -1484,8 +1485,8 @@ export class ManifestStatsServer {
 
     try {
       const conditions: string[] = [];
-      const params: any[] = [];
-      let paramIndex = 1;
+      const params: (string | number)[] = [];
+      let paramIndex: number = 1;
 
       if (market) {
         conditions.push(`market = $${paramIndex++}`);
@@ -1500,6 +1501,13 @@ export class ManifestStatsServer {
       if (maker) {
         conditions.push(`maker = $${paramIndex++}`);
         params.push(maker);
+      }
+
+      // wallet matches either taker OR maker
+      if (wallet) {
+        conditions.push(`(taker = $${paramIndex} OR maker = $${paramIndex})`);
+        params.push(wallet);
+        paramIndex++;
       }
 
       if (signature) {
