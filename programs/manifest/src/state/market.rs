@@ -977,6 +977,13 @@ impl<
             fixed.bids_best_index
         };
 
+        // Increment the sequence number before matching so that the taker logs
+        // are correct, even if sequence numbers are consumed by reverse orders
+        // during matching. We are claiming this_order_sequence_number for the
+        // current order.
+        let this_order_sequence_number: u64 = fixed.order_sequence_number;
+        fixed.order_sequence_number = this_order_sequence_number.wrapping_add(1);
+
         let mut total_base_atoms_traded: BaseAtoms = BaseAtoms::ZERO;
         let mut total_quote_atoms_traded: QuoteAtoms = QuoteAtoms::ZERO;
 
@@ -1203,7 +1210,7 @@ impl<
                 quote_atoms: quote_atoms_traded,
                 price: matched_price,
                 maker_sequence_number,
-                taker_sequence_number: fixed.order_sequence_number,
+                taker_sequence_number: this_order_sequence_number,
                 taker_is_buy: PodBool::from(is_bid),
                 is_maker_global: PodBool::from(is_global),
                 _padding: [0; 14],
@@ -1363,18 +1370,13 @@ impl<
         // Record volume on market
         fixed.quote_volume = fixed.quote_volume.wrapping_add(total_quote_atoms_traded);
 
-        // Bump the order sequence number even for orders which do not end up
-        // resting.
-        let order_sequence_number: u64 = fixed.order_sequence_number;
-        fixed.order_sequence_number = order_sequence_number.wrapping_add(1);
-
         // If there is nothing left to rest, then return before resting.
         if !order_type_can_rest(order_type)
             || remaining_base_atoms == BaseAtoms::ZERO
             || price == QuoteAtomsPerBaseAtom::ZERO
         {
             return Ok(AddOrderToMarketResult {
-                order_sequence_number,
+                order_sequence_number: this_order_sequence_number,
                 order_index: NIL,
                 base_atoms_traded: total_base_atoms_traded,
                 quote_atoms_traded: total_quote_atoms_traded,
@@ -1384,7 +1386,7 @@ impl<
         self.rest_remaining(
             args,
             remaining_base_atoms,
-            order_sequence_number,
+            this_order_sequence_number,
             total_base_atoms_traded,
             total_quote_atoms_traded,
         )
