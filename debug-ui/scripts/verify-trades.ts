@@ -43,8 +43,12 @@ const hasTokenTransfer = async (
       accountKeys = [...message.staticAccountKeys];
       if (tx.meta?.loadedAddresses) {
         accountKeys.push(
-          ...tx.meta.loadedAddresses.writable.map((addr) => new PublicKey(addr)),
-          ...tx.meta.loadedAddresses.readonly.map((addr) => new PublicKey(addr)),
+          ...tx.meta.loadedAddresses.writable.map(
+            (addr) => new PublicKey(addr),
+          ),
+          ...tx.meta.loadedAddresses.readonly.map(
+            (addr) => new PublicKey(addr),
+          ),
         );
       }
     }
