@@ -39,8 +39,18 @@ const hasTokenTransfer = async (
       // Legacy transaction
       accountKeys = message.accountKeys;
     } else {
-      // Versioned transaction (v0)
-      accountKeys = message.staticAccountKeys;
+      // Versioned transaction (v0) - need to include loaded addresses from ALTs
+      accountKeys = [...message.staticAccountKeys];
+      if (tx.meta?.loadedAddresses) {
+        accountKeys.push(
+          ...tx.meta.loadedAddresses.writable.map(
+            (addr) => new PublicKey(addr),
+          ),
+          ...tx.meta.loadedAddresses.readonly.map(
+            (addr) => new PublicKey(addr),
+          ),
+        );
+      }
     }
 
     // Check if any instruction involves token programs
@@ -144,15 +154,25 @@ const parseTransactionForFills = async (
   let hasTruncatedLogs = false;
 
   try {
-    let tx = await connection.getTransaction(signature, {
-      maxSupportedTransactionVersion: 0,
-    });
+    let tx: Awaited<ReturnType<typeof connection.getTransaction>> | null = null;
+    let fetchError: unknown = null;
 
-    // Retry once after 10 seconds if transaction not found (transient RPC error/throttling)
+    try {
+      tx = await connection.getTransaction(signature, {
+        maxSupportedTransactionVersion: 0,
+      });
+    } catch (error) {
+      fetchError = error;
+    }
+
+    // Retry once after 10 seconds if transaction not found or error (transient RPC error/throttling)
     if (!tx) {
+      const errorMsg = fetchError
+        ? `: ${fetchError instanceof Error ? fetchError.message : String(fetchError)}`
+        : '';
       console.log(
         logPrefix,
-        `Transaction ${signature} not found, retrying after 10 seconds...`,
+        `Transaction ${signature} not found${errorMsg}, retrying after 10 seconds...`,
       );
       await sleep(10000);
       tx = await connection.getTransaction(signature, {
