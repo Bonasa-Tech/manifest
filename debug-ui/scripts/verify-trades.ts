@@ -144,9 +144,21 @@ const parseTransactionForFills = async (
   let hasTruncatedLogs = false;
 
   try {
-    const tx = await connection.getTransaction(signature, {
+    let tx = await connection.getTransaction(signature, {
       maxSupportedTransactionVersion: 0,
     });
+
+    // Retry once after 10 seconds if transaction not found (transient RPC error/throttling)
+    if (!tx) {
+      console.log(
+        logPrefix,
+        `Transaction ${signature} not found, retrying after 10 seconds...`,
+      );
+      await sleep(10000);
+      tx = await connection.getTransaction(signature, {
+        maxSupportedTransactionVersion: 0,
+      });
+    }
 
     if (!tx?.meta?.logMessages) {
       return { fills, hasTruncatedLogs };
