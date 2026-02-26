@@ -14,7 +14,8 @@ use hypertree::trace;
 use instruction::ManifestWrapperInstruction;
 use processors::{
     cancel_order::process_cancel_order, create_wrapper::process_create_wrapper,
-    place_order::process_place_order, settle_funds::process_settle_funds,
+    edit_order::process_edit_order, place_order::process_place_order,
+    settle_funds::process_settle_funds,
 };
 use solana_program::{
     account_info::AccountInfo, declare_id, entrypoint::ProgramResult, program_error::ProgramError,
@@ -65,7 +66,7 @@ pub fn process_instruction(
             process_place_order(program_id, accounts, data)?;
         }
         ManifestWrapperInstruction::EditOrder => {
-            unimplemented!("todo");
+            process_edit_order(program_id, accounts, data)?;
         }
         ManifestWrapperInstruction::CancelOrder => {
             process_cancel_order(program_id, accounts, data)?;
