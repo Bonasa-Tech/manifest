@@ -275,7 +275,7 @@ async function main() {
         new PublicKey(MFX_MKT),
         owner,
     );
-    console.log('LEVELS RUNNING! MKT', mfxClient.market.address.toBase58(), 'Base', mfxClient.market.baseMint().toBase58())
+    console.log('Levels running. Market', mfxClient.market.address.toBase58(), 'Base', mfxClient.market.baseMint().toBase58())
 
     // Generate bonding levels once at startup
     const bondingLevels = generateBondingLevels(TOKEN_SUPPLY, NUM_LEVELS);

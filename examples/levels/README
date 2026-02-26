@@ -6,6 +6,10 @@ Levels implements a bonding curve through limit orders on Manifest, an On-Chain 
 
 Levels is an example of what is capable to compose on top of a cheap, efficient on-chain orderbook. The parameters provided set 100 levels for a token to achieve a $1B FDV.
 
+## Scripts
+- Levels.ts is a fully managed script to replace orders along the bonding curve that runs on an interval.
+- Reverse.ts use reverse orders to achieve a more robust replacement strategy with permenant liquidity similar to an AMM.
+
 ## Comparison
 Bonding curves designed as constant product markets have dominated token launch platforms, but they come with significant drawbacks:
 
