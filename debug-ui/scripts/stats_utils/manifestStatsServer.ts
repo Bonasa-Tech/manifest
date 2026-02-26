@@ -386,6 +386,27 @@ export class ManifestStatsServer {
         }
       }
 
+      // Re-lookup tickers if they were empty/null (ticker may have been set after first fill)
+      const tickers = this.tickers.get(market);
+      if (tickers) {
+        const [baseSymbol, quoteSymbol] = tickers;
+        if (!baseSymbol || baseSymbol === '') {
+          const newBaseSymbol = await lookupMintTicker(
+            this.connection,
+            marketObject.baseMint(),
+          );
+          this.tickers.set(market, [newBaseSymbol, quoteSymbol]);
+        }
+        if (!quoteSymbol || quoteSymbol === '') {
+          const currentTickers = this.tickers.get(market)!;
+          const newQuoteSymbol = await lookupMintTicker(
+            this.connection,
+            marketObject.quoteMint(),
+          );
+          this.tickers.set(market, [currentTickers[0], newQuoteSymbol]);
+        }
+      }
+
       // Update price and volume
       this.lastPrice.set(
         { market },
