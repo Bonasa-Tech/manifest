@@ -169,9 +169,9 @@
     "@babel/helper-validator-identifier" "^7.24.7"
     to-fast-properties "^2.0.0"
 
-"@cks-systems/manifest-sdk-old@npm:@cks-systems/manifest-sdk@0.2.25":
+"@bonasa-tech/manifest-sdk-old@npm:@bonasa-tech/manifest-sdk@0.2.25":
   version "0.2.25"
-  resolved "https://registry.yarnpkg.com/@cks-systems/manifest-sdk/-/manifest-sdk-0.2.25.tgz#717812f77f366f533bbf0bea69ee7015ce0237ae"
+  resolved "https://registry.yarnpkg.com/@bonasa-tech/manifest-sdk/-/manifest-sdk-0.2.25.tgz#717812f77f366f533bbf0bea69ee7015ce0237ae"
   integrity sha512-inMyXUZPkmdIHWSoPYPsgfDmwbnbbunlUH9ACKU7IKNF9MHPYAuwwZWE9837zx85ehmaShjgEYByqFsBNIa+aQ==
   dependencies:
     "@metaplex-foundation/beet" "^0.7.1"

@@ -10,13 +10,13 @@ import {
 import {
   WrapperPlaceOrderParamsExternal,
   WrapperPlaceOrderReverseParamsExternal,
-} from '@cks-systems/manifest-sdk';
-import { OrderType } from '@cks-systems/manifest-sdk/manifest';
+} from '@bonasa-tech/manifest-sdk';
+import { OrderType } from '@bonasa-tech/manifest-sdk/manifest';
 import { getSolscanSigUrl, setupClient } from '@/lib/util';
 import { useAppState } from './AppWalletProvider';
 import { toast } from 'react-toastify';
 import { ensureError } from '@/lib/error';
-import { NO_EXPIRATION_LAST_VALID_SLOT } from '@cks-systems/manifest-sdk/constants';
+import { NO_EXPIRATION_LAST_VALID_SLOT } from '@bonasa-tech/manifest-sdk/constants';
 
 const PlaceOrder = ({
   marketAddress,

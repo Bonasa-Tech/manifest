@@ -5,7 +5,7 @@ TypeScript SDK for interacting with the Manifest decentralized exchange on Solan
 ## Installation
 
 ```bash
-yarn add @cks-systems/manifest-sdk
+yarn add @bonasa-tech/manifest-sdk
 ```
 
 ## Overview
@@ -25,7 +25,7 @@ The SDK provides these main classes:
 
 ```typescript
 import { Connection, PublicKey } from '@solana/web3.js';
-import { ManifestClient, Market } from '@cks-systems/manifest-sdk';
+import { ManifestClient, Market } from '@bonasa-tech/manifest-sdk';
 
 const connection = new Connection('https://api.mainnet-beta.solana.com');
 const marketAddress = new PublicKey('YOUR_MARKET_ADDRESS');
@@ -48,7 +48,7 @@ console.log('Best ask:', market.bestAskPrice());
 
 ```typescript
 import { Connection, Keypair, PublicKey } from '@solana/web3.js';
-import { ManifestClient, OrderType } from '@cks-systems/manifest-sdk';
+import { ManifestClient, OrderType } from '@bonasa-tech/manifest-sdk';
 
 const connection = new Connection('https://api.mainnet-beta.solana.com');
 const trader = Keypair.fromSecretKey(/* your keypair */);
@@ -79,7 +79,7 @@ const placeOrderIx = client.placeOrderIx({
 ### Finding Markets
 
 ```typescript
-import { ManifestClient } from '@cks-systems/manifest-sdk';
+import { ManifestClient } from '@bonasa-tech/manifest-sdk';
 
 // List all market addresses
 const marketPubkeys = await ManifestClient.listMarketPublicKeys(connection);
@@ -98,7 +98,7 @@ const markets = await ManifestClient.listMarketsForMints(
 ### Loading Market Data
 
 ```typescript
-import { Market } from '@cks-systems/manifest-sdk';
+import { Market } from '@bonasa-tech/manifest-sdk';
 
 // Method 1: Load from address (fetches from chain)
 const market = await Market.loadFromAddress({
@@ -176,7 +176,7 @@ For browser wallets like Phantom, use `getSetupIxs` and `getClientForMarketNoPri
 
 ```typescript
 import { Transaction } from '@solana/web3.js';
-import { ManifestClient } from '@cks-systems/manifest-sdk';
+import { ManifestClient } from '@bonasa-tech/manifest-sdk';
 
 async function setupAndGetClient(
   connection: Connection,
@@ -231,7 +231,7 @@ import {
   sendAndConfirmTransaction,
   ComputeBudgetProgram,
 } from '@solana/web3.js';
-import { ManifestClient, OrderType } from '@cks-systems/manifest-sdk';
+import { ManifestClient, OrderType } from '@bonasa-tech/manifest-sdk';
 
 const connection = new Connection('https://api.mainnet-beta.solana.com');
 const trader = Keypair.fromSecretKey(Uint8Array.from(/* your key */));
@@ -448,7 +448,7 @@ Global accounts allow traders to share liquidity across multiple markets.
 ### Setup Global Account
 
 ```typescript
-import { Global, ManifestClient } from '@cks-systems/manifest-sdk';
+import { Global, ManifestClient } from '@bonasa-tech/manifest-sdk';
 
 const mint = new PublicKey('TOKEN_MINT_ADDRESS');
 
@@ -495,7 +495,7 @@ await sendAndConfirmTransaction(connection, tx, [trader]);
 ### Reading Global Account State
 
 ```typescript
-import { Global } from '@cks-systems/manifest-sdk';
+import { Global } from '@bonasa-tech/manifest-sdk';
 
 // Load global account
 const globalAddress = Global.findGlobalAddress(mint);
@@ -568,7 +568,7 @@ for (const client of clients) {
 ### Fill Feed (Monitoring Trades)
 
 ```typescript
-import { FillFeed } from '@cks-systems/manifest-sdk';
+import { FillFeed } from '@bonasa-tech/manifest-sdk';
 
 const fillFeed = new FillFeed(connection);
 

@@ -1,4 +1,4 @@
-import { FillLogResult } from '@cks-systems/manifest-sdk';
+import { FillLogResult } from '@bonasa-tech/manifest-sdk';
 
 /**
  * Query options for fetching complete fills from database

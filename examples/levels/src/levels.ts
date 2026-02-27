@@ -1,8 +1,8 @@
 import {
     ManifestClient, WrapperPlaceOrderParamsExternal,
-} from '@cks-systems/manifest-sdk';
-import { OrderType } from '@cks-systems/manifest-sdk/client/ts/src/manifest/types';
-import { WrapperCancelOrderParams } from '@cks-systems/manifest-sdk/client/ts/src/wrapper';
+} from '@bonasa-tech/manifest-sdk';
+import { OrderType } from '@bonasa-tech/manifest-sdk/client/ts/src/manifest/types';
+import { WrapperCancelOrderParams } from '@bonasa-tech/manifest-sdk/client/ts/src/wrapper';
 import { 
     Connection, 
     Keypair, 

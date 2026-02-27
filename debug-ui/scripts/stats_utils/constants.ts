@@ -1,5 +1,5 @@
 import { PublicKey } from '@solana/web3.js';
-import { genAccDiscriminator } from '@cks-systems/manifest-sdk/utils';
+import { genAccDiscriminator } from '@bonasa-tech/manifest-sdk/utils';
 
 // Stores volume checkpoints every 5 minutes
 export const VOLUME_CHECKPOINT_DURATION_SEC: number = 5 * 60;

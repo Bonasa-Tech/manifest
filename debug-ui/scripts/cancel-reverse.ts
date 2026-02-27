@@ -3,7 +3,7 @@ import {
   RestingOrder,
   OrderType,
   createBatchUpdateInstruction,
-} from '@cks-systems/manifest-sdk';
+} from '@bonasa-tech/manifest-sdk';
 import { bignum } from '@metaplex-foundation/beet';
 import {
   Connection,

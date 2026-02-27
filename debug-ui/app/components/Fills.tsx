@@ -2,7 +2,7 @@
 
 import SolscanAddrLink from './SolscanAddrLink';
 import { FillResultUi } from '@/lib/types';
-import { FillLogResult, Market } from '@cks-systems/manifest-sdk';
+import { FillLogResult, Market } from '@bonasa-tech/manifest-sdk';
 import { useConnection } from '@solana/wallet-adapter-react';
 import { PublicKey } from '@solana/web3.js';
 import { ReactElement, useEffect, useState, useRef } from 'react';

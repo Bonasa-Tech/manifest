@@ -65,7 +65,7 @@
     "tabWidth": 2
   },
   "devDependencies": {
-    "@cks-systems/manifest-sdk-old": "npm:@cks-systems/manifest-sdk@0.2.25",
+    "@bonasa-tech/manifest-sdk-old": "npm:@bonasa-tech/manifest-sdk@0.2.25",
     "@types/bn.js": "^5.1.1",
     "@types/chai": "^4.3.4",
     "@types/mocha": "^10.0.1",

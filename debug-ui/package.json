@@ -24,7 +24,7 @@
     "verify-trades": "tsx scripts/verify-trades.ts"
   },
   "dependencies": {
-    "@cks-systems/manifest-sdk": "file:../dist/cjs",
+    "@bonasa-tech/manifest-sdk": "file:../dist/cjs",
     "@metaplex-foundation/js": "^0.20.1",
     "@solana/spl-token-registry": "^0.2.4574",
     "@solana/wallet-adapter-base": "^0.9.23",

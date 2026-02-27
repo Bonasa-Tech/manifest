@@ -19,7 +19,7 @@ import {
 import { WalletAdapterNetwork } from '@solana/wallet-adapter-base';
 import { WalletModalProvider } from '@solana/wallet-adapter-react-ui';
 import WalletConnection from './WalletConnection';
-import { ManifestClient, Market } from '@cks-systems/manifest-sdk';
+import { ManifestClient, Market } from '@bonasa-tech/manifest-sdk';
 import {
   AccountInfo,
   Connection,
@@ -31,7 +31,7 @@ import { ensureError } from '@/lib/error';
 import {
   Cluster,
   getClusterFromConnection,
-} from '@cks-systems/manifest-sdk/utils/solana';
+} from '@bonasa-tech/manifest-sdk/utils/solana';
 import NavBar from './NavBar';
 import {
   ActiveByAddr,

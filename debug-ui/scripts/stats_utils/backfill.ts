@@ -1,9 +1,9 @@
 import { Connection } from '@solana/web3.js';
-import { FillLogResult, FillLog } from '@cks-systems/manifest-sdk';
+import { FillLogResult, FillLog } from '@bonasa-tech/manifest-sdk';
 import {
   genAccDiscriminator,
   convertU128,
-} from '@cks-systems/manifest-sdk/utils';
+} from '@bonasa-tech/manifest-sdk/utils';
 
 const fillDiscriminant = genAccDiscriminator('manifest::logs::FillLog');
 
