@@ -1,6 +1,6 @@
-import { ManifestClient, Market } from '@cks-systems/manifest-sdk';
-import { getVaultAddress } from '@cks-systems/manifest-sdk/utils';
-import { Global } from '@cks-systems/manifest-sdk';
+import { ManifestClient, Market } from '@bonasa-tech/manifest-sdk';
+import { getVaultAddress } from '@bonasa-tech/manifest-sdk/utils';
+import { Global } from '@bonasa-tech/manifest-sdk';
 import {
   AccountInfo,
   Connection,

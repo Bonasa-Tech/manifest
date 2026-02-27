@@ -9,7 +9,7 @@ import {
   CandlestickData,
   Time,
 } from 'lightweight-charts';
-import { FillLogResult, Market } from '@cks-systems/manifest-sdk';
+import { FillLogResult, Market } from '@bonasa-tech/manifest-sdk';
 import { useConnection } from '@solana/wallet-adapter-react';
 import { PublicKey } from '@solana/web3.js';
 import { toast } from 'react-toastify';

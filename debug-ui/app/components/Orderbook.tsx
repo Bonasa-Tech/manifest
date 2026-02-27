@@ -1,6 +1,6 @@
 'use client';
 
-import { Market, RestingOrder } from '@cks-systems/manifest-sdk';
+import { Market, RestingOrder } from '@bonasa-tech/manifest-sdk';
 import { useConnection, useWallet } from '@solana/wallet-adapter-react';
 import { AccountInfo, PublicKey, SlotUpdate } from '@solana/web3.js';
 import { useEffect, useMemo, useState } from 'react';
@@ -9,7 +9,7 @@ import SolscanAddrLink from './SolscanAddrLink';
 import { toast } from 'react-toastify';
 import { ensureError } from '@/lib/error';
 import { formatPrice } from '@/lib/format';
-import { OrderType } from '@cks-systems/manifest-sdk/manifest';
+import { OrderType } from '@bonasa-tech/manifest-sdk/manifest';
 
 const MAX_ORDERS_TO_SHOW: number = 5;
 

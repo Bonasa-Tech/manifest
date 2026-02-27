@@ -1,4 +1,4 @@
-import { ManifestClient } from '@cks-systems/manifest-sdk';
+import { ManifestClient } from '@bonasa-tech/manifest-sdk';
 import { TOKEN_PROGRAM_ID } from '@solana/spl-token';
 import {
   SendTransactionOptions,

@@ -11,7 +11,7 @@ import {
   GetProgramAccountsResponse,
   PublicKey,
 } from '@solana/web3.js';
-import { Market } from '@cks-systems/manifest-sdk';
+import { Market } from '@bonasa-tech/manifest-sdk';
 
 /**
  * Retry a database operation with exponential backoff

@@ -63,13 +63,13 @@ For your business:
 ### Install
 
 ```bash
-yarn add @cks-systems/manifest-sdk
+yarn add @bonasa-tech/manifest-sdk
 ```
 
 ### Your First Limit Order
 
 ```typescript
-import { ManifestClient, OrderType } from '@cks-systems/manifest-sdk';
+import { ManifestClient, OrderType } from '@bonasa-tech/manifest-sdk';
 import { Connection, PublicKey, Transaction } from '@solana/web3.js';
 
 // Initialize client for a market
@@ -161,7 +161,7 @@ Claim seat → Deposit to market → Place many orders → Withdraw when done
                      ▼
 ┌─────────────────────────────────────────────────────────┐
 │            Manifest TypeScript SDK                       │
-│  @cks-systems/manifest-sdk                              │
+│  @bonasa-tech/manifest-sdk                              │
 └────────────────────┬────────────────────────────────────┘
                      │
       ┌──────────────┴──────────────┐
@@ -197,7 +197,7 @@ Claim seat → Deposit to market → Place many orders → Withdraw when done
 Find markets for token pairs your users want to trade:
 
 ```typescript
-import { ManifestClient } from '@cks-systems/manifest-sdk';
+import { ManifestClient } from '@bonasa-tech/manifest-sdk';
 
 // List all markets
 const allMarkets = await ManifestClient.listMarketPublicKeys(connection);
@@ -358,7 +358,7 @@ import {
   ManifestClient,
   OrderType,
   Market,
-} from '@cks-systems/manifest-sdk';
+} from '@bonasa-tech/manifest-sdk';
 import {
   Connection,
   PublicKey,
@@ -818,7 +818,7 @@ Formal verification eliminates these risks. It's the highest security standard i
 
 ### Documentation & Resources
 
-- **NPM Package**: [@cks-systems/manifest-sdk](https://www.npmjs.com/package/@cks-systems/manifest-sdk)
+- **NPM Package**: [@bonasa-tech/manifest-sdk](https://www.npmjs.com/package/@bonasa-tech/manifest-sdk)
 - **Whitepaper**: [The Orderbook Manifesto](https://manifest.trade/whitepaper.pdf)
 - **Audit Report**: [manifest.trade/audit.pdf](https://www.manifest.trade/audit.pdf)
 - **Formal Verification**: Detailed in [Certora_README](https://github.com/Bonasa-Tech/manifest/blob/main/Certora_README.md)
@@ -857,7 +857,7 @@ Formal verification eliminates these risks. It's the highest security standard i
 
 ## Next Steps
 
-1. **Install SDK**: `yarn add @cks-systems/manifest-sdk`
+1. **Install SDK**: `yarn add @bonasa-tech/manifest-sdk`
 2. **Review Examples**: Study code samples in this guide
 3. **Build POC**: Test integration with mainnet markets using small amounts
 4. **Define Fee Structure**: Decide on monetization approach

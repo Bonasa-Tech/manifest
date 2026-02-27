@@ -1,4 +1,4 @@
-import { ManifestClient, Wrapper } from '@cks-systems/manifest-sdk';
+import { ManifestClient, Wrapper } from '@bonasa-tech/manifest-sdk';
 import {
   SendTransactionOptions,
   WalletAdapterNetwork,

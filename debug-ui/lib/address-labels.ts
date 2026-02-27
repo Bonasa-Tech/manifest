@@ -5,7 +5,7 @@ import {
 } from '@solana/web3.js';
 import { Metaplex } from '@metaplex-foundation/js';
 import { ENV, TokenInfo, TokenListProvider } from '@solana/spl-token-registry';
-import { Market } from '@cks-systems/manifest-sdk';
+import { Market } from '@bonasa-tech/manifest-sdk';
 import { LabelsByAddr } from './types';
 import { Dispatch, SetStateAction } from 'react';
 

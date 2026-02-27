@@ -1,4 +1,4 @@
-import { ManifestClient, Market } from '@cks-systems/manifest-sdk';
+import { ManifestClient, Market } from '@bonasa-tech/manifest-sdk';
 import {
   AddressLookupTableAccount,
   AddressLookupTableProgram,

@@ -5,9 +5,9 @@ import {
   ManifestClient,
   Market,
   RestingOrder,
-} from '@cks-systems/manifest-sdk';
-import { WrapperCancelOrderParams } from '@cks-systems/manifest-sdk/wrapper';
-import { WrapperOpenOrder } from '@cks-systems/manifest-sdk/wrapperObj';
+} from '@bonasa-tech/manifest-sdk';
+import { WrapperCancelOrderParams } from '@bonasa-tech/manifest-sdk/wrapper';
+import { WrapperOpenOrder } from '@bonasa-tech/manifest-sdk/wrapperObj';
 import {
   getAssociatedTokenAddressSync,
   TOKEN_2022_PROGRAM_ID,

@@ -1,12 +1,12 @@
 import 'dotenv/config';
 
 import { Connection, PublicKey } from '@solana/web3.js';
-import { Market, RestingOrder, ClaimedSeat } from '@cks-systems/manifest-sdk';
-import { OrderType } from '@cks-systems/manifest-sdk/manifest/types';
+import { Market, RestingOrder, ClaimedSeat } from '@bonasa-tech/manifest-sdk';
+import { OrderType } from '@bonasa-tech/manifest-sdk/manifest/types';
 import {
   FIXED_MANIFEST_HEADER_SIZE,
   NIL,
-} from '@cks-systems/manifest-sdk/constants';
+} from '@bonasa-tech/manifest-sdk/constants';
 
 const { RPC_URL } = process.env;
 

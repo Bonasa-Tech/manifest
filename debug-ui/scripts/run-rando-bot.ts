@@ -10,8 +10,8 @@ import {
   SystemProgram,
   SendTransactionError,
 } from '@solana/web3.js';
-import { ManifestClient } from '@cks-systems/manifest-sdk';
-import { Market } from '@cks-systems/manifest-sdk/market';
+import { ManifestClient } from '@bonasa-tech/manifest-sdk';
+import { Market } from '@bonasa-tech/manifest-sdk/market';
 import {
   createAssociatedTokenAccountIdempotent,
   createMint,
@@ -21,9 +21,9 @@ import {
 import {
   airdropSol,
   getClusterFromConnection,
-} from '@cks-systems/manifest-sdk/utils/solana';
-import { OrderType, PROGRAM_ID } from '@cks-systems/manifest-sdk/manifest';
-import { FIXED_MANIFEST_HEADER_SIZE } from '@cks-systems/manifest-sdk/constants';
+} from '@bonasa-tech/manifest-sdk/utils/solana';
+import { OrderType, PROGRAM_ID } from '@bonasa-tech/manifest-sdk/manifest';
+import { FIXED_MANIFEST_HEADER_SIZE } from '@bonasa-tech/manifest-sdk/constants';
 
 const {
   RPC_URL,

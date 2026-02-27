@@ -1,8 +1,8 @@
 'use client';
 
-import { ManifestClient, Market } from '@cks-systems/manifest-sdk';
-import { FIXED_MANIFEST_HEADER_SIZE } from '@cks-systems/manifest-sdk/constants';
-import { PROGRAM_ID } from '@cks-systems/manifest-sdk/manifest';
+import { ManifestClient, Market } from '@bonasa-tech/manifest-sdk';
+import { FIXED_MANIFEST_HEADER_SIZE } from '@bonasa-tech/manifest-sdk/constants';
+import { PROGRAM_ID } from '@bonasa-tech/manifest-sdk/manifest';
 import {
   MINT_SIZE,
   getMinimumBalanceForRentExemptMint,

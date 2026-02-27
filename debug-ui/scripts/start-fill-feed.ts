@@ -1,7 +1,7 @@
 import 'dotenv/config';
 
-import { FillFeed } from '@cks-systems/manifest-sdk/fillFeed';
-import { FillFeedBlockSub } from '@cks-systems/manifest-sdk/fillFeedBlockSub';
+import { FillFeed } from '@bonasa-tech/manifest-sdk/fillFeed';
+import { FillFeedBlockSub } from '@bonasa-tech/manifest-sdk/fillFeedBlockSub';
 import { Connection } from '@solana/web3.js';
 import { sleep } from '@/lib/util';
 import * as promClient from 'prom-client';
