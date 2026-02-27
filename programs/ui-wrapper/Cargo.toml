@@ -2,7 +2,7 @@
 name = "ui-wrapper"
 version = "0.1.4"
 edition = "2021"
-repository = "https://github.com/CKS-systems/manifest"
+repository = "https://github.com/Bonasa-Tech/manifest"
 authors = ["Maximilian Schneider <max@mango.markets>"]
 description = "UI Wrapper for Manifest"
 license-file = "LICENSE"

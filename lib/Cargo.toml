@@ -2,7 +2,7 @@
 name = "hypertree"
 version = "1.1.0"
 edition = "2021"
-repository = "https://github.com/CKS-systems/manifest"
+repository = "https://github.com/Bonasa-Tech/manifest"
 authors = ["Britt Cyr <britt@cks.systems>"]
 description = "Data structures for Manifest"
 license-file = "LICENSE"
