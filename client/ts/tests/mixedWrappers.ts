@@ -28,9 +28,9 @@ import {
 import {
   createCreateWrapperInstruction as createCreateUIWrapperInstruction,
   PROGRAM_ID as UI_WRAPPER_PROGRAM_ID,
-} from '@bonasa-tech/manifest-sdk-old/dist/cjs/ui_wrapper';
-import { UiWrapper } from '@bonasa-tech/manifest-sdk-old/dist/cjs/uiWrapperObj';
-import { Market as OldMarket } from '@bonasa-tech/manifest-sdk-old/dist/cjs/market';
+} from '@cks-systems/manifest-sdk-old/dist/cjs/ui_wrapper';
+import { UiWrapper } from '@cks-systems/manifest-sdk-old/dist/cjs/uiWrapperObj';
+import { Market as OldMarket } from '@cks-systems/manifest-sdk-old/dist/cjs/market';
 
 async function testMixedWrappers(): Promise<void> {
   const connection: Connection = new Connection(
