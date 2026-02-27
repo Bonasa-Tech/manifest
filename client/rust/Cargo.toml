@@ -2,7 +2,7 @@
 name = "manifest-jupiter"
 version = "0.3.0"
 edition = "2021"
-repository = "https://github.com/CKS-systems/manifest"
+repository = "https://github.com/Bonasa-Tech/manifest"
 authors = ["Britt Cyr <britt@cks.systems>"]
 description = "Jupiter AMM interface for Manifest exchange"
 license-file = "LICENSE"
