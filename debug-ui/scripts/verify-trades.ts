@@ -175,12 +175,38 @@ const parseTransactionForFills = async (
         `Transaction ${signature} not found${errorMsg}, retrying after 10 seconds...`,
       );
       await sleep(10000);
-      tx = await connection.getTransaction(signature, {
-        maxSupportedTransactionVersion: 0,
-      });
+      try {
+        tx = await connection.getTransaction(signature, {
+          maxSupportedTransactionVersion: 0,
+        });
+      } catch (retryError) {
+        // Log non-429 errors with full details
+        const retryErrorMsg =
+          retryError instanceof Error ? retryError.message : String(retryError);
+        if (!retryErrorMsg.includes('429')) {
+          console.error(
+            logPrefix,
+            `Error fetching transaction ${signature} after retry:`,
+            retryError,
+          );
+        }
+      }
     }
 
     if (!tx?.meta?.logMessages) {
+      // Log if transaction still not found after retry (and it wasn't a 429 error)
+      const errorMsg = fetchError
+        ? fetchError instanceof Error
+          ? fetchError.message
+          : String(fetchError)
+        : '';
+      if (!errorMsg.includes('429')) {
+        console.warn(
+          logPrefix,
+          `Transaction ${signature} not found after retry`,
+          fetchError ? `- Original error: ${errorMsg}` : '',
+        );
+      }
       return { fills, hasTruncatedLogs };
     }
 
