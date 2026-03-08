@@ -1,0 +1,16 @@
+openai_spec_version: 1.0.0
+kind: skill
+metadata:
+  name: manifest
+  display_name: Manifest DEX
+  description: Build and debug integrations for the Manifest DEX on Solana, including market reads, order placement, deposits, withdrawals, and SDK-level transaction construction.
+  authors:
+    - name: Bonasa Tech
+  tags:
+    - solana
+    - defi
+    - dex
+    - trading
+    - manifest
+  default_prompt: |
+    Use this skill to work on Manifest DEX integrations. Start by identifying whether the task is market-state reads (`Market`) or tx/instruction building (`ManifestClient`), then use repo-accurate paths and validation commands.
