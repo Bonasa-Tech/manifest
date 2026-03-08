@@ -1,6 +1,6 @@
 ---
 name: manifest
-description: Use this skill when building, debugging, or integrating with the Manifest DEX on Solana, especially for TypeScript SDK usage in `manifest/client/ts`, frontend patterns derived from the `manifest.trade` web app, transaction construction with `ManifestClient`, market state reads via `Market`, and repo-specific validation/testing workflows.
+description: Use this skill when building, debugging, or integrating with the Manifest DEX on Solana, especially for TypeScript SDK usage, transaction construction with `ManifestClient`, market state reads via `Market`, order/account-model decisions, and frontend patterns derived from the `manifest.trade` web app.
 ---
 
 # Manifest Skill
@@ -10,17 +10,22 @@ description: Use this skill when building, debugging, or integrating with the Ma
 - A task touches Manifest orderbook integrations, trading flows, or market reads.
 - You need to add or update TypeScript code using the Manifest SDK.
 - You need to build or adapt a frontend based on patterns used by the `manifest.trade` web app.
-- You need repo-accurate commands for testing Manifest client or program changes.
+- You need guidance on order types, wrapper/global accounts, or setup flows.
+- You need Bonasa-Tech Manifest repo commands for validation or implementation details.
 
 ## First Steps
 
 Target surfaces:
 
+- Primary guidance in this skill folder: `references/manifest-actions.md` and `references/manifest-sdk.md`
+- Frontend architecture patterns: `references/manifest-ui.md`
+
+If working inside the Bonasa-Tech `manifest` repo:
+
 - SDK client changes: `client/ts/src`
 - SDK tests/examples: `client/ts/tests`
 - Rust AMM interface: `client/rust/src`
 - Program/runtime behavior: `programs/`
-- Frontend architecture patterns: `references/manifest-ui.md`
 
 Reference files:
 
@@ -48,17 +53,17 @@ Reference files:
 
 ## Validation Commands
 
-- TypeScript client tests (local validator flow):
+- If working in the Bonasa-Tech `manifest` repo, TypeScript client tests (local validator flow):
 ```bash
 sh local-validator-test.sh
 ```
 
-- Program tests:
+- If working in the Bonasa-Tech `manifest` repo, program tests:
 ```bash
 cargo test-sbf
 ```
 
-- Build program:
+- If working in the Bonasa-Tech `manifest` repo, build program:
 ```bash
 cargo build-sbf
 ```

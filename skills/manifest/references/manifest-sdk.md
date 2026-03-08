@@ -1,6 +1,6 @@
 # Manifest SDK Quick Map
 
-Primary docs: `client/ts/README.md`
+Canonical public SDK docs live in the Bonasa-Tech `manifest` repository TypeScript client README.
 
 ## Core Types
 
@@ -104,6 +104,8 @@ Account-management flow:
 - read balances back through `Global`
 
 ## Validation
+
+If working inside the Bonasa-Tech `manifest` repository:
 
 - Local TS flow: `sh local-validator-test.sh`
 - Program tests: `cargo test-sbf`

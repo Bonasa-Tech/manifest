@@ -60,7 +60,9 @@ Use `ManifestClient` when building instructions for deposits, orders, cancels, a
 - Wallet adapter flow: `getSetupIxs(...)` first, then `getClientForMarketNoPrivateKey(...)`
 - Multi-market/global operations: load `Global`, use global deposit/withdraw methods, and prefer `OrderType.Global` when shared collateral across markets is intended.
 
-## Repo Pointers
+## Source Repo Pointers
+
+Use these only when working inside the Bonasa-Tech `manifest` repository:
 
 - TypeScript SDK source: `client/ts/src`
 - TypeScript examples/tests: `client/ts/tests`
