@@ -106,6 +106,13 @@ cargo test-sbf
 ```
 sh local-validator-test.sh
 ```
+
+## AI Skill
+
+Use the in-repo Manifest skill scaffold for AI-agent workflows:
+
+- [skills/manifest/SKILL.md](skills/manifest/SKILL.md)
+
 ## Resources
 ### Client SDK
   [NPM Package](https://www.npmjs.com/package/@bonasa-tech/manifest-sdk)

@@ -1,0 +1,16 @@
+openai_spec_version: 1.0.0
+kind: skill
+metadata:
+  name: manifest
+  display_name: Manifest DEX
+  description: Build and debug Manifest DEX integrations on Solana, including SDK usage, order/account-model decisions, market reads, and frontend integration patterns.
+  authors:
+    - name: Bonasa Tech
+  tags:
+    - solana
+    - defi
+    - dex
+    - trading
+    - manifest
+  default_prompt: |
+    Use this skill to work on Manifest DEX integrations. Start by identifying whether the task is market-state reads (`Market`) or tx/instruction building (`ManifestClient`), then use the action and SDK references in this skill folder. Only rely on Bonasa-Tech `manifest` repo paths and validation commands when the task is explicitly in that repository.
