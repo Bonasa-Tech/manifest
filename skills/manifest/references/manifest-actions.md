@@ -26,7 +26,6 @@ Use `ManifestClient` when building instructions for deposits, orders, cancels, a
 ## Order Strategy Helpers
 
 - Batch operations: `client.batchUpdateIx(...)`
-- Place with required funding: `client.placeOrderWithRequiredDepositIxs(...)`
 - Fill stream: `FillFeed` for processing fills/events
 
 ## Order Types
@@ -45,7 +44,6 @@ Use `ManifestClient` when building instructions for deposits, orders, cancels, a
 - `ManifestClient.getClientForMarket(...)` is the signer path that auto-creates wrapper state and claims a seat if needed.
 - `ManifestClient.getClientForMarketNoPrivateKey(...)` assumes setup is already complete and is the wallet-adapter path after preflight/setup.
 - `ManifestClient.getClientReadOnly(...)` is the anonymous or pre-setup inspection path. It can still load wrapper-linked state when available.
-- Wrapper state tracks a trader's market-specific balances and open-order metadata across Manifest wrapper interactions.
 - A market seat is what makes a trader present on a given market for local balances and orders.
 - Global accounts are separate from wrapper state. They are token-level accounts used for cross-market liquidity and global order support.
 - Global account setup is one-time per token per trader: `ManifestClient.createGlobalAddTraderIx(...)`

@@ -41,7 +41,7 @@ Canonical public SDK docs live in the Bonasa-Tech `manifest` repository TypeScri
 
 ### Global Account Management
 
-- `ManifestClient.createGlobalAddTraderIx(connection, traderPk, mintPk)`
+- `ManifestClient.createGlobalAddTraderIx(traderPk, mintPk)`
 - `ManifestClient.globalDepositIx(connection, traderPk, mintPk, amountTokens)`
 - `ManifestClient.globalWithdrawIx(connection, traderPk, mintPk, amountTokens)`
 
@@ -109,4 +109,3 @@ If working inside the Bonasa-Tech `manifest` repository:
 
 - Local TS flow: `sh local-validator-test.sh`
 - Program tests: `cargo test-sbf`
-- Program build: `cargo build-sbf`

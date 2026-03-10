@@ -3,7 +3,7 @@ kind: skill
 metadata:
   name: manifest
   display_name: Manifest DEX
-  description: Build and debug Manifest DEX integrations on Solana, including SDK usage, order/account-model decisions, market reads, and frontend integration patterns.
+  description: Build and debug Manifest DEX integrations on Solana, including SDK usage, order/account-model decisions, market reads, and transaction construction.
   authors:
     - name: Bonasa Tech
   tags:
