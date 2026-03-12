@@ -140,7 +140,8 @@ pub(crate) fn process_global_evict(
 
     // Deposit
     {
-        global_dynamic_account.deposit_global(payer.key, GlobalAtoms::new(amount_atoms))?;
+        // Needs to check the amount before because of transfer fees.
+        let before_vault_balance_atoms: u64 = global_vault.get_balance_atoms();
 
         // Do the token transfer
         if *global_vault.owner == spl_token_2022::id() {
@@ -181,6 +182,12 @@ pub(crate) fn process_global_evict(
                 ],
             )?;
         }
+
+        let after_vault_balance_atoms: u64 = global_vault.get_balance_atoms();
+        let deposited_amount_atoms: u64 = after_vault_balance_atoms
+            .checked_sub(before_vault_balance_atoms)
+            .unwrap();
+        global_dynamic_account.deposit_global(payer.key, GlobalAtoms::new(deposited_amount_atoms))?;
 
         emit_stack(GlobalDepositLog {
             global: *global.key,
