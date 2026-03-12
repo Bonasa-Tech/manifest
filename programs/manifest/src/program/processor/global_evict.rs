@@ -187,7 +187,8 @@ pub(crate) fn process_global_evict(
         let deposited_amount_atoms: u64 = after_vault_balance_atoms
             .checked_sub(before_vault_balance_atoms)
             .unwrap();
-        global_dynamic_account.deposit_global(payer.key, GlobalAtoms::new(deposited_amount_atoms))?;
+        global_dynamic_account
+            .deposit_global(payer.key, GlobalAtoms::new(deposited_amount_atoms))?;
 
         emit_stack(GlobalDepositLog {
             global: *global.key,
