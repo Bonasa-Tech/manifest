@@ -12,3 +12,11 @@ export * from './manifest/instructions';
 export * from './manifest/types/OrderType';
 
 export * from './wrapperObj';
+
+// Aggregator and originating protocol detection utilities
+export {
+  AGGREGATOR_PROGRAM_IDS,
+  ORIGINATING_PROTOCOL_IDS,
+  detectAggregatorFromKeys,
+  detectOriginatingProtocolFromKeys,
+} from './fillFeed';
