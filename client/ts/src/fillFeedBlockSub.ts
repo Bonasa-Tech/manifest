@@ -3,12 +3,11 @@ import { Connection } from '@solana/web3.js';
 import { FillLog } from './manifest/accounts/FillLog';
 import { PROGRAM_ID } from './manifest';
 import * as promClient from 'prom-client';
+import { fillDiscriminant, toFillLogResult } from './fillFeed';
 import {
-  fillDiscriminant,
-  toFillLogResult,
   detectAggregatorFromKeys,
   detectOriginatingProtocolFromKeys,
-} from './fillFeed';
+} from './aggregators';
 import { WebSocketManager } from './utils/WebSocketManager';
 
 // For live monitoring of the fill feed. For a more complete look at fill
