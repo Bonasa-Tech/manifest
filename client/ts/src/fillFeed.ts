@@ -12,8 +12,6 @@ import { genAccDiscriminator } from './utils/discriminator';
 import * as promClient from 'prom-client';
 import { FillLogResult } from './types';
 import {
-  AGGREGATOR_PROGRAM_IDS,
-  ORIGINATING_PROTOCOL_IDS,
   detectAggregatorFromKeys,
   detectOriginatingProtocolFromKeys,
 } from './aggregators';
