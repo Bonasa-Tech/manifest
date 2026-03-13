@@ -12,3 +12,6 @@ export * from './manifest/instructions';
 export * from './manifest/types/OrderType';
 
 export * from './wrapperObj';
+
+// Aggregator and originating protocol detection utilities
+export * from './aggregators';
