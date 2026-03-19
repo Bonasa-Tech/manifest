@@ -621,7 +621,7 @@ export class ManifestStatsServer {
    *   - Bytes 0-7: Discriminant (8 bytes, value = 1 as u64 LE)
    *   - Bytes 8-39: Trader/owner pubkey (32 bytes)
    */
-  private async loadWrapperCache(): Promise<void> {
+  async loadWrapperCache(): Promise<void> {
     console.log('Loading wrapper accounts...');
     try {
       // Wrapper discriminant is 1 as u64 little-endian: [1, 0, 0, 0, 0, 0, 0, 0]
