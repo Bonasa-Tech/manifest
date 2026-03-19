@@ -7,6 +7,7 @@ import promBundle from 'express-prom-bundle';
 import {
   VOLUME_CHECKPOINT_DURATION_SEC,
   DATABASE_CHECKPOINT_DURATION_SEC,
+  ONE_DAY_SEC,
   PORT,
 } from './stats_utils/constants';
 import { CompleteFillsQueryOptions } from './stats_utils/types';
@@ -391,6 +392,18 @@ const run = async () => {
           console.error('Error in saving loop:', error);
           // Continue the loop instead of crashing
           await sleep(5_000); // Add a short delay before retrying
+        }
+      }
+    })(),
+    (async () => {
+      // eslint-disable-next-line no-constant-condition
+      while (true) {
+        try {
+          await sleep(ONE_DAY_SEC * 1_000);
+          await statsServer.loadWrapperCache();
+        } catch (error) {
+          console.error('Error refreshing wrapper cache:', error);
+          await sleep(5_000);
         }
       }
     })(),
