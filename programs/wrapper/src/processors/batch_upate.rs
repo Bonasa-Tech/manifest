@@ -118,6 +118,8 @@ fn prepare_cancels(
     orders_root_index: DataIndex,
     remaining_base_atoms: &mut BaseAtoms,
     remaining_quote_atoms: &mut QuoteAtoms,
+    market: &ManifestAccountInfo<MarketFixed>,
+    trader_index: DataIndex,
 ) -> Result<(Vec<DataIndex>, Vec<CancelOrderParams>), ProgramError> {
     let wrapper_data: Ref<&mut [u8]> = wrapper_state.info.try_borrow_data().unwrap();
     let wrapper: DynamicAccount<&ManifestWrapperStateFixed, &[u8]> =
@@ -151,6 +153,47 @@ fn prepare_cancels(
             };
         }
     }
+    drop(wrapper_data);
+
+    // When cancel_all is set, also cancel orders on the market's seat that the
+    // wrapper does not track (e.g. placed directly via the manifest program).
+    if cancel_all {
+        let known_sequence_numbers: HashSet<u64> = core_cancels
+            .iter()
+            .map(|c| c.order_sequence_number())
+            .collect();
+
+        let market_data: Ref<&mut [u8]> = market.try_borrow_data().unwrap();
+        let market_ref: DynamicAccount<&MarketFixed, &[u8]> =
+            get_dynamic_account::<MarketFixed>(&market_data);
+
+        for (index, resting_order) in market_ref.get_bids().iter::<RestingOrder>() {
+            if resting_order.get_trader_index() == trader_index
+                && !known_sequence_numbers.contains(&resting_order.get_sequence_number())
+            {
+                core_cancels.push(CancelOrderParams::new_with_hint(
+                    resting_order.get_sequence_number(),
+                    Some(index),
+                ));
+                *remaining_quote_atoms += resting_order
+                    .get_price()
+                    .checked_quote_for_base(resting_order.get_num_base_atoms(), true)
+                    .unwrap();
+            }
+        }
+        for (index, resting_order) in market_ref.get_asks().iter::<RestingOrder>() {
+            if resting_order.get_trader_index() == trader_index
+                && !known_sequence_numbers.contains(&resting_order.get_sequence_number())
+            {
+                core_cancels.push(CancelOrderParams::new_with_hint(
+                    resting_order.get_sequence_number(),
+                    Some(index),
+                ));
+                *remaining_base_atoms += resting_order.get_num_base_atoms();
+            }
+        }
+    }
+
     Ok((wrapper_indices, core_cancels))
 }
 
@@ -513,6 +556,8 @@ pub(crate) fn process_batch_update(
         market_info.orders_root_index,
         &mut remaining_base_atoms,
         &mut remaining_quote_atoms,
+        &market,
+        market_info.trader_index,
     )?;
     let core_orders: Vec<PlaceOrderParams> = prepare_orders(
         &orders,

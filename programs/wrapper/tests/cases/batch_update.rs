@@ -3,7 +3,13 @@ use std::{mem::size_of, rc::Rc};
 use hypertree::{
     get_helper, DataIndex, HyperTreeReadOperations, HyperTreeValueIteratorTrait, RBNode, NIL,
 };
-use manifest::state::{constants::NO_EXPIRATION_LAST_VALID_SLOT, OrderType, RestingOrder};
+use manifest::{
+    program::{
+        batch_update::PlaceOrderParams as ManifestPlaceOrderParams,
+        instruction_builders::batch_update_instruction as manifest_batch_update_instruction,
+    },
+    state::{constants::NO_EXPIRATION_LAST_VALID_SLOT, OrderType, RestingOrder},
+};
 use solana_program::instruction::Instruction;
 use solana_program_test::tokio;
 use solana_sdk::{account::Account, pubkey::Pubkey, signature::Keypair, signer::Signer};
@@ -330,11 +336,14 @@ async fn sync_remove_test() -> anyhow::Result<()> {
 async fn wrapper_batch_update_cancel_all_test() -> anyhow::Result<()> {
     let mut test_fixture: TestFixture = TestFixture::new().await;
     test_fixture.claim_seat().await?;
-    test_fixture.deposit(Token::SOL, SOL_UNIT_SIZE).await?;
+    test_fixture
+        .deposit(Token::SOL, 2 * SOL_UNIT_SIZE)
+        .await?;
 
     let payer: Pubkey = test_fixture.payer();
     let payer_keypair: Keypair = test_fixture.payer_keypair().insecure_clone();
 
+    // Place an order via the wrapper.
     let batch_update_ix: Instruction = batch_update_instruction(
         &test_fixture.market.key,
         &payer,
@@ -359,6 +368,47 @@ async fn wrapper_batch_update_cancel_all_test() -> anyhow::Result<()> {
     )
     .await?;
 
+    // Place an order directly via the manifest program (bypassing the wrapper).
+    let manifest_place_ix: Instruction = manifest_batch_update_instruction(
+        &test_fixture.market.key,
+        &payer,
+        None,
+        vec![],
+        vec![ManifestPlaceOrderParams::new(
+            1 * SOL_UNIT_SIZE,
+            2,
+            0,
+            false,
+            OrderType::Limit,
+            NO_EXPIRATION_LAST_VALID_SLOT,
+        )],
+        None,
+        None,
+        None,
+        None,
+    );
+    send_tx_with_retry(
+        Rc::clone(&test_fixture.context),
+        &[manifest_place_ix],
+        Some(&payer),
+        &[&payer_keypair],
+    )
+    .await?;
+
+    // Verify there are 2 asks on the market before cancel_all.
+    test_fixture.market.reload().await;
+    assert_eq!(
+        test_fixture
+            .market
+            .market
+            .get_asks()
+            .iter::<RestingOrder>()
+            .count(),
+        2,
+        "Two asks before cancel_all"
+    );
+
+    // cancel_all via wrapper should cancel both orders.
     let batch_update_ix: Instruction = batch_update_instruction(
         &test_fixture.market.key,
         &payer,
@@ -375,7 +425,7 @@ async fn wrapper_batch_update_cancel_all_test() -> anyhow::Result<()> {
     )
     .await?;
 
-    // Assert that there are no more orders on the book.
+    // Assert that there are no more orders on the wrapper.
     let mut wrapper_account: Account = test_fixture
         .context
         .borrow_mut()
@@ -401,6 +451,29 @@ async fn wrapper_batch_update_cancel_all_test() -> anyhow::Result<()> {
         get_helper::<RBNode<MarketInfo>>(wrapper_dynamic_data, market_info_index).get_value();
     let orders_root_index: DataIndex = market_info.orders_root_index;
     assert_eq!(orders_root_index, NIL, "Deleted all orders in cancel all");
+
+    // Assert that the market order book is empty (both wrapper and non-wrapper orders cancelled).
+    test_fixture.market.reload().await;
+    assert_eq!(
+        test_fixture
+            .market
+            .market
+            .get_asks()
+            .iter::<RestingOrder>()
+            .count(),
+        0,
+        "No asks remaining on market"
+    );
+    assert_eq!(
+        test_fixture
+            .market
+            .market
+            .get_bids()
+            .iter::<RestingOrder>()
+            .count(),
+        0,
+        "No bids remaining on market"
+    );
 
     Ok(())
 }
