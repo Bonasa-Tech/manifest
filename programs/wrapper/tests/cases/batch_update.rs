@@ -336,9 +336,7 @@ async fn sync_remove_test() -> anyhow::Result<()> {
 async fn wrapper_batch_update_cancel_all_test() -> anyhow::Result<()> {
     let mut test_fixture: TestFixture = TestFixture::new().await;
     test_fixture.claim_seat().await?;
-    test_fixture
-        .deposit(Token::SOL, 2 * SOL_UNIT_SIZE)
-        .await?;
+    test_fixture.deposit(Token::SOL, 2 * SOL_UNIT_SIZE).await?;
 
     let payer: Pubkey = test_fixture.payer();
     let payer_keypair: Keypair = test_fixture.payer_keypair().insecure_clone();
