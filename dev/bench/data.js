@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1773322249896,
+  "lastUpdate": 1774154189826,
   "repoUrl": "https://github.com/Bonasa-Tech/manifest",
   "entries": {
     "CU Benchmark": [
@@ -10787,6 +10787,72 @@ window.BENCHMARK_DATA = {
           {
             "name": "MFX_99",
             "value": 5468,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "mail@maximilianschneider.net",
+            "name": "Maximilian Schneider",
+            "username": "mschneider"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "864a464046cd879bfa698de6a3c68b75b58994cd",
+          "message": "update cancel all to be thorough and cancel reverse orders (#558)\n\n* update cancel all to be thorough and cancel reverse orders\n\n* fmt",
+          "timestamp": "2026-03-22T05:23:53+01:00",
+          "tree_id": "b5f452d27dafa6d5df6efb40cbbcbedb91fa1d71",
+          "url": "https://github.com/Bonasa-Tech/manifest/commit/864a464046cd879bfa698de6a3c68b75b58994cd"
+        },
+        "date": 1774154187825,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "PHX_50",
+            "value": 6787,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "PHX_95",
+            "value": 13209,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "PHX_99",
+            "value": 13904,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_50",
+            "value": 3246,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_95",
+            "value": 11949,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_99",
+            "value": 12636,
             "range": "",
             "unit": "CU",
             "extra": ""
