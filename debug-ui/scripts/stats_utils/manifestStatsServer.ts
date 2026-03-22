@@ -715,21 +715,21 @@ export class ManifestStatsServer {
         this.quoteVolumeAtomsSinceLastCheckpoint.set(marketPk, 0);
         this.baseVolumeAtomsCheckpoints.set(
           marketPk,
-          new Array<number>(
-            ONE_DAY_SEC / VOLUME_CHECKPOINT_DURATION_SEC,
-          ).fill(0),
+          new Array<number>(ONE_DAY_SEC / VOLUME_CHECKPOINT_DURATION_SEC).fill(
+            0,
+          ),
         );
         this.quoteVolumeAtomsCheckpoints.set(
           marketPk,
-          new Array<number>(
-            ONE_DAY_SEC / VOLUME_CHECKPOINT_DURATION_SEC,
-          ).fill(0),
+          new Array<number>(ONE_DAY_SEC / VOLUME_CHECKPOINT_DURATION_SEC).fill(
+            0,
+          ),
         );
         this.checkpointTimestamps.set(
           marketPk,
-          new Array<number>(
-            ONE_DAY_SEC / VOLUME_CHECKPOINT_DURATION_SEC,
-          ).fill(0),
+          new Array<number>(ONE_DAY_SEC / VOLUME_CHECKPOINT_DURATION_SEC).fill(
+            0,
+          ),
         );
       }
     }
