@@ -684,59 +684,67 @@ export class ManifestStatsServer {
     const marketProgramAccounts: GetProgramAccountsResponse =
       await fetchMarketProgramAccounts(this.connection);
 
-    marketProgramAccounts.forEach(
-      (
-        value: Readonly<{ account: AccountInfo<Buffer>; pubkey: PublicKey }>,
-      ) => {
-        const marketPk: string = value.pubkey.toBase58();
+    // Collect markets that need individual loading (when we only have pubkeys)
+    const marketsToLoad: string[] = [];
 
-        // If we have account data, load the market and check volume
-        if (value.account.data.length > 0) {
-          try {
-            const market: Market = Market.loadFromBuffer({
-              buffer: value.account.data,
-              address: new PublicKey(marketPk),
-            });
+    for (const value of marketProgramAccounts) {
+      const marketPk: string = value.pubkey.toBase58();
 
-            // Skip markets that have never traded to keep the amount of data
-            // retention smaller.
-            if (Number(market.quoteVolume()) == 0) {
-              return;
-            }
+      // If we have account data, load the market from buffer
+      if (value.account.data.length > 0) {
+        try {
+          const market: Market = Market.loadFromBuffer({
+            buffer: value.account.data,
+            address: new PublicKey(marketPk),
+          });
 
-            this.markets.set(marketPk, market);
-          } catch (err) {
-            console.error(`Failed to load market ${marketPk}:`, err);
-            // Continue with other markets
-            return;
-          }
+          this.markets.set(marketPk, market);
+        } catch (err) {
+          console.error(`Failed to load market ${marketPk}:`, err);
+          // Continue with other markets
+          continue;
         }
+      } else {
+        // No data - need to fetch individually
+        marketsToLoad.push(marketPk);
+      }
 
-        // Initialize checkpoints regardless of whether we have market data
-        if (!this.baseVolumeAtomsCheckpoints.has(marketPk)) {
-          this.baseVolumeAtomsSinceLastCheckpoint.set(marketPk, 0);
-          this.quoteVolumeAtomsSinceLastCheckpoint.set(marketPk, 0);
-          this.baseVolumeAtomsCheckpoints.set(
-            marketPk,
-            new Array<number>(
-              ONE_DAY_SEC / VOLUME_CHECKPOINT_DURATION_SEC,
-            ).fill(0),
-          );
-          this.quoteVolumeAtomsCheckpoints.set(
-            marketPk,
-            new Array<number>(
-              ONE_DAY_SEC / VOLUME_CHECKPOINT_DURATION_SEC,
-            ).fill(0),
-          );
-          this.checkpointTimestamps.set(
-            marketPk,
-            new Array<number>(
-              ONE_DAY_SEC / VOLUME_CHECKPOINT_DURATION_SEC,
-            ).fill(0),
-          );
-        }
-      },
-    );
+      // Initialize checkpoints regardless of whether we have market data
+      if (!this.baseVolumeAtomsCheckpoints.has(marketPk)) {
+        this.baseVolumeAtomsSinceLastCheckpoint.set(marketPk, 0);
+        this.quoteVolumeAtomsSinceLastCheckpoint.set(marketPk, 0);
+        this.baseVolumeAtomsCheckpoints.set(
+          marketPk,
+          new Array<number>(ONE_DAY_SEC / VOLUME_CHECKPOINT_DURATION_SEC).fill(
+            0,
+          ),
+        );
+        this.quoteVolumeAtomsCheckpoints.set(
+          marketPk,
+          new Array<number>(ONE_DAY_SEC / VOLUME_CHECKPOINT_DURATION_SEC).fill(
+            0,
+          ),
+        );
+        this.checkpointTimestamps.set(
+          marketPk,
+          new Array<number>(ONE_DAY_SEC / VOLUME_CHECKPOINT_DURATION_SEC).fill(
+            0,
+          ),
+        );
+      }
+    }
+
+    // Load markets individually if we only had pubkeys (fallback path)
+    if (marketsToLoad.length > 0) {
+      console.log(
+        `Loading ${marketsToLoad.length} markets individually (fallback path)`,
+      );
+      for (const marketPk of marketsToLoad) {
+        // Rate limit to avoid RPC spam
+        await new Promise((f) => setTimeout(f, 100));
+        await this.loadNewMarket(marketPk);
+      }
+    }
 
     const mintToSymbols: Map<string, string> = new Map();
     this.markets.forEach(async (market: Market) => {
