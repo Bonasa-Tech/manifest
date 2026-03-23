@@ -8,7 +8,7 @@ import { genAccDiscriminator } from '@/../../client/ts/src/utils/discriminator';
 import {
   detectAggregatorFromKeys,
   detectOriginatingProtocolFromKeys,
-} from '@/../../client/ts/src/fillFeed';
+} from '@/../../client/ts/src/aggregators';
 import { TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID } from '@solana/spl-token';
 
 const MARKET_VERIFY_CONCURRENCY = 10;
