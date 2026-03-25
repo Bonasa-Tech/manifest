@@ -1,6 +1,6 @@
 import { Connection, PublicKey } from '@solana/web3.js';
+import { ManifestClient, Market } from '@bonasa-tech/manifest-sdk';
 
-const MFX_STATS_URL = 'https://mfx-stats-mainnet.fly.dev/tickers';
 const TOKEN_2022_PROGRAM_ID = new PublicKey(
   'TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb',
 );
@@ -30,11 +30,10 @@ enum ExtensionType {
   ScaledUiAmountConfig = 29,
 }
 
-interface Ticker {
-  ticker_id: string;
-  base_currency: string;
-  target_currency: string;
-  pool_id: string;
+interface MarketMintInfo {
+  marketAddress: string;
+  baseMint: string;
+  quoteMint: string;
 }
 
 interface ExtensionInfo {
@@ -311,21 +310,40 @@ async function main() {
     process.exit(1);
   }
 
-  console.log('Fetching tickers from mfx-stats...');
-  const resp = await fetch(MFX_STATS_URL);
-  const tickers: Ticker[] = await resp.json();
+  const connection = new Connection(rpcUrl, { commitment: 'confirmed' });
 
-  // Extract unique mints
+  // Fetch all markets directly from chain
+  console.log('Fetching all market program accounts from chain...');
+  const marketAccounts =
+    await ManifestClient.getMarketProgramAccounts(connection);
+  console.log(`Found ${marketAccounts.length} markets`);
+
+  // Extract unique mints from all markets
   const mints = new Set<string>();
-  for (const t of tickers) {
-    mints.add(t.base_currency);
-    mints.add(t.target_currency);
+  const marketMintInfo: MarketMintInfo[] = [];
+
+  for (const account of marketAccounts) {
+    try {
+      const market = Market.loadFromBuffer({
+        buffer: account.account.data,
+        address: account.pubkey,
+      });
+      const baseMint = market.baseMint().toBase58();
+      const quoteMint = market.quoteMint().toBase58();
+      mints.add(baseMint);
+      mints.add(quoteMint);
+      marketMintInfo.push({
+        marketAddress: account.pubkey.toBase58(),
+        baseMint,
+        quoteMint,
+      });
+    } catch (e) {
+      console.error(`Failed to parse market ${account.pubkey.toBase58()}`);
+    }
   }
   console.log(
-    `Found ${mints.size} unique mints across ${tickers.length} tickers`,
+    `Found ${mints.size} unique mints across ${marketMintInfo.length} markets`,
   );
-
-  const connection = new Connection(rpcUrl, { commitment: 'confirmed' });
 
   // Batch using getMultipleAccountsInfo for efficiency
   const mintList = [...mints];
@@ -545,7 +563,7 @@ async function main() {
   // Send Discord notification if webhook URL is configured
   if (discordWebhookUrl) {
     let message = `**Token Extensions Check Report**\n`;
-    message += `Checked ${mints.size} unique mints across ${tickers.length} markets\n`;
+    message += `Checked ${mints.size} unique mints across ${marketMintInfo.length} markets\n`;
     message += `- Token-2022 mints: ${token2022Mints.length}\n`;
     message += `- SPL Token mints: ${splTokenMints.length}\n\n`;
 
