@@ -119,9 +119,10 @@ const run = async () => {
       }
       // Only crash on a loss of funds. There has been unsolicited deposits into
       // vaults which makes them have more tokens than the program expects.
+      // Use > 1 tolerance to handle JavaScript floating point rounding errors.
       if (
-        baseExpectedAtoms > baseVaultBalanceAtoms ||
-        quoteExpectedAtoms > quoteVaultBalanceAtoms
+        baseExpectedAtoms - baseVaultBalanceAtoms > 1 ||
+        quoteExpectedAtoms - quoteVaultBalanceAtoms > 1
       ) {
         foundMismatch = true;
       }
@@ -202,7 +203,8 @@ const run = async () => {
       );
 
       // Check if vault has less than expected (loss of funds)
-      if (totalExpectedAtoms > actualVaultAtoms) {
+      // Use > 1 tolerance to handle JavaScript floating point rounding errors.
+      if (totalExpectedAtoms - actualVaultAtoms > 1) {
         console.log('MISMATCH DETECTED - Listing all seats:');
         console.log('=====================================');
 
@@ -221,10 +223,7 @@ const run = async () => {
         console.log(`Actual in vault: ${actualVaultAtoms} atoms`);
         console.log(`Difference: ${difference} atoms`);
         console.log('=====================================');
-      }
 
-      // Only crash on a loss of funds
-      if (totalExpectedAtoms > actualVaultAtoms) {
         foundMismatch = true;
       }
     } catch (error) {
