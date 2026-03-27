@@ -80,6 +80,12 @@ export class ManifestStatsServer {
   // Tickers. Ticker from metaplex metadata with a fallback to spl token
   // registry for old stuff like wsol.
   private tickers: Map<string, [string, string]> = new Map();
+  // Short-lived cache to reduce RPC fanout when /tickers is polled frequently.
+  private liveSnapshotsCache: Map<string, Market> | null = null;
+  private liveSnapshotsCacheAtMs: number = 0;
+  private liveSnapshotsRefreshPromise: Promise<Map<string, Market>> | null =
+    null;
+  private readonly LIVE_SNAPSHOTS_CACHE_TTL_MS: number = 5_000;
 
   private lastFillSlot: number = 0;
 
@@ -955,12 +961,91 @@ export class ManifestStatsServer {
    *
    * https://docs.google.com/document/d/1v27QFoQq1SKT3Priq3aqPgB70Xd_PnDzbOCiuoCyixw/edit?tab=t.0#heading=h.pa64vhp5pbih
    */
-  getTickers() {
+  private async getLiveMarketSnapshots(): Promise<Map<string, Market>> {
+    const nowMs = Date.now();
+    if (
+      this.liveSnapshotsCache &&
+      nowMs - this.liveSnapshotsCacheAtMs < this.LIVE_SNAPSHOTS_CACHE_TTL_MS
+    ) {
+      return this.liveSnapshotsCache;
+    }
+
+    if (this.liveSnapshotsRefreshPromise) {
+      return this.liveSnapshotsRefreshPromise;
+    }
+
+    this.liveSnapshotsRefreshPromise = (async () => {
+      const liveMarkets = new Map<string, Market>();
+      const marketPks = Array.from(this.markets.keys()).map(
+        (marketPk) => new PublicKey(marketPk),
+      );
+
+      // Refresh all markets in batched RPC calls. This is equivalent to per-market
+      // reload semantics, but avoids issuing one RPC request per market on /tickers.
+      const marketPkChunks: PublicKey[][] = chunks(marketPks, 100);
+      for (const marketPkChunk of marketPkChunks) {
+        try {
+          const accountInfos = await this.connection.getMultipleAccountsInfo(
+            marketPkChunk,
+          );
+          accountInfos.forEach((accountInfo, index) => {
+            const marketPk = marketPkChunk[index].toBase58();
+            if (!accountInfo) {
+              const cached = this.markets.get(marketPk);
+              if (cached) {
+                liveMarkets.set(marketPk, cached);
+              }
+              return;
+            }
+
+            try {
+              const market = Market.loadFromBuffer({
+                buffer: accountInfo.data,
+                address: marketPkChunk[index],
+              });
+              liveMarkets.set(marketPk, market);
+              this.markets.set(marketPk, market);
+            } catch (error) {
+              console.error(
+                `Failed to deserialize live market snapshot for ${marketPk}:`,
+                error,
+              );
+              const cached = this.markets.get(marketPk);
+              if (cached) {
+                liveMarkets.set(marketPk, cached);
+              }
+            }
+          });
+        } catch (error) {
+          console.error('Failed to fetch live market snapshots chunk:', error);
+          marketPkChunk.forEach((marketPk) => {
+            const cached = this.markets.get(marketPk.toBase58());
+            if (cached) {
+              liveMarkets.set(marketPk.toBase58(), cached);
+            }
+          });
+        }
+      }
+
+      this.liveSnapshotsCache = liveMarkets;
+      this.liveSnapshotsCacheAtMs = Date.now();
+      return liveMarkets;
+    })();
+
+    try {
+      return await this.liveSnapshotsRefreshPromise;
+    } finally {
+      this.liveSnapshotsRefreshPromise = null;
+    }
+  }
+
+  async getTickers() {
     const tickers: any = [];
     const currentTimestamp = Math.floor(Date.now() / 1000);
     const twentyFourHoursAgo = currentTimestamp - ONE_DAY_SEC;
+    const liveMarkets = await this.getLiveMarketSnapshots();
 
-    this.markets.forEach((market: Market, marketPk: string) => {
+    liveMarkets.forEach((market: Market, marketPk: string) => {
       // Calculate volume using only checkpoints from the last 24 hours
       const timestamps = this.checkpointTimestamps.get(marketPk) || [];
       const baseCheckpoints =
@@ -978,18 +1063,16 @@ export class ManifestStatsServer {
         }
       }
 
-      const bids = market.bids();
-      const asks = market.asks();
-      const bestBid = bids.length > 0 ? bids[bids.length - 1].tokenPrice : 0;
-      const bestAsk = asks.length > 0 ? asks[asks.length - 1].tokenPrice : 0;
+      const lastPriceAtoms = this.lastPriceByMarket.get(marketPk) ?? 0;
+      const bestBid = market.bidsL2()[0]?.tokenPrice ?? 0;
+      const bestAsk = market.asksL2()[0]?.tokenPrice ?? 0;
 
       tickers.push({
         ticker_id: marketPk,
         base_currency: market.baseMint().toBase58(),
         target_currency: market.quoteMint().toBase58(),
         last_price:
-          this.lastPriceByMarket.get(marketPk)! *
-          10 ** (market.baseDecimals() - market.quoteDecimals()),
+          lastPriceAtoms * 10 ** (market.baseDecimals() - market.quoteDecimals()),
         base_volume: baseVolumeAtoms / 10 ** market.baseDecimals(),
         target_volume: quoteVolumeAtoms / 10 ** market.quoteDecimals(),
         pool_id: marketPk,

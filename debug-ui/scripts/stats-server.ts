@@ -173,8 +173,13 @@ const run = async () => {
   }
 
   // Set up Express routes
-  const tickersHandler: RequestHandler = (_req, res) => {
-    res.send(statsServer.getTickers());
+  const tickersHandler: RequestHandler = async (_req, res) => {
+    try {
+      res.send(await statsServer.getTickers());
+    } catch (error) {
+      console.error('Error in tickers handler:', error);
+      res.status(500).send({ error: 'Internal server error' });
+    }
   };
   const metadataHandler: RequestHandler = (_req, res) => {
     res.send(JSON.stringify(Object.fromEntries(statsServer.getMetadata())));
