@@ -978,11 +978,6 @@ export class ManifestStatsServer {
         }
       }
 
-      const bids = market.bids();
-      const asks = market.asks();
-      const bestBid = bids.length > 0 ? bids[bids.length - 1].tokenPrice : 0;
-      const bestAsk = asks.length > 0 ? asks[asks.length - 1].tokenPrice : 0;
-
       tickers.push({
         ticker_id: marketPk,
         base_currency: market.baseMint().toBase58(),
@@ -995,11 +990,11 @@ export class ManifestStatsServer {
         pool_id: marketPk,
         // Does not apply to orderbooks.
         liquidity_in_usd: 0,
-        bid: bestBid,
-        ask: bestAsk,
         // Optional: not yet implemented
         // high: 0,
         // low: 0,
+        // bid: bestBid,
+        // ask: bestAsk,
       });
     });
     return tickers;
