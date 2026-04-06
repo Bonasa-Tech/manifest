@@ -2394,7 +2394,9 @@ export class ManifestStatsServer {
   /**
    * GeckoTerminal: Get latest indexed block info
    */
-  getGeckoLatestBlock(): { block: { blockNumber: number; blockTimestamp: number } } {
+  getGeckoLatestBlock(): {
+    block: { blockNumber: number; blockTimestamp: number };
+  } {
     return {
       block: {
         blockNumber: this.lastFillSlot,
@@ -2526,10 +2528,8 @@ export class ManifestStatsServer {
           // Convert amounts to decimalized values
           const baseDecimals = market?.baseDecimals() ?? 9;
           const quoteDecimals = market?.quoteDecimals() ?? 6;
-          const baseAmount =
-            Number(fill.baseAtoms) / 10 ** baseDecimals;
-          const quoteAmount =
-            Number(fill.quoteAtoms) / 10 ** quoteDecimals;
+          const baseAmount = Number(fill.baseAtoms) / 10 ** baseDecimals;
+          const quoteAmount = Number(fill.quoteAtoms) / 10 ** quoteDecimals;
 
           // Calculate native price (price of asset0 in terms of asset1)
           const priceNative =
