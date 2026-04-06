@@ -118,6 +118,22 @@ export class ManifestStatsServer {
   // Wrapper cache: owner pubkey -> wrapper pubkey
   private wrapperCache: Map<string, string> = new Map();
 
+  // GeckoTerminal integration: block-indexed event storage
+  // Map<slot, { blockTime: number, events: FillLogResult[] }>
+  private geckoBlockEvents: Map<
+    number,
+    { blockTime: number; events: FillLogResult[] }
+  > = new Map();
+  // Track ordered list of slots for efficient cleanup
+  private geckoBlockSlots: number[] = [];
+  // Maximum blocks to keep
+  private readonly GECKO_MAX_BLOCKS = 1000;
+  // Token metadata derived from markets: Map<mintAddress, { symbol: string, decimals: number }>
+  private tokenMetadata: Map<string, { symbol: string; decimals: number }> =
+    new Map();
+  // Track latest block timestamp
+  private latestBlockTime: number = 0;
+
   // Checkpoint protection: track how many checkpoint advances have occurred since startup
   // to prevent overwriting good database data before new data has accumulated
   private checkpointAdvancesSinceStartup: number = 0;
@@ -584,6 +600,9 @@ export class ManifestStatsServer {
           }
           this.fillLogResults.set(market, prevFills);
 
+          // GeckoTerminal: Add to block-indexed events
+          this.addGeckoBlockEvent(fill);
+
           this.fills.inc({ market });
 
           await this.processFillAsync(fill);
@@ -773,6 +792,22 @@ export class ManifestStatsServer {
         mintToSymbols.get(market.baseMint()!.toBase58())!,
         mintToSymbols.get(market.quoteMint()!.toBase58())!,
       ]);
+
+      // GeckoTerminal: Build token metadata for /asset endpoint
+      const baseMintStr = baseMint.toBase58();
+      const quoteMintStr = quoteMint.toBase58();
+      if (!this.tokenMetadata.has(baseMintStr)) {
+        this.tokenMetadata.set(baseMintStr, {
+          symbol: baseSymbol,
+          decimals: market.baseDecimals(),
+        });
+      }
+      if (!this.tokenMetadata.has(quoteMintStr)) {
+        this.tokenMetadata.set(quoteMintStr, {
+          symbol: quoteSymbol,
+          decimals: market.quoteDecimals(),
+        });
+      }
     });
   }
 
@@ -2318,6 +2353,239 @@ export class ManifestStatsServer {
     this.pruneInactiveTraders();
     this.pruneFillLogResults();
     this.logMemoryUsage();
+  }
+
+  /**
+   * Add a fill event to the GeckoTerminal block-indexed storage.
+   * Maintains a maximum of GECKO_MAX_BLOCKS blocks.
+   */
+  private addGeckoBlockEvent(fill: FillLogResult): void {
+    const slot = fill.slot;
+    const blockTime = fill.blockTime ?? Math.floor(Date.now() / 1000);
+
+    // Update latest block time
+    if (slot >= this.lastFillSlot) {
+      this.latestBlockTime = blockTime;
+    }
+
+    // Add event to existing block or create new block entry
+    if (this.geckoBlockEvents.has(slot)) {
+      this.geckoBlockEvents.get(slot)!.events.push(fill);
+    } else {
+      this.geckoBlockEvents.set(slot, { blockTime, events: [fill] });
+
+      // Add slot to ordered list and maintain sort order
+      // Insert in sorted position (slots should mostly come in order)
+      const insertIndex = this.geckoBlockSlots.findIndex((s) => s > slot);
+      if (insertIndex === -1) {
+        this.geckoBlockSlots.push(slot);
+      } else {
+        this.geckoBlockSlots.splice(insertIndex, 0, slot);
+      }
+
+      // Cleanup: remove oldest blocks if we exceed the limit
+      while (this.geckoBlockSlots.length > this.GECKO_MAX_BLOCKS) {
+        const oldestSlot = this.geckoBlockSlots.shift()!;
+        this.geckoBlockEvents.delete(oldestSlot);
+      }
+    }
+  }
+
+  /**
+   * GeckoTerminal: Get latest indexed block info
+   */
+  getGeckoLatestBlock(): { block: { blockNumber: number; blockTimestamp: number } } {
+    return {
+      block: {
+        blockNumber: this.lastFillSlot,
+        blockTimestamp: this.latestBlockTime,
+      },
+    };
+  }
+
+  /**
+   * GeckoTerminal: Get token/asset info by mint address
+   */
+  getGeckoAsset(
+    id: string,
+  ): { id: string; name: string; symbol: string; decimals: number } | null {
+    const metadata = this.tokenMetadata.get(id);
+    if (!metadata) {
+      return null;
+    }
+    return {
+      id,
+      name: metadata.symbol, // Use symbol as name since we don't have separate name
+      symbol: metadata.symbol,
+      decimals: metadata.decimals,
+    };
+  }
+
+  /**
+   * GeckoTerminal: Get pair/market info by market address
+   */
+  getGeckoPair(id: string): {
+    id: string;
+    dexKey: string;
+    asset0Id: string;
+    asset1Id: string;
+    feeBps: number;
+  } | null {
+    const market = this.markets.get(id);
+    if (!market) {
+      return null;
+    }
+    return {
+      id,
+      dexKey: 'manifest',
+      asset0Id: market.baseMint().toBase58(),
+      asset1Id: market.quoteMint().toBase58(),
+      feeBps: 0, // Manifest has no trading fees
+    };
+  }
+
+  /**
+   * GeckoTerminal: Get swap events within block range (inclusive)
+   */
+  getGeckoEvents(
+    fromBlock: number,
+    toBlock: number,
+  ): Array<{
+    block: { blockNumber: number; blockTimestamp: number };
+    events: Array<{
+      eventType: string;
+      txnId: string;
+      txnIndex: number;
+      eventIndex: number;
+      maker: string;
+      pairId: string;
+      asset0In?: number;
+      asset1Out?: number;
+      asset1In?: number;
+      asset0Out?: number;
+      priceNative: number;
+      reserves: { asset0: number; asset1: number };
+    }>;
+  }> {
+    const result: Array<{
+      block: { blockNumber: number; blockTimestamp: number };
+      events: Array<{
+        eventType: string;
+        txnId: string;
+        txnIndex: number;
+        eventIndex: number;
+        maker: string;
+        pairId: string;
+        asset0In?: number;
+        asset1Out?: number;
+        asset1In?: number;
+        asset0Out?: number;
+        priceNative: number;
+        reserves: { asset0: number; asset1: number };
+      }>;
+    }> = [];
+
+    // Filter slots within range
+    for (const slot of this.geckoBlockSlots) {
+      if (slot < fromBlock) continue;
+      if (slot > toBlock) break;
+
+      const blockData = this.geckoBlockEvents.get(slot);
+      if (!blockData) continue;
+
+      const blockEvents: Array<{
+        eventType: string;
+        txnId: string;
+        txnIndex: number;
+        eventIndex: number;
+        maker: string;
+        pairId: string;
+        asset0In?: number;
+        asset1Out?: number;
+        asset1In?: number;
+        asset0Out?: number;
+        priceNative: number;
+        reserves: { asset0: number; asset1: number };
+      }> = [];
+
+      // Group fills by transaction to assign txnIndex
+      const fillsByTx = new Map<string, FillLogResult[]>();
+      for (const fill of blockData.events) {
+        if (!fillsByTx.has(fill.signature)) {
+          fillsByTx.set(fill.signature, []);
+        }
+        fillsByTx.get(fill.signature)!.push(fill);
+      }
+
+      let txnIndex = 0;
+      for (const [_signature, fills] of fillsByTx) {
+        for (let eventIndex = 0; eventIndex < fills.length; eventIndex++) {
+          const fill = fills[eventIndex];
+          const market = this.markets.get(fill.market);
+
+          // Convert amounts to decimalized values
+          const baseDecimals = market?.baseDecimals() ?? 9;
+          const quoteDecimals = market?.quoteDecimals() ?? 6;
+          const baseAmount =
+            Number(fill.baseAtoms) / 10 ** baseDecimals;
+          const quoteAmount =
+            Number(fill.quoteAtoms) / 10 ** quoteDecimals;
+
+          // Calculate native price (price of asset0 in terms of asset1)
+          const priceNative =
+            fill.priceAtoms * 10 ** (baseDecimals - quoteDecimals);
+
+          // Determine direction: takerIsBuy means taker buys base (asset0)
+          // So asset0 goes out (to taker), asset1 goes in (from taker)
+          const event: {
+            eventType: string;
+            txnId: string;
+            txnIndex: number;
+            eventIndex: number;
+            maker: string;
+            pairId: string;
+            asset0In?: number;
+            asset1Out?: number;
+            asset1In?: number;
+            asset0Out?: number;
+            priceNative: number;
+            reserves: { asset0: number; asset1: number };
+          } = {
+            eventType: 'swap',
+            txnId: fill.signature,
+            txnIndex,
+            eventIndex,
+            maker: fill.maker,
+            pairId: fill.market,
+            priceNative,
+            reserves: { asset0: 0, asset1: 0 }, // Orderbook, no reserves
+          };
+
+          if (fill.takerIsBuy) {
+            // Taker buys base: asset1 goes in, asset0 goes out
+            event.asset1In = quoteAmount;
+            event.asset0Out = baseAmount;
+          } else {
+            // Taker sells base: asset0 goes in, asset1 goes out
+            event.asset0In = baseAmount;
+            event.asset1Out = quoteAmount;
+          }
+
+          blockEvents.push(event);
+        }
+        txnIndex++;
+      }
+
+      result.push({
+        block: {
+          blockNumber: slot,
+          blockTimestamp: blockData.blockTime,
+        },
+        events: blockEvents,
+      });
+    }
+
+    return result;
   }
 
   /**

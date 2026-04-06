@@ -330,6 +330,51 @@ const run = async () => {
   app.get('/wrapper', wrapperHandler);
   app.get('/wrappers', wrappersHandler);
 
+  // GeckoTerminal integration endpoints
+  app.get('/latest-block', (_req, res) => {
+    res.send(statsServer.getGeckoLatestBlock());
+  });
+
+  app.get('/asset', (req, res) => {
+    const id = req.query.id as string;
+    if (!id) {
+      res.status(400).send({ error: 'id parameter is required' });
+      return;
+    }
+    const asset = statsServer.getGeckoAsset(id);
+    if (!asset) {
+      res.status(404).send({ error: 'Asset not found', id });
+      return;
+    }
+    res.send(asset);
+  });
+
+  app.get('/pair', (req, res) => {
+    const id = req.query.id as string;
+    if (!id) {
+      res.status(400).send({ error: 'id parameter is required' });
+      return;
+    }
+    const pair = statsServer.getGeckoPair(id);
+    if (!pair) {
+      res.status(404).send({ error: 'Pair not found', id });
+      return;
+    }
+    res.send(pair);
+  });
+
+  app.get('/events', (req, res) => {
+    const fromBlock = parseInt(req.query.fromBlock as string);
+    const toBlock = parseInt(req.query.toBlock as string);
+    if (isNaN(fromBlock) || isNaN(toBlock)) {
+      res
+        .status(400)
+        .send({ error: 'fromBlock and toBlock parameters are required' });
+      return;
+    }
+    res.send(statsServer.getGeckoEvents(fromBlock, toBlock));
+  });
+
   // Add health check endpoint for Fly.io
   app.get('/health', (_req, res) => {
     res.status(200).send('OK');
