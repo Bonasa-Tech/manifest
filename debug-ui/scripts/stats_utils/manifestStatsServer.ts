@@ -386,24 +386,40 @@ export class ManifestStatsServer {
         }
       }
 
-      // Re-lookup tickers if they were empty/null (ticker may have been set after first fill)
-      const tickers = this.tickers.get(market);
-      if (tickers) {
-        const [baseSymbol, quoteSymbol] = tickers;
-        if (!baseSymbol || baseSymbol === '') {
+      // Re-lookup tickers if they were empty/null (ticker may have failed on first fill).
+      if (!this.tickers.has(market)) {
+        this.tickers.set(market, ['', '']);
+      }
+      const [baseSymbol, quoteSymbol] = this.tickers.get(market)!;
+      if (!baseSymbol || baseSymbol === '') {
+        try {
           const newBaseSymbol = await lookupMintTicker(
             this.connection,
             marketObject.baseMint(),
           );
           this.tickers.set(market, [newBaseSymbol, quoteSymbol]);
+        } catch (error) {
+          console.error(
+            'Failed to refresh base symbol for market',
+            market,
+            error,
+          );
         }
-        if (!quoteSymbol || quoteSymbol === '') {
+      }
+      if (!quoteSymbol || quoteSymbol === '') {
+        try {
           const currentTickers = this.tickers.get(market)!;
           const newQuoteSymbol = await lookupMintTicker(
             this.connection,
             marketObject.quoteMint(),
           );
           this.tickers.set(market, [currentTickers[0], newQuoteSymbol]);
+        } catch (error) {
+          console.error(
+            'Failed to refresh quote symbol for market',
+            market,
+            error,
+          );
         }
       }
 
@@ -464,14 +480,25 @@ export class ManifestStatsServer {
       });
 
       this.markets.set(market, marketObject);
-      const baseSymbol = await lookupMintTicker(
-        this.connection,
-        marketObject.baseMint(),
-      );
-      const quoteSymbol = await lookupMintTicker(
-        this.connection,
-        marketObject.quoteMint(),
-      );
+      // Symbol lookups can fail transiently. Keep an entry so later fills can retry.
+      let baseSymbol = '';
+      let quoteSymbol = '';
+      try {
+        baseSymbol = await lookupMintTicker(
+          this.connection,
+          marketObject.baseMint(),
+        );
+      } catch (error) {
+        console.error('Failed base symbol lookup for market', market, error);
+      }
+      try {
+        quoteSymbol = await lookupMintTicker(
+          this.connection,
+          marketObject.quoteMint(),
+        );
+      } catch (error) {
+        console.error('Failed quote symbol lookup for market', market, error);
+      }
 
       this.tickers.set(market, [baseSymbol, quoteSymbol]);
 

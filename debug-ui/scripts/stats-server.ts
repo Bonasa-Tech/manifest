@@ -177,7 +177,7 @@ const run = async () => {
     res.send(statsServer.getTickers());
   };
   const metadataHandler: RequestHandler = (_req, res) => {
-    res.send(JSON.stringify(Object.fromEntries(statsServer.getMetadata())));
+    res.json(Object.fromEntries(statsServer.getMetadata()));
   };
   const orderbookHandler: RequestHandler = async (req, res) => {
     res.send(
