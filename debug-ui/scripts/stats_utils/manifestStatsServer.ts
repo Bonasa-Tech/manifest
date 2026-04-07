@@ -396,7 +396,9 @@ export class ManifestStatsServer {
         this.traderMakerNotionalVolume.set(maker, 0);
       }
 
-      // Load market and look up tickers if missing (with backoff to avoid RPC spam)
+      // Load market and look up tickers if missing (with backoff to avoid RPC spam).
+      // If market fails to load, marketObject will be undefined and the code below
+      // will throw, which is caught by the try/catch - this is intentional.
       await this.attemptTickerLookup(market);
       const marketObject: Market | undefined = this.markets.get(market);
 
@@ -439,7 +441,6 @@ export class ManifestStatsServer {
   private async attemptTickerLookup(market: string): Promise<void> {
     let marketObject: Market | undefined = this.markets.get(market);
     if (!marketObject) {
-      // Tickers handled below after market loads
       marketObject = await this.loadNewMarket(market);
       if (!marketObject) {
         return;
@@ -501,7 +502,6 @@ export class ManifestStatsServer {
       });
 
       this.markets.set(market, marketObject);
-      // Note: Does not look up tickers - callers handle this separately
       return marketObject;
     } catch (error) {
       console.error('Error loading market:', market, error);
