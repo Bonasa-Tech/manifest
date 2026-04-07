@@ -397,8 +397,9 @@ export class ManifestStatsServer {
       }
 
       // Load market if needed (this is the slow part)
-      let marketObject = this.markets.get(market);
+      let marketObject: Market | undefined = this.markets.get(market);
       if (!marketObject) {
+        // Tickers handled by attemptTickerLookup below
         marketObject = await this.loadNewMarket(market);
         if (!marketObject) {
           console.error('Failed to load market:', market);
@@ -406,7 +407,7 @@ export class ManifestStatsServer {
         }
       }
 
-      // Re-lookup tickers if they were empty/null or don't exist (ticker may have been set after first fill)
+      // Look up tickers if missing or empty (with backoff to avoid RPC spam)
       await this.attemptTickerLookup(market);
 
       // Update price and volume
@@ -448,6 +449,7 @@ export class ManifestStatsServer {
   private async attemptTickerLookup(market: string): Promise<void> {
     let marketObject: Market | undefined = this.markets.get(market);
     if (!marketObject) {
+      // Tickers handled below after market loads
       marketObject = await this.loadNewMarket(market);
       if (!marketObject) {
         return;
@@ -484,7 +486,7 @@ export class ManifestStatsServer {
     this.tickers.set(market, [newBase, newQuote]);
   }
 
-  // Helper method for market loading
+  // Helper method for market loading. Does not look up tickers - callers must handle separately.
   private async loadNewMarket(market: string): Promise<Market | undefined> {
     try {
       this.baseVolumeAtomsSinceLastCheckpoint.set(market, 0);
@@ -509,17 +511,7 @@ export class ManifestStatsServer {
       });
 
       this.markets.set(market, marketObject);
-      const baseSymbol = await lookupMintTicker(
-        this.connection,
-        marketObject.baseMint(),
-      );
-      const quoteSymbol = await lookupMintTicker(
-        this.connection,
-        marketObject.quoteMint(),
-      );
-
-      this.tickers.set(market, [baseSymbol, quoteSymbol]);
-
+      // Note: Does not look up tickers - callers handle this separately
       return marketObject;
     } catch (error) {
       console.error('Error loading market:', market, error);
@@ -790,10 +782,12 @@ export class ManifestStatsServer {
       for (const marketPk of marketsToLoad) {
         // Rate limit to avoid RPC spam
         await new Promise((f) => setTimeout(f, 100));
+        // Tickers handled by the mintToSymbols loop below
         await this.loadNewMarket(marketPk);
       }
     }
 
+    // Look up tickers for all markets, caching by mint to avoid duplicate lookups
     const mintToSymbols: Map<string, string> = new Map();
     this.markets.forEach(async (market: Market) => {
       const baseMint: PublicKey = market.baseMint();
