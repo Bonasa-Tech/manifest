@@ -397,10 +397,11 @@ export class ManifestStatsServer {
       }
 
       // Load market and look up tickers if missing (with backoff to avoid RPC spam).
-      // If market fails to load, marketObject will be undefined and the code below
-      // will throw, which is caught by the try/catch - this is intentional.
       await this.attemptTickerLookup(market);
       const marketObject: Market | undefined = this.markets.get(market);
+      if (!marketObject) {
+        return;
+      }
 
       // Update price and volume
       this.lastPrice.set(
