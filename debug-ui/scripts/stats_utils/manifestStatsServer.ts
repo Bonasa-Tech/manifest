@@ -396,19 +396,13 @@ export class ManifestStatsServer {
         this.traderMakerNotionalVolume.set(maker, 0);
       }
 
-      // Load market if needed (this is the slow part)
-      let marketObject: Market | undefined = this.markets.get(market);
+      // Load market and look up tickers if missing (with backoff to avoid RPC spam)
+      const marketObject: Market | undefined =
+        await this.attemptTickerLookup(market);
       if (!marketObject) {
-        // Tickers handled by attemptTickerLookup below
-        marketObject = await this.loadNewMarket(market);
-        if (!marketObject) {
-          console.error('Failed to load market:', market);
-          return;
-        }
+        console.error('Failed to load market:', market);
+        return;
       }
-
-      // Look up tickers if missing or empty (with backoff to avoid RPC spam)
-      await this.attemptTickerLookup(market);
 
       // Update price and volume
       this.lastPrice.set(
@@ -445,14 +439,17 @@ export class ManifestStatsServer {
   /**
    * Attempt to look up and update tickers for a market.
    * Backoff only applies to RPC calls (lookupMintTicker), not the check itself.
+   * Returns the market object if loaded, undefined otherwise.
    */
-  private async attemptTickerLookup(market: string): Promise<void> {
+  private async attemptTickerLookup(
+    market: string,
+  ): Promise<Market | undefined> {
     let marketObject: Market | undefined = this.markets.get(market);
     if (!marketObject) {
       // Tickers handled below after market loads
       marketObject = await this.loadNewMarket(market);
       if (!marketObject) {
-        return;
+        return undefined;
       }
     }
 
@@ -463,13 +460,13 @@ export class ManifestStatsServer {
       !tickers || !tickers[1] || tickers[1] === '';
 
     if (!needsBaseLookup && !needsQuoteLookup) {
-      return;
+      return marketObject;
     }
 
     // Only apply backoff when we actually need to make RPC calls
     const now: number = Date.now();
     if (now - this.tickerLookupLastAttempt <= this.TICKER_LOOKUP_BACKOFF_MS) {
-      return;
+      return marketObject;
     }
     this.tickerLookupLastAttempt = now;
 
@@ -484,6 +481,7 @@ export class ManifestStatsServer {
       : currentQuote;
 
     this.tickers.set(market, [newBase, newQuote]);
+    return marketObject;
   }
 
   // Helper method for market loading. Does not look up tickers - callers must handle separately.
