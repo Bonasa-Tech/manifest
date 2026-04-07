@@ -442,19 +442,10 @@ export class ManifestStatsServer {
   }
 
   /**
-   * Attempt to look up and update tickers for a market with backoff.
-   * Will only make RPC calls if enough time has passed since the last attempt.
+   * Attempt to look up and update tickers for a market.
+   * Backoff only applies to RPC calls (lookupMintTicker), not the check itself.
    */
   private async attemptTickerLookup(market: string): Promise<void> {
-    const now: number = Date.now();
-    const lastAttempt: number = this.tickerLookupLastAttempt.get(market) ?? 0;
-    const shouldAttemptLookup: boolean =
-      now - lastAttempt > this.TICKER_LOOKUP_BACKOFF_MS;
-
-    if (!shouldAttemptLookup) {
-      return;
-    }
-
     let marketObject: Market | undefined = this.markets.get(market);
     if (!marketObject) {
       marketObject = await this.loadNewMarket(market);
@@ -464,39 +455,34 @@ export class ManifestStatsServer {
     }
 
     const tickers: [string, string] | undefined = this.tickers.get(market);
+    const needsBaseLookup: boolean =
+      !tickers || !tickers[0] || tickers[0] === '';
+    const needsQuoteLookup: boolean =
+      !tickers || !tickers[1] || tickers[1] === '';
 
-    if (tickers) {
-      const [baseSymbol, quoteSymbol] = tickers;
-      if (!baseSymbol || baseSymbol === '') {
-        this.tickerLookupLastAttempt.set(market, now);
-        const newBaseSymbol: string = await lookupMintTicker(
-          this.connection,
-          marketObject.baseMint(),
-        );
-        this.tickers.set(market, [newBaseSymbol, quoteSymbol]);
-      }
-      if (!quoteSymbol || quoteSymbol === '') {
-        this.tickerLookupLastAttempt.set(market, now);
-        const currentTickers: [string, string] = this.tickers.get(market)!;
-        const newQuoteSymbol: string = await lookupMintTicker(
-          this.connection,
-          marketObject.quoteMint(),
-        );
-        this.tickers.set(market, [currentTickers[0], newQuoteSymbol]);
-      }
-    } else {
-      // No ticker entry exists - try to add it
-      this.tickerLookupLastAttempt.set(market, now);
-      const baseSymbol: string = await lookupMintTicker(
-        this.connection,
-        marketObject.baseMint(),
-      );
-      const quoteSymbol: string = await lookupMintTicker(
-        this.connection,
-        marketObject.quoteMint(),
-      );
-      this.tickers.set(market, [baseSymbol, quoteSymbol]);
+    if (!needsBaseLookup && !needsQuoteLookup) {
+      return;
     }
+
+    // Only apply backoff when we actually need to make RPC calls
+    const now: number = Date.now();
+    const lastAttempt: number = this.tickerLookupLastAttempt.get(market) ?? 0;
+    if (now - lastAttempt <= this.TICKER_LOOKUP_BACKOFF_MS) {
+      return;
+    }
+    this.tickerLookupLastAttempt.set(market, now);
+
+    const currentBase: string = tickers?.[0] ?? '';
+    const currentQuote: string = tickers?.[1] ?? '';
+
+    const newBase: string = needsBaseLookup
+      ? await lookupMintTicker(this.connection, marketObject.baseMint())
+      : currentBase;
+    const newQuote: string = needsQuoteLookup
+      ? await lookupMintTicker(this.connection, marketObject.quoteMint())
+      : currentQuote;
+
+    this.tickers.set(market, [newBase, newQuote]);
   }
 
   // Helper method for market loading
