@@ -118,9 +118,9 @@ export class ManifestStatsServer {
   // Wrapper cache: owner pubkey -> wrapper pubkey
   private wrapperCache: Map<string, string> = new Map();
 
-  // Ticker lookup backoff: track last attempt time per market to avoid spamming RPC
-  private tickerLookupLastAttempt: Map<string, number> = new Map();
-  private readonly TICKER_LOOKUP_BACKOFF_MS: number = 60_000; // 1 minute between attempts
+  // Ticker lookup backoff: global throttle to avoid spamming RPC
+  private tickerLookupLastAttempt: number = 0;
+  private readonly TICKER_LOOKUP_BACKOFF_MS: number = 5_000; // 5 seconds between attempts
 
   // GeckoTerminal integration: block-indexed event storage
   // Map<slot, { blockTime: number, events: FillLogResult[] }>
@@ -466,11 +466,10 @@ export class ManifestStatsServer {
 
     // Only apply backoff when we actually need to make RPC calls
     const now: number = Date.now();
-    const lastAttempt: number = this.tickerLookupLastAttempt.get(market) ?? 0;
-    if (now - lastAttempt <= this.TICKER_LOOKUP_BACKOFF_MS) {
+    if (now - this.tickerLookupLastAttempt <= this.TICKER_LOOKUP_BACKOFF_MS) {
       return;
     }
-    this.tickerLookupLastAttempt.set(market, now);
+    this.tickerLookupLastAttempt = now;
 
     const currentBase: string = tickers?.[0] ?? '';
     const currentQuote: string = tickers?.[1] ?? '';
