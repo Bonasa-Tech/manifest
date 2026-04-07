@@ -396,17 +396,9 @@ export class ManifestStatsServer {
         this.traderMakerNotionalVolume.set(maker, 0);
       }
 
-      // Load market if needed
-      let marketObject: Market | undefined = this.markets.get(market);
-      if (!marketObject) {
-        marketObject = await this.loadNewMarket(market);
-        if (!marketObject) {
-          console.error('Failed to load market:', market);
-        }
-      }
-
-      // Look up tickers if missing or empty (with backoff to avoid RPC spam)
+      // Load market and look up tickers if missing (with backoff to avoid RPC spam)
       await this.attemptTickerLookup(market);
+      const marketObject: Market | undefined = this.markets.get(market);
 
       // Update price and volume
       this.lastPrice.set(
