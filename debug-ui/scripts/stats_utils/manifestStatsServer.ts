@@ -2452,23 +2452,25 @@ export class ManifestStatsServer {
   getGeckoEvents(
     fromBlock: number,
     toBlock: number,
-  ): Array<{
-    block: { blockNumber: number; blockTimestamp: number };
+  ): {
     events: Array<{
-      eventType: string;
-      txnId: string;
-      txnIndex: number;
-      eventIndex: number;
-      maker: string;
-      pairId: string;
-      asset0In?: number;
-      asset1Out?: number;
-      asset1In?: number;
-      asset0Out?: number;
-      priceNative: number;
-      reserves: { asset0: number; asset1: number };
+      block: { blockNumber: number; blockTimestamp: number };
+      events: Array<{
+        eventType: string;
+        txnId: string;
+        txnIndex: number;
+        eventIndex: number;
+        maker: string;
+        pairId: string;
+        asset0In?: number;
+        asset1Out?: number;
+        asset1In?: number;
+        asset0Out?: number;
+        priceNative: number;
+        reserves: { asset0: number; asset1: number };
+      }>;
     }>;
-  }> {
+  } {
     const result: Array<{
       block: { blockNumber: number; blockTimestamp: number };
       events: Array<{
@@ -2585,7 +2587,7 @@ export class ManifestStatsServer {
       });
     }
 
-    return result;
+    return { events: result };
   }
 
   /**
