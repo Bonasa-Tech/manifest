@@ -118,6 +118,10 @@ export class ManifestStatsServer {
   // Wrapper cache: owner pubkey -> wrapper pubkey
   private wrapperCache: Map<string, string> = new Map();
 
+  // Ticker lookup backoff: track last attempt time per market to avoid spamming RPC
+  private tickerLookupLastAttempt: Map<string, number> = new Map();
+  private readonly TICKER_LOOKUP_BACKOFF_MS: number = 60_000; // 1 minute between attempts
+
   // GeckoTerminal integration: block-indexed event storage
   // Map<slot, { blockTime: number, events: FillLogResult[] }>
   private geckoBlockEvents: Map<
@@ -402,26 +406,8 @@ export class ManifestStatsServer {
         }
       }
 
-      // Re-lookup tickers if they were empty/null (ticker may have been set after first fill)
-      const tickers = this.tickers.get(market);
-      if (tickers) {
-        const [baseSymbol, quoteSymbol] = tickers;
-        if (!baseSymbol || baseSymbol === '') {
-          const newBaseSymbol = await lookupMintTicker(
-            this.connection,
-            marketObject.baseMint(),
-          );
-          this.tickers.set(market, [newBaseSymbol, quoteSymbol]);
-        }
-        if (!quoteSymbol || quoteSymbol === '') {
-          const currentTickers = this.tickers.get(market)!;
-          const newQuoteSymbol = await lookupMintTicker(
-            this.connection,
-            marketObject.quoteMint(),
-          );
-          this.tickers.set(market, [currentTickers[0], newQuoteSymbol]);
-        }
-      }
+      // Re-lookup tickers if they were empty/null or don't exist (ticker may have been set after first fill)
+      await this.attemptTickerLookup(market);
 
       // Update price and volume
       this.lastPrice.set(
@@ -452,6 +438,64 @@ export class ManifestStatsServer {
         fill,
       );
       // Don't throw - this is fire-and-forget
+    }
+  }
+
+  /**
+   * Attempt to look up and update tickers for a market with backoff.
+   * Will only make RPC calls if enough time has passed since the last attempt.
+   */
+  private async attemptTickerLookup(market: string): Promise<void> {
+    const now: number = Date.now();
+    const lastAttempt: number = this.tickerLookupLastAttempt.get(market) ?? 0;
+    const shouldAttemptLookup: boolean =
+      now - lastAttempt > this.TICKER_LOOKUP_BACKOFF_MS;
+
+    if (!shouldAttemptLookup) {
+      return;
+    }
+
+    let marketObject: Market | undefined = this.markets.get(market);
+    if (!marketObject) {
+      marketObject = await this.loadNewMarket(market);
+      if (!marketObject) {
+        return;
+      }
+    }
+
+    const tickers: [string, string] | undefined = this.tickers.get(market);
+
+    if (tickers) {
+      const [baseSymbol, quoteSymbol] = tickers;
+      if (!baseSymbol || baseSymbol === '') {
+        this.tickerLookupLastAttempt.set(market, now);
+        const newBaseSymbol: string = await lookupMintTicker(
+          this.connection,
+          marketObject.baseMint(),
+        );
+        this.tickers.set(market, [newBaseSymbol, quoteSymbol]);
+      }
+      if (!quoteSymbol || quoteSymbol === '') {
+        this.tickerLookupLastAttempt.set(market, now);
+        const currentTickers: [string, string] = this.tickers.get(market)!;
+        const newQuoteSymbol: string = await lookupMintTicker(
+          this.connection,
+          marketObject.quoteMint(),
+        );
+        this.tickers.set(market, [currentTickers[0], newQuoteSymbol]);
+      }
+    } else {
+      // No ticker entry exists - try to add it
+      this.tickerLookupLastAttempt.set(market, now);
+      const baseSymbol: string = await lookupMintTicker(
+        this.connection,
+        marketObject.baseMint(),
+      );
+      const quoteSymbol: string = await lookupMintTicker(
+        this.connection,
+        marketObject.quoteMint(),
+      );
+      this.tickers.set(market, [baseSymbol, quoteSymbol]);
     }
   }
 
@@ -1696,6 +1740,12 @@ export class ManifestStatsServer {
     console.log(
       `Backfill for ${signature}: ${backfilled} new, ${alreadyExisted} already existed`,
     );
+
+    // Attempt ticker lookups for any markets encountered (with backoff)
+    const uniqueMarkets: Set<string> = new Set(fills.map((f) => f.market));
+    for (const market of uniqueMarkets) {
+      await this.attemptTickerLookup(market);
+    }
 
     return { backfilled, alreadyExisted };
   }
