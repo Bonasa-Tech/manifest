@@ -40,7 +40,7 @@ const run = async () => {
   const marketPks: PublicKey[] =
     await ManifestClient.listMarketPublicKeys(connection);
 
-  let foundMismatch: boolean = false;
+  const mismatchedMarkets: string[] = [];
   for (const marketPk of marketPks) {
     const client: ManifestClient = await ManifestClient.getClientReadOnly(
       connection,
@@ -125,7 +125,7 @@ const run = async () => {
         baseExpectedAtoms - baseVaultBalanceAtoms > 1 ||
         quoteExpectedAtoms - quoteVaultBalanceAtoms > 1
       ) {
-        foundMismatch = true;
+        mismatchedMarkets.push(marketPk.toBase58());
       }
     }
   }
@@ -158,6 +158,7 @@ const run = async () => {
   );
   console.log(`Found ${globalPublicKeys.length} global accounts`);
 
+  const mismatchedGlobals: string[] = [];
   // Check global account balances
   for (const globalAccount of globalAccounts) {
     try {
@@ -225,7 +226,7 @@ const run = async () => {
         console.log(`Difference: ${difference} atoms`);
         console.log('=====================================');
 
-        foundMismatch = true;
+        mismatchedGlobals.push(mint.toBase58());
       }
     } catch (error) {
       console.log(
@@ -234,11 +235,19 @@ const run = async () => {
     }
   }
 
-  if (foundMismatch) {
+  if (mismatchedMarkets.length > 0 || mismatchedGlobals.length > 0) {
+    const details: string[] = [];
+    if (mismatchedMarkets.length > 0) {
+      details.push(`Markets: ${mismatchedMarkets.join(', ')}`);
+    }
+    if (mismatchedGlobals.length > 0) {
+      details.push(`Globals: ${mismatchedGlobals.join(', ')}`);
+    }
+    const detailsStr = details.join('; ');
     await sendDiscordMessage(
-      `**Balance Checker Alert**\nBalance mismatch detected! Check the logs for details.`,
+      `**Balance Checker Alert**\nBalance mismatch detected! ${detailsStr}`,
     );
-    throw new Error('Balance mismatch detected');
+    throw new Error(`Balance mismatch detected: ${detailsStr}`);
   }
 
   await sendDiscordMessage(
