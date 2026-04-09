@@ -113,7 +113,8 @@ const run = async () => {
       // rounding issues. Verified that they are solvent manually.
       if (
         marketPk.toBase58() == 'GQHqLzX8swBiTyREF57PGs4vq59obuRPdtGrY4gChHfB' ||
-        marketPk.toBase58() == '8MHWBBr87Ta3JqFK4tt6r7tSR31oFKa8SWkF2YKTpWHa'
+        marketPk.toBase58() == '8MHWBBr87Ta3JqFK4tt6r7tSR31oFKa8SWkF2YKTpWHa' ||
+        marketPk.toBase58() == 'BBh1v6nPcTKufDN1CHKzh3urYMTTH59U6uCu4u5CNjJ6'
       ) {
         continue;
       }
