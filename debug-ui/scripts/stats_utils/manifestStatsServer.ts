@@ -2428,18 +2428,20 @@ export class ManifestStatsServer {
   /**
    * GeckoTerminal: Get token/asset info by mint address
    */
-  getGeckoAsset(
-    id: string,
-  ): { id: string; name: string; symbol: string; decimals: number } | null {
+  getGeckoAsset(id: string): {
+    asset: { id: string; name: string; symbol: string; decimals: number };
+  } | null {
     const metadata = this.tokenMetadata.get(id);
     if (!metadata) {
       return null;
     }
     return {
-      id,
-      name: metadata.symbol, // Use symbol as name since we don't have separate name
-      symbol: metadata.symbol,
-      decimals: metadata.decimals,
+      asset: {
+        id,
+        name: metadata.symbol, // Use symbol as name since we don't have separate name
+        symbol: metadata.symbol,
+        decimals: metadata.decimals,
+      },
     };
   }
 
@@ -2447,66 +2449,71 @@ export class ManifestStatsServer {
    * GeckoTerminal: Get pair/market info by market address
    */
   getGeckoPair(id: string): {
-    id: string;
-    dexKey: string;
-    asset0Id: string;
-    asset1Id: string;
-    feeBps: number;
+    pair: {
+      id: string;
+      dexKey: string;
+      asset0Id: string;
+      asset1Id: string;
+      feeBps: number;
+      createdAtBlockTimestamp: number;
+    };
   } | null {
     const market = this.markets.get(id);
     if (!market) {
       return null;
     }
     return {
-      id,
-      dexKey: 'manifest',
-      asset0Id: market.baseMint().toBase58(),
-      asset1Id: market.quoteMint().toBase58(),
-      feeBps: 0, // Manifest has no trading fees
+      pair: {
+        id,
+        dexKey: 'manifest',
+        asset0Id: market.baseMint().toBase58(),
+        asset1Id: market.quoteMint().toBase58(),
+        feeBps: 0, // Manifest has no trading fees
+        createdAtBlockTimestamp: 0,
+      },
     };
   }
 
   /**
    * GeckoTerminal: Get swap events within block range (inclusive)
+   * Returns a flat array of events, each containing its own block info
    */
   getGeckoEvents(
     fromBlock: number,
     toBlock: number,
   ): {
     events: Array<{
-      block: { blockNumber: number; blockTimestamp: number };
-      events: Array<{
-        eventType: string;
-        txnId: string;
-        txnIndex: number;
-        eventIndex: number;
-        maker: string;
-        pairId: string;
-        asset0In?: number;
-        asset1Out?: number;
-        asset1In?: number;
-        asset0Out?: number;
-        priceNative: number;
-        reserves: { asset0: number; asset1: number };
-      }>;
+      blockNumber: number;
+      blockTimestamp: number;
+      eventType: string;
+      txnId: string;
+      txnIndex: number;
+      eventIndex: number;
+      maker: string;
+      pairId: string;
+      asset0In?: number;
+      asset1Out?: number;
+      asset1In?: number;
+      asset0Out?: number;
+      priceNative: number;
+      reserves: { asset0: number; asset1: number };
     }>;
   } {
     const result: Array<{
-      block: { blockNumber: number; blockTimestamp: number };
-      events: Array<{
-        eventType: string;
-        txnId: string;
-        txnIndex: number;
-        eventIndex: number;
-        maker: string;
-        pairId: string;
-        asset0In?: number;
-        asset1Out?: number;
-        asset1In?: number;
-        asset0Out?: number;
-        priceNative: number;
-        reserves: { asset0: number; asset1: number };
-      }>;
+      blockNumber: number;
+      blockTimestamp: number;
+      eventType: string;
+      txnId: string;
+      txnIndex: number;
+      eventIndex: number;
+      maker: string;
+      pairId: string;
+      asset0In?: number;
+      asset1Out?: number;
+      asset1In?: number;
+      asset0Out?: number;
+      priceNative: number;
+      reserves: { asset0: number; asset1: number };
     }> = [];
 
     // Filter slots within range
@@ -2516,21 +2523,6 @@ export class ManifestStatsServer {
 
       const blockData = this.geckoBlockEvents.get(slot);
       if (!blockData) continue;
-
-      const blockEvents: Array<{
-        eventType: string;
-        txnId: string;
-        txnIndex: number;
-        eventIndex: number;
-        maker: string;
-        pairId: string;
-        asset0In?: number;
-        asset1Out?: number;
-        asset1In?: number;
-        asset0Out?: number;
-        priceNative: number;
-        reserves: { asset0: number; asset1: number };
-      }> = [];
 
       // Group fills by transaction to assign txnIndex
       const fillsByTx = new Map<string, FillLogResult[]>();
@@ -2560,6 +2552,8 @@ export class ManifestStatsServer {
           // Determine direction: takerIsBuy means taker buys base (asset0)
           // So asset0 goes out (to taker), asset1 goes in (from taker)
           const event: {
+            blockNumber: number;
+            blockTimestamp: number;
             eventType: string;
             txnId: string;
             txnIndex: number;
@@ -2573,6 +2567,8 @@ export class ManifestStatsServer {
             priceNative: number;
             reserves: { asset0: number; asset1: number };
           } = {
+            blockNumber: slot,
+            blockTimestamp: blockData.blockTime,
             eventType: 'swap',
             txnId: fill.signature,
             txnIndex,
@@ -2593,18 +2589,10 @@ export class ManifestStatsServer {
             event.asset1Out = quoteAmount;
           }
 
-          blockEvents.push(event);
+          result.push(event);
         }
         txnIndex++;
       }
-
-      result.push({
-        block: {
-          blockNumber: slot,
-          blockTimestamp: blockData.blockTime,
-        },
-        events: blockEvents,
-      });
     }
 
     return { events: result };
