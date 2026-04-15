@@ -607,6 +607,11 @@ export class ManifestStatsServer {
             this.fillLogResults.set(market, []);
           }
 
+          // Set createdAtBlockTimestamp on first fill for new markets
+          if (!this.createdAtBlockTimestamp.has(market) && fill.blockTime) {
+            this.createdAtBlockTimestamp.set(market, fill.blockTime);
+          }
+
           const prevFills = this.fillLogResults.get(market)!;
           prevFills.push(fill);
 
