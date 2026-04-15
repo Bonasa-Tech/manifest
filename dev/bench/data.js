@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1776266816530,
+  "lastUpdate": 1776274855113,
   "repoUrl": "https://github.com/Bonasa-Tech/manifest",
   "entries": {
     "CU Benchmark": [
@@ -10919,6 +10919,72 @@ window.BENCHMARK_DATA = {
           {
             "name": "MFX_99",
             "value": 12659,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "cyrbritt@gmail.com",
+            "name": "Britt Cyr",
+            "username": "brittcyr"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "60a131caf7534aa9901ec5b475fff2f6b50188c9",
+          "message": "Add test coverage for transfer fee (#577)",
+          "timestamp": "2026-04-15T13:29:05-04:00",
+          "tree_id": "647dd38046c4b0470f7c10bf3200384118f2807c",
+          "url": "https://github.com/Bonasa-Tech/manifest/commit/60a131caf7534aa9901ec5b475fff2f6b50188c9"
+        },
+        "date": 1776274851958,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "PHX_50",
+            "value": 6787,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "PHX_95",
+            "value": 13209,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "PHX_99",
+            "value": 13904,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_50",
+            "value": 3247,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_95",
+            "value": 11959,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_99",
+            "value": 12649,
             "range": "",
             "unit": "CU",
             "extra": ""
