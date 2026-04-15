@@ -59,7 +59,7 @@ pub(crate) fn get_now_epoch() -> u64 {
             leader_schedule_epoch: u64::MAX,
             unix_timestamp: i64::MAX,
         })
-        .slot;
+        .epoch;
     now_epoch
 }
 
