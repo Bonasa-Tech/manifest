@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1774154189826,
+  "lastUpdate": 1776266816530,
   "repoUrl": "https://github.com/Bonasa-Tech/manifest",
   "entries": {
     "CU Benchmark": [
@@ -10853,6 +10853,72 @@ window.BENCHMARK_DATA = {
           {
             "name": "MFX_99",
             "value": 12636,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "seinarukiro@gmail.com",
+            "name": "Seinarukiro",
+            "username": "Seinarukiro2"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "4d7ac31fff6e51a254ff6f0cdb2dc8f99600f150",
+          "message": "fix: get_now_epoch() reads .slot instead of .epoch (#575)\n\n`get_now_epoch()` was returning `Clock::get().slot` instead of\n`Clock::get().epoch`. This was a copy-paste from `get_now_slot()`\ndirectly above it (introduced in e33e49c1, Oct 2024).\n\nThe bug causes `get_epoch_fee(slot_number)` to always select\n`newer_transfer_fee` because the slot value (~300M+) always exceeds\nany epoch threshold (~700). This affects:\n\n- utils.rs:301 — global order transfer fee check\n- swap.rs:691 — post-fee amount on swap output\n- swap.rs:750 — pre-fee amount on swap input\n\nFor Token-2022 mints with differing older/newer fee schedules,\nthe wrong schedule is applied, which can cause vault accounting\nmismatches similar to the issues fixed in PR #531 and #554.",
+          "timestamp": "2026-04-15T11:14:15-04:00",
+          "tree_id": "c2baca17989c19f0fab2a51d45d8189672fe4d4d",
+          "url": "https://github.com/Bonasa-Tech/manifest/commit/4d7ac31fff6e51a254ff6f0cdb2dc8f99600f150"
+        },
+        "date": 1776266814273,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "PHX_50",
+            "value": 6787,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "PHX_95",
+            "value": 13209,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "PHX_99",
+            "value": 13904,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_50",
+            "value": 3247,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_95",
+            "value": 11943,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_99",
+            "value": 12659,
             "range": "",
             "unit": "CU",
             "extra": ""
