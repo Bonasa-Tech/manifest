@@ -61,6 +61,15 @@ export const SELECT_FILLS_COMPLETE_COUNT_BASE =
 export const SELECT_FILLS_COMPLETE_DATA_BASE =
   'SELECT fill_data FROM fills_complete';
 
+// Select the first (oldest) fill for a market to determine market creation time
+// Uses existing (market, timestamp DESC) index - B-tree allows efficient seek to range end
+export const SELECT_FIRST_FILL_FOR_MARKET = `
+  SELECT fill_data FROM fills_complete
+  WHERE market = $1
+  ORDER BY timestamp ASC
+  LIMIT 1
+`;
+
 // ========== DELETE QUERIES ==========
 
 export const DELETE_OLD_CHECKPOINTS =

@@ -138,6 +138,10 @@ export class ManifestStatsServer {
   // Track latest block timestamp
   private latestBlockTime: number = 0;
 
+  // Track when each market was created (block timestamp of first fill)
+  // Defaults to 0 until backfilled from database
+  private createdAtBlockTimestamp: Map<string, number> = new Map();
+
   // Checkpoint protection: track how many checkpoint advances have occurred since startup
   // to prevent overwriting good database data before new data has accumulated
   private checkpointAdvancesSinceStartup: number = 0;
@@ -823,6 +827,61 @@ export class ManifestStatsServer {
         });
       }
     });
+
+    // Start background backfill of createdAtBlockTimestamp (non-blocking)
+    this.backfillCreatedAtTimestamps();
+  }
+
+  /**
+   * Background task to backfill createdAtBlockTimestamp for all markets.
+   * Queries the first fill for each market to determine when it was created.
+   * Runs slowly with backoff to avoid blocking other operations.
+   * Does not block initialization - runs in background.
+   */
+  private async backfillCreatedAtTimestamps(): Promise<void> {
+    console.log('Starting background backfill of createdAtBlockTimestamp...');
+
+    const marketAddresses = Array.from(this.markets.keys());
+    const BACKOFF_MS = 2000; // 2 seconds between queries to avoid load
+
+    for (const marketPk of marketAddresses) {
+      // Skip if already have a timestamp for this market
+      if (this.createdAtBlockTimestamp.has(marketPk)) {
+        continue;
+      }
+
+      try {
+        const result = await this.executeQueryWithMetrics(
+          'SELECT_FIRST_FILL_FOR_MARKET',
+          async () =>
+            this.pool.query(queries.SELECT_FIRST_FILL_FOR_MARKET, [marketPk]),
+        );
+
+        if (result.rows.length > 0) {
+          const fillData = result.rows[0].fill_data;
+          const blockTime = fillData?.blockTime;
+          if (blockTime && typeof blockTime === 'number') {
+            this.createdAtBlockTimestamp.set(marketPk, blockTime);
+            console.log(
+              `Backfilled createdAtBlockTimestamp for ${marketPk}: ${blockTime}`,
+            );
+          }
+        }
+      } catch (error) {
+        console.error(
+          `Error backfilling createdAtBlockTimestamp for ${marketPk}:`,
+          error,
+        );
+        // Continue with other markets - don't let one failure stop the backfill
+      }
+
+      // Backoff between queries to avoid load
+      await new Promise((resolve) => setTimeout(resolve, BACKOFF_MS));
+    }
+
+    console.log(
+      `Completed backfill of createdAtBlockTimestamp for ${this.createdAtBlockTimestamp.size} markets`,
+    );
   }
 
   /**
@@ -2469,7 +2528,7 @@ export class ManifestStatsServer {
         asset0Id: market.baseMint().toBase58(),
         asset1Id: market.quoteMint().toBase58(),
         feeBps: 0, // Manifest has no trading fees
-        createdAtBlockTimestamp: 0,
+        createdAtBlockTimestamp: this.createdAtBlockTimestamp.get(id) || 0,
       },
     };
   }
