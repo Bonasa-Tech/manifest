@@ -3,6 +3,7 @@ pub mod cancel_order;
 pub mod claim_seat;
 pub mod create_market;
 pub mod deposit;
+pub mod exploit_global_reduce;
 pub mod global;
 pub mod loaders;
 pub mod matching;
