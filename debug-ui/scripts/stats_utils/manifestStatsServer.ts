@@ -607,7 +607,7 @@ export class ManifestStatsServer {
             this.fillLogResults.set(market, []);
           }
 
-          // Set createdAtBlockTimestamp on first fill for new markets
+          // Set temporary createdAtBlockTimestamp until backfill overwrites with oldest from database
           if (!this.createdAtBlockTimestamp.has(market) && fill.blockTime) {
             this.createdAtBlockTimestamp.set(market, fill.blockTime);
           }
@@ -850,11 +850,6 @@ export class ManifestStatsServer {
     const BACKOFF_MS = 2000; // 2 seconds between queries to avoid load
 
     for (const marketPk of marketAddresses) {
-      // Skip if already have a timestamp for this market
-      if (this.createdAtBlockTimestamp.has(marketPk)) {
-        continue;
-      }
-
       try {
         const result = await this.executeQueryWithMetrics(
           'SELECT_FIRST_FILL_FOR_MARKET',
