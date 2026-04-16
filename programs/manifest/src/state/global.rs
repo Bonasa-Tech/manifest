@@ -337,16 +337,36 @@ impl<Fixed: DerefOrBorrowMut<GlobalFixed>, Dynamic: DerefOrBorrowMut<[u8]>>
 
     pub fn reduce(&mut self, trader: &Pubkey, num_atoms: GlobalAtoms) -> ProgramResult {
         let DynamicAccount { fixed, dynamic } = self.borrow_mut_global();
-        let global_deposit_opt: Option<&mut GlobalDeposit> =
-            get_mut_global_deposit(fixed, dynamic, trader);
-        require!(
-            global_deposit_opt.is_some(),
-            crate::program::ManifestError::MissingGlobal,
-            "Could not find global deposit for {}",
-            trader
-        )?;
-        let global_deposit: &mut GlobalDeposit = global_deposit_opt.unwrap();
+        let deposit_index: DataIndex = get_deposit_index(fixed, dynamic, trader)?;
+
+        // Remove from tree first, then update balance, then reinsert.
+        // Split into separate scopes to satisfy the borrow checker.
+        {
+            let mut deposit_tree: GlobalDepositTree = GlobalDepositTree::new(
+                dynamic,
+                fixed.global_deposits_root_index,
+                fixed.global_deposits_max_index,
+            );
+            deposit_tree.remove_by_index(deposit_index);
+            fixed.global_deposits_root_index = deposit_tree.get_root_index();
+            fixed.global_deposits_max_index = deposit_tree.get_max_index();
+        }
+
+        let global_deposit: &mut GlobalDeposit =
+            get_mut_helper::<RBNode<GlobalDeposit>>(dynamic, deposit_index).get_mut_value();
         global_deposit.balance_atoms = global_deposit.balance_atoms.checked_sub(num_atoms)?;
+        let updated_deposit: GlobalDeposit = *global_deposit;
+
+        {
+            let mut deposit_tree: GlobalDepositTree = GlobalDepositTree::new(
+                dynamic,
+                fixed.global_deposits_root_index,
+                fixed.global_deposits_max_index,
+            );
+            deposit_tree.insert(deposit_index, updated_deposit);
+            fixed.global_deposits_root_index = deposit_tree.get_root_index();
+            fixed.global_deposits_max_index = deposit_tree.get_max_index();
+        }
         Ok(())
     }
 
@@ -496,16 +516,34 @@ impl<Fixed: DerefOrBorrowMut<GlobalFixed>, Dynamic: DerefOrBorrowMut<[u8]>>
     /// Deposit to global account.
     pub fn deposit_global(&mut self, trader: &Pubkey, num_atoms: GlobalAtoms) -> ProgramResult {
         let DynamicAccount { fixed, dynamic } = self.borrow_mut_global();
-        let global_deposit_opt: Option<&mut GlobalDeposit> =
-            get_mut_global_deposit(fixed, dynamic, trader);
-        require!(
-            global_deposit_opt.is_some(),
-            crate::program::ManifestError::MissingGlobal,
-            "Could not find global deposit for {}",
-            trader
-        )?;
-        let global_deposit: &mut GlobalDeposit = global_deposit_opt.unwrap();
+        let deposit_index: DataIndex = get_deposit_index(fixed, dynamic, trader)?;
+
+        {
+            let mut deposit_tree: GlobalDepositTree = GlobalDepositTree::new(
+                dynamic,
+                fixed.global_deposits_root_index,
+                fixed.global_deposits_max_index,
+            );
+            deposit_tree.remove_by_index(deposit_index);
+            fixed.global_deposits_root_index = deposit_tree.get_root_index();
+            fixed.global_deposits_max_index = deposit_tree.get_max_index();
+        }
+
+        let global_deposit: &mut GlobalDeposit =
+            get_mut_helper::<RBNode<GlobalDeposit>>(dynamic, deposit_index).get_mut_value();
         global_deposit.balance_atoms = global_deposit.balance_atoms.checked_add(num_atoms)?;
+        let updated_deposit: GlobalDeposit = *global_deposit;
+
+        {
+            let mut deposit_tree: GlobalDepositTree = GlobalDepositTree::new(
+                dynamic,
+                fixed.global_deposits_root_index,
+                fixed.global_deposits_max_index,
+            );
+            deposit_tree.insert(deposit_index, updated_deposit);
+            fixed.global_deposits_root_index = deposit_tree.get_root_index();
+            fixed.global_deposits_max_index = deposit_tree.get_max_index();
+        }
 
         Ok(())
     }
@@ -513,20 +551,57 @@ impl<Fixed: DerefOrBorrowMut<GlobalFixed>, Dynamic: DerefOrBorrowMut<[u8]>>
     /// Withdraw from global account.
     pub fn withdraw_global(&mut self, trader: &Pubkey, num_atoms: GlobalAtoms) -> ProgramResult {
         let DynamicAccount { fixed, dynamic } = self.borrow_mut_global();
-        let global_deposit_opt: Option<&mut GlobalDeposit> =
-            get_mut_global_deposit(fixed, dynamic, trader);
-        require!(
-            global_deposit_opt.is_some(),
-            crate::program::ManifestError::MissingGlobal,
-            "Could not find global deposit for {}",
-            trader
-        )?;
-        let global_deposit: &mut GlobalDeposit = global_deposit_opt.unwrap();
-        // Checked sub makes sure there are enough funds.
+        let deposit_index: DataIndex = get_deposit_index(fixed, dynamic, trader)?;
+
+        {
+            let mut deposit_tree: GlobalDepositTree = GlobalDepositTree::new(
+                dynamic,
+                fixed.global_deposits_root_index,
+                fixed.global_deposits_max_index,
+            );
+            deposit_tree.remove_by_index(deposit_index);
+            fixed.global_deposits_root_index = deposit_tree.get_root_index();
+            fixed.global_deposits_max_index = deposit_tree.get_max_index();
+        }
+
+        let global_deposit: &mut GlobalDeposit =
+            get_mut_helper::<RBNode<GlobalDeposit>>(dynamic, deposit_index).get_mut_value();
         global_deposit.balance_atoms = global_deposit.balance_atoms.checked_sub(num_atoms)?;
+        let updated_deposit: GlobalDeposit = *global_deposit;
+
+        {
+            let mut deposit_tree: GlobalDepositTree = GlobalDepositTree::new(
+                dynamic,
+                fixed.global_deposits_root_index,
+                fixed.global_deposits_max_index,
+            );
+            deposit_tree.insert(deposit_index, updated_deposit);
+            fixed.global_deposits_root_index = deposit_tree.get_root_index();
+            fixed.global_deposits_max_index = deposit_tree.get_max_index();
+        }
 
         Ok(())
     }
+}
+
+fn get_deposit_index(
+    fixed: &GlobalFixed,
+    dynamic: &[u8],
+    trader: &Pubkey,
+) -> Result<DataIndex, solana_program::program_error::ProgramError> {
+    let global_trader_tree: GlobalTraderTreeReadOnly =
+        GlobalTraderTreeReadOnly::new(dynamic, fixed.global_traders_root_index, NIL);
+    let global_trader_index: DataIndex =
+        global_trader_tree.lookup_index(&GlobalTrader::new_empty(trader, NIL));
+    require!(
+        global_trader_index != NIL,
+        crate::program::ManifestError::MissingGlobal,
+        "Could not find global trader for {}",
+        trader
+    )?;
+    let global_trader: &GlobalTrader =
+        get_helper::<RBNode<GlobalTrader>>(dynamic, global_trader_index).get_value();
+    Ok(global_trader.deposit_index)
 }
 
 fn get_free_address_on_global_fixed(fixed: &mut GlobalFixed, dynamic: &mut [u8]) -> DataIndex {
