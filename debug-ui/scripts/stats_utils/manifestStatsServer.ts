@@ -186,8 +186,6 @@ export class ManifestStatsServer {
       // Continue operation - don't let DB errors crash the server
     });
 
-    this.initWebSocket();
-
     // Only initialize database schema if not in read-only mode
     if (!this.isReadOnly) {
       this.initDatabase();
@@ -835,6 +833,10 @@ export class ManifestStatsServer {
 
     // Start background backfill of createdAtBlockTimestamp (non-blocking)
     this.backfillCreatedAtTimestamps();
+
+    // Connect to fill feed after state is loaded to avoid race conditions
+    // where fills arrive before checkpoint data is restored
+    this.initWebSocket();
   }
 
   /**
