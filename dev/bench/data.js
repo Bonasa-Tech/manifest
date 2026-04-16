@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1776274855113,
+  "lastUpdate": 1776351425214,
   "repoUrl": "https://github.com/Bonasa-Tech/manifest",
   "entries": {
     "CU Benchmark": [
@@ -10985,6 +10985,72 @@ window.BENCHMARK_DATA = {
           {
             "name": "MFX_99",
             "value": 12649,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "seinarukiro@gmail.com",
+            "name": "Seinarukiro",
+            "username": "Seinarukiro2"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "9c015685c07e1a1d208d8246e4d1ac5ab1356d74",
+          "message": "Fix global balance drain on token22 fee or hook check (#580)\n\n* Fix global balance drain on token22 fee check\n\n* Fix formatting (cargo fmt)",
+          "timestamp": "2026-04-16T10:44:34-04:00",
+          "tree_id": "496d9014756bdc2e421335edc56e599d596463f5",
+          "url": "https://github.com/Bonasa-Tech/manifest/commit/9c015685c07e1a1d208d8246e4d1ac5ab1356d74"
+        },
+        "date": 1776351423335,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "PHX_50",
+            "value": 6787,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "PHX_95",
+            "value": 13209,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "PHX_99",
+            "value": 13904,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_50",
+            "value": 3244,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_95",
+            "value": 11960,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_99",
+            "value": 12635,
             "range": "",
             "unit": "CU",
             "extra": ""
