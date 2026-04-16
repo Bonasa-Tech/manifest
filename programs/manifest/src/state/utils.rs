@@ -276,10 +276,7 @@ pub(crate) fn try_to_move_global_tokens<'a, 'info>(
         return Ok(false);
     }
 
-    // Update the GlobalTrader
-    global_dynamic_account.reduce(resting_order_trader, desired_global_atoms)?;
-
-    let mint_key: &Pubkey = global_dynamic_account.fixed.get_mint();
+    let mint_key: Pubkey = *global_dynamic_account.fixed.get_mint();
 
     let global_vault_bump: u8 = global_dynamic_account.fixed.get_vault_bump();
 
@@ -287,6 +284,8 @@ pub(crate) fn try_to_move_global_tokens<'a, 'info>(
     let market_vault: &TokenAccountInfo<'a, 'info> = market_vault_opt.as_ref().unwrap();
     let token_program: &TokenProgram<'a, 'info> = token_program_opt.as_ref().unwrap();
 
+    // Check transfer fee/hook BEFORE reducing balance to avoid permanent
+    // balance loss when the transfer is rejected.
     if *token_program.key == spl_token_2022::id() {
         require!(
             mint_opt.is_some(),
@@ -312,7 +311,13 @@ pub(crate) fn try_to_move_global_tokens<'a, 'info>(
             );
             return Ok(false);
         }
+    }
 
+    // Reduce balance only after confirming the transfer can proceed.
+    global_dynamic_account.reduce(resting_order_trader, desired_global_atoms)?;
+
+    if *token_program.key == spl_token_2022::id() {
+        let mint_account_info: &MintAccountInfo = &mint_opt.as_ref().unwrap();
         invoke_signed(
             &spl_token_2022::instruction::transfer_checked(
                 token_program.key,
@@ -330,7 +335,7 @@ pub(crate) fn try_to_move_global_tokens<'a, 'info>(
                 mint_account_info.as_ref().clone(),
                 market_vault.as_ref().clone(),
             ],
-            global_vault_seeds_with_bump!(mint_key, global_vault_bump),
+            global_vault_seeds_with_bump!(&mint_key, global_vault_bump),
         )?;
     } else {
         invoke_signed(
@@ -347,7 +352,7 @@ pub(crate) fn try_to_move_global_tokens<'a, 'info>(
                 global_vault.as_ref().clone(),
                 market_vault.as_ref().clone(),
             ],
-            global_vault_seeds_with_bump!(mint_key, global_vault_bump),
+            global_vault_seeds_with_bump!(&mint_key, global_vault_bump),
         )?;
     }
 
