@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1776351425214,
+  "lastUpdate": 1776374166418,
   "repoUrl": "https://github.com/Bonasa-Tech/manifest",
   "entries": {
     "CU Benchmark": [
@@ -11051,6 +11051,72 @@ window.BENCHMARK_DATA = {
           {
             "name": "MFX_99",
             "value": 12635,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "seinarukiro@gmail.com",
+            "name": "Seinarukiro",
+            "username": "Seinarukiro2"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "981f61ab5d4cb9cc27e6460a40d45429440ab7b4",
+          "message": "Fix global deposit tree ordering after balance changes (#582)",
+          "timestamp": "2026-04-16T17:03:31-04:00",
+          "tree_id": "c8412a9b6ebdfee2e9c26131a8e3516e71efdd16",
+          "url": "https://github.com/Bonasa-Tech/manifest/commit/981f61ab5d4cb9cc27e6460a40d45429440ab7b4"
+        },
+        "date": 1776374164663,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "PHX_50",
+            "value": 6787,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "PHX_95",
+            "value": 13209,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "PHX_99",
+            "value": 13904,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_50",
+            "value": 3247,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_95",
+            "value": 11957,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_99",
+            "value": 12642,
             "range": "",
             "unit": "CU",
             "extra": ""
