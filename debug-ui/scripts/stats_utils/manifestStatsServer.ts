@@ -2544,8 +2544,7 @@ export class ManifestStatsServer {
     toBlock: number,
   ): {
     events: Array<{
-      blockNumber: number;
-      blockTimestamp: number;
+      block: { blockNumber: number; blockTimestamp: number };
       eventType: string;
       txnId: string;
       txnIndex: number;
@@ -2561,8 +2560,7 @@ export class ManifestStatsServer {
     }>;
   } {
     const result: Array<{
-      blockNumber: number;
-      blockTimestamp: number;
+      block: { blockNumber: number; blockTimestamp: number };
       eventType: string;
       txnId: string;
       txnIndex: number;
@@ -2613,8 +2611,7 @@ export class ManifestStatsServer {
           // Determine direction: takerIsBuy means taker buys base (asset0)
           // So asset0 goes out (to taker), asset1 goes in (from taker)
           const event: {
-            blockNumber: number;
-            blockTimestamp: number;
+            block: { blockNumber: number; blockTimestamp: number };
             eventType: string;
             txnId: string;
             txnIndex: number;
@@ -2628,8 +2625,10 @@ export class ManifestStatsServer {
             priceNative: number;
             reserves: { asset0: number; asset1: number };
           } = {
-            blockNumber: slot,
-            blockTimestamp: blockData.blockTime,
+            block: {
+              blockNumber: slot,
+              blockTimestamp: blockData.blockTime,
+            },
             eventType: 'swap',
             txnId: fill.signature,
             txnIndex,
