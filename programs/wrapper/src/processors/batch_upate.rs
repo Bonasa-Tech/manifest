@@ -204,7 +204,7 @@ fn prepare_orders(
     remaining_base_atoms: &mut BaseAtoms,
     remaining_quote_atoms: &mut QuoteAtoms,
     market: &ManifestAccountInfo<MarketFixed>,
-) -> Vec<PlaceOrderParams> {
+) -> (Vec<PlaceOrderParams>, Vec<usize>) {
     let market_data: Ref<'_, &mut [u8]> = market.try_borrow_data().unwrap();
     let market_ref: DynamicAccount<&MarketFixed, &[u8]> =
         get_dynamic_account::<MarketFixed>(&market_data);
@@ -266,80 +266,67 @@ fn prepare_orders(
     };
 
     let mut result: Vec<PlaceOrderParams> = Vec::with_capacity(orders.len());
-    result.extend(
-        orders
-            .iter()
-            .map(|order: &WrapperPlaceOrderParams| {
-                // Possibly reduce the order due to insufficient funds. This is a
-                // request from a market maker so that the whole tx doesnt roll back
-                // if they do not have the funds on the exchange that the orders
-                // require.
-                let mut num_base_atoms: u64 = order.base_atoms;
-                let price: QuoteAtomsPerBaseAtom =
-                    QuoteAtomsPerBaseAtom::try_from_mantissa_and_exponent(
-                        order.price_mantissa,
-                        order.price_exponent,
-                    )
-                    .unwrap();
-                if order.order_type != OrderType::Global {
-                    if order.is_bid {
-                        // If a post only would cross, then reduce to no size and clear it in the filter later.
-                        if price > best_ask_price && order.order_type == OrderType::PostOnly {
-                            solana_program::msg!("Removing post only bid that would cross");
-                            num_base_atoms = 0;
-                        } else {
-                            let desired: QuoteAtoms = BaseAtoms::new(order.base_atoms)
-                                .checked_mul(price, true)
-                                .unwrap();
-                            if desired > *remaining_quote_atoms {
-                                solana_program::msg!("Removing bid for insufficient funds");
-                                num_base_atoms = 0;
-                            } else {
-                                *remaining_quote_atoms -= desired;
-                            }
-                        }
+    let mut original_indices: Vec<usize> = Vec::with_capacity(orders.len());
+    for (i, order) in orders.iter().enumerate() {
+        let mut num_base_atoms: u64 = order.base_atoms;
+        let price: QuoteAtomsPerBaseAtom = QuoteAtomsPerBaseAtom::try_from_mantissa_and_exponent(
+            order.price_mantissa,
+            order.price_exponent,
+        )
+        .unwrap();
+        if order.order_type != OrderType::Global {
+            if order.is_bid {
+                if price > best_ask_price && order.order_type == OrderType::PostOnly {
+                    solana_program::msg!("Removing post only bid that would cross");
+                    num_base_atoms = 0;
+                } else {
+                    let desired: QuoteAtoms = BaseAtoms::new(order.base_atoms)
+                        .checked_mul(price, true)
+                        .unwrap();
+                    if desired > *remaining_quote_atoms {
+                        solana_program::msg!("Removing bid for insufficient funds");
+                        num_base_atoms = 0;
                     } else {
-                        let desired: BaseAtoms = BaseAtoms::new(order.base_atoms);
-                        // If a post only would cross, then reduce to no size and clear it in the filter later.
-                        if price < best_bid_price && order.order_type == OrderType::PostOnly {
-                            solana_program::msg!("Removing post only ask that would cross");
-                            num_base_atoms = 0;
-                        } else {
-                            if desired > *remaining_base_atoms {
-                                solana_program::msg!("Removing ask for insufficient funds");
-                                num_base_atoms = 0;
-                            } else {
-                                *remaining_base_atoms -= desired;
-                            }
-                        }
+                        *remaining_quote_atoms -= desired;
                     }
                 }
-                // Sanity check for if the user inputs a slots in force instead
-                // of a last valid slot. Does not apply to reversible since that
-                // is not allowed to expire.
-                let expiration = if order.last_valid_slot != NO_EXPIRATION_LAST_VALID_SLOT
-                    && order.last_valid_slot < 10_000_000
-                    && !order.order_type.is_reversible()
-                {
-                    now_slot + order.last_valid_slot
+            } else {
+                let desired: BaseAtoms = BaseAtoms::new(order.base_atoms);
+                if price < best_bid_price && order.order_type == OrderType::PostOnly {
+                    solana_program::msg!("Removing post only ask that would cross");
+                    num_base_atoms = 0;
                 } else {
-                    order.last_valid_slot
-                };
-                let core_place: PlaceOrderParams = PlaceOrderParams::new(
-                    num_base_atoms,
-                    order.price_mantissa,
-                    order.price_exponent,
-                    order.is_bid,
-                    order.order_type,
-                    expiration,
-                );
-                core_place
-            })
-            .filter(|wrapper_place_orders: &PlaceOrderParams| {
-                wrapper_place_orders.base_atoms() > 0
-            }),
-    );
-    result
+                    if desired > *remaining_base_atoms {
+                        solana_program::msg!("Removing ask for insufficient funds");
+                        num_base_atoms = 0;
+                    } else {
+                        *remaining_base_atoms -= desired;
+                    }
+                }
+            }
+        }
+        if num_base_atoms == 0 {
+            continue;
+        }
+        let expiration = if order.last_valid_slot != NO_EXPIRATION_LAST_VALID_SLOT
+            && order.last_valid_slot < 10_000_000
+            && !order.order_type.is_reversible()
+        {
+            now_slot + order.last_valid_slot
+        } else {
+            order.last_valid_slot
+        };
+        result.push(PlaceOrderParams::new(
+            num_base_atoms,
+            order.price_mantissa,
+            order.price_exponent,
+            order.is_bid,
+            order.order_type,
+            expiration,
+        ));
+        original_indices.push(i);
+    }
+    (result, original_indices)
 }
 
 fn execute_cpi(
@@ -426,6 +413,7 @@ fn process_orders<'a, 'info>(
     system_program: &Program<'a, 'info>,
     wrapper_state: &WrapperStateAccountInfo<'a, 'info>,
     orders: &Vec<WrapperPlaceOrderParams>,
+    original_indices: &Vec<usize>,
     market_info_index: DataIndex,
 ) -> ProgramResult {
     let cpi_return_data: Option<(Pubkey, Vec<u8>)> = get_return_data();
@@ -460,7 +448,7 @@ fn process_orders<'a, 'info>(
             new_index
         };
 
-        let original_order: &WrapperPlaceOrderParams = &orders[index];
+        let original_order: &WrapperPlaceOrderParams = &orders[original_indices[index]];
         // Base atoms & price can be wrong, will be fixed in the sync.
         let order: WrapperOpenOrder = WrapperOpenOrder::new(
             original_order.client_order_id,
@@ -559,7 +547,7 @@ pub(crate) fn process_batch_update(
         &market,
         market_info.trader_index,
     )?;
-    let core_orders: Vec<PlaceOrderParams> = prepare_orders(
+    let (core_orders, original_indices) = prepare_orders(
         &orders,
         &mut remaining_base_atoms,
         &mut remaining_quote_atoms,
@@ -574,6 +562,7 @@ pub(crate) fn process_batch_update(
         &system_program,
         &wrapper_state,
         &orders,
+        &original_indices,
         market_info_index,
     )?;
 
