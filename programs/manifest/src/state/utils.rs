@@ -235,7 +235,13 @@ pub(crate) fn can_back_order<'a, 'info>(
     return desired_global_atoms <= num_deposited_atoms;
 }
 
-pub(crate) fn try_to_move_global_tokens<'a, 'info>(
+/// Checks if a global order has sufficient balance and reduces the balance.
+/// Does NOT perform the token transfer - caller should accumulate amounts
+/// and call transfer_global_tokens after matching is complete.
+///
+/// Returns Ok(true) if balance was reduced successfully, Ok(false) if
+/// insufficient balance or transfer would fail (fee/hook), Err on other errors.
+pub(crate) fn try_to_reduce_global_tokens<'a, 'info>(
     global_trade_accounts_opt: &'a Option<GlobalTradeAccounts<'a, 'info>>,
     resting_order_trader: &Pubkey,
     desired_global_atoms: GlobalAtoms,
@@ -249,9 +255,7 @@ pub(crate) fn try_to_move_global_tokens<'a, 'info>(
     let GlobalTradeAccounts {
         global,
         mint_opt,
-        global_vault_opt,
         gas_receiver_opt,
-        market_vault_opt,
         token_program_opt,
         ..
     } = global_trade_accounts;
@@ -276,12 +280,6 @@ pub(crate) fn try_to_move_global_tokens<'a, 'info>(
         return Ok(false);
     }
 
-    let mint_key: Pubkey = *global_dynamic_account.fixed.get_mint();
-
-    let global_vault_bump: u8 = global_dynamic_account.fixed.get_vault_bump();
-
-    let global_vault: &TokenAccountInfo<'a, 'info> = global_vault_opt.as_ref().unwrap();
-    let market_vault: &TokenAccountInfo<'a, 'info> = market_vault_opt.as_ref().unwrap();
     let token_program: &TokenProgram<'a, 'info> = token_program_opt.as_ref().unwrap();
 
     // Check transfer fee/hook BEFORE reducing balance to avoid permanent
@@ -316,6 +314,44 @@ pub(crate) fn try_to_move_global_tokens<'a, 'info>(
     // Reduce balance only after confirming the transfer can proceed.
     global_dynamic_account.reduce(resting_order_trader, desired_global_atoms)?;
 
+    Ok(true)
+}
+
+/// Transfers tokens from global vault to market vault.
+/// Should be called after matching is complete with the accumulated total.
+pub(crate) fn transfer_global_tokens<'a, 'info>(
+    global_trade_accounts_opt: &'a Option<GlobalTradeAccounts<'a, 'info>>,
+    total_atoms: GlobalAtoms,
+) -> Result<(), ProgramError> {
+    if total_atoms.as_u64() == 0 {
+        return Ok(());
+    }
+
+    require!(
+        global_trade_accounts_opt.is_some(),
+        crate::program::ManifestError::MissingGlobal,
+        "Missing global accounts when transferring",
+    )?;
+    let global_trade_accounts: &GlobalTradeAccounts = &global_trade_accounts_opt.as_ref().unwrap();
+    let GlobalTradeAccounts {
+        global,
+        mint_opt,
+        global_vault_opt,
+        market_vault_opt,
+        token_program_opt,
+        ..
+    } = global_trade_accounts;
+
+    let global_data: &mut RefMut<&mut [u8]> = &mut global.try_borrow_mut_data()?;
+    let global_dynamic_account: GlobalRefMut = get_mut_dynamic_account(global_data);
+
+    let mint_key: Pubkey = *global_dynamic_account.fixed.get_mint();
+    let global_vault_bump: u8 = global_dynamic_account.fixed.get_vault_bump();
+
+    let global_vault: &TokenAccountInfo<'a, 'info> = global_vault_opt.as_ref().unwrap();
+    let market_vault: &TokenAccountInfo<'a, 'info> = market_vault_opt.as_ref().unwrap();
+    let token_program: &TokenProgram<'a, 'info> = token_program_opt.as_ref().unwrap();
+
     if *token_program.key == spl_token_2022::id() {
         let mint_account_info: &MintAccountInfo = &mint_opt.as_ref().unwrap();
         invoke_signed(
@@ -326,7 +362,7 @@ pub(crate) fn try_to_move_global_tokens<'a, 'info>(
                 market_vault.key,
                 global_vault.key,
                 &[],
-                desired_global_atoms.as_u64(),
+                total_atoms.as_u64(),
                 mint_account_info.mint.decimals,
             )?,
             &[
@@ -345,7 +381,7 @@ pub(crate) fn try_to_move_global_tokens<'a, 'info>(
                 market_vault.key,
                 global_vault.key,
                 &[],
-                desired_global_atoms.as_u64(),
+                total_atoms.as_u64(),
             )?,
             &[
                 token_program.as_ref().clone(),
@@ -356,5 +392,5 @@ pub(crate) fn try_to_move_global_tokens<'a, 'info>(
         )?;
     }
 
-    Ok(true)
+    Ok(())
 }

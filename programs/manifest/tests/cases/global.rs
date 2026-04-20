@@ -1429,3 +1429,287 @@ async fn global_crash_without_global() -> anyhow::Result<()> {
 
     Ok(())
 }
+
+/// Test matching through multiple levels of global orders.
+/// This tests the batched global token transfer optimization where
+/// all global token transfers are accumulated and done in a single CPI.
+#[tokio::test]
+async fn global_match_multiple_levels() -> anyhow::Result<()> {
+    let mut test_fixture: TestFixture = TestFixture::new().await;
+
+    // Setup maker with global orders at multiple price levels
+    let maker_keypair = test_fixture.second_keypair.insecure_clone();
+    test_fixture.claim_seat_for_keypair(&maker_keypair).await?;
+    test_fixture
+        .global_add_trader_for_keypair(&maker_keypair)
+        .await?;
+    test_fixture
+        .global_deposit_for_keypair(&maker_keypair, 10_000_000)
+        .await?;
+
+    // Place 3 global bid orders at different price levels
+    // Order 1: 100 base @ 1.2 (costs 120 quote)
+    // Order 2: 200 base @ 1.1 (costs 220 quote)
+    // Order 3: 300 base @ 1.0 (costs 300 quote)
+    // Total quote needed: 640
+    test_fixture
+        .batch_update_with_global_for_keypair(
+            None,
+            vec![],
+            vec![
+                PlaceOrderParams::new(
+                    100,
+                    12,
+                    -1, // price = 1.2
+                    true,
+                    OrderType::Global,
+                    NO_EXPIRATION_LAST_VALID_SLOT,
+                ),
+                PlaceOrderParams::new(
+                    200,
+                    11,
+                    -1, // price = 1.1
+                    true,
+                    OrderType::Global,
+                    NO_EXPIRATION_LAST_VALID_SLOT,
+                ),
+                PlaceOrderParams::new(
+                    300,
+                    10,
+                    -1, // price = 1.0
+                    true,
+                    OrderType::Global,
+                    NO_EXPIRATION_LAST_VALID_SLOT,
+                ),
+            ],
+            &maker_keypair,
+        )
+        .await?;
+
+    // Verify orders are on the book
+    test_fixture.market_fixture.reload().await;
+    let orders: Vec<RestingOrder> = test_fixture.market_fixture.get_resting_orders().await;
+    assert_eq!(orders.len(), 3, "Should have 3 resting orders");
+
+    // Setup taker
+    test_fixture.claim_seat().await?;
+    test_fixture.deposit(Token::SOL, 10_000_000).await?;
+
+    // Taker sells 600 base, which should match all 3 global orders
+    // Best bid is 1.2, then 1.1, then 1.0
+    // Match 100 @ 1.2 = 120 quote
+    // Match 200 @ 1.1 = 220 quote
+    // Match 300 @ 1.0 = 300 quote
+    // Total: 640 quote received by taker
+    test_fixture
+        .batch_update_with_global_for_keypair(
+            None,
+            vec![],
+            vec![PlaceOrderParams::new(
+                600,
+                1,
+                0, // willing to sell at any price >= 0.1
+                false,
+                OrderType::Limit,
+                NO_EXPIRATION_LAST_VALID_SLOT,
+            )],
+            &test_fixture.payer_keypair().insecure_clone(),
+        )
+        .await?;
+
+    // Verify all orders matched
+    test_fixture.market_fixture.reload().await;
+    let orders: Vec<RestingOrder> = test_fixture.market_fixture.get_resting_orders().await;
+    assert_eq!(orders.len(), 0, "All orders should be matched");
+
+    // Verify taker balances
+    // Started with 10_000_000 base, sold 600 = 9_999_400
+    // Received: 100*1.2 + 200*1.1 + 300*1.0 = 120 + 220 + 300 = 640 quote
+    assert_eq!(
+        test_fixture
+            .market_fixture
+            .get_base_balance_atoms(&test_fixture.payer())
+            .await,
+        10_000_000 - 600,
+        "Taker base balance incorrect"
+    );
+    assert_eq!(
+        test_fixture
+            .market_fixture
+            .get_quote_balance_atoms(&test_fixture.payer())
+            .await,
+        640,
+        "Taker quote balance incorrect"
+    );
+
+    // Verify maker balances
+    // Maker received 600 base total
+    // Maker spent 640 quote from global
+    assert_eq!(
+        test_fixture
+            .market_fixture
+            .get_base_balance_atoms(&maker_keypair.pubkey())
+            .await,
+        600,
+        "Maker base balance incorrect"
+    );
+    assert_eq!(
+        test_fixture
+            .market_fixture
+            .get_quote_balance_atoms(&maker_keypair.pubkey())
+            .await,
+        0,
+        "Maker quote balance incorrect"
+    );
+
+    // Verify global balance reduced correctly
+    // Started with 10_000_000, spent 640
+    test_fixture.global_fixture.reload().await;
+    assert_eq!(
+        test_fixture
+            .global_fixture
+            .global
+            .get_balance_atoms(&maker_keypair.pubkey())
+            .as_u64(),
+        10_000_000 - 640,
+        "Global balance incorrect"
+    );
+
+    Ok(())
+}
+
+/// Test matching through multiple global orders where some are unbacked.
+/// Verifies that unbacked orders are skipped and backed orders still match.
+#[tokio::test]
+async fn global_match_multiple_levels_with_unbacked() -> anyhow::Result<()> {
+    let mut test_fixture: TestFixture = TestFixture::new().await;
+
+    // Setup first maker with limited funds (can only back 2 of 3 orders)
+    let maker1_keypair = test_fixture.second_keypair.insecure_clone();
+    test_fixture
+        .claim_seat_for_keypair(&maker1_keypair)
+        .await?;
+    test_fixture
+        .global_add_trader_for_keypair(&maker1_keypair)
+        .await?;
+    // Deposit only enough for 2 orders worth (120 + 220 = 340)
+    test_fixture
+        .global_deposit_for_keypair(&maker1_keypair, 340)
+        .await?;
+
+    // Place 3 orders but only have funds to back 2
+    test_fixture
+        .batch_update_with_global_for_keypair(
+            None,
+            vec![],
+            vec![
+                PlaceOrderParams::new(
+                    100,
+                    12,
+                    -1, // price = 1.2, costs 120 quote
+                    true,
+                    OrderType::Global,
+                    NO_EXPIRATION_LAST_VALID_SLOT,
+                ),
+                PlaceOrderParams::new(
+                    200,
+                    11,
+                    -1, // price = 1.1, costs 220 quote
+                    true,
+                    OrderType::Global,
+                    NO_EXPIRATION_LAST_VALID_SLOT,
+                ),
+                PlaceOrderParams::new(
+                    300,
+                    10,
+                    -1, // price = 1.0, costs 300 quote - UNBACKED
+                    true,
+                    OrderType::Global,
+                    NO_EXPIRATION_LAST_VALID_SLOT,
+                ),
+            ],
+            &maker1_keypair,
+        )
+        .await?;
+
+    test_fixture.market_fixture.reload().await;
+    let orders: Vec<RestingOrder> = test_fixture.market_fixture.get_resting_orders().await;
+    assert_eq!(orders.len(), 3, "Should have 3 resting orders");
+
+    // Setup taker
+    test_fixture.claim_seat().await?;
+    test_fixture.deposit(Token::SOL, 10_000_000).await?;
+
+    // Taker sells 600 base
+    // Should match: 100 @ 1.2 = 120, 200 @ 1.1 = 220
+    // Third order at 1.0 is unbacked and will be cleaned
+    test_fixture
+        .batch_update_with_global_for_keypair(
+            None,
+            vec![],
+            vec![PlaceOrderParams::new(
+                600,
+                1,
+                0,
+                false,
+                OrderType::Limit,
+                NO_EXPIRATION_LAST_VALID_SLOT,
+            )],
+            &test_fixture.payer_keypair().insecure_clone(),
+        )
+        .await?;
+
+    test_fixture.market_fixture.reload().await;
+    let orders: Vec<RestingOrder> = test_fixture.market_fixture.get_resting_orders().await;
+    // Unbacked order removed, taker's remaining 300 base rests as ask
+    assert_eq!(orders.len(), 1, "Should have 1 resting order (taker's ask)");
+    let remaining_order = orders.first().unwrap();
+    assert_eq!(
+        remaining_order.get_num_base_atoms(),
+        300,
+        "Remaining ask should be 300 base"
+    );
+
+    // Verify taker traded 300 base (100 + 200 matched, 300 rests)
+    assert_eq!(
+        test_fixture
+            .market_fixture
+            .get_base_balance_atoms(&test_fixture.payer())
+            .await,
+        10_000_000 - 600, // 600 deposited for the sell order
+        "Taker base balance incorrect"
+    );
+    // Received 120 + 220 = 340 quote
+    assert_eq!(
+        test_fixture
+            .market_fixture
+            .get_quote_balance_atoms(&test_fixture.payer())
+            .await,
+        340,
+        "Taker quote balance incorrect"
+    );
+
+    // Verify maker got 300 base (100 + 200)
+    assert_eq!(
+        test_fixture
+            .market_fixture
+            .get_base_balance_atoms(&maker1_keypair.pubkey())
+            .await,
+        300,
+        "Maker base balance incorrect"
+    );
+
+    // Verify global balance is zero (all 340 used)
+    test_fixture.global_fixture.reload().await;
+    assert_eq!(
+        test_fixture
+            .global_fixture
+            .global
+            .get_balance_atoms(&maker1_keypair.pubkey())
+            .as_u64(),
+        0,
+        "Global balance should be zero"
+    );
+
+    Ok(())
+}
