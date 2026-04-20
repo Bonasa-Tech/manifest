@@ -1586,9 +1586,7 @@ async fn global_match_multiple_levels_with_unbacked() -> anyhow::Result<()> {
 
     // Setup first maker with limited funds (can only back 2 of 3 orders)
     let maker1_keypair = test_fixture.second_keypair.insecure_clone();
-    test_fixture
-        .claim_seat_for_keypair(&maker1_keypair)
-        .await?;
+    test_fixture.claim_seat_for_keypair(&maker1_keypair).await?;
     test_fixture
         .global_add_trader_for_keypair(&maker1_keypair)
         .await?;

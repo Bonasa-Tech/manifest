@@ -289,11 +289,8 @@ impl<'a, 'b, 'info> AddSingleOrderCtx<'a, 'b, 'info> {
             } else {
                 base_atoms_traded.as_u64()
             });
-            let has_enough_tokens: bool = try_to_reduce_global_tokens(
-                global_trade_accounts_opt,
-                &maker,
-                desired_atoms,
-            )?;
+            let has_enough_tokens: bool =
+                try_to_reduce_global_tokens(global_trade_accounts_opt, &maker, desired_atoms)?;
             if !has_enough_tokens {
                 remove_and_update_balances(
                     fixed,
@@ -308,7 +305,8 @@ impl<'a, 'b, 'info> AddSingleOrderCtx<'a, 'b, 'info> {
                 });
             }
             // Accumulate for batch transfer after matching completes
-            self.global_atoms_to_transfer = self.global_atoms_to_transfer.checked_add(desired_atoms)?;
+            self.global_atoms_to_transfer =
+                self.global_atoms_to_transfer.checked_add(desired_atoms)?;
         }
 
         self.total_base_atoms_traded = self

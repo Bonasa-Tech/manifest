@@ -1105,7 +1105,6 @@ impl<
                     current_maker_order_index = next_maker_order_index;
                     continue;
                 }
-                // Accumulate for batch transfer after matching
                 global_atoms_to_transfer =
                     global_atoms_to_transfer.checked_add(global_atoms_needed)?;
             }
@@ -1377,7 +1376,10 @@ impl<
             }
         }
 
-        // Batch transfer global tokens after all matching is complete
+        // Batch transfer global tokens after all matching is complete.
+        // Doing it here allows matching through many levels which is common for
+        // destiny vaults. Without this, the CPI overhead would be massive and
+        // limit the tx size.
         if global_atoms_to_transfer > GlobalAtoms::ZERO {
             let global_trade_accounts_opt: &Option<GlobalTradeAccounts> = if is_bid {
                 &global_trade_accounts_opts[0]
