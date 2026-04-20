@@ -144,6 +144,7 @@ pub use free_addr_helpers::*;
 // Refactoring of place_order
 
 use super::*;
+use crate::state::utils::{transfer_global_tokens, try_to_reduce_global_tokens};
 
 #[derive(Default, PartialEq)]
 pub enum AddOrderStatus {
@@ -169,6 +170,7 @@ pub struct AddSingleOrderCtx<'a, 'b, 'info> {
     pub remaining_base_atoms: BaseAtoms,
     pub total_base_atoms_traded: BaseAtoms,
     pub total_quote_atoms_traded: QuoteAtoms,
+    pub global_atoms_to_transfer: GlobalAtoms,
 }
 
 impl<'a, 'b, 'info> AddSingleOrderCtx<'a, 'b, 'info> {
@@ -187,6 +189,7 @@ impl<'a, 'b, 'info> AddSingleOrderCtx<'a, 'b, 'info> {
             remaining_base_atoms,
             total_base_atoms_traded: BaseAtoms::ZERO,
             total_quote_atoms_traded: QuoteAtoms::ZERO,
+            global_atoms_to_transfer: GlobalAtoms::ZERO,
         }
     }
     // TODO: Clean this up or prove that it is the same as market::place_order
@@ -281,15 +284,13 @@ impl<'a, 'b, 'info> AddSingleOrderCtx<'a, 'b, 'info> {
             } else {
                 &global_trade_accounts_opts[1]
             };
-            let has_enough_tokens: bool = try_to_move_global_tokens(
-                global_trade_accounts_opt,
-                &maker,
-                GlobalAtoms::new(if is_bid {
-                    quote_atoms_traded.as_u64()
-                } else {
-                    base_atoms_traded.as_u64()
-                }),
-            )?;
+            let desired_atoms: GlobalAtoms = GlobalAtoms::new(if is_bid {
+                quote_atoms_traded.as_u64()
+            } else {
+                base_atoms_traded.as_u64()
+            });
+            let has_enough_tokens: bool =
+                try_to_reduce_global_tokens(global_trade_accounts_opt, &maker, desired_atoms)?;
             if !has_enough_tokens {
                 remove_and_update_balances(
                     fixed,
@@ -303,6 +304,9 @@ impl<'a, 'b, 'info> AddSingleOrderCtx<'a, 'b, 'info> {
                     ..Default::default()
                 });
             }
+            // Accumulate for batch transfer after matching completes
+            self.global_atoms_to_transfer =
+                self.global_atoms_to_transfer.checked_add(desired_atoms)?;
         }
 
         self.total_base_atoms_traded = self
@@ -521,6 +525,18 @@ pub fn place_order_helper<
             break;
         }
     }
+
+    // Batch transfer global tokens after all matching is complete
+    let global_atoms_to_transfer: GlobalAtoms = ctx.global_atoms_to_transfer;
+    if global_atoms_to_transfer > GlobalAtoms::ZERO {
+        let global_trade_accounts_opt: &Option<GlobalTradeAccounts> = if is_bid {
+            &ctx.args.global_trade_accounts_opts[0]
+        } else {
+            &ctx.args.global_trade_accounts_opts[1]
+        };
+        transfer_global_tokens(global_trade_accounts_opt, global_atoms_to_transfer)?;
+    }
+
     // move out args so that they can be used later
     let args: AddOrderToMarketArgs = ctx.args;
     // ctx is dead from this point onward

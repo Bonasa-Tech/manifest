@@ -22,7 +22,10 @@ use crate::{
     quantities::{BaseAtoms, GlobalAtoms, QuoteAtoms, QuoteAtomsPerBaseAtom, WrapperU64},
     require,
     state::{
-        utils::{assert_can_take, remove_from_global, try_to_move_global_tokens},
+        utils::{
+            assert_can_take, remove_from_global, transfer_global_tokens,
+            try_to_reduce_global_tokens,
+        },
         OrderType,
     },
     validation::{
@@ -987,6 +990,9 @@ impl<
         let mut total_base_atoms_traded: BaseAtoms = BaseAtoms::ZERO;
         let mut total_quote_atoms_traded: QuoteAtoms = QuoteAtoms::ZERO;
 
+        // Accumulator for batched global token transfers (only one side per order)
+        let mut global_atoms_to_transfer: GlobalAtoms = GlobalAtoms::ZERO;
+
         let mut remaining_base_atoms: BaseAtoms = num_base_atoms;
         while remaining_base_atoms > BaseAtoms::ZERO && is_not_nil!(current_maker_order_index) {
             let maker_order: &RestingOrder =
@@ -1072,14 +1078,15 @@ impl<
                 }
                 // When is_bid, the taker is supplying quote, so the global
                 // maker needs to supply base.
-                let has_enough_tokens: bool = try_to_move_global_tokens(
+                let global_atoms_needed: GlobalAtoms = GlobalAtoms::new(if is_bid {
+                    base_atoms_traded.as_u64()
+                } else {
+                    quote_atoms_traded.as_u64()
+                });
+                let has_enough_tokens: bool = try_to_reduce_global_tokens(
                     global_trade_accounts_opt,
                     &maker,
-                    GlobalAtoms::new(if is_bid {
-                        base_atoms_traded.as_u64()
-                    } else {
-                        quote_atoms_traded.as_u64()
-                    }),
+                    global_atoms_needed,
                 )?;
 
                 if !has_enough_tokens {
@@ -1098,6 +1105,8 @@ impl<
                     current_maker_order_index = next_maker_order_index;
                     continue;
                 }
+                global_atoms_to_transfer =
+                    global_atoms_to_transfer.checked_add(global_atoms_needed)?;
             }
 
             total_base_atoms_traded = total_base_atoms_traded.checked_add(base_atoms_traded)?;
@@ -1365,6 +1374,19 @@ impl<
             if !did_fully_match_resting_order {
                 break;
             }
+        }
+
+        // Batch transfer global tokens after all matching is complete.
+        // Doing it here allows matching through many levels which is common for
+        // destiny vaults. Without this, the CPI overhead would be massive and
+        // limit the tx size.
+        if global_atoms_to_transfer > GlobalAtoms::ZERO {
+            let global_trade_accounts_opt: &Option<GlobalTradeAccounts> = if is_bid {
+                &global_trade_accounts_opts[0]
+            } else {
+                &global_trade_accounts_opts[1]
+            };
+            transfer_global_tokens(global_trade_accounts_opt, global_atoms_to_transfer)?;
         }
 
         // Record volume on market
