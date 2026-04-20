@@ -298,6 +298,12 @@ pub(crate) fn try_to_reduce_global_tokens<'a, 'info>(
             .is_ok_and(|f| f.get_epoch_fee(get_now_epoch()).transfer_fee_basis_points != 0.into())
         {
             solana_program::msg!("Treating global order as unbacked because it has a transfer fee");
+            emit_stack(GlobalCleanupLog {
+                cleaner: *gas_receiver_opt.as_ref().unwrap().key,
+                maker: *resting_order_trader,
+                amount_desired: desired_global_atoms,
+                amount_deposited: num_deposited_atoms,
+            })?;
             return Ok(false);
         }
         if StateWithExtensions::<Mint>::unpack(&mint_account_info.info.data.borrow())?
@@ -307,6 +313,12 @@ pub(crate) fn try_to_reduce_global_tokens<'a, 'info>(
             solana_program::msg!(
                 "Treating global order as unbacked because it has a transfer hook"
             );
+            emit_stack(GlobalCleanupLog {
+                cleaner: *gas_receiver_opt.as_ref().unwrap().key,
+                maker: *resting_order_trader,
+                amount_desired: desired_global_atoms,
+                amount_deposited: num_deposited_atoms,
+            })?;
             return Ok(false);
         }
     }
