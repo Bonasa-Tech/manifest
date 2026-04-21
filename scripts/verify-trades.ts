@@ -448,7 +448,7 @@ const fetchOnchainFills = async (
 
   let lastSignature: string | undefined;
   let done = false;
-  let totalSignatures = 0;
+  let _totalSignatures = 0;
   const truncatedSignatures = new Set<string>();
 
   while (!done) {
@@ -458,7 +458,7 @@ const fetchOnchainFills = async (
         limit: 1000,
       });
 
-      totalSignatures += signatures.length;
+      _totalSignatures += signatures.length;
 
       if (signatures.length === 0) {
         break;

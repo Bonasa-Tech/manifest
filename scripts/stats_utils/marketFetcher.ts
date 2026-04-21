@@ -2,7 +2,6 @@ import {
   Connection,
   GetProgramAccountsResponse,
   AccountInfo,
-  PublicKey,
 } from '@solana/web3.js';
 import { ManifestClient } from '@bonasa-tech/manifest-sdk';
 import { MANIFEST_PROGRAM_ID, MARKET_DISCRIMINATOR } from './constants';

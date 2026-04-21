@@ -1,4 +1,3 @@
-import { sleep } from '@/lib/util';
 import {
   KNOWN_AGGREGATORS,
   SOL_MINT,
@@ -6,6 +5,10 @@ import {
   WBTC_MINT,
   STABLECOIN_MINTS,
 } from './constants';
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 import {
   AccountInfo,
   GetProgramAccountsResponse,

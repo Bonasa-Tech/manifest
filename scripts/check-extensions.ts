@@ -176,7 +176,7 @@ function parseExtensionsFromAccountData(data: Buffer): {
   };
 }
 
-async function checkMint(
+async function _checkMint(
   connection: Connection,
   mintStr: string,
 ): Promise<ExtensionInfo> {

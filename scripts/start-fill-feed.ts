@@ -3,8 +3,11 @@ import 'dotenv/config';
 import { FillFeed } from '@bonasa-tech/manifest-sdk/fillFeed';
 import { FillFeedBlockSub } from '@bonasa-tech/manifest-sdk/fillFeedBlockSub';
 import { Connection } from '@solana/web3.js';
-import { sleep } from '@/lib/util';
 import * as promClient from 'prom-client';
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 import express from 'express';
 import promBundle from 'express-prom-bundle';
 

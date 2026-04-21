@@ -1,6 +1,9 @@
 import 'dotenv/config';
-import { sleep } from '@/lib/util';
 import * as promClient from 'prom-client';
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 import cors from 'cors';
 import express, { RequestHandler } from 'express';
 import promBundle from 'express-prom-bundle';

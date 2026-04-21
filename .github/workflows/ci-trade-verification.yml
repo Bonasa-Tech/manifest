@@ -8,9 +8,6 @@ jobs:
   trade-verification:
     name: Trade Verification
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: ./debug-ui
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -30,7 +27,7 @@ jobs:
           }
 
       - name: Run the trade verification
-        run: yarn tsx scripts/verify-trades.ts
+        run: npx tsx scripts/verify-trades.ts
         env:
           RPC_URL: ${{ secrets.RPC_URL }}
           STATS_SERVER_URL: ${{ secrets.STATS_SERVER_URL }}

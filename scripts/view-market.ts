@@ -1,7 +1,7 @@
 import 'dotenv/config';
 
 import { Connection, PublicKey } from '@solana/web3.js';
-import { Market, RestingOrder, ClaimedSeat } from '@bonasa-tech/manifest-sdk';
+import { Market, RestingOrder } from '@bonasa-tech/manifest-sdk';
 import { OrderType } from '@bonasa-tech/manifest-sdk/manifest/types';
 import {
   FIXED_MANIFEST_HEADER_SIZE,

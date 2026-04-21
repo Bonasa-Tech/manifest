@@ -1,4 +1,4 @@
-import { ManifestClient, Market } from '@bonasa-tech/manifest-sdk';
+import { ManifestClient } from '@bonasa-tech/manifest-sdk';
 import {
   AddressLookupTableAccount,
   AddressLookupTableProgram,
@@ -6,7 +6,6 @@ import {
   Keypair,
   MessageV0,
   PublicKey,
-  Transaction,
   VersionedTransaction,
 } from '@solana/web3.js';
 import { Pool } from 'pg';
