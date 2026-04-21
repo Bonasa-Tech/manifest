@@ -45,19 +45,6 @@ function createCollectInstruction(
   });
 }
 
-async function _getCollectableAmount(
-  connection: Connection,
-  wrapperState: PublicKey,
-): Promise<number> {
-  const accountInfo = await connection.getAccountInfo(wrapperState);
-  if (!accountInfo) return 0;
-
-  const rent = await connection.getMinimumBalanceForRentExemption(
-    accountInfo.data.length,
-  );
-  return accountInfo.lamports - rent;
-}
-
 const run = async () => {
   const connection = new Connection(RPC_URL!);
 
