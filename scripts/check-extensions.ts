@@ -1,5 +1,6 @@
 import { Connection, PublicKey } from '@solana/web3.js';
-import { ManifestClient, Market } from '@bonasa-tech/manifest-sdk';
+import { ManifestClient } from '../client/ts/src/client';
+import { Market } from '../client/ts/src/market';
 
 const TOKEN_2022_PROGRAM_ID = new PublicKey(
   'TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb',

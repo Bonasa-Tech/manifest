@@ -1,6 +1,7 @@
-import { ManifestClient, Market } from '@bonasa-tech/manifest-sdk';
-import { getVaultAddress } from '@bonasa-tech/manifest-sdk/utils';
-import { Global } from '@bonasa-tech/manifest-sdk';
+import { ManifestClient } from '../client/ts/src/client';
+import { Market } from '../client/ts/src/market';
+import { getVaultAddress } from '../client/ts/src/utils/market';
+import { Global } from '../client/ts/src/global';
 import {
   AccountInfo,
   Connection,
