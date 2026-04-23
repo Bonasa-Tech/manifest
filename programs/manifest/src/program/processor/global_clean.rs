@@ -115,7 +115,9 @@ pub(crate) fn process_global_clean(
     };
 
     require!(
-        is_expired || maker_global_balance.as_u64() < required_global_atoms,
+        is_expired
+            || (resting_order.is_global()
+                && maker_global_balance.as_u64() < required_global_atoms),
         crate::program::ManifestError::InvalidClean,
         "Ineligible clean order index {}",
         order_index,
