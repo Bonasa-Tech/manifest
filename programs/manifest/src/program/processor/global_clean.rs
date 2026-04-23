@@ -107,7 +107,7 @@ pub(crate) fn process_global_clean(
     let required_global_atoms: u64 = if resting_order.get_is_bid() {
         resting_order
             .get_num_base_atoms()
-            .checked_mul(resting_order.get_price(), false)
+            .checked_mul(resting_order.get_price(), true)
             .unwrap()
             .as_u64()
     } else {
@@ -116,8 +116,7 @@ pub(crate) fn process_global_clean(
 
     require!(
         is_expired
-            || (resting_order.is_global()
-                && maker_global_balance.as_u64() < required_global_atoms),
+            || (resting_order.is_global() && maker_global_balance.as_u64() < required_global_atoms),
         crate::program::ManifestError::InvalidClean,
         "Ineligible clean order index {}",
         order_index,

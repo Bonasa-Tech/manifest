@@ -1107,7 +1107,9 @@ async fn maintenance_clean() -> anyhow::Result<()> {
     test_fixture.claim_seat().await?;
     test_fixture.global_add_trader().await?;
     test_fixture.deposit(Token::USDC, 100).await?;
+    test_fixture.global_deposit(1_000_000).await?;
 
+    // Assume 1_000 is sufficiently far enough that it is not already expired.
     test_fixture
         .batch_update_for_keypair(
             None,
@@ -1118,7 +1120,7 @@ async fn maintenance_clean() -> anyhow::Result<()> {
                 0,
                 true,
                 OrderType::Limit,
-                NO_EXPIRATION_LAST_VALID_SLOT,
+                1_000,
             )],
             &test_fixture.payer_keypair().insecure_clone(),
         )
@@ -1126,7 +1128,46 @@ async fn maintenance_clean() -> anyhow::Result<()> {
 
     test_fixture.advance_time_seconds(14 * 24 * 60 * 60).await;
 
-    // Clean should succeed.
+    // Clean should succeed because expired
+    send_tx_with_retry(
+        Rc::clone(&test_fixture.context),
+        &[global_clean_instruction(
+            &test_fixture.global_fixture.key,
+            &test_fixture.payer(),
+            &test_fixture.market_fixture.key,
+            MARKET_BLOCK_SIZE as DataIndex,
+        )],
+        Some(&test_fixture.payer()),
+        &[&test_fixture.payer_keypair().insecure_clone()],
+    )
+    .await?;
+
+    test_fixture.market_fixture.reload().await;
+
+    let bids = test_fixture.market_fixture.market.get_bids();
+    let next = bids.iter::<RestingOrder>().next();
+    assert_eq!(next, None);
+
+    test_fixture
+        .batch_update_with_global_for_keypair(
+            None,
+            vec![],
+            vec![PlaceOrderParams::new(
+                100,
+                1,
+                0,
+                true,
+                OrderType::Global,
+                NO_EXPIRATION_LAST_VALID_SLOT,
+            )],
+            &test_fixture.payer_keypair().insecure_clone(),
+        )
+        .await?;
+
+    // Unback the global.
+    test_fixture.global_withdraw(1_000_000).await?;
+
+    // Clean should succeed because unbacked
     send_tx_with_retry(
         Rc::clone(&test_fixture.context),
         &[global_clean_instruction(
