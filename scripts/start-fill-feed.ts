@@ -1,7 +1,7 @@
 import 'dotenv/config';
 
-import { FillFeed } from '@bonasa-tech/manifest-sdk/fillFeed';
-import { FillFeedBlockSub } from '@bonasa-tech/manifest-sdk/fillFeedBlockSub';
+import { FillFeed } from '../client/ts/src/fillFeed';
+import { FillFeedBlockSub } from '../client/ts/src/fillFeedBlockSub';
 import { Connection } from '@solana/web3.js';
 import * as promClient from 'prom-client';
 

@@ -1,0 +1,14 @@
+{
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "baseUrl": ".",
+    "paths": {
+      "@manifest-sdk/*": ["../client/ts/src/*"],
+      "@manifest-sdk": ["../client/ts/src"]
+    }
+  },
+  "include": [
+    "*.ts",
+    "stats_utils/**/*.ts"
+  ]
+}

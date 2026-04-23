@@ -1,4 +1,4 @@
-import { FillLogResult } from '@bonasa-tech/manifest-sdk';
+import { FillLogResult } from '../../client/ts/src';
 
 /**
  * Query options for fetching complete fills from database

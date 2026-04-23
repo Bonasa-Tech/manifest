@@ -1,12 +1,12 @@
 import 'dotenv/config';
 
 import { Connection, PublicKey } from '@solana/web3.js';
-import { Market, RestingOrder } from '@bonasa-tech/manifest-sdk';
-import { OrderType } from '@bonasa-tech/manifest-sdk/manifest/types';
+import { Market, RestingOrder } from '../client/ts/src';
+import { OrderType } from '../client/ts/src/manifest/types';
 import {
   FIXED_MANIFEST_HEADER_SIZE,
   NIL,
-} from '@bonasa-tech/manifest-sdk/constants';
+} from '../client/ts/src/constants';
 
 const { RPC_URL } = process.env;
 
