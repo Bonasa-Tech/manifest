@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1776725393191,
+  "lastUpdate": 1776957443499,
   "repoUrl": "https://github.com/Bonasa-Tech/manifest",
   "entries": {
     "CU Benchmark": [
@@ -11249,6 +11249,72 @@ window.BENCHMARK_DATA = {
           {
             "name": "MFX_99",
             "value": 13181,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "77837794+dao-ming-dev@users.noreply.github.com",
+            "name": "Dominique",
+            "username": "dao-ming-dev"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "59d04a1e38cdb67e6a6ce23688080a43179c1aec",
+          "message": "global clean explpoit and fix (#595)\n\n* global clean explpoit and fix\n\n* Fmt and test fix\n\n---------\n\nCo-authored-by: Dominique Chuo <dominique@raptor.trade>\nCo-authored-by: Britt Cyr <cyrbritt@gmail.com>",
+          "timestamp": "2026-04-23T11:04:37-04:00",
+          "tree_id": "4744f04e5afba794b17157bb0c197509b8499141",
+          "url": "https://github.com/Bonasa-Tech/manifest/commit/59d04a1e38cdb67e6a6ce23688080a43179c1aec"
+        },
+        "date": 1776957441591,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "PHX_50",
+            "value": 6897,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "PHX_95",
+            "value": 13208,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "PHX_99",
+            "value": 13902,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_50",
+            "value": 3274,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_95",
+            "value": 12249,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_99",
+            "value": 13169,
             "range": "",
             "unit": "CU",
             "extra": ""
