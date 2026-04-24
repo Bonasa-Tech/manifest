@@ -44,6 +44,8 @@ jobs:
 
       - name: Cache dependencies
         uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: "solana-${{ env.SOLANA_VERSION }}"
 
       - name: Set Rust version
         run: |
@@ -62,6 +64,8 @@ jobs:
 
       - name: Cache dependencies
         uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: "solana-${{ env.SOLANA_VERSION }}"
 
       - name: Set Rust version
         run: |
@@ -96,6 +100,8 @@ jobs:
 
       - name: Cache dependencies
         uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: "solana-${{ env.SOLANA_VERSION }}"
 
       - name: Set Rust version
         run: |
