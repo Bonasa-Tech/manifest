@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1777045463676,
+  "lastUpdate": 1777047818319,
   "repoUrl": "https://github.com/Bonasa-Tech/manifest",
   "entries": {
     "CU Benchmark": [
@@ -11447,6 +11447,72 @@ window.BENCHMARK_DATA = {
           {
             "name": "MFX_99",
             "value": 13187,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "cyrbritt@gmail.com",
+            "name": "Britt Cyr",
+            "username": "brittcyr"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "4e68d7dd5bb29bec819896d12eb6e0564b0a0db4",
+          "message": "Handle transfer fees on global eviction (#598)",
+          "timestamp": "2026-04-24T12:10:44-04:00",
+          "tree_id": "819fd9a60fdf6507f19781964981e984e0cf4d3b",
+          "url": "https://github.com/Bonasa-Tech/manifest/commit/4e68d7dd5bb29bec819896d12eb6e0564b0a0db4"
+        },
+        "date": 1777047815730,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "PHX_50",
+            "value": 6897,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "PHX_95",
+            "value": 13208,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "PHX_99",
+            "value": 13902,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_50",
+            "value": 3278,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_95",
+            "value": 12260,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_99",
+            "value": 13180,
             "range": "",
             "unit": "CU",
             "extra": ""
