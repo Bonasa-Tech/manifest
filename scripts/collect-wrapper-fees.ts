@@ -9,7 +9,7 @@ import {
   TransactionInstruction,
   sendAndConfirmTransaction,
 } from '@solana/web3.js';
-import { PROGRAM_ID as WRAPPER_PROGRAM_ID } from '@cks-systems/manifest-sdk/wrapper';
+import { PROGRAM_ID as WRAPPER_PROGRAM_ID } from '../client/ts/src/wrapper';
 import * as fs from 'fs';
 
 const { RPC_URL, KEYPAIR_PATH } = process.env;

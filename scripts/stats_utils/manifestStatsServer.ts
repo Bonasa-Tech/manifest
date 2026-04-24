@@ -15,7 +15,7 @@ import {
   ManifestClient,
   Market,
   RestingOrder,
-} from '@bonasa-tech/manifest-sdk';
+} from '../../client/ts/src';
 import { Pool, PoolClient, QueryResult } from 'pg';
 import {
   VOLUME_CHECKPOINT_DURATION_SEC,

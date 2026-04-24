@@ -1,7 +1,7 @@
 import { Connection, PublicKey } from '@solana/web3.js';
 import { MANIFEST_PROGRAM_ID, MARKET_DISCRIMINATOR } from './stats_utils/constants';
-import { Market } from '@bonasa-tech/manifest-sdk';
-import { getVaultAddress } from '@bonasa-tech/manifest-sdk/utils';
+import { Market } from '../client/ts/src';
+import { getVaultAddress } from '../client/ts/src/utils';
 
 const STATS_SERVER_URL = 'https://mfx-stats-mainnet.fly.dev';
 const PRIMARY_RPC_URL = 'https://rpc.shyft.to?api_key=hji2tMNbrRzaTuyn';

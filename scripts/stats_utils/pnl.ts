@@ -1,4 +1,4 @@
-import { Market } from '@bonasa-tech/manifest-sdk';
+import { Market } from '../../client/ts/src';
 import { SOL_MINT, SOL_USDC_MARKET, STABLECOIN_MINTS } from './constants';
 
 export interface TraderPnLDetails {

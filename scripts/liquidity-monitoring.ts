@@ -1,7 +1,7 @@
 import 'dotenv/config';
 
 import { Connection, GetProgramAccountsResponse } from '@solana/web3.js';
-import { ManifestClient, Market } from '@bonasa-tech/manifest-sdk';
+import { ManifestClient, Market } from '../client/ts/src';
 import { Pool } from 'pg';
 import * as promClient from 'prom-client';
 import express from 'express';
