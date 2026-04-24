@@ -405,7 +405,7 @@ export class ManifestStatsServer {
         return;
       }
 
-      // Update price and volume
+      // Update price and volume (skip volume for self-trades where maker === taker)
       this.lastPrice.set(
         { market },
         priceAtoms *
@@ -413,19 +413,23 @@ export class ManifestStatsServer {
       );
 
       this.lastPriceByMarket.set(market, priceAtoms);
-      this.baseVolumeAtomsSinceLastCheckpoint.set(
-        market,
-        (this.baseVolumeAtomsSinceLastCheckpoint.get(market) || 0) +
-          Number(baseAtoms),
-      );
-      this.quoteVolumeAtomsSinceLastCheckpoint.set(
-        market,
-        (this.quoteVolumeAtomsSinceLastCheckpoint.get(market) || 0) +
-          Number(quoteAtoms),
-      );
 
-      // Process notional volumes and positions
-      await this.updateTradingMetrics(fill, marketObject, actualTaker);
+      // Skip volume counting for self-trades (wash trades)
+      if (maker !== actualTaker) {
+        this.baseVolumeAtomsSinceLastCheckpoint.set(
+          market,
+          (this.baseVolumeAtomsSinceLastCheckpoint.get(market) || 0) +
+            Number(baseAtoms),
+        );
+        this.quoteVolumeAtomsSinceLastCheckpoint.set(
+          market,
+          (this.quoteVolumeAtomsSinceLastCheckpoint.get(market) || 0) +
+            Number(quoteAtoms),
+        );
+
+        // Process notional volumes and positions
+        await this.updateTradingMetrics(fill, marketObject, actualTaker);
+      }
     } catch (error) {
       console.error(
         'Error in background fill processing:',
