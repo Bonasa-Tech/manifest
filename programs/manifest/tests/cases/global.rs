@@ -1862,3 +1862,96 @@ async fn global_match_multiple_levels_with_unbacked() -> anyhow::Result<()> {
 
     Ok(())
 }
+
+/// Test that global creation succeeds when the global vault address PDA has been
+/// "dusted" with SOL before initialization. This verifies the recovery mechanism
+/// that transfers any existing lamports from the vault address back to the payer
+/// before creating the token account. Tests both regular SPL token and Token-2022.
+#[tokio::test]
+async fn global_create_with_dusted_vault_address() -> anyhow::Result<()> {
+    use manifest::validation::{get_global_address, get_global_vault_address};
+    use solana_sdk::system_instruction::transfer;
+
+    let test_fixture: TestFixture = TestFixture::new().await;
+    let payer: Pubkey = test_fixture.payer();
+    let payer_keypair: Keypair = test_fixture.payer_keypair().insecure_clone();
+
+    {
+        // Create a new mint for this test
+        let mint_fixture: MintFixture =
+            MintFixture::new(Rc::clone(&test_fixture.context), Some(6)).await;
+
+        // Get the global vault PDA address
+        let (global_vault_key, _) = get_global_vault_address(&mint_fixture.key);
+
+        // "Dust" the global vault address with SOL before it's initialized
+        let dust_amount: u64 = 5_000_000; // 0.005 SOL
+        send_tx_with_retry(
+            Rc::clone(&test_fixture.context),
+            &[transfer(&payer, &global_vault_key, dust_amount)],
+            Some(&payer),
+            &[&payer_keypair],
+        )
+        .await?;
+
+        // Verify the dust landed at the global vault address
+        let vault_account_before = test_fixture
+            .context
+            .borrow_mut()
+            .banks_client
+            .get_account(global_vault_key)
+            .await
+            .unwrap();
+        assert!(
+            vault_account_before.is_some(),
+            "Vault address should have lamports from dusting"
+        );
+        assert_eq!(
+            vault_account_before.unwrap().lamports,
+            dust_amount,
+            "Vault address should have exactly the dust amount"
+        );
+
+        // Create the global - this should succeed despite the dust
+        let mut global_fixture: GlobalFixture = GlobalFixture::new_with_token_program(
+            Rc::clone(&test_fixture.context),
+            &mint_fixture.key,
+            &spl_token::id(),
+        )
+        .await;
+
+        // Verify the global was created successfully
+        global_fixture.reload().await;
+        assert_eq!(
+            *global_fixture.global.fixed.get_mint(),
+            mint_fixture.key,
+            "Global should be initialized with correct mint"
+        );
+
+        // Verify the vault is now a token account owned by the token program
+        let vault_account_after = test_fixture
+            .context
+            .borrow_mut()
+            .banks_client
+            .get_account(global_vault_key)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            vault_account_after.owner,
+            spl_token::id(),
+            "Vault should be owned by SPL token program"
+        );
+
+        // Verify the global can be used normally
+        send_tx_with_retry(
+            Rc::clone(&test_fixture.context),
+            &[global_add_trader_instruction(&global_fixture.key, &payer)],
+            Some(&payer),
+            &[&payer_keypair],
+        )
+        .await?;
+    }
+
+    Ok(())
+}

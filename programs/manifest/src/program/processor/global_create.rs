@@ -1,7 +1,7 @@
 use std::{cell::Ref, mem::size_of};
 
 use crate::{
-    global_seeds_with_bump,
+    global_seeds_with_bump, global_vault_seeds_with_bump,
     logs::{emit_stack, GlobalCreateLog},
     program::invoke,
     state::GlobalFixed,
@@ -100,6 +100,22 @@ pub(crate) fn process_global_create(
             ];
             assert_eq!(expected_global_vault_key, *global_vault.info.key);
             let rent: Rent = Rent::get()?;
+
+            if global_vault.info.lamports() > 0 {
+                solana_program::program::invoke_signed(
+                    &system_instruction::transfer(
+                        global_vault.info.key,
+                        payer.info.key,
+                        global_vault.info.lamports(),
+                    ),
+                    &[
+                        payer.info.clone(),
+                        global_vault.info.clone(),
+                        system_program.info.clone(),
+                    ],
+                    global_vault_seeds_with_bump!(global_mint.info.key, global_vault_bump),
+                )?;
+            }
 
             if is_mint_22 {
                 let mint_data: Ref<'_, &mut [u8]> = global_mint.info.data.borrow();
