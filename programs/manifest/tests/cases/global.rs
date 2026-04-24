@@ -1955,3 +1955,152 @@ async fn global_create_with_dusted_vault_address() -> anyhow::Result<()> {
 
     Ok(())
 }
+
+/// Test that global eviction fails when transfer fees reduce the deposited amount
+/// below the evictee's balance. This verifies the fix that checks the actual deposited
+/// amount rather than the requested amount.
+#[tokio::test]
+async fn global_evict_fails_with_transfer_fee() -> anyhow::Result<()> {
+    let test_fixture: TestFixture = TestFixture::new().await;
+
+    let payer: Pubkey = test_fixture.payer();
+    let payer_keypair: Keypair = test_fixture.payer_keypair().insecure_clone();
+
+    // Create a Token-2022 mint with 20% transfer fee (2000 basis points)
+    // This high fee will cause the actual deposit to be less than expected
+    let transfer_fee_bps: u16 = 2000; // 20%
+    let mut mint_fixture: MintFixture = MintFixture::new_with_transfer_fee(
+        Rc::clone(&test_fixture.context),
+        9, // decimals
+        transfer_fee_bps,
+    )
+    .await;
+
+    let mut global_fixture: GlobalFixture = GlobalFixture::new_with_token_program(
+        Rc::clone(&test_fixture.context),
+        &mint_fixture.key,
+        &spl_token_2022::id(),
+    )
+    .await;
+
+    // Fill up the global to capacity - 1
+    for _ in 0..MAX_GLOBAL_SEATS - 1 {
+        let new_keypair: Keypair = Keypair::new();
+        let token_account_keypair: Keypair = Keypair::new();
+        let token_account_fixture: TokenAccountFixture =
+            TokenAccountFixture::new_with_keypair_2022_transfer_fee(
+                Rc::clone(&test_fixture.context),
+                &mint_fixture.key,
+                &new_keypair.pubkey(),
+                &token_account_keypair,
+            )
+            .await;
+        mint_fixture
+            .mint_to_2022(&token_account_fixture.key, 10_000_000)
+            .await;
+
+        let _ = send_tx_with_retry(
+            Rc::clone(&test_fixture.context),
+            &[
+                transfer(&payer, &new_keypair.pubkey(), 10_000_000),
+                global_add_trader_instruction(&global_fixture.key, &new_keypair.pubkey()),
+                global_deposit_instruction(
+                    &global_fixture.mint_key,
+                    &new_keypair.pubkey(),
+                    &token_account_fixture.key,
+                    &spl_token_2022::id(),
+                    10_000_000,
+                ),
+            ],
+            Some(&payer_keypair.pubkey()),
+            &[&payer_keypair, &new_keypair],
+        )
+        .await;
+    }
+
+    // Add the evictee (payer) with 1000 tokens (after 20% fee, they get 800)
+    let evictee_account_keypair: Keypair = Keypair::new();
+    let evictee_account_fixture: TokenAccountFixture =
+        TokenAccountFixture::new_with_keypair_2022_transfer_fee(
+            Rc::clone(&test_fixture.context),
+            &mint_fixture.key,
+            &payer,
+            &evictee_account_keypair,
+        )
+        .await;
+    mint_fixture
+        .mint_to_2022(&evictee_account_fixture.key, 1_000)
+        .await;
+    send_tx_with_retry(
+        Rc::clone(&test_fixture.context),
+        &[
+            global_add_trader_instruction(&global_fixture.key, &payer),
+            global_deposit_instruction(
+                &global_fixture.mint_key,
+                &payer,
+                &evictee_account_fixture.key,
+                &spl_token_2022::id(),
+                1_000,
+            ),
+        ],
+        Some(&payer_keypair.pubkey()),
+        &[&payer_keypair],
+    )
+    .await?;
+
+    // Evictee has 800 tokens after 20% fee on 1000
+    global_fixture.reload().await;
+    let evictee_balance = global_fixture.global.get_balance_atoms(&payer);
+    assert_eq!(
+        evictee_balance.as_u64(),
+        800,
+        "Evictee should have 800 after 20% fee"
+    );
+
+    // Evictor tries to deposit 1000 tokens, which would be valid without fees
+    // But with 20% fee, they only deposit 800 which is NOT greater than evictee's 800
+    let evictor_account_keypair: Keypair = Keypair::new();
+    let evictor_account_fixture: TokenAccountFixture =
+        TokenAccountFixture::new_with_keypair_2022_transfer_fee(
+            Rc::clone(&test_fixture.context),
+            &mint_fixture.key,
+            &test_fixture.second_keypair.pubkey(),
+            &evictor_account_keypair,
+        )
+        .await;
+    mint_fixture
+        .mint_to_2022(&evictor_account_fixture.key, 1_000)
+        .await;
+
+    // This eviction should FAIL because 1000 * 0.8 = 800 is NOT > 800
+    let result = send_tx_with_retry(
+        Rc::clone(&test_fixture.context),
+        &[global_evict_instruction(
+            &global_fixture.mint_key,
+            &test_fixture.second_keypair.pubkey(),
+            &evictor_account_fixture.key,
+            &evictee_account_fixture.key,
+            &spl_token_2022::id(),
+            1_000,
+        )],
+        Some(&test_fixture.second_keypair.pubkey()),
+        &[&test_fixture.second_keypair.insecure_clone()],
+    )
+    .await;
+
+    assert!(
+        result.is_err(),
+        "Eviction should fail when transfer fee makes deposited amount not greater than evictee balance"
+    );
+
+    // Verify evictee still has their balance
+    global_fixture.reload().await;
+    let evictee_balance_after = global_fixture.global.get_balance_atoms(&payer);
+    assert_eq!(
+        evictee_balance_after.as_u64(),
+        800,
+        "Evictee should still have 800 tokens after failed eviction"
+    );
+
+    Ok(())
+}

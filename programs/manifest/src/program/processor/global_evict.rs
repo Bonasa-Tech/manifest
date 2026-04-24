@@ -61,12 +61,6 @@ pub(crate) fn process_global_evict(
             crate::program::ManifestError::InvalidEvict,
             "Eviction is only allowed when global is at capacity",
         )?;
-        require!(
-            evictee_balance < GlobalAtoms::new(amount_atoms),
-            crate::program::ManifestError::InvalidEvict,
-            "Evictee balance {} is more than evictor wants to deposit",
-            evictee_balance.as_u64(),
-        )?;
         global_dynamic_account.verify_min_balance(&evictee_token.get_owner())?;
     }
 
@@ -187,6 +181,17 @@ pub(crate) fn process_global_evict(
         let deposited_amount_atoms: u64 = after_vault_balance_atoms
             .checked_sub(before_vault_balance_atoms)
             .unwrap();
+
+        // Verify that the actual deposited amount is greater than the evictee balance.
+        // This check is done after the deposit to account for token22 transfer fees.
+        require!(
+            evictee_balance < GlobalAtoms::new(deposited_amount_atoms),
+            crate::program::ManifestError::InvalidEvict,
+            "Evictee balance {} is more than evictor deposited {}",
+            evictee_balance.as_u64(),
+            deposited_amount_atoms,
+        )?;
+
         global_dynamic_account
             .deposit_global(payer.key, GlobalAtoms::new(deposited_amount_atoms))?;
 
