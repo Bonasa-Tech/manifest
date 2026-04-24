@@ -1,4 +1,4 @@
-import { ManifestClient } from '@bonasa-tech/manifest-sdk';
+import { ManifestClient } from '../client/ts/src';
 import {
   AddressLookupTableAccount,
   AddressLookupTableProgram,
