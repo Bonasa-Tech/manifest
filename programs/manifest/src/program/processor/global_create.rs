@@ -1,7 +1,7 @@
 use std::{cell::Ref, mem::size_of};
 
 use crate::{
-    global_vault_seeds_with_bump,
+    global_seeds_with_bump,
     logs::{emit_stack, GlobalCreateLog},
     program::invoke,
     state::GlobalFixed,
@@ -58,7 +58,7 @@ pub(crate) fn process_global_create(
                         global.info.clone(),
                         system_program.info.clone(),
                     ],
-                    global_vault_seeds_with_bump!(global_mint.info.key, global_bump),
+                    global_seeds_with_bump!(global_mint.info.key, global_bump),
                 )?;
             }
             create_account(
