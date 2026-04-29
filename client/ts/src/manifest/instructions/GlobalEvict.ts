@@ -58,6 +58,7 @@ export type GlobalEvictInstructionAccounts = {
   traderToken: web3.PublicKey;
   evicteeToken: web3.PublicKey;
   tokenProgram?: web3.PublicKey;
+  systemProgram?: web3.PublicKey;
 };
 
 export const globalEvictInstructionDiscriminator = 11;
@@ -114,6 +115,11 @@ export function createGlobalEvictInstruction(
     },
     {
       pubkey: accounts.tokenProgram ?? splToken.TOKEN_PROGRAM_ID,
+      isWritable: false,
+      isSigner: false,
+    },
+    {
+      pubkey: accounts.systemProgram ?? web3.SystemProgram.programId,
       isWritable: false,
       isSigner: false,
     },

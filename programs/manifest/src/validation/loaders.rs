@@ -806,6 +806,7 @@ pub(crate) struct GlobalEvictContext<'a, 'info> {
     pub trader_token: TokenAccountInfo<'a, 'info>,
     pub evictee_token: TokenAccountInfo<'a, 'info>,
     pub token_program: TokenProgram<'a, 'info>,
+    pub _system_program: Program<'a, 'info>,
 }
 
 impl<'a, 'info> GlobalEvictContext<'a, 'info> {
@@ -846,6 +847,8 @@ impl<'a, 'info> GlobalEvictContext<'a, 'info> {
         let evictee_token: TokenAccountInfo =
             TokenAccountInfo::new(token_account_info, mint.info.key)?;
         let token_program: TokenProgram = TokenProgram::new(next_account_info(account_iter)?)?;
+        let _system_program: Program =
+            Program::new(next_account_info(account_iter)?, &system_program::id())?;
         Ok(Self {
             payer,
             global,
@@ -854,6 +857,7 @@ impl<'a, 'info> GlobalEvictContext<'a, 'info> {
             trader_token,
             evictee_token,
             token_program,
+            _system_program,
         })
     }
 }

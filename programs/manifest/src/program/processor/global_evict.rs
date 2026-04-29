@@ -1,7 +1,11 @@
 use std::cell::RefMut;
 
 use borsh::{BorshDeserialize, BorshSerialize};
-use solana_program::{account_info::AccountInfo, entrypoint::ProgramResult, pubkey::Pubkey};
+use solana_program::{
+    account_info::AccountInfo, entrypoint::ProgramResult, program_pack::Pack, pubkey::Pubkey,
+    rent::Rent, sysvar::Sysvar,
+};
+use spl_token::state::Account;
 
 use crate::{
     global_vault_seeds_with_bump,
@@ -9,7 +13,7 @@ use crate::{
     program::get_mut_dynamic_account,
     quantities::{GlobalAtoms, WrapperU64},
     require,
-    state::GlobalRefMut,
+    state::{GlobalRefMut, GAS_DEPOSIT_LAMPORTS},
     validation::{get_global_vault_address, loaders::GlobalEvictContext},
 };
 use solana_program::program::invoke_signed;
@@ -44,7 +48,29 @@ pub(crate) fn process_global_evict(
         trader_token,
         evictee_token,
         token_program,
+        ..
     } = global_evict_context;
+
+    {
+        // Charge a seat fee + eviction fee.
+        // This is necessary to prevent an attack where an attacker would claim a
+        // global seat and then delete their token account. In order for someone
+        // else to get that seat, they would need to init a token account for the
+        // attacker, giving them rent.
+        // In addition backed orders might become unbacked by eviction. To prevent
+        // someone evicting another seat for the sole purpose of claiming the
+        // unbacked order penalty it's advised to not place more than 10000 global
+        // orders using the same trader identity.
+        let rent: Rent = Rent::get()?;
+        invoke(
+            &solana_program::system_instruction::transfer(
+                &payer.key,
+                &global.key,
+                rent.minimum_balance(Account::LEN as usize) * 2 + 10000 * GAS_DEPOSIT_LAMPORTS,
+            ),
+            &[payer.info.clone(), global.info.clone()],
+        )?;
+    }
 
     // 1. Withdraw for the evictee
     // 2. Evict the seat on the global account and claim
