@@ -1,6 +1,6 @@
 {
   "name": "@bonasa-tech/manifest-sdk",
-  "version": "0.2.43",
+  "version": "0.2.44",
   "files": [
     "dist/",
     "README.md",
