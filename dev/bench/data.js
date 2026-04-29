@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1777047818319,
+  "lastUpdate": 1777493628452,
   "repoUrl": "https://github.com/Bonasa-Tech/manifest",
   "entries": {
     "CU Benchmark": [
@@ -11499,6 +11499,72 @@ window.BENCHMARK_DATA = {
           {
             "name": "MFX_50",
             "value": 3278,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_95",
+            "value": 12260,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_99",
+            "value": 13180,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "mail@maximilianschneider.net",
+            "name": "Maximilian Schneider",
+            "username": "mschneider"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "21e1fa29b5b74931e5ab6cb962dcacae7e9a9381",
+          "message": "charge seat fee also for global eviction (#601)\n\n* charge sat fee also for global eviction\n* add system program to global evict\n* increase eviction fee to account for unbacked orders\n* update ts client\n* bump npm version",
+          "timestamp": "2026-04-29T22:00:37+02:00",
+          "tree_id": "5a6d32f323275bd344917cdfe49d96015a5875fe",
+          "url": "https://github.com/Bonasa-Tech/manifest/commit/21e1fa29b5b74931e5ab6cb962dcacae7e9a9381"
+        },
+        "date": 1777493626565,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "PHX_50",
+            "value": 6897,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "PHX_95",
+            "value": 13208,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "PHX_99",
+            "value": 13902,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_50",
+            "value": 3277,
             "range": "",
             "unit": "CU",
             "extra": ""
