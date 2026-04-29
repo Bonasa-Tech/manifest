@@ -1,7 +1,11 @@
 use std::cell::RefMut;
 
 use borsh::{BorshDeserialize, BorshSerialize};
-use solana_program::{account_info::AccountInfo, entrypoint::ProgramResult, pubkey::Pubkey};
+use solana_program::{
+    account_info::AccountInfo, entrypoint::ProgramResult, program_pack::Pack, pubkey::Pubkey,
+    rent::Rent, sysvar::Sysvar,
+};
+use spl_token::state::Account;
 
 use crate::{
     global_vault_seeds_with_bump,
@@ -45,6 +49,23 @@ pub(crate) fn process_global_evict(
         evictee_token,
         token_program,
     } = global_evict_context;
+
+    {
+        // Charge a seat fee. This is stranded similar to forfeited global gas prepayments.
+        // This is necessary to prevent an attack where an attacker would claim a
+        // global seat and then delete their token account. In order for someone
+        // else to get that seat, they would need to init a token account for the
+        // attacker, giving them rent.
+        let rent: Rent = Rent::get()?;
+        invoke(
+            &solana_program::system_instruction::transfer(
+                &payer.key,
+                &global.key,
+                rent.minimum_balance(Account::LEN as usize) * 2,
+            ),
+            &[payer.info.clone(), global.info.clone()],
+        )?;
+    }
 
     // 1. Withdraw for the evictee
     // 2. Evict the seat on the global account and claim
