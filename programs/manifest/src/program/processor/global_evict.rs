@@ -13,7 +13,7 @@ use crate::{
     program::get_mut_dynamic_account,
     quantities::{GlobalAtoms, WrapperU64},
     require,
-    state::GlobalRefMut,
+    state::{GlobalRefMut, GAS_DEPOSIT_LAMPORTS},
     validation::{get_global_vault_address, loaders::GlobalEvictContext},
 };
 use solana_program::program::invoke_signed;
