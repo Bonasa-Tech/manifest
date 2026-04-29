@@ -959,6 +959,14 @@
           "docs": [
             "Token program(22)"
           ]
+        },
+        {
+          "name": "systemProgram",
+          "isMut": false,
+          "isSigner": false,
+          "docs": [
+            "System program"
+          ]
         }
       ],
       "args": [
