@@ -59,8 +59,8 @@ pub(crate) fn process_global_evict(
         // attacker, giving them rent.
         // In addition backed orders might become unbacked by eviction. To prevent
         // someone evicting another seat for the sole purpose of claiming the
-        // unbacked order penalty it's advised to not place more than 10000 orders
-        // using the same trader identity close to mid.
+        // unbacked order penalty it's advised to not place more than 10000 global
+        // orders using the same trader identity.
         let rent: Rent = Rent::get()?;
         invoke(
             &solana_program::system_instruction::transfer(
