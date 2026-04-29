@@ -48,6 +48,7 @@ pub(crate) fn process_global_evict(
         trader_token,
         evictee_token,
         token_program,
+        ..
     } = global_evict_context;
 
     {
