@@ -1,5 +1,6 @@
 use crate::{
     program::{global_deposit::GlobalDepositParams, ManifestInstruction},
+    state::GAS_DEPOSIT_LAMPORTS,
     validation::{get_global_address, get_global_vault_address},
 };
 use borsh::BorshSerialize;

@@ -25,7 +25,7 @@ pub(crate) fn process_global_add_trader(
     let GlobalAddTraderContext { payer, global, .. } = global_add_trader_context;
 
     {
-        // Charge a seat fee. This is stranded similar to forfeited global gas prepayments.
+        // Charge a seat fee.
         // This is necessary to prevent an attack where an attacker would claim a
         // global seat and then delete their token account. In order for someone
         // else to get that seat, they would need to init a token account for the

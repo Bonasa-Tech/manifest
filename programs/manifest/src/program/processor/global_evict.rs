@@ -52,17 +52,21 @@ pub(crate) fn process_global_evict(
     } = global_evict_context;
 
     {
-        // Charge a seat fee. This is stranded similar to forfeited global gas prepayments.
+        // Charge a seat fee.
         // This is necessary to prevent an attack where an attacker would claim a
         // global seat and then delete their token account. In order for someone
         // else to get that seat, they would need to init a token account for the
         // attacker, giving them rent.
+        // In addition backed orders might become unbacked by eviction. To prevent
+        // someone evicting another seat for the sole purpose of claiming the
+        // unbacked order penalty it's advised to not place more than 10000 orders
+        // using the same trader identity close to mid.
         let rent: Rent = Rent::get()?;
         invoke(
             &solana_program::system_instruction::transfer(
                 &payer.key,
                 &global.key,
-                rent.minimum_balance(Account::LEN as usize) * 2,
+                rent.minimum_balance(Account::LEN as usize) * 2 + 10000 * GAS_DEPOSIT_LAMPORTS,
             ),
             &[payer.info.clone(), global.info.clone()],
         )?;
