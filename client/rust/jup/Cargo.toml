@@ -3,7 +3,7 @@ name = "manifest-jupiter"
 version = "0.3.0"
 edition = "2021"
 repository = "https://github.com/Bonasa-Tech/manifest"
-authors = ["Britt Cyr <britt@cks.systems>"]
+authors = ["Britt Cyr <britt@manifest.trade>"]
 description = "Jupiter AMM interface for Manifest exchange"
 license-file = "LICENSE"
 
@@ -12,8 +12,8 @@ test = []
 
 [dependencies]
 anyhow = { workspace = true }
-manifest-dex = { path = "../../programs/manifest" }
-hypertree = { path = "../../lib" }
+manifest-dex = { path = "../../../programs/manifest" }
+hypertree = { path = "../../../lib" }
 jupiter-amm-interface = "0.5.1"
 solana-sdk = { workspace = true }
 solana-program = { workspace = true }

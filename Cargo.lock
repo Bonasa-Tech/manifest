@@ -2265,7 +2265,7 @@ dependencies = [
 
 [[package]]
 name = "hypertree"
-version = "1.1.0"
+version = "1.2.0"
 dependencies = [
  "bytemuck",
  "calltrace",
@@ -2783,6 +2783,22 @@ dependencies = [
  "serde_json",
  "syn 2.0.104",
  "toml_edit 0.22.27",
+]
+
+[[package]]
+name = "manifest-client"
+version = "0.1.0"
+dependencies = [
+ "hypertree",
+ "manifest-dex",
+ "solana-instruction",
+ "solana-program",
+ "solana-program-test",
+ "solana-pubkey",
+ "solana-sdk",
+ "spl-token",
+ "spl-token-2022 9.0.0",
+ "tokio",
 ]
 
 [[package]]
