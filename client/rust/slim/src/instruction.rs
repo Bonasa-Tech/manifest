@@ -1,9 +1,9 @@
 //! Instruction builders for Manifest operations.
 
 use crate::constants::DataIndex;
+use crate::constants::OrderType;
 use crate::constants::MANIFEST_PROGRAM_ID;
 use crate::constants::NO_EXPIRATION_LAST_VALID_SLOT;
-use crate::constants::OrderType;
 use crate::constants::SYSTEM_PROGRAM_ID;
 use crate::constants::TOKEN_PROGRAM_ID;
 use solana_instruction::AccountMeta;

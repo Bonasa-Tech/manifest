@@ -1,10 +1,10 @@
 //! Market state parsing for Manifest.
 
+use crate::constants::OrderType;
 use crate::constants::CLAIMED_SEAT_SIZE;
 use crate::constants::MARKET_FIXED_DISCRIMINANT;
 use crate::constants::MARKET_FIXED_SIZE;
 use crate::constants::NO_EXPIRATION_LAST_VALID_SLOT;
-use crate::constants::OrderType;
 use crate::constants::RESTING_ORDER_SIZE;
 use hypertree::DataIndex;
 use hypertree::NIL;
@@ -148,8 +148,7 @@ impl RestingOrder {
 
     /// Check if the order is expired.
     pub fn is_expired(&self, current_slot: u32) -> bool {
-        self.last_valid_slot != NO_EXPIRATION_LAST_VALID_SLOT
-            && self.last_valid_slot < current_slot
+        self.last_valid_slot != NO_EXPIRATION_LAST_VALID_SLOT && self.last_valid_slot < current_slot
     }
 
     /// Get the price as a u128.
@@ -232,7 +231,10 @@ impl<'a> Market<'a> {
             return None;
         }
         // Skip the RBNode header
-        let order_ptr = self.dynamic.as_ptr().wrapping_add(offset + RBTREE_OVERHEAD_BYTES);
+        let order_ptr = self
+            .dynamic
+            .as_ptr()
+            .wrapping_add(offset + RBTREE_OVERHEAD_BYTES);
         Some(unsafe { &*(order_ptr as *const RestingOrder) })
     }
 
@@ -246,7 +248,10 @@ impl<'a> Market<'a> {
             return None;
         }
         // Skip the RBNode header
-        let seat_ptr = self.dynamic.as_ptr().wrapping_add(offset + RBTREE_OVERHEAD_BYTES);
+        let seat_ptr = self
+            .dynamic
+            .as_ptr()
+            .wrapping_add(offset + RBTREE_OVERHEAD_BYTES);
         Some(unsafe { &*(seat_ptr as *const ClaimedSeat) })
     }
 

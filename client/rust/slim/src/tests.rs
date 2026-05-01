@@ -13,17 +13,17 @@ mod integration_tests {
     use crate::withdraw_instruction;
     use crate::BatchUpdateParams;
     use crate::DepositParams;
+    use crate::Market;
     use crate::PlaceOrderParams;
     use crate::SwapParams;
     use crate::WithdrawParams;
-    use crate::Market;
     use crate::MARKET_FIXED_SIZE;
     use crate::TOKEN_2022_PROGRAM_ID;
     use crate::TOKEN_PROGRAM_ID;
     use solana_pubkey::Pubkey;
 
-    use solana_program::system_instruction;
     use solana_program::program_pack::Pack;
+    use solana_program::system_instruction;
     use solana_program_test::{processor, ProgramTest};
     use solana_sdk::{
         instruction::Instruction as SolanaInstruction,
@@ -216,7 +216,10 @@ mod integration_tests {
         );
 
         let tx = Transaction::new_signed_with_payer(
-            &[create_market_account_ix, to_solana_instruction(&create_market_ix)],
+            &[
+                create_market_account_ix,
+                to_solana_instruction(&create_market_ix),
+            ],
             Some(&payer.pubkey()),
             &[&payer, &market],
             recent_blockhash,
@@ -232,10 +235,7 @@ mod integration_tests {
             .unwrap();
 
         let parsed_market = Market::try_from_bytes(&market_account.data).unwrap();
-        assert_eq!(
-            to_solana_pubkey(&parsed_market.get_base_mint()),
-            base_mint
-        );
+        assert_eq!(to_solana_pubkey(&parsed_market.get_base_mint()), base_mint);
         assert_eq!(
             to_solana_pubkey(&parsed_market.get_quote_mint()),
             quote_mint
@@ -298,7 +298,10 @@ mod integration_tests {
         );
 
         let tx = Transaction::new_signed_with_payer(
-            &[create_market_account_ix, to_solana_instruction(&create_market_ix)],
+            &[
+                create_market_account_ix,
+                to_solana_instruction(&create_market_ix),
+            ],
             Some(&payer.pubkey()),
             &[&payer, &market],
             recent_blockhash,
@@ -435,7 +438,10 @@ mod integration_tests {
         );
 
         let tx = Transaction::new_signed_with_payer(
-            &[create_market_account_ix, to_solana_instruction(&create_market_ix)],
+            &[
+                create_market_account_ix,
+                to_solana_instruction(&create_market_ix),
+            ],
             Some(&payer.pubkey()),
             &[&payer, &market],
             recent_blockhash,
@@ -489,13 +495,14 @@ mod integration_tests {
         // Place a bid order using batch_update
         // Bid for 0.001 base tokens at price 1.0 (mantissa=1, exp=0)
         // Cost = 0.001 * 1.0 = 0.001 quote tokens = 1_000 quote atoms
-        let batch_update_params: BatchUpdateParams = BatchUpdateParams::new().add_order(PlaceOrderParams::new(
-            1_000_000,  // 0.001 base tokens (9 decimals)
-            1,          // price mantissa
-            0,          // price exponent
-            true,       // is_bid
-            crate::OrderType::Limit,
-        ));
+        let batch_update_params: BatchUpdateParams =
+            BatchUpdateParams::new().add_order(PlaceOrderParams::new(
+                1_000_000, // 0.001 base tokens (9 decimals)
+                1,         // price mantissa
+                0,         // price exponent
+                true,      // is_bid
+                crate::OrderType::Limit,
+            ));
 
         let batch_update_ix = batch_update_instruction(
             from_solana_pubkey(&payer.pubkey()),
@@ -597,7 +604,10 @@ mod integration_tests {
         );
 
         let tx = Transaction::new_signed_with_payer(
-            &[create_market_account_ix, to_solana_instruction(&create_market_ix)],
+            &[
+                create_market_account_ix,
+                to_solana_instruction(&create_market_ix),
+            ],
             Some(&payer.pubkey()),
             &[&payer, &market],
             recent_blockhash,
@@ -679,7 +689,8 @@ mod integration_tests {
         let taker = Keypair::new();
 
         // Fund taker
-        let fund_taker_ix = system_instruction::transfer(&payer.pubkey(), &taker.pubkey(), 1_000_000_000);
+        let fund_taker_ix =
+            system_instruction::transfer(&payer.pubkey(), &taker.pubkey(), 1_000_000_000);
 
         let tx = Transaction::new_signed_with_payer(
             &[fund_taker_ix],
