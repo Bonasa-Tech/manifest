@@ -1,0 +1,25 @@
+[package]
+name = "manifest-client"
+version = "0.1.0"
+edition = "2021"
+repository = "https://github.com/Bonasa-Tech/manifest"
+authors = ["Britt Cyr <britt@manifest.trade>"]
+description = "Minimal dependency Manifest client for instruction building and market parsing"
+license-file = "LICENSE"
+
+[features]
+default = []
+
+[dependencies]
+solana-pubkey = { version = "2", features = ["curve25519"] }
+solana-instruction = { workspace = true }
+hypertree = { path = "../../../lib" }
+
+[dev-dependencies]
+solana-program-test = { workspace = true }
+solana-sdk = { workspace = true }
+solana-program = { workspace = true }
+manifest-dex = { path = "../../../programs/manifest" }
+spl-token = { workspace = true }
+spl-token-2022 = { workspace = true }
+tokio = { workspace = true, features = ["full"] }
