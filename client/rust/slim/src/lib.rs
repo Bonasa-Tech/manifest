@@ -4,6 +4,7 @@
 //! exchange with minimal dependencies.
 
 mod constants;
+mod events;
 mod instruction;
 mod state;
 
@@ -50,6 +51,45 @@ pub use state::MarketFixed;
 pub use state::OrderIterator;
 pub use state::RBNodeHeader;
 pub use state::RestingOrder;
+
+// Event types
+pub use events::BaseAtoms;
+pub use events::GlobalAtoms;
+pub use events::PodBool;
+pub use events::QuoteAtoms;
+pub use events::QuoteAtomsPerBaseAtom;
+// Event discriminants
+pub use events::CANCEL_ORDER_LOG_DISCRIMINANT;
+pub use events::CLAIM_SEAT_LOG_DISCRIMINANT;
+pub use events::CREATE_MARKET_LOG_DISCRIMINANT;
+pub use events::DEPOSIT_LOG_DISCRIMINANT;
+pub use events::FILL_LOG_DISCRIMINANT;
+pub use events::GLOBAL_ADD_TRADER_LOG_DISCRIMINANT;
+pub use events::GLOBAL_CLAIM_SEAT_LOG_DISCRIMINANT;
+pub use events::GLOBAL_CLEANUP_LOG_DISCRIMINANT;
+pub use events::GLOBAL_CREATE_LOG_DISCRIMINANT;
+pub use events::GLOBAL_DEPOSIT_LOG_DISCRIMINANT;
+pub use events::GLOBAL_EVICT_LOG_DISCRIMINANT;
+pub use events::GLOBAL_WITHDRAW_LOG_DISCRIMINANT;
+pub use events::PLACE_ORDER_LOG_DISCRIMINANT;
+pub use events::PLACE_ORDER_LOG_V2_DISCRIMINANT;
+pub use events::WITHDRAW_LOG_DISCRIMINANT;
+// Event structs
+pub use events::CancelOrderLog;
+pub use events::ClaimSeatLog;
+pub use events::CreateMarketLog;
+pub use events::DepositLog;
+pub use events::FillLog;
+pub use events::GlobalAddTraderLog;
+pub use events::GlobalClaimSeatLog;
+pub use events::GlobalCleanupLog;
+pub use events::GlobalCreateLog;
+pub use events::GlobalDepositLog;
+pub use events::GlobalEvictLog;
+pub use events::GlobalWithdrawLog;
+pub use events::PlaceOrderLog;
+pub use events::PlaceOrderLogV2;
+pub use events::WithdrawLog;
 
 #[cfg(test)]
 mod tests;
