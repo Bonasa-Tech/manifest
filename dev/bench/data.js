@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1777493628452,
+  "lastUpdate": 1778072234100,
   "repoUrl": "https://github.com/Bonasa-Tech/manifest",
   "entries": {
     "CU Benchmark": [
@@ -11579,6 +11579,72 @@ window.BENCHMARK_DATA = {
           {
             "name": "MFX_99",
             "value": 13180,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "cyrbritt@gmail.com",
+            "name": "Britt Cyr",
+            "username": "brittcyr"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "bf68dc9921671b02b07d867c2383f019c058746a",
+          "message": "Add minimal dependency slim Rust client (#602)\n\n* Add minimal dependency slim Rust client\n\n- Move existing Jupiter AMM client to client/rust/jup subdirectory\n- Create new slim client at client/rust/slim with minimal dependencies:\n  - Only solana-pubkey, solana-instruction, and hypertree\n  - No solana-program or solana-sdk dependencies\n- Slim client provides:\n  - Instruction builders for all Manifest operations\n  - Market state parsing (orders, seats, balances)\n  - PDA derivation helpers\n- Make solana-program optional in hypertree (only needed for trace feature)\n- Bump hypertree version to 1.2.0\n- Add integration tests using solana-program-test\n\n* Update github actions\n\n* Add events",
+          "timestamp": "2026-05-06T08:44:11-04:00",
+          "tree_id": "5cfb0ad3f494a1d2f4aa79a64f8bf058d2dc6dc0",
+          "url": "https://github.com/Bonasa-Tech/manifest/commit/bf68dc9921671b02b07d867c2383f019c058746a"
+        },
+        "date": 1778072231891,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "PHX_50",
+            "value": 6897,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "PHX_95",
+            "value": 13208,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "PHX_99",
+            "value": 13902,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_50",
+            "value": 3278,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_95",
+            "value": 12250,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_99",
+            "value": 13181,
             "range": "",
             "unit": "CU",
             "extra": ""
