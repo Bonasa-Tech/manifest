@@ -205,8 +205,6 @@ export class TvlMonitor {
    * Check TVL changes and send alerts if threshold exceeded
    */
   async checkAndAlert(): Promise<void> {
-    console.log('TVL Monitor: Starting hourly TVL check...');
-
     const currentSnapshot: TvlSnapshot = await this.fetchCurrentTvl();
 
     if (this.previousSnapshot) {
@@ -218,22 +216,14 @@ export class TvlMonitor {
           currentSnapshot.tvlByMint.get(mint) ?? BigInt(0);
 
         if (previousTvl === BigInt(0)) {
-          console.log(
-            `TVL Monitor: ${symbol} - No previous TVL data, skipping comparison`,
-          );
           continue;
         }
 
         // Calculate percentage change
-        // Use Number conversion carefully for large values
         const previousNum: number = Number(previousTvl);
         const currentNum: number = Number(currentTvl);
         const percentChange: number = (currentNum - previousNum) / previousNum;
         const percentChangeAbs: number = Math.abs(percentChange);
-
-        console.log(
-          `TVL Monitor: ${symbol} - Previous: ${previousTvl}, Current: ${currentTvl}, Change: ${(percentChange * 100).toFixed(2)}%`,
-        );
 
         if (percentChangeAbs >= TVL_CHANGE_THRESHOLD) {
           const direction: string =
@@ -247,8 +237,6 @@ export class TvlMonitor {
             `Change: ${percentChange > 0 ? '+' : ''}${(percentChange * 100).toFixed(2)}%`,
           ].join('\n');
 
-          console.log(`TVL Monitor: Alert triggered for ${symbol}!`);
-
           if (this.discordWebhookUrl) {
             await sendDiscordNotification(this.discordWebhookUrl, message, {
               title: `${emoji} TVL Alert: ${symbol}`,
@@ -258,19 +246,9 @@ export class TvlMonitor {
           }
         }
       }
-    } else {
-      console.log('TVL Monitor: First run, storing initial snapshot');
-      const entries: [string, string][] = Object.entries(MONITORED_MINTS);
-      for (const [symbol, mint] of entries) {
-        const tvl: bigint = currentSnapshot.tvlByMint.get(mint) ?? BigInt(0);
-        console.log(
-          `TVL Monitor: ${symbol} - Initial TVL: ${this.formatAtoms(tvl, symbol)} ${symbol}`,
-        );
-      }
     }
 
     this.previousSnapshot = currentSnapshot;
-    console.log('TVL Monitor: Hourly check complete');
   }
 
   /**
@@ -290,19 +268,5 @@ export class TvlMonitor {
       .slice(0, 2);
 
     return `${wholeStr}.${fracStr}`;
-  }
-
-  /**
-   * Get the previous snapshot (for testing/debugging)
-   */
-  getPreviousSnapshot(): TvlSnapshot | null {
-    return this.previousSnapshot;
-  }
-
-  /**
-   * Set previous snapshot (for testing/initialization)
-   */
-  setPreviousSnapshot(snapshot: TvlSnapshot): void {
-    this.previousSnapshot = snapshot;
   }
 }
