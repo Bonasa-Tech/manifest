@@ -10,6 +10,7 @@ import promBundle from 'express-prom-bundle';
 import {
   VOLUME_CHECKPOINT_DURATION_SEC,
   DATABASE_CHECKPOINT_DURATION_SEC,
+  ONE_HOUR_SEC,
   ONE_DAY_SEC,
   PORT,
 } from './stats_utils/constants';
@@ -451,6 +452,19 @@ const run = async () => {
           await statsServer.loadWrapperCache();
         } catch (error) {
           console.error('Error refreshing wrapper cache:', error);
+          await sleep(5_000);
+        }
+      }
+    })(),
+    // Hourly volume monitoring - alerts on 25% volume changes
+    (async () => {
+      // eslint-disable-next-line no-constant-condition
+      while (true) {
+        try {
+          await sleep(ONE_HOUR_SEC * 1_000);
+          await statsServer.checkHourlyVolumeChange();
+        } catch (error) {
+          console.error('Error in hourly volume check:', error);
           await sleep(5_000);
         }
       }
