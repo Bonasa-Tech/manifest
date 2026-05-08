@@ -12,10 +12,12 @@ import {
   DATABASE_CHECKPOINT_DURATION_SEC,
   ONE_HOUR_SEC,
   ONE_DAY_SEC,
+  ONE_HOUR_SEC,
   PORT,
 } from './stats_utils/constants';
 import { CompleteFillsQueryOptions } from './stats_utils/types';
 import { ManifestStatsServer } from './stats_utils/manifestStatsServer';
+import { TvlMonitor } from './stats_utils/tvlMonitor';
 
 // Global error handlers to catch unhandled errors and log them before exit
 process.on('unhandledRejection', (reason, promise) => {
@@ -175,6 +177,13 @@ const run = async () => {
     console.error('Error initializing server:', error);
     throw error;
   }
+
+  // Initialize TVL monitor for hourly alerts
+  const { Connection } = await import('@solana/web3.js');
+  const tvlMonitor = new TvlMonitor(
+    new Connection(RPC_URL),
+    process.env.DISCORD_WEBHOOK_URL,
+  );
 
   // Set up Express routes
   const tickersHandler: RequestHandler = (_req, res) => {
@@ -456,7 +465,20 @@ const run = async () => {
         }
       }
     })(),
-    // Hourly volume monitoring - alerts on 25% volume changes
+    // Hourly TVL monitoring - alerts when TVL changes by more than 10%
+    (async () => {
+      // eslint-disable-next-line no-constant-condition
+      while (true) {
+        try {
+          await tvlMonitor.checkAndAlert();
+          await sleep(ONE_HOUR_SEC * 1_000);
+        } catch (error) {
+          console.error('Error in TVL monitoring:', error);
+          await sleep(5_000);
+        }
+      }
+    })(),
+    // Hourly volume monitoring - alerts on 25% volume changes and large fills
     (async () => {
       // eslint-disable-next-line no-constant-condition
       while (true) {
