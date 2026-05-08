@@ -1,0 +1,252 @@
+import { FillLogResult, Market } from '../../client/ts/src';
+import { sendDiscordNotification } from './utils';
+import {
+  SOL_MINT,
+  USDC_MINT,
+  USDT_MINT,
+  PYUSD_MINT,
+  STABLECOIN_MINTS,
+} from './constants';
+
+// Volume change threshold (25%)
+const VOLUME_CHANGE_THRESHOLD: number = 0.25;
+
+// Large fill threshold in USDC ($1 million)
+const LARGE_FILL_THRESHOLD_USDC: number = 1_000_000;
+
+// Type for hourly volume snapshot
+interface HourlyVolumeSnapshot {
+  timestamp: number;
+  totalVolumeUsdc: number;
+}
+
+// Type for fill value calculation result
+interface FillValueResult {
+  valueUsdc: number;
+  symbol: string;
+}
+
+export class VolumeMonitor {
+  private readonly discordWebhookUrl: string | undefined;
+  private previousHourlyVolume: HourlyVolumeSnapshot | null = null;
+  private currentHourVolumeUsdc: number = 0;
+  private currentHourStartTime: number = Date.now();
+
+  // Callback to get SOL price from stats server
+  private readonly getSolPrice: () => number;
+
+  // Callback to get market object from stats server
+  private readonly getMarket: (marketPk: string) => Market | undefined;
+
+  // Callback to get ticker symbols from stats server
+  private readonly getTicker: (marketPk: string) => [string, string] | undefined;
+
+  constructor(
+    discordWebhookUrl: string | undefined,
+    getSolPrice: () => number,
+    getMarket: (marketPk: string) => Market | undefined,
+    getTicker: (marketPk: string) => [string, string] | undefined,
+  ) {
+    this.discordWebhookUrl = discordWebhookUrl;
+    this.getSolPrice = getSolPrice;
+    this.getMarket = getMarket;
+    this.getTicker = getTicker;
+  }
+
+  /**
+   * Process a fill and check for large fill alerts.
+   * Also accumulates volume for hourly tracking.
+   */
+  async processFill(fill: FillLogResult): Promise<void> {
+    const market: Market | undefined = this.getMarket(fill.market);
+    if (!market) {
+      return;
+    }
+
+    const fillValue: FillValueResult | null = this.calculateFillValueUsdc(
+      fill,
+      market,
+    );
+    if (!fillValue) {
+      return;
+    }
+
+    // Accumulate hourly volume
+    this.currentHourVolumeUsdc += fillValue.valueUsdc;
+
+    // Check for large fill alert
+    if (fillValue.valueUsdc >= LARGE_FILL_THRESHOLD_USDC) {
+      await this.sendLargeFillAlert(fill, fillValue, market);
+    }
+  }
+
+  /**
+   * Calculate the USDC equivalent value of a fill
+   */
+  private calculateFillValueUsdc(
+    fill: FillLogResult,
+    market: Market,
+  ): FillValueResult | null {
+    const quoteMint: string = market.quoteMint().toBase58();
+    const quoteDecimals: number = market.quoteDecimals();
+    const quoteAtoms: number = Number(fill.quoteAtoms);
+    const quoteTokens: number = quoteAtoms / 10 ** quoteDecimals;
+
+    // Get ticker symbol for display
+    const ticker: [string, string] | undefined = this.getTicker(fill.market);
+    const symbol: string = ticker ? `${ticker[0]}/${ticker[1]}` : fill.market.slice(0, 8);
+
+    // If quote is a stablecoin, use 1:1 conversion
+    if (STABLECOIN_MINTS.has(quoteMint)) {
+      return { valueUsdc: quoteTokens, symbol };
+    }
+
+    // If quote is SOL, convert using SOL price
+    if (quoteMint === SOL_MINT) {
+      const solPrice: number = this.getSolPrice();
+      if (solPrice > 0) {
+        return { valueUsdc: quoteTokens * solPrice, symbol };
+      }
+    }
+
+    // Cannot determine USDC value for other quote mints
+    return null;
+  }
+
+  /**
+   * Send alert for a large fill
+   */
+  private async sendLargeFillAlert(
+    fill: FillLogResult,
+    fillValue: FillValueResult,
+    market: Market,
+  ): Promise<void> {
+    if (!this.discordWebhookUrl) {
+      return;
+    }
+
+    const formattedValue: string = this.formatUsdValue(fillValue.valueUsdc);
+    const baseAtoms: number = Number(fill.baseAtoms);
+    const baseTokens: number = baseAtoms / 10 ** market.baseDecimals();
+    const quoteAtoms: number = Number(fill.quoteAtoms);
+    const quoteTokens: number = quoteAtoms / 10 ** market.quoteDecimals();
+
+    const ticker: [string, string] | undefined = this.getTicker(fill.market);
+    const baseSymbol: string = ticker?.[0] ?? 'BASE';
+    const quoteSymbol: string = ticker?.[1] ?? 'QUOTE';
+
+    const side: string = fill.takerIsBuy ? 'BUY' : 'SELL';
+
+    const message: string = [
+      `**${side} ${this.formatNumber(baseTokens)} ${baseSymbol}**`,
+      `Quote: ${this.formatNumber(quoteTokens)} ${quoteSymbol}`,
+      `Value: ${formattedValue}`,
+      `Market: ${fillValue.symbol}`,
+      `Taker: \`${fill.taker.slice(0, 8)}...\``,
+      `Maker: \`${fill.maker.slice(0, 8)}...\``,
+    ].join('\n');
+
+    await sendDiscordNotification(this.discordWebhookUrl, message, {
+      title: '💰 Large Fill Alert',
+      color: 0xffd700, // Gold color
+      timestamp: true,
+    });
+  }
+
+  /**
+   * Check hourly volume change and send alert if threshold exceeded.
+   * Should be called every hour.
+   */
+  async checkHourlyVolumeChange(): Promise<void> {
+    const currentSnapshot: HourlyVolumeSnapshot = {
+      timestamp: Date.now(),
+      totalVolumeUsdc: this.currentHourVolumeUsdc,
+    };
+
+    if (this.previousHourlyVolume && this.previousHourlyVolume.totalVolumeUsdc > 0) {
+      const previousVolume: number = this.previousHourlyVolume.totalVolumeUsdc;
+      const currentVolume: number = currentSnapshot.totalVolumeUsdc;
+      const percentChange: number = (currentVolume - previousVolume) / previousVolume;
+      const percentChangeAbs: number = Math.abs(percentChange);
+
+      if (percentChangeAbs >= VOLUME_CHANGE_THRESHOLD) {
+        await this.sendVolumeChangeAlert(
+          previousVolume,
+          currentVolume,
+          percentChange,
+        );
+      }
+    }
+
+    // Reset for next hour
+    this.previousHourlyVolume = currentSnapshot;
+    this.currentHourVolumeUsdc = 0;
+    this.currentHourStartTime = Date.now();
+  }
+
+  /**
+   * Send alert for hourly volume change
+   */
+  private async sendVolumeChangeAlert(
+    previousVolume: number,
+    currentVolume: number,
+    percentChange: number,
+  ): Promise<void> {
+    if (!this.discordWebhookUrl) {
+      return;
+    }
+
+    const direction: string = percentChange > 0 ? 'increased' : 'decreased';
+    const emoji: string = percentChange > 0 ? '📈' : '📉';
+    const percentChangeAbs: number = Math.abs(percentChange);
+
+    const message: string = [
+      `**Hourly volume ${direction} by ${(percentChangeAbs * 100).toFixed(1)}%**`,
+      `Previous hour: ${this.formatUsdValue(previousVolume)}`,
+      `Current hour: ${this.formatUsdValue(currentVolume)}`,
+      `Change: ${percentChange > 0 ? '+' : ''}${(percentChange * 100).toFixed(1)}%`,
+    ].join('\n');
+
+    await sendDiscordNotification(this.discordWebhookUrl, message, {
+      title: `${emoji} Hourly Volume Alert`,
+      color: percentChange > 0 ? 0x00ff00 : 0xff0000,
+      timestamp: true,
+    });
+  }
+
+  /**
+   * Format USD value with appropriate suffix (K, M, B)
+   */
+  private formatUsdValue(value: number): string {
+    if (value >= 1_000_000_000) {
+      return `$${(value / 1_000_000_000).toFixed(2)}B`;
+    }
+    if (value >= 1_000_000) {
+      return `$${(value / 1_000_000).toFixed(2)}M`;
+    }
+    if (value >= 1_000) {
+      return `$${(value / 1_000).toFixed(2)}K`;
+    }
+    return `$${value.toFixed(2)}`;
+  }
+
+  /**
+   * Format number with commas
+   */
+  private formatNumber(value: number): string {
+    if (value >= 1_000_000) {
+      return `${(value / 1_000_000).toFixed(2)}M`;
+    }
+    if (value >= 1_000) {
+      return `${(value / 1_000).toFixed(2)}K`;
+    }
+    return value.toLocaleString(undefined, { maximumFractionDigits: 4 });
+  }
+
+  /**
+   * Get current hour's accumulated volume (for debugging/monitoring)
+   */
+  getCurrentHourVolume(): number {
+    return this.currentHourVolumeUsdc;
+  }
+}

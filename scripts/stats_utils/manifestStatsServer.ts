@@ -45,6 +45,7 @@ import { CompleteFillsQueryOptions, CompleteFillsQueryResult } from './types';
 import { withRetry } from './utils';
 import { WebSocketManager } from './websocketManager';
 import { parseTransactionForFills } from './backfill';
+import { VolumeMonitor } from './volumeMonitor';
 
 // Memory management constants
 const MAX_TRADERS = 50000; // Maximum number of traders to track in memory
@@ -149,6 +150,9 @@ export class ManifestStatsServer {
   // With 5-minute checkpoint intervals, 12 advances = 1 hour of accumulated data
   private readonly MIN_CHECKPOINT_ADVANCES_BEFORE_SAVE: number = 12;
 
+  // Volume monitoring for alerts
+  private volumeMonitor: VolumeMonitor;
+
   constructor(
     rpcUrl: string,
     isReadOnly: boolean,
@@ -190,6 +194,37 @@ export class ManifestStatsServer {
     if (!this.isReadOnly) {
       this.initDatabase();
     }
+
+    // Initialize volume monitor for alerts
+    this.volumeMonitor = new VolumeMonitor(
+      this.discordWebhookUrl,
+      () => this.getSolPrice(),
+      (marketPk: string) => this.markets.get(marketPk),
+      (marketPk: string) => this.tickers.get(marketPk),
+    );
+  }
+
+  /**
+   * Get SOL price in USDC from the SOL/USDC market
+   */
+  private getSolPrice(): number {
+    const solPriceAtoms: number | undefined =
+      this.lastPriceByMarket.get(SOL_USDC_MARKET);
+    const solUsdcMarket: Market | undefined = this.markets.get(SOL_USDC_MARKET);
+    if (solPriceAtoms && solUsdcMarket) {
+      return (
+        solPriceAtoms *
+        10 ** (solUsdcMarket.baseDecimals() - solUsdcMarket.quoteDecimals())
+      );
+    }
+    return 0;
+  }
+
+  /**
+   * Check hourly volume change - should be called every hour
+   */
+  async checkHourlyVolumeChange(): Promise<void> {
+    await this.volumeMonitor.checkHourlyVolumeChange();
   }
 
   private initTraderPositionTracking(trader: string): void {
@@ -429,6 +464,9 @@ export class ManifestStatsServer {
 
         // Process notional volumes and positions
         await this.updateTradingMetrics(fill, marketObject, actualTaker);
+
+        // Process fill for volume monitoring and large fill alerts
+        await this.volumeMonitor.processFill(fill);
       }
     } catch (error) {
       console.error(
