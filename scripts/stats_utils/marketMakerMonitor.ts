@@ -3,11 +3,8 @@ import { sendDiscordNotification } from './utils';
 // Threshold for new market maker alert (in USDC equivalent)
 const NEW_MARKET_MAKER_THRESHOLD_USDC: number = 100_000;
 
-// Large change threshold for existing market makers (50%)
-const MAKER_VOLUME_CHANGE_THRESHOLD: number = 0.5;
-
-// Minimum volume to track for large changes (avoid noise from small traders)
-const MIN_VOLUME_FOR_CHANGE_ALERT_USDC: number = 50_000;
+// Large hourly volume threshold for existing market makers ($1 million)
+const MAKER_HOURLY_VOLUME_THRESHOLD_USDC: number = 1_000_000;
 
 // Type for hourly maker volume snapshot
 interface MakerVolumeSnapshot {
@@ -89,35 +86,17 @@ export class MarketMakerMonitor {
     for (const [trader, currentVolume] of currentVolumes) {
       const previousVolume: number = previousVolumes.get(trader) ?? 0;
 
-      // Skip if below minimum threshold for change alerts
-      if (
-        currentVolume < MIN_VOLUME_FOR_CHANGE_ALERT_USDC &&
-        previousVolume < MIN_VOLUME_FOR_CHANGE_ALERT_USDC
-      ) {
-        continue;
-      }
-
       // Calculate hourly volume (delta)
       const hourlyVolume: number = currentVolume - previousVolume;
 
-      // Skip if no significant activity this hour
-      if (hourlyVolume <= 0) {
-        continue;
-      }
-
-      // Check for large percentage change relative to previous total
-      if (previousVolume > 0) {
-        const percentChange: number = hourlyVolume / previousVolume;
-
-        if (percentChange >= MAKER_VOLUME_CHANGE_THRESHOLD) {
-          await this.sendVolumeChangeAlert(
-            trader,
-            previousVolume,
-            currentVolume,
-            hourlyVolume,
-            percentChange,
-          );
-        }
+      // Alert if hourly volume exceeds $1 million threshold
+      if (hourlyVolume >= MAKER_HOURLY_VOLUME_THRESHOLD_USDC) {
+        await this.sendVolumeChangeAlert(
+          trader,
+          previousVolume,
+          currentVolume,
+          hourlyVolume,
+        );
       }
     }
   }
@@ -157,18 +136,16 @@ export class MarketMakerMonitor {
     previousVolume: number,
     currentVolume: number,
     hourlyVolume: number,
-    percentChange: number,
   ): Promise<void> {
     if (!this.discordWebhookUrl) {
       return;
     }
 
     const message: string = [
-      `**Large maker volume increase**`,
+      `**Large maker volume in last hour**`,
       `Trader: \`${trader.slice(0, 8)}...${trader.slice(-4)}\``,
-      `Previous Total: ${this.formatUsdValue(previousVolume)}`,
-      `Current Total: ${this.formatUsdValue(currentVolume)}`,
-      `Hourly Volume: +${this.formatUsdValue(hourlyVolume)} (+${(percentChange * 100).toFixed(1)}%)`,
+      `Hourly Volume: +${this.formatUsdValue(hourlyVolume)}`,
+      `Total Volume: ${this.formatUsdValue(currentVolume)}`,
       `[View on Solscan](https://solscan.io/account/${trader})`,
     ].join('\n');
 
