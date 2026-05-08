@@ -46,6 +46,7 @@ import { withRetry } from './utils';
 import { WebSocketManager } from './websocketManager';
 import { parseTransactionForFills } from './backfill';
 import { VolumeMonitor } from './volumeMonitor';
+import { MarketMakerMonitor } from './marketMakerMonitor';
 
 // Memory management constants
 const MAX_TRADERS = 50000; // Maximum number of traders to track in memory
@@ -153,6 +154,9 @@ export class ManifestStatsServer {
   // Volume monitoring for alerts
   private volumeMonitor: VolumeMonitor;
 
+  // Market maker monitoring for alerts
+  private marketMakerMonitor: MarketMakerMonitor;
+
   constructor(
     rpcUrl: string,
     isReadOnly: boolean,
@@ -198,9 +202,16 @@ export class ManifestStatsServer {
     // Initialize volume monitor for alerts
     this.volumeMonitor = new VolumeMonitor(
       this.discordWebhookUrl,
-      () => this.getSolPrice(),
-      (marketPk: string) => this.markets.get(marketPk),
-      (marketPk: string) => this.tickers.get(marketPk),
+      (): number => this.getSolPrice(),
+      (marketPk: string): Market | undefined => this.markets.get(marketPk),
+      (marketPk: string): [string, string] | undefined =>
+        this.tickers.get(marketPk),
+    );
+
+    // Initialize market maker monitor
+    this.marketMakerMonitor = new MarketMakerMonitor(
+      this.discordWebhookUrl,
+      (): Map<string, number> => this.traderMakerNotionalVolume,
     );
   }
 
@@ -225,6 +236,14 @@ export class ManifestStatsServer {
    */
   async checkHourlyVolumeChange(): Promise<void> {
     await this.volumeMonitor.checkHourlyVolumeChange();
+  }
+
+  /**
+   * Check for new market makers and large maker volume changes.
+   * Should be called every hour.
+   */
+  async checkHourlyMarketMakerChanges(): Promise<void> {
+    await this.marketMakerMonitor.checkHourlyChanges();
   }
 
   private initTraderPositionTracking(trader: string): void {

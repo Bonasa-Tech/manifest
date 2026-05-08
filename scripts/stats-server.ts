@@ -10,7 +10,6 @@ import promBundle from 'express-prom-bundle';
 import {
   VOLUME_CHECKPOINT_DURATION_SEC,
   DATABASE_CHECKPOINT_DURATION_SEC,
-  ONE_HOUR_SEC,
   ONE_DAY_SEC,
   ONE_HOUR_SEC,
   PORT,
@@ -487,6 +486,19 @@ const run = async () => {
           await statsServer.checkHourlyVolumeChange();
         } catch (error) {
           console.error('Error in hourly volume check:', error);
+          await sleep(5_000);
+        }
+      }
+    })(),
+    // Hourly market maker monitoring - alerts on new market makers and large volume changes
+    (async () => {
+      // eslint-disable-next-line no-constant-condition
+      while (true) {
+        try {
+          await sleep(ONE_HOUR_SEC * 1_000);
+          await statsServer.checkHourlyMarketMakerChanges();
+        } catch (error) {
+          console.error('Error in market maker monitoring:', error);
           await sleep(5_000);
         }
       }
