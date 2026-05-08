@@ -1,6 +1,6 @@
 [package]
 name = "hypertree"
-version = "1.1.0"
+version = "1.2.0"
 edition = "2021"
 repository = "https://github.com/Bonasa-Tech/manifest"
 authors = ["Britt Cyr <britt@cks.systems>"]
@@ -10,7 +10,7 @@ license-file = "LICENSE"
 [features]
 colored = ["dep:colored"]
 fuzz = []
-trace = []
+trace = ["dep:solana-program"]
 test = []
 
 # Certora feature exposes many of the internal implementation details, so should
@@ -20,7 +20,7 @@ certora = ["dep:nondet", "dep:calltrace", "dep:cvt"]
 
 [dependencies]
 bytemuck = { workspace = true, features = ["derive"] }
-solana-program = { workspace = true }
+solana-program = { workspace = true, optional = true }
 static_assertions = { workspace = true }
 nondet = { workspace = true, optional = true}
 calltrace = { workspace = true, optional = true}

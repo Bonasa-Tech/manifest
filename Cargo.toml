@@ -2,7 +2,8 @@
 resolver = "2"
 members = [
   "lib",
-  "client/rust",
+  "client/rust/jup",
+  "client/rust/slim",
   "client/okx",
   "programs/manifest",
   "programs/wrapper",
@@ -14,6 +15,8 @@ shank = "0.4.2"
 spl-token = { version = "8.0.0", features = ["no-entrypoint"] }
 spl-token-2022 = { version = "9.0.0", features = [ "no-entrypoint" ] }
 solana-program = "=2.2"
+solana-pubkey = "2.2"
+solana-instruction = "2.2"
 borsh = "=0.10"
 bytemuck = "1.7.2"
 num_enum = "=0.5.11"
