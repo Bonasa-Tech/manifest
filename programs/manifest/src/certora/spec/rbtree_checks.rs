@@ -8,6 +8,8 @@ pub use hypertree::red_black_tree::*;
 use hypertree::{
     get_helper, get_mut_helper, DataIndex, HyperTreeReadOperations, HyperTreeWriteOperations, NIL,
 };
+#[cfg(feature = "opt-unsafe")]
+use hypertree::{RedBlackTreeReadOperationsHelpersOpt, RedBlackTreeWriteOperationsHelpersOpt};
 use nondet::*;
 use solana_program::account_info::AccountInfo;
 use std::{cmp::Ordering, fmt::Display};
@@ -4771,6 +4773,495 @@ pub fn rule_swap_left_child_parent() {
     cvt_assert!(tree.get_right_index::<TestOrder>(index_3) == index_5);
     cvt_assert!(tree.get_parent_index::<TestOrder>(index_5) == index_3);
     cvt_assert!(tree.get_parent_index::<TestOrder>(index_1) == index_0);
+
+    cvt_vacuity_check!();
+}
+
+// ============================================================================
+// EQUIVALENCE RULES FOR OPTIMIZED IMPLEMENTATIONS
+// These rules verify that the optimized implementations produce identical
+// results to the reference implementations.
+// ============================================================================
+
+/// Verifies that rotate_left_opt produces the same tree structure as rotate_left.
+/// Both functions should update nodes G, P, Y, GG identically.
+#[cfg(feature = "opt-unsafe")]
+#[rule]
+pub fn rule_rotate_left_opt_equivalence() {
+    init_static();
+
+    let acc_infos1: [AccountInfo; 16] = acc_infos_with_mem_layout!();
+    let acc_infos2: [AccountInfo; 16] = acc_infos_with_mem_layout!();
+    let acc_info1 = &acc_infos1[0];
+    let acc_info2 = &acc_infos2[0];
+    let mut data1 = acc_info1.data.borrow_mut();
+    let mut data2 = acc_info2.data.borrow_mut();
+
+    let gg_index = 0 * TEST_BLOCK_WIDTH;
+    let g_index = 1 * TEST_BLOCK_WIDTH;
+    let u_index = 2 * TEST_BLOCK_WIDTH;
+    let p_index = 3 * TEST_BLOCK_WIDTH;
+    let y_index = 4 * TEST_BLOCK_WIDTH;
+    let x_index = 5 * TEST_BLOCK_WIDTH;
+
+    let gg_val: u64 = nondet();
+    let g_val: u64 = nondet();
+    let u_val: u64 = nondet();
+    let p_val: u64 = nondet();
+    let y_val: u64 = nondet();
+    let x_val: u64 = nondet();
+
+    // Set up identical trees in both data arrays
+    // GG
+    *get_mut_helper(&mut data1, gg_index) =
+        mk_rb_node!(g_index, NIL, NIL, Color::Black, TestOrder::new(gg_val));
+    *get_mut_helper(&mut data2, gg_index) =
+        mk_rb_node!(g_index, NIL, NIL, Color::Black, TestOrder::new(gg_val));
+
+    // G
+    *get_mut_helper(&mut data1, g_index) = mk_rb_node!(
+        u_index,
+        p_index,
+        gg_index,
+        Color::Red,
+        TestOrder::new(g_val)
+    );
+    *get_mut_helper(&mut data2, g_index) = mk_rb_node!(
+        u_index,
+        p_index,
+        gg_index,
+        Color::Red,
+        TestOrder::new(g_val)
+    );
+
+    // U
+    *get_mut_helper(&mut data1, u_index) =
+        mk_rb_node!(NIL, NIL, g_index, Color::Black, TestOrder::new(u_val));
+    *get_mut_helper(&mut data2, u_index) =
+        mk_rb_node!(NIL, NIL, g_index, Color::Black, TestOrder::new(u_val));
+
+    // P
+    *get_mut_helper(&mut data1, p_index) = mk_rb_node!(
+        y_index,
+        x_index,
+        g_index,
+        Color::Black,
+        TestOrder::new(p_val)
+    );
+    *get_mut_helper(&mut data2, p_index) = mk_rb_node!(
+        y_index,
+        x_index,
+        g_index,
+        Color::Black,
+        TestOrder::new(p_val)
+    );
+
+    // Y
+    *get_mut_helper(&mut data1, y_index) =
+        mk_rb_node!(NIL, NIL, p_index, Color::Red, TestOrder::new(y_val));
+    *get_mut_helper(&mut data2, y_index) =
+        mk_rb_node!(NIL, NIL, p_index, Color::Red, TestOrder::new(y_val));
+
+    // X
+    *get_mut_helper(&mut data1, x_index) =
+        mk_rb_node!(NIL, NIL, p_index, Color::Red, TestOrder::new(x_val));
+    *get_mut_helper(&mut data2, x_index) =
+        mk_rb_node!(NIL, NIL, p_index, Color::Red, TestOrder::new(x_val));
+
+    // Create trees
+    let mut tree1: RedBlackTree<TestOrder> = RedBlackTree::new(&mut data1, gg_index, NIL);
+    let mut tree2: RedBlackTree<TestOrder> = RedBlackTree::new(&mut data2, gg_index, NIL);
+
+    // Apply reference rotate_left to tree1
+    tree1.rotate_left::<TestOrder>(g_index);
+
+    // Apply optimized rotate_left_opt to tree2
+    tree2.rotate_left_opt::<TestOrder>(g_index);
+
+    // Verify both trees have identical structure
+    // Check P node (now parent of G)
+    cvt_assert!(
+        tree1.get_parent_index::<TestOrder>(p_index)
+            == tree2.get_parent_index::<TestOrder>(p_index)
+    );
+    cvt_assert!(
+        tree1.get_left_index::<TestOrder>(p_index) == tree2.get_left_index::<TestOrder>(p_index)
+    );
+    cvt_assert!(
+        tree1.get_right_index::<TestOrder>(p_index) == tree2.get_right_index::<TestOrder>(p_index)
+    );
+
+    // Check G node (now left child of P)
+    cvt_assert!(
+        tree1.get_parent_index::<TestOrder>(g_index)
+            == tree2.get_parent_index::<TestOrder>(g_index)
+    );
+    cvt_assert!(
+        tree1.get_left_index::<TestOrder>(g_index) == tree2.get_left_index::<TestOrder>(g_index)
+    );
+    cvt_assert!(
+        tree1.get_right_index::<TestOrder>(g_index) == tree2.get_right_index::<TestOrder>(g_index)
+    );
+
+    // Check GG node
+    cvt_assert!(
+        tree1.get_left_index::<TestOrder>(gg_index) == tree2.get_left_index::<TestOrder>(gg_index)
+    );
+
+    cvt_vacuity_check!();
+}
+
+/// Verifies that rotate_right_opt produces the same tree structure as rotate_right.
+#[cfg(feature = "opt-unsafe")]
+#[rule]
+pub fn rule_rotate_right_opt_equivalence() {
+    init_static();
+
+    let acc_infos1: [AccountInfo; 16] = acc_infos_with_mem_layout!();
+    let acc_infos2: [AccountInfo; 16] = acc_infos_with_mem_layout!();
+    let acc_info1 = &acc_infos1[0];
+    let acc_info2 = &acc_infos2[0];
+    let mut data1 = acc_info1.data.borrow_mut();
+    let mut data2 = acc_info2.data.borrow_mut();
+
+    let gg_index = 0 * TEST_BLOCK_WIDTH;
+    let g_index = 1 * TEST_BLOCK_WIDTH;
+    let p_index = 2 * TEST_BLOCK_WIDTH;
+    let u_index = 3 * TEST_BLOCK_WIDTH;
+    let x_index = 4 * TEST_BLOCK_WIDTH;
+    let y_index = 5 * TEST_BLOCK_WIDTH;
+
+    let gg_val: u64 = nondet();
+    let g_val: u64 = nondet();
+    let p_val: u64 = nondet();
+    let u_val: u64 = nondet();
+    let x_val: u64 = nondet();
+    let y_val: u64 = nondet();
+
+    // Set up identical trees (mirrored for right rotation)
+    // GG
+    *get_mut_helper(&mut data1, gg_index) =
+        mk_rb_node!(g_index, NIL, NIL, Color::Black, TestOrder::new(gg_val));
+    *get_mut_helper(&mut data2, gg_index) =
+        mk_rb_node!(g_index, NIL, NIL, Color::Black, TestOrder::new(gg_val));
+
+    // G (P is left child, U is right child)
+    *get_mut_helper(&mut data1, g_index) = mk_rb_node!(
+        p_index,
+        u_index,
+        gg_index,
+        Color::Red,
+        TestOrder::new(g_val)
+    );
+    *get_mut_helper(&mut data2, g_index) = mk_rb_node!(
+        p_index,
+        u_index,
+        gg_index,
+        Color::Red,
+        TestOrder::new(g_val)
+    );
+
+    // P (X is left child, Y is right child)
+    *get_mut_helper(&mut data1, p_index) = mk_rb_node!(
+        x_index,
+        y_index,
+        g_index,
+        Color::Black,
+        TestOrder::new(p_val)
+    );
+    *get_mut_helper(&mut data2, p_index) = mk_rb_node!(
+        x_index,
+        y_index,
+        g_index,
+        Color::Black,
+        TestOrder::new(p_val)
+    );
+
+    // U
+    *get_mut_helper(&mut data1, u_index) =
+        mk_rb_node!(NIL, NIL, g_index, Color::Black, TestOrder::new(u_val));
+    *get_mut_helper(&mut data2, u_index) =
+        mk_rb_node!(NIL, NIL, g_index, Color::Black, TestOrder::new(u_val));
+
+    // X
+    *get_mut_helper(&mut data1, x_index) =
+        mk_rb_node!(NIL, NIL, p_index, Color::Red, TestOrder::new(x_val));
+    *get_mut_helper(&mut data2, x_index) =
+        mk_rb_node!(NIL, NIL, p_index, Color::Red, TestOrder::new(x_val));
+
+    // Y
+    *get_mut_helper(&mut data1, y_index) =
+        mk_rb_node!(NIL, NIL, p_index, Color::Red, TestOrder::new(y_val));
+    *get_mut_helper(&mut data2, y_index) =
+        mk_rb_node!(NIL, NIL, p_index, Color::Red, TestOrder::new(y_val));
+
+    // Create trees
+    let mut tree1: RedBlackTree<TestOrder> = RedBlackTree::new(&mut data1, gg_index, NIL);
+    let mut tree2: RedBlackTree<TestOrder> = RedBlackTree::new(&mut data2, gg_index, NIL);
+
+    // Apply reference rotate_right to tree1
+    tree1.rotate_right::<TestOrder>(g_index);
+
+    // Apply optimized rotate_right_opt to tree2
+    tree2.rotate_right_opt::<TestOrder>(g_index);
+
+    // Verify both trees have identical structure
+    // Check P node (now parent of G)
+    cvt_assert!(
+        tree1.get_parent_index::<TestOrder>(p_index)
+            == tree2.get_parent_index::<TestOrder>(p_index)
+    );
+    cvt_assert!(
+        tree1.get_left_index::<TestOrder>(p_index) == tree2.get_left_index::<TestOrder>(p_index)
+    );
+    cvt_assert!(
+        tree1.get_right_index::<TestOrder>(p_index) == tree2.get_right_index::<TestOrder>(p_index)
+    );
+
+    // Check G node (now right child of P)
+    cvt_assert!(
+        tree1.get_parent_index::<TestOrder>(g_index)
+            == tree2.get_parent_index::<TestOrder>(g_index)
+    );
+    cvt_assert!(
+        tree1.get_left_index::<TestOrder>(g_index) == tree2.get_left_index::<TestOrder>(g_index)
+    );
+    cvt_assert!(
+        tree1.get_right_index::<TestOrder>(g_index) == tree2.get_right_index::<TestOrder>(g_index)
+    );
+
+    // Check GG node
+    cvt_assert!(
+        tree1.get_left_index::<TestOrder>(gg_index) == tree2.get_left_index::<TestOrder>(gg_index)
+    );
+
+    cvt_vacuity_check!();
+}
+
+/// Verifies that get_helper_unchecked returns the same result as get_helper
+/// when called on valid indices.
+#[cfg(feature = "opt-unsafe")]
+#[rule]
+pub fn rule_get_helper_unchecked_equivalence() {
+    init_static();
+
+    let acc_infos: [AccountInfo; 16] = acc_infos_with_mem_layout!();
+    let acc_info = &acc_infos[0];
+    let mut data = acc_info.data.borrow_mut();
+
+    let index = 0 * TEST_BLOCK_WIDTH;
+    let val: u64 = nondet();
+
+    // Set up a node
+    *get_mut_helper(&mut data, index) =
+        mk_rb_node!(NIL, NIL, NIL, Color::Black, TestOrder::new(val));
+
+    // Read using both helpers
+    let node_safe: &RBNode<TestOrder> = get_helper(&data, index);
+    let node_unsafe: &RBNode<TestOrder> = unsafe { hypertree::get_helper_unchecked(&data, index) };
+
+    // Verify they return identical data
+    cvt_assert!(node_safe.left == node_unsafe.left);
+    cvt_assert!(node_safe.right == node_unsafe.right);
+    cvt_assert!(node_safe.parent == node_unsafe.parent);
+    cvt_assert!(node_safe.color == node_unsafe.color);
+
+    cvt_vacuity_check!();
+}
+
+/// Verifies that insert_fix_opt produces the same tree state as the reference
+/// by comparing trees after full insert operations.
+#[cfg(feature = "opt-unsafe")]
+#[rule]
+pub fn rule_insert_fix_opt_equivalence() {
+    init_static();
+
+    let acc_infos: [AccountInfo; 16] = acc_infos_with_mem_layout!();
+    let acc_info = &acc_infos[0];
+    let mut data = acc_info.data.borrow_mut();
+
+    let root_index = 0 * TEST_BLOCK_WIDTH;
+    let parent_index = 1 * TEST_BLOCK_WIDTH;
+    let node_index = 2 * TEST_BLOCK_WIDTH;
+
+    let root_val: u64 = nondet();
+    let parent_val: u64 = nondet();
+    let node_val: u64 = nondet();
+
+    // Set up a simple tree: root -> parent -> node
+    // Root (BLACK)
+    *get_mut_helper(&mut data, root_index) = mk_rb_node!(
+        parent_index,
+        NIL,
+        NIL,
+        Color::Black,
+        TestOrder::new(root_val)
+    );
+
+    // Parent (BLACK) - this means no fixup is needed
+    *get_mut_helper(&mut data, parent_index) = mk_rb_node!(
+        node_index,
+        NIL,
+        root_index,
+        Color::Black,
+        TestOrder::new(parent_val)
+    );
+
+    // Node (RED) - newly inserted
+    *get_mut_helper(&mut data, node_index) =
+        mk_rb_node!(NIL, NIL, parent_index, Color::Red, TestOrder::new(node_val));
+
+    let mut tree: RedBlackTree<TestOrder> = RedBlackTree::new(&mut data, root_index, NIL);
+
+    // Apply optimized insert_fix_opt
+    let result = tree.insert_fix_opt::<TestOrder>(node_index);
+
+    // With black parent, should return NIL (no further fix needed)
+    cvt_assert!(result == NIL);
+
+    // Node should still be RED (no fix was needed)
+    cvt_assert!(tree.get_color::<TestOrder>(node_index) == Color::Red);
+    // Parent should still be BLACK
+    cvt_assert!(tree.get_color::<TestOrder>(parent_index) == Color::Black);
+
+    cvt_vacuity_check!();
+}
+
+/// Verifies that remove_fix_opt handles root case correctly.
+#[cfg(feature = "opt-unsafe")]
+#[rule]
+pub fn rule_remove_fix_opt_equivalence() {
+    init_static();
+
+    let acc_infos: [AccountInfo; 16] = acc_infos_with_mem_layout!();
+    let acc_info = &acc_infos[0];
+    let mut data = acc_info.data.borrow_mut();
+
+    let root_index = 0 * TEST_BLOCK_WIDTH;
+    let root_val: u64 = nondet();
+
+    // Single node tree (root)
+    *get_mut_helper(&mut data, root_index) =
+        mk_rb_node!(NIL, NIL, NIL, Color::Black, TestOrder::new(root_val));
+
+    let mut tree: RedBlackTree<TestOrder> = RedBlackTree::new(&mut data, root_index, NIL);
+
+    // Apply remove_fix_opt on root (should return (NIL, NIL))
+    let (next, parent) = tree.remove_fix_opt::<TestOrder>(root_index, NIL);
+
+    cvt_assert!(next == NIL);
+    cvt_assert!(parent == NIL);
+
+    cvt_vacuity_check!();
+}
+
+/// Verifies that unchecked getters return same values as checked getters.
+#[cfg(feature = "opt-unsafe")]
+#[rule]
+pub fn rule_unchecked_getters_equivalence() {
+    init_static();
+
+    let acc_infos: [AccountInfo; 16] = acc_infos_with_mem_layout!();
+    let acc_info = &acc_infos[0];
+    let mut data = acc_info.data.borrow_mut();
+
+    let index = 0 * TEST_BLOCK_WIDTH;
+    let left: DataIndex = nondet();
+    let right: DataIndex = nondet();
+    let parent: DataIndex = nondet();
+    let color: Color = if nondet::<bool>() {
+        Color::Red
+    } else {
+        Color::Black
+    };
+    let val: u64 = nondet();
+
+    // Set up a node with symbolic values
+    *get_mut_helper(&mut data, index) =
+        mk_rb_node!(left, right, parent, color, TestOrder::new(val));
+
+    let tree: RedBlackTree<TestOrder> = RedBlackTree::new(&mut data, index, NIL);
+
+    // Compare checked vs unchecked getters
+    unsafe {
+        cvt_assert!(
+            tree.get_color::<TestOrder>(index) == tree.get_color_unchecked::<TestOrder>(index)
+        );
+        cvt_assert!(
+            tree.get_left_index::<TestOrder>(index)
+                == tree.get_left_index_unchecked::<TestOrder>(index)
+        );
+        cvt_assert!(
+            tree.get_right_index::<TestOrder>(index)
+                == tree.get_right_index_unchecked::<TestOrder>(index)
+        );
+        cvt_assert!(
+            tree.get_parent_index::<TestOrder>(index)
+                == tree.get_parent_index_unchecked::<TestOrder>(index)
+        );
+    }
+
+    cvt_vacuity_check!();
+}
+
+/// Verifies that unchecked setters produce same tree state as checked setters.
+#[cfg(feature = "opt-unsafe")]
+#[rule]
+pub fn rule_unchecked_setters_equivalence() {
+    init_static();
+
+    let acc_infos1: [AccountInfo; 16] = acc_infos_with_mem_layout!();
+    let acc_infos2: [AccountInfo; 16] = acc_infos_with_mem_layout!();
+    let acc_info1 = &acc_infos1[0];
+    let acc_info2 = &acc_infos2[0];
+    let mut data1 = acc_info1.data.borrow_mut();
+    let mut data2 = acc_info2.data.borrow_mut();
+
+    let index = 0 * TEST_BLOCK_WIDTH;
+    let val: u64 = nondet();
+    let new_left: DataIndex = nondet();
+    let new_right: DataIndex = nondet();
+    let new_parent: DataIndex = nondet();
+    let new_color: Color = if nondet::<bool>() {
+        Color::Red
+    } else {
+        Color::Black
+    };
+
+    // Set up identical initial nodes
+    *get_mut_helper(&mut data1, index) =
+        mk_rb_node!(NIL, NIL, NIL, Color::Black, TestOrder::new(val));
+    *get_mut_helper(&mut data2, index) =
+        mk_rb_node!(NIL, NIL, NIL, Color::Black, TestOrder::new(val));
+
+    let mut tree1: RedBlackTree<TestOrder> = RedBlackTree::new(&mut data1, index, NIL);
+    let mut tree2: RedBlackTree<TestOrder> = RedBlackTree::new(&mut data2, index, NIL);
+
+    // Apply checked setters to tree1
+    tree1.set_color::<TestOrder>(index, new_color);
+    tree1.set_left_index::<TestOrder>(index, new_left);
+    tree1.set_right_index::<TestOrder>(index, new_right);
+    tree1.set_parent_index::<TestOrder>(index, new_parent);
+
+    // Apply unchecked setters to tree2
+    unsafe {
+        tree2.set_color_unchecked::<TestOrder>(index, new_color);
+        tree2.set_left_index_unchecked::<TestOrder>(index, new_left);
+        tree2.set_right_index_unchecked::<TestOrder>(index, new_right);
+        tree2.set_parent_index_unchecked::<TestOrder>(index, new_parent);
+    }
+
+    // Verify both trees have identical state
+    cvt_assert!(tree1.get_color::<TestOrder>(index) == tree2.get_color::<TestOrder>(index));
+    cvt_assert!(
+        tree1.get_left_index::<TestOrder>(index) == tree2.get_left_index::<TestOrder>(index)
+    );
+    cvt_assert!(
+        tree1.get_right_index::<TestOrder>(index) == tree2.get_right_index::<TestOrder>(index)
+    );
+    cvt_assert!(
+        tree1.get_parent_index::<TestOrder>(index) == tree2.get_parent_index::<TestOrder>(index)
+    );
 
     cvt_vacuity_check!();
 }

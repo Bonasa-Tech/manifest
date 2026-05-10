@@ -91,6 +91,47 @@ jobs:
       - name: Run sbf tests
         run: cargo test-sbf --arch=${{ env.SVM_ARCH }} --features test -- --test-threads 1
 
+  test-optimized:
+    name: Test Optimized
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Cache dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: "solana-${{ env.SOLANA_VERSION }}-opt"
+
+      - name: Set Rust version
+        run: |
+          rustup toolchain install ${{ env.RUST_TOOLCHAIN }}
+
+      - name: Install Solana
+        run: |
+          sh -c "$(curl -sSfL https://release.anza.xyz/v${{ env.SOLANA_VERSION }}/install)"
+          echo "$HOME/.local/share/solana/install/active_release/bin" >> $GITHUB_PATH
+          export PATH="/home/runner/.local/share/solana/install/active_release/bin:$PATH"
+          solana --version
+          echo "Generating keypair..."
+          solana-keygen new -o "$HOME/.config/solana/id.json" --no-passphrase --silent
+
+      - name: Run hypertree tests with opt-unsafe
+        run: cargo test -p hypertree --features opt-unsafe
+
+      - name: Build all programs
+        run: cargo build-sbf --arch=${{ env.SVM_ARCH }} -- -p manifest-dex -p wrapper -p ui-wrapper
+
+      - name: Rebuild manifest-dex with opt-unsafe feature
+        run: cargo build-sbf --arch=${{ env.SVM_ARCH }} -- -p manifest-dex --features opt-unsafe
+
+      - name: Enforce sbf runtime for program tests
+        run: |
+          sed -i 's/processor!(manifest::process_instruction)/None/g' 'programs/manifest/tests/program_test/fixtures.rs'
+
+      - name: Run sbf tests with opt-unsafe
+        run: cargo test-sbf --arch=${{ env.SVM_ARCH }} --features "test,opt-unsafe" -- --test-threads 1
+
   coverage:
     name: Coverage
     runs-on: ubuntu-latest

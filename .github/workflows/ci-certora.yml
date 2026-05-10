@@ -8,7 +8,9 @@ on:
       - main
   workflow_dispatch:
 jobs:
- submit_verification_jobs:
+  # Standard verification - rules.conf
+  verify_rules:
+    name: Verify Standard Rules
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -17,13 +19,58 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-      - name: Submit verification jobs to Certora Prover
+      - name: Submit rules verification job
+        uses: Certora/certora-run-action@v1
+        with:
+          configurations: rules.conf
+          job-name: "manifest rules"
+          ecosystem: solana
+          working-directory: programs/manifest/src/certora/confs
+          certora-key: ${{ secrets.CERTORAKEY }}
+          certora-sbf-options: "-vvv --tools-version=v1.43"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # Standard verification - hypertree.conf
+  verify_hypertree:
+    name: Verify Hypertree Rules
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      statuses: write
+      pull-requests: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Submit hypertree verification job
+        uses: Certora/certora-run-action@v1
+        with:
+          configurations: hypertree.conf
+          job-name: "manifest hypertree rules"
+          ecosystem: solana
+          working-directory: programs/manifest/src/certora/confs
+          certora-key: ${{ secrets.CERTORAKEY }}
+          certora-sbf-options: "-vvv --tools-version=v1.43"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # Verification with optimizations enabled
+  verify_optimized:
+    name: Verify Optimized Rules
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      statuses: write
+      pull-requests: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Submit optimized verification jobs
         uses: Certora/certora-run-action@v1
         with:
           configurations: |-
-            rules.conf --commit_sha1 7a4ffb7d0a9fb99d9367ea77975885c1dea85d0f
-            hypertree.conf --commit_sha1 7a4ffb7d0a9fb99d9367ea77975885c1dea85d0f
-          job-name:  "manifest rules"
+            hypertree_opt.conf
+          job-name: "manifest optimized rules"
           ecosystem: solana
           working-directory: programs/manifest/src/certora/confs
           certora-key: ${{ secrets.CERTORAKEY }}

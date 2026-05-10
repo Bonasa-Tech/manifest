@@ -159,3 +159,14 @@
 ;; We need to inline this function to avoid unsoundness results in
 ;; NcnOperatorTicket::seeds and others.
 #[inline] ^<alloc::vec::Vec<T> as alloc::vec::spec_from_iter::SpecFromIter<T,I>>::from_iter(_\d+)?$
+
+;; Hypertree optimization modules
+;; Inline the optimized Rust implementations for verification
+#[inline] ^hypertree::red_black_tree_opt::.*$
+#[inline] ^hypertree::utils_opt::.*$
+#[inline] ^hypertree::llrb_opt::.*$
+;; Do not inline assembly FFI functions - these are verified separately
+#[inline(never)] ^hypertree::asm::rotate_left_asm$
+#[inline(never)] ^hypertree::asm::rotate_right_asm$
+#[inline(never)] ^hypertree::asm::insert_fix_asm$
+#[inline(never)] ^hypertree::asm::remove_fix_asm$
