@@ -16,12 +16,11 @@ jobs:
       contents: read
       statuses: write
       pull-requests: write
-      id-token: write
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
       - name: Submit rules verification job
-        uses: Certora/certora-run-action@v2
+        uses: Certora/certora-run-action@v1
         with:
           configurations: rules.conf
           job-name: "manifest rules"
@@ -40,12 +39,11 @@ jobs:
       contents: read
       statuses: write
       pull-requests: write
-      id-token: write
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
       - name: Submit hypertree verification job
-        uses: Certora/certora-run-action@v2
+        uses: Certora/certora-run-action@v1
         with:
           configurations: hypertree.conf
           job-name: "manifest hypertree rules"
@@ -64,12 +62,11 @@ jobs:
       contents: read
       statuses: write
       pull-requests: write
-      id-token: write
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
       - name: Submit optimized verification jobs
-        uses: Certora/certora-run-action@v2
+        uses: Certora/certora-run-action@v1
         with:
           configurations: |-
             hypertree_opt.conf
@@ -80,3 +77,4 @@ jobs:
           certora-sbf-options: "-vvv --tools-version=v1.43"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
