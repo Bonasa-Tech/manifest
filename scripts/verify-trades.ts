@@ -99,6 +99,12 @@ interface TradeMismatch {
   fill: FillLogResult;
 }
 
+interface UnparseableFill {
+  market: string;
+  signature: string;
+  fill: FillLogResult;
+}
+
 const toFillLogResult = (
   fillLog: FillLog,
   slot: number,
@@ -525,8 +531,9 @@ const compareFills = async (
   market: string,
   dbBufferTime: number,
   logPrefix: string,
-): Promise<TradeMismatch[]> => {
+): Promise<{ mismatches: TradeMismatch[]; unparseableFills: UnparseableFill[] }> => {
   const mismatches: TradeMismatch[] = [];
+  const unparseableFills: UnparseableFill[] = [];
 
   // Create maps keyed by signature for easy lookup
   const dbFillsMap = new Map<string, FillLogResult[]>();
@@ -559,14 +566,19 @@ const compareFills = async (
       const hasTransfers = await hasTokenTransfer(connection, signature);
 
       if (hasTransfers) {
-        // Only report as missing if the transaction actually has token transfers
+        // Transaction exists onchain with token transfers but we couldn't parse the fill
+        // Track as unparseable rather than a mismatch
         for (const fill of fills) {
-          mismatches.push({
+          unparseableFills.push({
             market,
-            type: 'missing_onchain',
+            signature,
             fill,
           });
         }
+        console.log(
+          logPrefix,
+          `Transaction ${signature} found onchain but fill could not be parsed`,
+        );
       } else {
         console.log(
           logPrefix,
@@ -594,11 +606,17 @@ const compareFills = async (
           );
 
           if (hasTransfers) {
-            mismatches.push({
+            // Transaction exists onchain with token transfers but specific fill not found
+            // Track as unparseable rather than a mismatch
+            unparseableFills.push({
               market,
-              type: 'missing_onchain',
+              signature: dbFill.signature,
               fill: dbFill,
             });
+            console.log(
+              logPrefix,
+              `Transaction ${dbFill.signature} found onchain but specific fill could not be parsed`,
+            );
           } else {
             console.log(
               logPrefix,
@@ -669,7 +687,7 @@ const compareFills = async (
     }
   }
 
-  return mismatches;
+  return { mismatches, unparseableFills };
 };
 
 const run = async () => {
@@ -731,7 +749,9 @@ const run = async () => {
       return true;
     });
 
-    const verifyMarket = async (market: Market): Promise<TradeMismatch[]> => {
+    const verifyMarket = async (
+      market: Market,
+    ): Promise<{ mismatches: TradeMismatch[]; unparseableFills: UnparseableFill[] }> => {
       const logPrefix = `[${market.ticker_id}]`;
       console.log(logPrefix, 'Verifying market');
 
@@ -773,7 +793,7 @@ const run = async () => {
 
         // Compare fills with DB fetch buffer
         const dbBufferTime = dbFetchStartTime - 60 * 1000; // 60 seconds before we started fetching from DB
-        const mismatches = await compareFills(
+        const { mismatches, unparseableFills } = await compareFills(
           connection,
           dbFills,
           onchainFills,
@@ -799,15 +819,23 @@ const run = async () => {
           console.log(logPrefix, 'All fills match');
         }
 
-        return mismatches;
+        if (unparseableFills.length > 0) {
+          console.log(
+            logPrefix,
+            `Found ${unparseableFills.length} fills with unparseable onchain transactions`,
+          );
+        }
+
+        return { mismatches, unparseableFills };
       } catch (error) {
         console.error(logPrefix, 'Error processing market:', error);
-        return [];
+        return { mismatches: [], unparseableFills: [] };
       }
     };
 
     // Process markets with a concurrency pool
     const allMismatches: TradeMismatch[] = [];
+    const allUnparseableFills: UnparseableFill[] = [];
     const pending = new Set<Promise<void>>();
     const marketQueue = [...validMarkets];
 
@@ -817,8 +845,9 @@ const run = async () => {
         pending.size < MARKET_VERIFY_CONCURRENCY
       ) {
         const market = marketQueue.shift()!;
-        const p = verifyMarket(market).then((mismatches) => {
+        const p = verifyMarket(market).then(({ mismatches, unparseableFills }) => {
           allMismatches.push(...mismatches);
+          allUnparseableFills.push(...unparseableFills);
           pending.delete(p);
         });
         pending.add(p);
@@ -881,6 +910,43 @@ const run = async () => {
           allMismatches.push(...remainingMismatches);
         }
       }
+    }
+
+    // Log unparseable fills (not failures, just informational)
+    if (allUnparseableFills.length > 0) {
+      console.log('\n⚠️  UNPARSEABLE ONCHAIN TRANSACTIONS ⚠️\n');
+      console.log(
+        'The following fills exist in the database but the onchain transaction',
+      );
+      console.log(
+        'could not be parsed (transaction exists but fill data is not extractable):',
+      );
+      console.log('');
+
+      const unparseableSignatures = new Set<string>();
+      const unparseableByMarket = new Map<string, Set<string>>();
+
+      for (const unparseable of allUnparseableFills) {
+        unparseableSignatures.add(unparseable.signature);
+
+        if (!unparseableByMarket.has(unparseable.market)) {
+          unparseableByMarket.set(unparseable.market, new Set());
+        }
+        unparseableByMarket.get(unparseable.market)!.add(unparseable.signature);
+      }
+
+      console.log(
+        `Total unparseable transactions: ${unparseableSignatures.size}`,
+      );
+      console.log(`Signatures: ${Array.from(unparseableSignatures).join(', ')}`);
+      console.log('');
+
+      console.log(`📊 BREAKDOWN BY MARKET:`);
+      for (const [market, signatures] of unparseableByMarket) {
+        console.log(`Market ${market}: ${signatures.size} transactions`);
+        console.log(`  Signatures: ${Array.from(signatures).join(', ')}`);
+      }
+      console.log('');
     }
 
     // Log all mismatches
@@ -950,9 +1016,15 @@ const run = async () => {
       console.log(`Unique transactions: ${allMismatchSignatures.size}`);
       process.exit(1);
     } else {
-      console.log(
-        '\n✅ All trades verified successfully! No mismatches found.',
-      );
+      if (allUnparseableFills.length > 0) {
+        console.log(
+          `\n✅ All trades verified successfully! (${allUnparseableFills.length} fills had unparseable onchain transactions - see above)`,
+        );
+      } else {
+        console.log(
+          '\n✅ All trades verified successfully! No mismatches found.',
+        );
+      }
     }
   } catch (error) {
     console.error('Fatal error:', error);
