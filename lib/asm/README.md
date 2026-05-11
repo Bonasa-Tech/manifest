@@ -55,9 +55,11 @@ The assembly files use the production NIL value. For Certora verification, the R
 
 To use these optimizations:
 
-1. Build the assembly: `make`
-2. Enable the `opt-asm` feature in your Cargo.toml
-3. The Rust FFI bindings in `lib/src/asm/mod.rs` will automatically use the assembly functions
+1. Enable `opt-asm` or `opt-full` when building for SBF. The production tree
+   fixup loops call the assembly functions on SBF targets and use the optimized
+   Rust path for native tests.
+2. The Rust bindings include these files with `global_asm!` for SBF builds, so
+   the assembly symbols are linked into the program directly.
 
 ## Testing
 

@@ -91,8 +91,8 @@ jobs:
       - name: Run sbf tests
         run: cargo test-sbf --arch=${{ env.SVM_ARCH }} --features test -- --test-threads 1
 
-  test-optimized:
-    name: Test Optimized
+  test-feature-combinations:
+    name: Test Feature Combinations
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -116,8 +116,17 @@ jobs:
           echo "Generating keypair..."
           solana-keygen new -o "$HOME/.config/solana/id.json" --no-passphrase --silent
 
+      - name: Run hypertree tests without optimizations
+        run: cargo test -p hypertree
+
       - name: Run hypertree tests with opt-unsafe
         run: cargo test -p hypertree --features opt-unsafe
+
+      - name: Run hypertree tests with opt-asm
+        run: cargo test -p hypertree --features opt-asm
+
+      - name: Run hypertree tests with opt-full
+        run: cargo test -p hypertree --features opt-full
 
       - name: Build all programs
         run: cargo build-sbf --arch=${{ env.SVM_ARCH }} -- -p manifest-dex -p wrapper -p ui-wrapper
@@ -125,12 +134,27 @@ jobs:
       - name: Rebuild manifest-dex with opt-unsafe feature
         run: cargo build-sbf --arch=${{ env.SVM_ARCH }} -- -p manifest-dex --features opt-unsafe
 
+      - name: Rebuild manifest-dex with opt-asm feature
+        run: cargo build-sbf --arch=${{ env.SVM_ARCH }} -- -p manifest-dex --features opt-asm
+
+      - name: Rebuild manifest-dex with opt-full feature
+        run: cargo build-sbf --arch=${{ env.SVM_ARCH }} -- -p manifest-dex --features opt-full
+
       - name: Enforce sbf runtime for program tests
         run: |
           sed -i 's/processor!(manifest::process_instruction)/None/g' 'programs/manifest/tests/program_test/fixtures.rs'
 
+      - name: Run sbf tests without optimizations
+        run: cargo test-sbf --arch=${{ env.SVM_ARCH }} --features test -- --test-threads 1
+
       - name: Run sbf tests with opt-unsafe
         run: cargo test-sbf --arch=${{ env.SVM_ARCH }} --features "test,opt-unsafe" -- --test-threads 1
+
+      - name: Run sbf tests with opt-asm
+        run: cargo test-sbf --arch=${{ env.SVM_ARCH }} --features "test,opt-asm" -- --test-threads 1
+
+      - name: Run sbf tests with opt-full
+        run: cargo test-sbf --arch=${{ env.SVM_ARCH }} --features "test,opt-full" -- --test-threads 1
 
   coverage:
     name: Coverage

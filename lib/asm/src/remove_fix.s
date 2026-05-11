@@ -1,130 +1,283 @@
-; sBPF Assembly: Optimized Remove Fix for Red-Black Tree
-;
-; Fixes red-black tree properties after deletion.
-; Handles the double-black node case.
-;
-; Function: void remove_fix_asm(u8* data, u32 current, u32 parent, u32* root_ptr,
-;                               u32* out_current, u32* out_parent)
-; Args: r1=data, r2=current, r3=parent, r4=root_ptr, r5=out_current
-; Stack: [r10-8]=out_parent
-;
-; OPTIMIZATIONS:
-; - Single NIL load
-; - Optimized common path (current is root)
-; - Minimized register spills
-
-.equ NODE_LEFT,   0x00
-.equ NODE_RIGHT,  0x04
-.equ NODE_PARENT, 0x08
-.equ NODE_COLOR,  0x0C
-
-.equ COLOR_BLACK, 0
-.equ COLOR_RED,   1
-
-.equ NIL, 0xFFFFFFFF
+# sBPF Assembly: Remove Fix for Red-Black Tree
+#
+# Function: void remove_fix_asm(u8* data, u32 current, u32 parent,
+#                               u32* root_ptr, u32* out_pair)
+# Args: r1=data, r2=current, r3=parent, r4=root_ptr, r5=out_pair
+# Output: out_pair[0] = next current, out_pair[1] = next parent
 
 .globl remove_fix_asm
 remove_fix_asm:
-    ; r0 = NIL constant
-    mov64 r0, NIL
+    stxdw [r10 - 8], r6
+    stxdw [r10 - 16], r7
+    stxdw [r10 - 24], r8
+    stxdw [r10 - 32], r9
 
-    ; Check if current is root - common early exit
-    ldxw r6, [r4+0]                     ; r6 = *root_ptr
-    jne r6, r2, not_at_root
+    stxdw [r10 - 40], r1
+    stxdw [r10 - 48], r2
+    stxdw [r10 - 56], r3
+    stxdw [r10 - 64], r4
+    stxdw [r10 - 72], r5
+    lddw r6, 4294967295
 
-    ; At root - done, return (NIL, NIL)
-    stxw [r5+0], r0                     ; *out_current = NIL
-    ldxdw r6, [r10-8]                   ; r6 = out_parent ptr
-    stxw [r6+0], r0                     ; *out_parent = NIL
-    exit
+    ldxw r7, [r4 + 0]
+    jne r7, r2, .Lremove_not_at_root
+    ja .Lremove_output_nil_nil
 
-not_at_root:
-    ; Calculate parent_ptr and get parent info
-    add64 r6, r1, r3                    ; r6 = parent_ptr
-    ldxw r7, [r6+NODE_LEFT]             ; r7 = parent->left
+.Lremove_not_at_root:
+    mov64 r4, r1
+    add64 r4, r3
+    ldxw r7, [r4 + 0]
+    jne r7, r2, .Lremove_current_is_not_left
+    ldxw r8, [r4 + 4]
+    mov64 r9, 0
+    ja .Lremove_have_sibling
+.Lremove_current_is_not_left:
+    mov64 r8, r7
+    mov64 r9, 1
+.Lremove_have_sibling:
+    stxdw [r10 - 80], r8
+    stxdw [r10 - 120], r9
 
-    ; Determine sibling: if current is left child, sibling is right, else left
-    jeq r7, r2, current_is_left
-    ; Current is right child or NIL on right, sibling is left
-    mov64 r8, r7                        ; r8 = sibling_index
-    ja have_sibling
-current_is_left:
-    ldxw r8, [r6+NODE_RIGHT]            ; r8 = sibling_index
+    ldxb r7, [r4 + 12]
+    stxdw [r10 - 88], r7
+    mov64 r7, 0
+    jeq r8, r6, .Lremove_have_sibling_color
+    mov64 r4, r1
+    add64 r4, r8
+    ldxb r7, [r4 + 12]
+.Lremove_have_sibling_color:
+    stxdw [r10 - 96], r7
+    mov64 r4, 0
+    jne r7, r4, .Lremove_sibling_red
+    lddw r7, 4294967295
+    lddw r8, 4294967295
+    mov64 r4, 0
+    mov64 r5, 0
 
-have_sibling:
-    ; Get sibling color (NIL = BLACK)
-    jeq r8, r0, sibling_black
-    add64 r9, r1, r8                    ; r9 = sibling_ptr
-    ldxb r7, [r9+NODE_COLOR]            ; r7 = sibling_color
-    mov32 r6, COLOR_BLACK
-    jeq r7, r6, sibling_black
+    ldxdw r9, [r10 - 80]
+    jeq r9, r6, .Lremove_sibling_black_no_red_children
+    ldxdw r1, [r10 - 40]
+    mov64 r2, r1
+    add64 r2, r9
+    ldxw r7, [r2 + 0]
+    ldxw r8, [r2 + 4]
+    stxdw [r10 - 104], r7
+    stxdw [r10 - 112], r8
+    jeq r7, r6, .Lremove_check_right_child
+    mov64 r3, r1
+    add64 r3, r7
+    ldxb r3, [r3 + 12]
+    mov64 r5, 1
+    jne r3, r5, .Lremove_check_right_child
+    mov64 r4, 1
 
-    ; === Sibling is RED (Case 3c) ===
-    ; Need rotation and recoloring, continue with current,parent
-    stxw [r5+0], r2                     ; *out_current = current
-    ldxdw r6, [r10-8]
-    stxw [r6+0], r3                     ; *out_parent = parent
-    exit
+.Lremove_check_right_child:
+    jeq r8, r6, .Lremove_have_child_red_flags
+    ldxdw r1, [r10 - 40]
+    mov64 r3, r1
+    add64 r3, r8
+    ldxb r3, [r3 + 12]
+    mov64 r5, 1
+    jne r3, r5, .Lremove_have_child_red_flags
+    mov64 r5, 1
 
-sibling_black:
-    ; Sibling is BLACK
-    ; Check if sibling has red children
-    jeq r8, r0, no_sibling
+.Lremove_have_child_red_flags:
+    stxdw [r10 - 128], r4
+    stxdw [r10 - 136], r5
+    jne r4, 0, .Lremove_sibling_black_has_red_child
+    jne r5, 0, .Lremove_sibling_black_has_red_child
+    ja .Lremove_sibling_black_no_red_children
 
-    add64 r9, r1, r8                    ; r9 = sibling_ptr
-    ldxw r6, [r9+NODE_LEFT]             ; r6 = sibling->left
-    ldxw r7, [r9+NODE_RIGHT]            ; r7 = sibling->right
+.Lremove_sibling_black_has_red_child:
+    ldxdw r4, [r10 - 128]
+    ldxdw r5, [r10 - 120]
+    jeq r4, 0, .Lremove_try_left_right
+    jeq r5, 0, .Lremove_try_left_right
 
-    ; Check left child color
-    jeq r6, r0, check_right_child
-    add64 r6, r1, r6
-    ldxb r6, [r6+NODE_COLOR]
-    mov32 r9, COLOR_RED
-    jeq r6, r9, has_red_child
+.Lremove_case_left_left:
+    ldxdw r1, [r10 - 40]
+    ldxdw r7, [r10 - 104]
+    mov64 r2, r1
+    add64 r2, r7
+    mov64 r3, 0
+    stxb [r2 + 12], r3
+    ldxdw r7, [r10 - 56]
+    mov64 r2, r1
+    add64 r2, r7
+    ldxdw r3, [r10 - 96]
+    stxb [r2 + 12], r3
+    ldxdw r7, [r10 - 80]
+    mov64 r2, r1
+    add64 r2, r7
+    ldxdw r3, [r10 - 88]
+    stxb [r2 + 12], r3
+    ldxdw r2, [r10 - 56]
+    ldxdw r3, [r10 - 64]
+    call rotate_right_asm
+    ja .Lremove_output_nil_nil
 
-check_right_child:
-    jeq r7, r0, no_red_children
-    add64 r7, r1, r7
-    ldxb r7, [r7+NODE_COLOR]
-    mov32 r9, COLOR_RED
-    jeq r7, r9, has_red_child
+.Lremove_try_left_right:
+    ldxdw r4, [r10 - 136]
+    ldxdw r5, [r10 - 120]
+    jeq r4, 0, .Lremove_try_right_right
+    jeq r5, 0, .Lremove_try_right_right
 
-no_red_children:
-no_sibling:
-    ; Case 3b: Sibling is BLACK with no red children
-    ; Recolor sibling RED (if exists)
-    jeq r8, r0, check_parent_color
-    add64 r9, r1, r8
-    mov32 r7, COLOR_RED
-    stxb [r9+NODE_COLOR], r7
+.Lremove_case_left_right:
+    ldxdw r1, [r10 - 40]
+    ldxdw r7, [r10 - 112]
+    mov64 r2, r1
+    add64 r2, r7
+    ldxdw r3, [r10 - 88]
+    stxb [r2 + 12], r3
+    ldxdw r7, [r10 - 56]
+    mov64 r2, r1
+    add64 r2, r7
+    mov64 r3, 0
+    stxb [r2 + 12], r3
+    ldxdw r7, [r10 - 80]
+    mov64 r2, r1
+    add64 r2, r7
+    stxb [r2 + 12], r3
+    ldxdw r2, [r10 - 80]
+    ldxdw r3, [r10 - 64]
+    call rotate_left_asm
+    ldxdw r1, [r10 - 40]
+    ldxdw r2, [r10 - 56]
+    ldxdw r3, [r10 - 64]
+    call rotate_right_asm
+    ja .Lremove_output_nil_nil
 
-check_parent_color:
-    ; Get parent color
-    add64 r6, r1, r3                    ; r6 = parent_ptr
-    ldxb r7, [r6+NODE_COLOR]
-    mov32 r9, COLOR_BLACK
-    jne r7, r9, parent_was_red
+.Lremove_try_right_right:
+    ldxdw r4, [r10 - 136]
+    ldxdw r5, [r10 - 120]
+    jeq r4, 0, .Lremove_try_right_left
+    jne r5, 0, .Lremove_try_right_left
 
-    ; Parent was BLACK - continue fixup up the tree
-    stxw [r5+0], r3                     ; *out_current = parent
-    ldxw r7, [r6+NODE_PARENT]           ; parent's parent
-    ldxdw r6, [r10-8]
-    stxw [r6+0], r7                     ; *out_parent = parent's parent
-    exit
+.Lremove_case_right_right:
+    ldxdw r1, [r10 - 40]
+    ldxdw r7, [r10 - 112]
+    mov64 r2, r1
+    add64 r2, r7
+    mov64 r3, 0
+    stxb [r2 + 12], r3
+    ldxdw r7, [r10 - 56]
+    mov64 r2, r1
+    add64 r2, r7
+    ldxdw r3, [r10 - 96]
+    stxb [r2 + 12], r3
+    ldxdw r7, [r10 - 80]
+    mov64 r2, r1
+    add64 r2, r7
+    ldxdw r3, [r10 - 88]
+    stxb [r2 + 12], r3
+    ldxdw r2, [r10 - 56]
+    ldxdw r3, [r10 - 64]
+    call rotate_left_asm
+    ja .Lremove_output_nil_nil
 
-parent_was_red:
-    ; Parent was RED - make it BLACK and done
-    mov32 r7, COLOR_BLACK
-    stxb [r6+NODE_COLOR], r7
-    stxw [r5+0], r0                     ; *out_current = NIL
-    ldxdw r6, [r10-8]
-    stxw [r6+0], r0                     ; *out_parent = NIL
-    exit
+.Lremove_try_right_left:
+    ldxdw r1, [r10 - 40]
+    ldxdw r7, [r10 - 104]
+    mov64 r2, r1
+    add64 r2, r7
+    ldxdw r3, [r10 - 88]
+    stxb [r2 + 12], r3
+    ldxdw r7, [r10 - 56]
+    mov64 r2, r1
+    add64 r2, r7
+    mov64 r3, 0
+    stxb [r2 + 12], r3
+    ldxdw r7, [r10 - 80]
+    mov64 r2, r1
+    add64 r2, r7
+    stxb [r2 + 12], r3
+    ldxdw r2, [r10 - 80]
+    ldxdw r3, [r10 - 64]
+    call rotate_right_asm
+    ldxdw r1, [r10 - 40]
+    ldxdw r2, [r10 - 56]
+    ldxdw r3, [r10 - 64]
+    call rotate_left_asm
+    ja .Lremove_output_nil_nil
 
-has_red_child:
-    ; Case 3a: Sibling is BLACK with red child
-    ; Complex case - fall back to Rust by returning (NIL, NIL)
-    stxw [r5+0], r0
-    ldxdw r6, [r10-8]
-    stxw [r6+0], r0
+.Lremove_sibling_black_no_red_children:
+    ldxdw r1, [r10 - 40]
+    ldxdw r8, [r10 - 80]
+    jeq r8, r6, .Lremove_check_parent_color
+    mov64 r4, r1
+    add64 r4, r8
+    mov64 r7, 1
+    stxb [r4 + 12], r7
+
+.Lremove_check_parent_color:
+    ldxdw r7, [r10 - 88]
+    mov64 r4, 0
+    jne r7, r4, .Lremove_parent_was_red
+
+    ldxdw r1, [r10 - 40]
+    ldxdw r7, [r10 - 56]
+    mov64 r4, r1
+    add64 r4, r7
+    ldxw r8, [r4 + 8]
+    ldxdw r5, [r10 - 72]
+    stxw [r5 + 0], r7
+    stxw [r5 + 4], r8
+    ja .Lremove_restore_and_exit
+
+.Lremove_parent_was_red:
+    ldxdw r1, [r10 - 40]
+    ldxdw r7, [r10 - 56]
+    mov64 r4, r1
+    add64 r4, r7
+    mov64 r8, 0
+    stxb [r4 + 12], r8
+    ja .Lremove_output_nil_nil
+
+.Lremove_sibling_red:
+    ldxdw r5, [r10 - 120]
+    jeq r5, 0, .Lremove_sibling_red_right
+
+.Lremove_sibling_red_left:
+    ldxdw r1, [r10 - 40]
+    ldxdw r2, [r10 - 56]
+    ldxdw r3, [r10 - 64]
+    call rotate_right_asm
+    ja .Lremove_sibling_red_recolor_and_continue
+
+.Lremove_sibling_red_right:
+    ldxdw r1, [r10 - 40]
+    ldxdw r2, [r10 - 56]
+    ldxdw r3, [r10 - 64]
+    call rotate_left_asm
+
+.Lremove_sibling_red_recolor_and_continue:
+    ldxdw r1, [r10 - 40]
+    ldxdw r7, [r10 - 56]
+    mov64 r4, r1
+    add64 r4, r7
+    mov64 r8, 1
+    stxb [r4 + 12], r8
+    ldxdw r7, [r10 - 80]
+    mov64 r4, r1
+    add64 r4, r7
+    mov64 r8, 0
+    stxb [r4 + 12], r8
+    ldxdw r5, [r10 - 72]
+    ldxdw r7, [r10 - 48]
+    ldxdw r8, [r10 - 56]
+    stxw [r5 + 0], r7
+    stxw [r5 + 4], r8
+    ja .Lremove_restore_and_exit
+
+.Lremove_output_nil_nil:
+    ldxdw r5, [r10 - 72]
+    lddw r6, 4294967295
+    stxw [r5 + 0], r6
+    stxw [r5 + 4], r6
+
+.Lremove_restore_and_exit:
+    ldxdw r6, [r10 - 8]
+    ldxdw r7, [r10 - 16]
+    ldxdw r8, [r10 - 24]
+    ldxdw r9, [r10 - 32]
     exit

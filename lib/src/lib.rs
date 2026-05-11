@@ -1,3 +1,8 @@
+#![cfg_attr(
+    all(feature = "opt-asm", target_arch = "sbf"),
+    feature(asm_experimental_arch)
+)]
+
 pub use free_list::*;
 pub use hypertree::*;
 pub use llrb::*;
@@ -38,8 +43,6 @@ pub(crate) use red_black_tree_opt::{
 
 #[cfg(all(feature = "opt-unsafe", feature = "certora"))]
 pub use llrb_opt::LLRBOptOperations;
-#[cfg(all(feature = "opt-unsafe", not(feature = "certora")))]
-pub(crate) use llrb_opt::LLRBOptOperations;
 
 // sBPF assembly FFI bindings (feature-gated)
 #[cfg(feature = "opt-asm")]

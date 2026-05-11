@@ -1,74 +1,54 @@
-; sBPF Assembly: Optimized Right Rotation for Red-Black Tree
-;
-; Right rotate of G:
-;         GG                     GG
-;         |                      |
-;         G                      P
-;       /   \                  /   \
-;      P     U     --->      X       G
-;    /  \                          /   \
-;  X     Y                       Y       U
-;
-; Function: void rotate_right_asm(u8* data, u32 g_index, u32* root_ptr)
-; Args: r1=data, r2=g_index, r3=root_ptr
-;
-; OPTIMIZATIONS:
-; - Single NIL constant load at start
-; - Batched memory reads before writes
-; - Eliminated redundant pointer recalculations
-; - Total: ~25 instructions (down from ~35)
-
-.equ NODE_LEFT,   0x00
-.equ NODE_RIGHT,  0x04
-.equ NODE_PARENT, 0x08
-.equ NIL, 0xFFFFFFFF
+# sBPF Assembly: Optimized Right Rotation for Red-Black Tree
+#
+# Function: void rotate_right_asm(u8* data, u32 g_index, u32* root_ptr)
+# Args: r1=data, r2=g_index, r3=root_ptr
 
 .globl rotate_right_asm
 rotate_right_asm:
-    ; r0 = NIL (keep constant in register throughout)
-    mov64 r0, NIL
+    stxdw [r10 - 8], r6
+    stxdw [r10 - 16], r7
+    stxdw [r10 - 24], r8
+    stxdw [r10 - 32], r9
+    lddw r0, 4294967295
+    mov64 r6, r1
+    add64 r6, r2
+    ldxw r7, [r6 + 0]
+    ldxw r9, [r6 + 8]
+    mov64 r4, r1
+    add64 r4, r7
+    ldxw r8, [r4 + 4]
 
-    ; Calculate g_ptr and load all needed fields at once
-    add64 r6, r1, r2                    ; r6 = g_ptr = data + g_index
-    ldxw r7, [r6+NODE_LEFT]             ; r7 = p_index = g->left
-    ldxw r9, [r6+NODE_PARENT]           ; r9 = gg_index = g->parent
+    stxw [r4 + 8], r9
+    stxw [r4 + 4], r2
 
-    ; Calculate p_ptr and load y_index
-    add64 r4, r1, r7                    ; r4 = p_ptr = data + p_index
-    ldxw r8, [r4+NODE_RIGHT]            ; r8 = y_index = p->right
+    stxw [r6 + 8], r7
+    stxw [r6 + 0], r8
+    jeq r8, r0, .Lrotate_right_update_gg
+    mov64 r5, r1
+    add64 r5, r8
+    stxw [r5 + 8], r2
 
-    ; === Batch all writes ===
-    ; Update P node (p->parent = gg, p->right = g)
-    stxw [r4+NODE_PARENT], r9
-    stxw [r4+NODE_RIGHT], r2
+.Lrotate_right_update_gg:
+    jeq r9, r0, .Lrotate_right_update_root
+    mov64 r5, r1
+    add64 r5, r9
+    ldxw r4, [r5 + 0]
+    jne r4, r2, .Lrotate_right_try_gg_right
+    stxw [r5 + 0], r7
+    ja .Lrotate_right_update_root
+.Lrotate_right_try_gg_right:
+    ldxw r4, [r5 + 4]
+    jne r4, r2, .Lrotate_right_update_root
+    stxw [r5 + 4], r7
 
-    ; Update G node (g->parent = p, g->left = y)
-    stxw [r6+NODE_PARENT], r7
-    stxw [r6+NODE_LEFT], r8
+.Lrotate_right_update_root:
+    ldxw r4, [r3 + 0]
+    jne r4, r2, .Lrotate_right_done
+    stxw [r3 + 0], r7
 
-    ; Update Y->parent if Y != NIL
-    jeq r8, r0, update_gg
-    add64 r5, r1, r8                    ; r5 = y_ptr
-    stxw [r5+NODE_PARENT], r2           ; y->parent = g_index
-
-update_gg:
-    ; Update GG child pointer if GG != NIL
-    jeq r9, r0, update_root
-    add64 r5, r1, r9                    ; r5 = gg_ptr
-    ldxw r4, [r5+NODE_LEFT]
-    jne r4, r2, try_gg_right
-    stxw [r5+NODE_LEFT], r7             ; gg->left = p_index
-    ja update_root
-try_gg_right:
-    ldxw r4, [r5+NODE_RIGHT]
-    jne r4, r2, update_root
-    stxw [r5+NODE_RIGHT], r7            ; gg->right = p_index
-
-update_root:
-    ; Update root if G was root
-    ldxw r4, [r3+0]
-    jne r4, r2, done
-    stxw [r3+0], r7                     ; *root_ptr = p_index
-
-done:
+.Lrotate_right_done:
+    ldxdw r6, [r10 - 8]
+    ldxdw r7, [r10 - 16]
+    ldxdw r8, [r10 - 24]
+    ldxdw r9, [r10 - 32]
     exit

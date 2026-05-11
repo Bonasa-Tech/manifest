@@ -1,105 +1,206 @@
-; sBPF Assembly: Optimized Insert Fix for Red-Black Tree
-;
-; Fixes red-black tree properties after insertion.
-; Returns the next index to fix (for iterative fixup), or NIL if done.
-;
-; Function: u32 insert_fix_asm(u8* data, u32 index, u32* root_ptr)
-; Args: r1=data, r2=index, r3=root_ptr
-; Returns: r0 = next index to fix, or NIL if complete
-;
-; OPTIMIZATIONS:
-; - Single NIL constant load
-; - Minimize redundant loads
-; - Early exit paths optimized
-; - Register allocation optimized for common paths
-
-.equ NODE_LEFT,   0x00
-.equ NODE_RIGHT,  0x04
-.equ NODE_PARENT, 0x08
-.equ NODE_COLOR,  0x0C
-
-.equ COLOR_BLACK, 0
-.equ COLOR_RED,   1
-
-.equ NIL, 0xFFFFFFFF
+# sBPF Assembly: Insert Fix for Red-Black Tree
+#
+# Function: u32 insert_fix_asm(u8* data, u32 index, u32* root_ptr)
+# Args: r1=data, r2=index, r3=root_ptr
+# Returns: r0 = next index to fix, or NIL if complete
 
 .globl insert_fix_asm
 insert_fix_asm:
-    ; r0 = NIL constant (return value and comparison)
-    mov64 r0, NIL
+    stxdw [r10 - 8], r6
+    stxdw [r10 - 16], r7
+    stxdw [r10 - 24], r8
+    stxdw [r10 - 32], r9
 
-    ; Check if index is root - most common exit
-    ldxw r4, [r3+0]                     ; r4 = *root_ptr
-    jne r4, r2, not_root
+    stxdw [r10 - 40], r1
+    stxdw [r10 - 48], r2
+    stxdw [r10 - 56], r3
+    lddw r6, 4294967295
 
-    ; Index is root: set black and return NIL
-    add64 r5, r1, r2                    ; r5 = node_ptr
-    mov32 r6, COLOR_BLACK
-    stxb [r5+NODE_COLOR], r6
-    exit                                ; r0 = NIL already
+    ldxw r4, [r3 + 0]
+    jne r4, r2, .Linsert_not_root
+    mov64 r4, r1
+    add64 r4, r2
+    mov64 r5, 0
+    stxb [r4 + 12], r5
+    ja .Linsert_return_nil
 
-not_root:
-    ; Get parent index and check parent color
-    add64 r5, r1, r2                    ; r5 = node_ptr
-    ldxw r6, [r5+NODE_PARENT]           ; r6 = parent_index
-    add64 r7, r1, r6                    ; r7 = parent_ptr
-    ldxb r8, [r7+NODE_COLOR]            ; r8 = parent_color
+.Linsert_not_root:
+    mov64 r4, r1
+    add64 r4, r2
+    ldxw r7, [r4 + 8]
+    stxdw [r10 - 64], r7
+    mov64 r4, r1
+    add64 r4, r7
+    ldxb r5, [r4 + 12]
+    mov64 r9, 0
+    jeq r5, r9, .Linsert_return_nil
 
-    ; If parent is black, done (common case)
-    mov32 r4, COLOR_BLACK
-    jeq r8, r4, done_nil
+    ldxw r8, [r4 + 8]
+    stxdw [r10 - 72], r8
+    jeq r8, r6, .Linsert_make_parent_black
 
-    ; Parent is red - need to check grandparent
-    ldxw r9, [r7+NODE_PARENT]           ; r9 = grandparent_index
+    ldxdw r1, [r10 - 40]
+    mov64 r4, r1
+    add64 r4, r8
+    ldxw r5, [r4 + 0]
+    jne r5, r7, .Linsert_parent_is_right
+    mov64 r9, 1
+    ldxw r5, [r4 + 4]
+    ja .Linsert_have_uncle
+.Linsert_parent_is_right:
+    mov64 r9, 0
+.Linsert_have_uncle:
+    stxdw [r10 - 80], r9
+    jeq r5, r6, .Linsert_uncle_black
+    mov64 r4, r1
+    add64 r4, r5
+    ldxb r4, [r4 + 12]
+    mov64 r9, 1
+    jne r4, r9, .Linsert_uncle_black
 
-    ; If no grandparent, make parent black and done
-    jeq r9, r0, make_parent_black
+    ldxdw r7, [r10 - 64]
+    mov64 r4, r1
+    add64 r4, r7
+    mov64 r9, 0
+    stxb [r4 + 12], r9
+    mov64 r4, r1
+    add64 r4, r5
+    stxb [r4 + 12], r9
+    ldxdw r8, [r10 - 72]
+    mov64 r4, r1
+    add64 r4, r8
+    mov64 r9, 1
+    stxb [r4 + 12], r9
+    mov64 r0, r8
+    ja .Linsert_restore_and_exit
 
-    ; Calculate grandparent_ptr
-    add64 r4, r1, r9                    ; r4 = grandparent_ptr
+.Linsert_uncle_black:
+    ldxdw r1, [r10 - 40]
+    ldxdw r2, [r10 - 48]
+    ldxdw r7, [r10 - 64]
+    ldxdw r8, [r10 - 72]
+    mov64 r4, r1
+    add64 r4, r8
+    ldxb r5, [r4 + 12]
+    stxdw [r10 - 88], r5
+    mov64 r4, r1
+    add64 r4, r2
+    ldxb r5, [r4 + 12]
+    stxdw [r10 - 96], r5
+    mov64 r4, r1
+    add64 r4, r7
+    ldxw r5, [r4 + 0]
+    jne r5, r2, .Linsert_current_is_right
+    mov64 r9, 1
+    ja .Linsert_have_current_side
+.Linsert_current_is_right:
+    mov64 r9, 0
+.Linsert_have_current_side:
+    stxdw [r10 - 104], r9
 
-    ; Determine uncle: if parent == gp->left, uncle = gp->right, else uncle = gp->left
-    ldxw r5, [r4+NODE_LEFT]             ; r5 = gp->left
-    jeq r5, r6, uncle_is_right
-    ; Parent is right child, uncle is left
-    mov64 r5, r5                        ; r5 = uncle_index (gp->left)
-    ja check_uncle
-uncle_is_right:
-    ldxw r5, [r4+NODE_RIGHT]            ; r5 = uncle_index (gp->right)
+    ldxdw r4, [r10 - 80]
+    jeq r4, 0, .Linsert_parent_right_cases
+    ldxdw r5, [r10 - 104]
+    jeq r5, 0, .Linsert_case_left_right
 
-check_uncle:
-    ; Get uncle color (NIL = BLACK)
-    jeq r5, r0, uncle_black
-    add64 r4, r1, r5                    ; r4 = uncle_ptr
-    ldxb r4, [r4+NODE_COLOR]            ; r4 = uncle_color
-    mov32 r8, COLOR_RED
-    jne r4, r8, uncle_black
+.Linsert_case_left_left:
+    ldxdw r1, [r10 - 40]
+    ldxdw r2, [r10 - 72]
+    ldxdw r3, [r10 - 56]
+    call rotate_right_asm
 
-    ; === CASE I: Uncle is RED ===
-    ; Recolor parent and uncle BLACK, grandparent RED
-    ; Return grandparent for continued fixup
-    mov32 r4, COLOR_BLACK
-    stxb [r7+NODE_COLOR], r4            ; parent->color = BLACK
-    add64 r8, r1, r5                    ; r8 = uncle_ptr
-    stxb [r8+NODE_COLOR], r4            ; uncle->color = BLACK
-    mov32 r4, COLOR_RED
-    add64 r8, r1, r9                    ; r8 = grandparent_ptr
-    stxb [r8+NODE_COLOR], r4            ; grandparent->color = RED
-    mov64 r0, r9                        ; return grandparent_index
-    exit
+    ldxdw r1, [r10 - 40]
+    ldxdw r8, [r10 - 72]
+    mov64 r4, r1
+    add64 r4, r8
+    mov64 r5, 1
+    stxb [r4 + 12], r5
+    ldxdw r7, [r10 - 64]
+    mov64 r4, r1
+    add64 r4, r7
+    ldxdw r5, [r10 - 88]
+    stxb [r4 + 12], r5
+    ja .Linsert_return_nil
 
-uncle_black:
-    ; Uncle is BLACK - rotations needed
-    ; For now, return NIL to fall back to Rust implementation
-    ; Full implementation would handle LL, LR, RR, RL cases
-    ; with inline rotate calls
-    exit                                ; r0 = NIL
+.Linsert_case_left_right:
+    ldxdw r1, [r10 - 40]
+    ldxdw r2, [r10 - 64]
+    ldxdw r3, [r10 - 56]
+    call rotate_left_asm
+    ldxdw r1, [r10 - 40]
+    ldxdw r2, [r10 - 72]
+    ldxdw r3, [r10 - 56]
+    call rotate_right_asm
 
-make_parent_black:
-    mov32 r4, COLOR_BLACK
-    stxb [r7+NODE_COLOR], r4
-    ; fall through to done_nil
+    ldxdw r1, [r10 - 40]
+    ldxdw r2, [r10 - 48]
+    mov64 r4, r1
+    add64 r4, r2
+    ldxdw r5, [r10 - 88]
+    stxb [r4 + 12], r5
+    ldxdw r8, [r10 - 72]
+    mov64 r4, r1
+    add64 r4, r8
+    ldxdw r5, [r10 - 96]
+    stxb [r4 + 12], r5
+    ja .Linsert_return_nil
 
-done_nil:
-    ; r0 already NIL
+.Linsert_parent_right_cases:
+    ldxdw r5, [r10 - 104]
+    jne r5, 0, .Linsert_case_right_left
+
+.Linsert_case_right_right:
+    ldxdw r1, [r10 - 40]
+    ldxdw r2, [r10 - 72]
+    ldxdw r3, [r10 - 56]
+    call rotate_left_asm
+
+    ldxdw r1, [r10 - 40]
+    ldxdw r8, [r10 - 72]
+    mov64 r4, r1
+    add64 r4, r8
+    mov64 r5, 1
+    stxb [r4 + 12], r5
+    ldxdw r7, [r10 - 64]
+    mov64 r4, r1
+    add64 r4, r7
+    ldxdw r5, [r10 - 88]
+    stxb [r4 + 12], r5
+    ja .Linsert_return_nil
+
+.Linsert_case_right_left:
+    ldxdw r1, [r10 - 40]
+    ldxdw r2, [r10 - 64]
+    ldxdw r3, [r10 - 56]
+    call rotate_right_asm
+    ldxdw r1, [r10 - 40]
+    ldxdw r2, [r10 - 72]
+    ldxdw r3, [r10 - 56]
+    call rotate_left_asm
+
+    ldxdw r1, [r10 - 40]
+    ldxdw r2, [r10 - 48]
+    mov64 r4, r1
+    add64 r4, r2
+    ldxdw r5, [r10 - 88]
+    stxb [r4 + 12], r5
+    ldxdw r8, [r10 - 72]
+    mov64 r4, r1
+    add64 r4, r8
+    ldxdw r5, [r10 - 96]
+    stxb [r4 + 12], r5
+    ja .Linsert_return_nil
+
+.Linsert_make_parent_black:
+    mov64 r5, 0
+    stxb [r4 + 12], r5
+
+.Linsert_return_nil:
+    lddw r0, 4294967295
+
+.Linsert_restore_and_exit:
+    ldxdw r6, [r10 - 8]
+    ldxdw r7, [r10 - 16]
+    ldxdw r8, [r10 - 24]
+    ldxdw r9, [r10 - 32]
     exit

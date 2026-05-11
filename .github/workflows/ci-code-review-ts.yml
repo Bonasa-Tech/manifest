@@ -6,7 +6,10 @@ on:
     paths: [
       'client/ts/**',
       'client/idl/*.json',
-      'programs/**/instruction.rs',
+      'programs/**',
+      'lib/**',
+      'Cargo.toml',
+      'Cargo.lock',
       'yarn.lock'
     ]
   push:
@@ -15,7 +18,7 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
-  SOLANA_VERSION: '2.2.12'
+  SOLANA_VERSION: '2.2.20'
   RUST_TOOLCHAIN: '1.86.0'
 
 jobs:
@@ -74,8 +77,12 @@ jobs:
         run: npx yarn-deduplicate --list --fail
 
   test:
-    name: Test
+    name: Test (${{ matrix.optimization }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        optimization: [default, opt-full]
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -106,16 +113,33 @@ jobs:
           echo "Generating keypair..."
           solana-keygen new -o "$HOME/.config/solana/id.json" --no-passphrase --silent
 
+      - name: Build default programs
+        if: matrix.optimization == 'default'
+        run: cargo build-sbf
+
+      - name: Build fully optimized manifest program
+        if: matrix.optimization == 'opt-full'
+        run: |
+          cargo build-sbf -- -p wrapper -p ui-wrapper
+          cargo build-sbf -- -p manifest-dex --features opt-full
+
       - name: Start validator
         run: |
-          cargo build-sbf
-          solana-test-validator --bpf-program MNFSTqtC93rEfYHB6hF82sKdZpUDFWkViLByLd1k1Ms target/deploy/manifest.so --bpf-program UMnFStVeG1ecZFc2gc5K3vFy3sMpotq8C91mXBQDGwh target/deploy/ui_wrapper.so --bpf-program wMNFSTkir3HgyZTsB7uqu3i7FA73grFCptPXgrZjksL target/deploy/wrapper.so  >/dev/null 2>&1 &
-          echo "Started test validator, sleeping for 15 seconds before starting"
+          solana-test-validator --reset --bpf-program MNFSTqtC93rEfYHB6hF82sKdZpUDFWkViLByLd1k1Ms target/deploy/manifest.so --bpf-program UMnFStVeG1ecZFc2gc5K3vFy3sMpotq8C91mXBQDGwh target/deploy/ui_wrapper.so --bpf-program wMNFSTkir3HgyZTsB7uqu3i7FA73grFCptPXgrZjksL target/deploy/wrapper.so  >/dev/null 2>&1 &
+          echo $! > validator.pid
+          echo "Started ${{ matrix.optimization }} test validator, sleeping for 15 seconds before starting"
           sleep 15
 
-      - name: Run test
+      - name: Run validator tests
+        run: yarn test
+
+      - name: Stop validator
+        if: always()
         run: |
-          yarn test
+          if [ -f validator.pid ]; then
+            kill "$(cat validator.pid)" || true
+            rm validator.pid
+          fi
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v3

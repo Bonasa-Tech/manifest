@@ -1,6 +1,13 @@
 use bytemuck::{Pod, Zeroable};
 use std::cmp::Ordering;
 
+#[cfg(all(feature = "opt-asm", target_arch = "sbf", not(feature = "certora")))]
+use crate::asm::{insert_fix_asm_wrapper, remove_fix_asm_wrapper};
+#[cfg(all(
+    feature = "opt-unsafe",
+    not(all(feature = "opt-asm", target_arch = "sbf", not(feature = "certora")))
+))]
+use crate::RedBlackTreeWriteOperationsHelpersOpt;
 use crate::{
     get_helper, get_mut_helper, trace, DataIndex, Get, HyperTreeReadOperations,
     HyperTreeValueIteratorTrait, HyperTreeValueReadOnlyIterator, HyperTreeWriteOperations, Payload,
@@ -1079,7 +1086,25 @@ impl<'a, V: Payload> HyperTreeWriteOperations<'a, V> for RedBlackTree<'a, V> {
         // Avoid recursion by doing a loop here.
         let mut node_to_fix: DataIndex = index;
         loop {
-            node_to_fix = self.insert_fix(node_to_fix);
+            #[cfg(all(feature = "opt-asm", target_arch = "sbf", not(feature = "certora")))]
+            {
+                node_to_fix =
+                    unsafe { insert_fix_asm_wrapper(self.data, node_to_fix, &mut self.root_index) };
+            }
+            #[cfg(all(
+                feature = "opt-unsafe",
+                not(all(feature = "opt-asm", target_arch = "sbf", not(feature = "certora")))
+            ))]
+            {
+                node_to_fix = self.insert_fix_opt::<V>(node_to_fix);
+            }
+            #[cfg(not(any(
+                feature = "opt-unsafe",
+                all(feature = "opt-asm", target_arch = "sbf", not(feature = "certora"))
+            )))]
+            {
+                node_to_fix = self.insert_fix(node_to_fix);
+            }
             if node_to_fix == NIL {
                 break;
             }
@@ -1144,7 +1169,31 @@ impl<'a, V: Payload> HyperTreeWriteOperations<'a, V> for RedBlackTree<'a, V> {
         // Avoid recursion by doing a loop here.
         let mut nodes_to_fix: (DataIndex, DataIndex) = (child_index, parent_index);
         loop {
-            nodes_to_fix = self.remove_fix(nodes_to_fix.0, nodes_to_fix.1);
+            #[cfg(all(feature = "opt-asm", target_arch = "sbf", not(feature = "certora")))]
+            {
+                nodes_to_fix = unsafe {
+                    remove_fix_asm_wrapper(
+                        self.data,
+                        nodes_to_fix.0,
+                        nodes_to_fix.1,
+                        &mut self.root_index,
+                    )
+                };
+            }
+            #[cfg(all(
+                feature = "opt-unsafe",
+                not(all(feature = "opt-asm", target_arch = "sbf", not(feature = "certora")))
+            ))]
+            {
+                nodes_to_fix = self.remove_fix_opt::<V>(nodes_to_fix.0, nodes_to_fix.1);
+            }
+            #[cfg(not(any(
+                feature = "opt-unsafe",
+                all(feature = "opt-asm", target_arch = "sbf", not(feature = "certora"))
+            )))]
+            {
+                nodes_to_fix = self.remove_fix(nodes_to_fix.0, nodes_to_fix.1);
+            }
             if nodes_to_fix.0 == NIL && nodes_to_fix.1 == NIL {
                 break;
             }
@@ -1183,6 +1232,7 @@ impl<'a, V: Payload> RedBlackTree<'a, V> {
         self.remove_fix(current_index, parent_index)
     }
 
+    #[cfg_attr(feature = "opt-unsafe", allow(dead_code))]
     fn remove_fix(
         &mut self,
         current_index: DataIndex,
@@ -1345,6 +1395,7 @@ impl<'a, V: Payload> RedBlackTree<'a, V> {
         self.insert_fix(index_to_fix)
     }
 
+    #[cfg_attr(feature = "opt-unsafe", allow(dead_code))]
     fn insert_fix(&mut self, index_to_fix: DataIndex) -> DataIndex {
         if self.root_index == index_to_fix {
             self.set_color::<V>(index_to_fix, Color::Black);
