@@ -89,8 +89,24 @@ jobs:
         run: cargo test-sbf --arch=${{ env.SVM_ARCH }} --features "test,test-sbf" -- --test-threads 1
 
   test-feature-combinations:
-    name: Test Feature Combinations
+    name: Test Feature Combination (${{ matrix.name }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: default
+            features: ''
+            test_features: 'test,test-sbf'
+          - name: opt-unsafe
+            features: 'opt-unsafe'
+            test_features: 'test,test-sbf,opt-unsafe'
+          - name: opt-asm
+            features: 'opt-asm'
+            test_features: 'test,test-sbf,opt-asm'
+          - name: opt-full
+            features: 'opt-full'
+            test_features: 'test,test-sbf,opt-full'
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -113,49 +129,26 @@ jobs:
           echo "Generating keypair..."
           solana-keygen new -o "$HOME/.config/solana/id.json" --no-passphrase --silent
 
-      - name: Run hypertree tests without optimizations
-        run: cargo test -p hypertree
-
-      - name: Run hypertree tests with opt-unsafe
-        run: cargo test -p hypertree --features opt-unsafe
-
-      - name: Run hypertree tests with opt-asm
-        run: cargo test -p hypertree --features opt-asm
-
-      - name: Run hypertree tests with opt-full
-        run: cargo test -p hypertree --features opt-full
-
-      - name: Build all programs without optimizations
+      - name: Run hypertree tests
         run: |
-          cargo build-sbf --arch=${{ env.SVM_ARCH }} -- -p manifest-dex -p wrapper -p ui-wrapper
-          cargo build-sbf --arch=${{ env.SVM_ARCH }} -- -p manifest-dex
+          if [ -n "${{ matrix.features }}" ]; then
+            cargo test -p hypertree --features "${{ matrix.features }}"
+          else
+            cargo test -p hypertree
+          fi
 
-      - name: Run sbf tests without optimizations
-        run: cargo test-sbf --arch=${{ env.SVM_ARCH }} --features "test,test-sbf" -- --test-threads 1
-
-      - name: Build all programs with opt-unsafe
+      - name: Build all programs
         run: |
-          cargo build-sbf --arch=${{ env.SVM_ARCH }} -- -p manifest-dex -p wrapper -p ui-wrapper --features opt-unsafe
-          cargo build-sbf --arch=${{ env.SVM_ARCH }} -- -p manifest-dex --features opt-unsafe
+          if [ -n "${{ matrix.features }}" ]; then
+            cargo build-sbf --arch=${{ env.SVM_ARCH }} -- -p manifest-dex -p wrapper -p ui-wrapper --features "${{ matrix.features }}"
+            cargo build-sbf --arch=${{ env.SVM_ARCH }} -- -p manifest-dex --features "${{ matrix.features }}"
+          else
+            cargo build-sbf --arch=${{ env.SVM_ARCH }} -- -p manifest-dex -p wrapper -p ui-wrapper
+            cargo build-sbf --arch=${{ env.SVM_ARCH }} -- -p manifest-dex
+          fi
 
-      - name: Run sbf tests with opt-unsafe
-        run: cargo test-sbf --arch=${{ env.SVM_ARCH }} --features "test,test-sbf,opt-unsafe" -- --test-threads 1
-
-      - name: Build all programs with opt-asm
-        run: |
-          cargo build-sbf --arch=${{ env.SVM_ARCH }} -- -p manifest-dex -p wrapper -p ui-wrapper --features opt-asm
-          cargo build-sbf --arch=${{ env.SVM_ARCH }} -- -p manifest-dex --features opt-asm
-
-      - name: Run sbf tests with opt-asm
-        run: cargo test-sbf --arch=${{ env.SVM_ARCH }} --features "test,test-sbf,opt-asm" -- --test-threads 1
-
-      - name: Build all programs with opt-full
-        run: |
-          cargo build-sbf --arch=${{ env.SVM_ARCH }} -- -p manifest-dex -p wrapper -p ui-wrapper --features opt-full
-          cargo build-sbf --arch=${{ env.SVM_ARCH }} -- -p manifest-dex --features opt-full
-
-      - name: Run sbf tests with opt-full
-        run: cargo test-sbf --arch=${{ env.SVM_ARCH }} --features "test,test-sbf,opt-full" -- --test-threads 1
+      - name: Run sbf tests
+        run: cargo test-sbf --arch=${{ env.SVM_ARCH }} --features "${{ matrix.test_features }}" -- --test-threads 1
 
   coverage:
     name: Coverage
