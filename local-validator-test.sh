@@ -20,9 +20,11 @@ run_validator_tests() {
   local optimization="$1"
 
   if [ "$optimization" = "opt-full" ]; then
-    cargo build-sbf -- -p manifest-dex -p wrapper -p ui-wrapper --features opt-full
+    cargo build-sbf -- -p manifest-dex --features opt-full
+    cargo build-sbf -- -p wrapper -p ui-wrapper --features opt-full
   else
-    cargo build-sbf
+    cargo build-sbf -- -p manifest-dex
+    cargo build-sbf -- -p wrapper -p ui-wrapper
   fi
   echo "Rebuilt programs for $optimization"
 
