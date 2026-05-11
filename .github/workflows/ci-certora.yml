@@ -27,6 +27,7 @@ jobs:
           ecosystem: solana
           working-directory: programs/manifest/src/certora/confs
           certora-key: ${{ secrets.CERTORAKEY }}
+          cli-version: "8.11.3"
           certora-sbf-options: "-vvv --tools-version=v1.43"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -50,6 +51,7 @@ jobs:
           ecosystem: solana
           working-directory: programs/manifest/src/certora/confs
           certora-key: ${{ secrets.CERTORAKEY }}
+          cli-version: "8.11.3"
           certora-sbf-options: "-vvv --tools-version=v1.43"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -74,7 +76,7 @@ jobs:
           ecosystem: solana
           working-directory: programs/manifest/src/certora/confs
           certora-key: ${{ secrets.CERTORAKEY }}
+          cli-version: "8.11.3"
           certora-sbf-options: "-vvv --tools-version=v1.43"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
