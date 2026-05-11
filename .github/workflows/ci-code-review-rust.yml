@@ -84,12 +84,8 @@ jobs:
         run: |
           cargo build-sbf --arch=${{ env.SVM_ARCH }} -- -p manifest-dex -p wrapper -p ui-wrapper
 
-      - name: Enforce sbf runtime for program tests
-        run: |
-          sed -i 's/processor!(manifest::process_instruction)/None/g' 'programs/manifest/tests/program_test/fixtures.rs'
-
       - name: Run sbf tests
-        run: cargo test-sbf --arch=${{ env.SVM_ARCH }} --features test -- --test-threads 1
+        run: cargo test-sbf --arch=${{ env.SVM_ARCH }} --features "test,test-sbf" -- --test-threads 1
 
   test-feature-combinations:
     name: Test Feature Combinations
@@ -128,33 +124,29 @@ jobs:
       - name: Run hypertree tests with opt-full
         run: cargo test -p hypertree --features opt-full
 
-      - name: Build all programs
+      - name: Build all programs without optimizations
         run: cargo build-sbf --arch=${{ env.SVM_ARCH }} -- -p manifest-dex -p wrapper -p ui-wrapper
 
-      - name: Rebuild manifest-dex with opt-unsafe feature
-        run: cargo build-sbf --arch=${{ env.SVM_ARCH }} -- -p manifest-dex --features opt-unsafe
-
-      - name: Rebuild manifest-dex with opt-asm feature
-        run: cargo build-sbf --arch=${{ env.SVM_ARCH }} -- -p manifest-dex --features opt-asm
-
-      - name: Rebuild manifest-dex with opt-full feature
-        run: cargo build-sbf --arch=${{ env.SVM_ARCH }} -- -p manifest-dex --features opt-full
-
-      - name: Enforce sbf runtime for program tests
-        run: |
-          sed -i 's/processor!(manifest::process_instruction)/None/g' 'programs/manifest/tests/program_test/fixtures.rs'
-
       - name: Run sbf tests without optimizations
-        run: cargo test-sbf --arch=${{ env.SVM_ARCH }} --features test -- --test-threads 1
+        run: cargo test-sbf --arch=${{ env.SVM_ARCH }} --features "test,test-sbf" -- --test-threads 1
+
+      - name: Build all programs with opt-unsafe
+        run: cargo build-sbf --arch=${{ env.SVM_ARCH }} -- -p manifest-dex -p wrapper -p ui-wrapper --features opt-unsafe
 
       - name: Run sbf tests with opt-unsafe
-        run: cargo test-sbf --arch=${{ env.SVM_ARCH }} --features "test,opt-unsafe" -- --test-threads 1
+        run: cargo test-sbf --arch=${{ env.SVM_ARCH }} --features "test,test-sbf,opt-unsafe" -- --test-threads 1
+
+      - name: Build all programs with opt-asm
+        run: cargo build-sbf --arch=${{ env.SVM_ARCH }} -- -p manifest-dex -p wrapper -p ui-wrapper --features opt-asm
 
       - name: Run sbf tests with opt-asm
-        run: cargo test-sbf --arch=${{ env.SVM_ARCH }} --features "test,opt-asm" -- --test-threads 1
+        run: cargo test-sbf --arch=${{ env.SVM_ARCH }} --features "test,test-sbf,opt-asm" -- --test-threads 1
+
+      - name: Build all programs with opt-full
+        run: cargo build-sbf --arch=${{ env.SVM_ARCH }} -- -p manifest-dex -p wrapper -p ui-wrapper --features opt-full
 
       - name: Run sbf tests with opt-full
-        run: cargo test-sbf --arch=${{ env.SVM_ARCH }} --features "test,opt-full" -- --test-threads 1
+        run: cargo test-sbf --arch=${{ env.SVM_ARCH }} --features "test,test-sbf,opt-full" -- --test-threads 1
 
   coverage:
     name: Coverage

@@ -23,13 +23,13 @@
 
 use crate::DataIndex;
 
-#[cfg(all(feature = "opt-asm", target_arch = "sbf"))]
+#[cfg(all(feature = "opt-asm", target_arch = "bpf"))]
 core::arch::global_asm!(include_str!("../../asm/src/rotate_left.s"));
-#[cfg(all(feature = "opt-asm", target_arch = "sbf"))]
+#[cfg(all(feature = "opt-asm", target_arch = "bpf"))]
 core::arch::global_asm!(include_str!("../../asm/src/rotate_right.s"));
-#[cfg(all(feature = "opt-asm", target_arch = "sbf"))]
+#[cfg(all(feature = "opt-asm", target_arch = "bpf"))]
 core::arch::global_asm!(include_str!("../../asm/src/insert_fix.s"));
-#[cfg(all(feature = "opt-asm", target_arch = "sbf"))]
+#[cfg(all(feature = "opt-asm", target_arch = "bpf"))]
 core::arch::global_asm!(include_str!("../../asm/src/remove_fix.s"));
 
 // External sBPF assembly functions for tree operations.

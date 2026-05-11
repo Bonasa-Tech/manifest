@@ -1,5 +1,5 @@
 #![cfg_attr(
-    all(feature = "opt-asm", target_arch = "sbf"),
+    all(feature = "opt-asm", target_arch = "bpf"),
     feature(asm_experimental_arch)
 )]
 

@@ -113,15 +113,13 @@ jobs:
           echo "Generating keypair..."
           solana-keygen new -o "$HOME/.config/solana/id.json" --no-passphrase --silent
 
-      - name: Build default programs
-        if: matrix.optimization == 'default'
-        run: cargo build-sbf
-
-      - name: Build fully optimized manifest program
-        if: matrix.optimization == 'opt-full'
+      - name: Build programs
         run: |
-          cargo build-sbf -- -p wrapper -p ui-wrapper
-          cargo build-sbf -- -p manifest-dex --features opt-full
+          if [ "${{ matrix.optimization }}" = "opt-full" ]; then
+            cargo build-sbf -- -p manifest-dex -p wrapper -p ui-wrapper --features opt-full
+          else
+            cargo build-sbf
+          fi
 
       - name: Start validator
         run: |
