@@ -181,7 +181,7 @@ const run = async () => {
   const { Connection } = await import('@solana/web3.js');
   const tvlMonitor = new TvlMonitor(
     new Connection(RPC_URL),
-    process.env.DISCORD_WEBHOOK_URL,
+    process.env.TVL_DISCORD_WEBHOOK_URL,
   );
 
   // Set up Express routes
