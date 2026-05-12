@@ -25,6 +25,9 @@ const MONITORED_MINTS: MonitoredMintsMap = {
 // TVL change threshold (10%)
 const TVL_CHANGE_THRESHOLD: number = 0.1;
 
+// Persistence check delay (5 minutes in milliseconds)
+const PERSISTENCE_CHECK_DELAY_MS: number = 5 * 60 * 1000;
+
 // Type for vault fetch info
 interface VaultFetchInfo {
   mint: PublicKey;
@@ -46,14 +49,31 @@ export interface TvlSnapshot {
   tvlByMint: Map<string, bigint>; // mint -> atoms
 }
 
+interface PendingAlert {
+  symbol: string;
+  mint: string;
+  previousTvl: bigint;
+  detectedTvl: bigint;
+  percentChange: number;
+  detectedAt: number;
+}
+
 export class TvlMonitor {
   private readonly connection: Connection;
   private readonly discordWebhookUrl: string | undefined;
   private previousSnapshot: TvlSnapshot | null = null;
+  private pendingAlerts: Map<string, PendingAlert> = new Map();
 
   constructor(connection: Connection, discordWebhookUrl?: string) {
     this.connection = connection;
     this.discordWebhookUrl = discordWebhookUrl;
+  }
+
+  /**
+   * Sleep helper
+   */
+  private sleep(ms: number): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
   /**
@@ -202,7 +222,7 @@ export class TvlMonitor {
   }
 
   /**
-   * Check TVL changes and send alerts if threshold exceeded
+   * Check TVL changes and send alerts if threshold exceeded AND persists after 5 minutes
    */
   async checkAndAlert(): Promise<void> {
     const currentSnapshot: TvlSnapshot = await this.fetchCurrentTvl();
@@ -226,29 +246,87 @@ export class TvlMonitor {
         const percentChangeAbs: number = Math.abs(percentChange);
 
         if (percentChangeAbs >= TVL_CHANGE_THRESHOLD) {
-          const direction: string =
-            percentChange > 0 ? 'increased' : 'decreased';
-          const emoji: string = percentChange > 0 ? '📈' : '📉';
+          // Threshold exceeded - schedule persistence check
+          this.pendingAlerts.set(mint, {
+            symbol,
+            mint,
+            previousTvl,
+            detectedTvl: currentTvl,
+            percentChange,
+            detectedAt: Date.now(),
+          });
+        }
+      }
 
-          const message: string = [
-            `**${symbol} TVL ${direction} by ${(percentChangeAbs * 100).toFixed(2)}%**`,
-            `Previous: ${this.formatAtoms(previousTvl, symbol)} ${symbol}`,
-            `Current: ${this.formatAtoms(currentTvl, symbol)} ${symbol}`,
-            `Change: ${percentChange > 0 ? '+' : ''}${(percentChange * 100).toFixed(2)}%`,
-          ].join('\n');
+      // Process pending alerts that need persistence check
+      await this.processPendingAlerts();
+    }
 
-          if (this.discordWebhookUrl) {
-            await sendDiscordNotification(this.discordWebhookUrl, message, {
-              title: `${emoji} TVL Alert: ${symbol}`,
-              color: percentChange > 0 ? 0x00ff00 : 0xff0000,
-              timestamp: true,
-            });
-          }
+    this.previousSnapshot = currentSnapshot;
+  }
+
+  /**
+   * Process pending alerts - wait 5 minutes and verify the change persists
+   */
+  private async processPendingAlerts(): Promise<void> {
+    if (this.pendingAlerts.size === 0) {
+      return;
+    }
+
+    await this.sleep(PERSISTENCE_CHECK_DELAY_MS);
+
+    // Fetch fresh TVL data
+    const verificationSnapshot: TvlSnapshot = await this.fetchCurrentTvl();
+
+    for (const [mint, pendingAlert] of this.pendingAlerts) {
+      const { symbol, previousTvl, percentChange } = pendingAlert;
+      const verificationTvl: bigint =
+        verificationSnapshot.tvlByMint.get(mint) ?? BigInt(0);
+
+      // Check if the change still persists
+      const previousNum: number = Number(previousTvl);
+      const verificationNum: number = Number(verificationTvl);
+      const currentPercentChange: number =
+        (verificationNum - previousNum) / previousNum;
+
+      const wasIncrease: boolean = percentChange > 0;
+      const stillIncreased: boolean = currentPercentChange > 0;
+      const wasDecrease: boolean = percentChange < 0;
+      const stillDecreased: boolean = currentPercentChange < 0;
+
+      // Alert only if direction matches and still exceeds threshold
+      const stillExceedsThreshold: boolean =
+        Math.abs(currentPercentChange) >= TVL_CHANGE_THRESHOLD;
+      const directionPersists: boolean =
+        (wasIncrease && stillIncreased) || (wasDecrease && stillDecreased);
+
+      if (stillExceedsThreshold && directionPersists) {
+        const direction: string =
+          currentPercentChange > 0 ? 'increased' : 'decreased';
+        const emoji: string = currentPercentChange > 0 ? '📈' : '📉';
+
+        const message: string = [
+          `**${symbol} TVL ${direction} by ${(Math.abs(currentPercentChange) * 100).toFixed(2)}%** (persisted after 5 min)`,
+          `Previous: ${this.formatAtoms(previousTvl, symbol)} ${symbol}`,
+          `Current: ${this.formatAtoms(verificationTvl, symbol)} ${symbol}`,
+          `Change: ${currentPercentChange > 0 ? '+' : ''}${(currentPercentChange * 100).toFixed(2)}%`,
+        ].join('\n');
+
+        if (this.discordWebhookUrl) {
+          await sendDiscordNotification(this.discordWebhookUrl, message, {
+            title: `${emoji} TVL Alert: ${symbol}`,
+            color: currentPercentChange > 0 ? 0x00ff00 : 0xff0000,
+            timestamp: true,
+          });
         }
       }
     }
 
-    this.previousSnapshot = currentSnapshot;
+    // Clear pending alerts after processing
+    this.pendingAlerts.clear();
+
+    // Update previous snapshot to the verification snapshot
+    this.previousSnapshot = verificationSnapshot;
   }
 
   /**
