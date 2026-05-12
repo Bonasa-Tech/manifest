@@ -8,24 +8,20 @@ use manifest::{
     quantities::WrapperU64,
     state::{OrderType, NO_EXPIRATION_LAST_VALID_SLOT},
 };
-use solana_program_test::{processor, ProgramTest, ProgramTestContext};
+use solana_program_test::{ProgramTest, ProgramTestContext};
 use solana_sdk::{
     instruction::Instruction, program_pack::Pack, pubkey::Pubkey, rent::Rent, signature::Keypair,
     signer::Signer, system_instruction::create_account,
 };
 
-use crate::{send_tx_with_retry, MintFixture, RUST_LOG_DEFAULT};
+use crate::{manifest_program_test, send_tx_with_retry, MintFixture, RUST_LOG_DEFAULT};
 
 #[tokio::test]
 async fn token22_base() -> anyhow::Result<()> {
     // Create market with one token being 22
     // Deposit both sides, place order both sides, swap both ways, withdraw both sides
 
-    let program_test: ProgramTest = ProgramTest::new(
-        "manifest",
-        manifest::ID,
-        processor!(manifest::process_instruction),
-    );
+    let program_test: ProgramTest = manifest_program_test();
 
     solana_logger::setup_with_default(RUST_LOG_DEFAULT);
 
@@ -303,11 +299,7 @@ async fn token22_quote() -> anyhow::Result<()> {
     // Create market with one token being 22
     // Deposit both sides, place order both sides, swap both ways, withdraw both sides
 
-    let program_test: ProgramTest = ProgramTest::new(
-        "manifest",
-        manifest::ID,
-        processor!(manifest::process_instruction),
-    );
+    let program_test: ProgramTest = manifest_program_test();
 
     solana_logger::setup_with_default(RUST_LOG_DEFAULT);
 
@@ -568,11 +560,7 @@ async fn token22_quote() -> anyhow::Result<()> {
 
 #[tokio::test]
 async fn token22_deposit_transfer_fee() -> anyhow::Result<()> {
-    let program_test: ProgramTest = ProgramTest::new(
-        "manifest",
-        manifest::ID,
-        processor!(manifest::process_instruction),
-    );
+    let program_test: ProgramTest = manifest_program_test();
     solana_logger::setup_with_default(RUST_LOG_DEFAULT);
 
     let market_keypair: Keypair = Keypair::new();
@@ -745,11 +733,7 @@ async fn token22_deposit_transfer_fee() -> anyhow::Result<()> {
 /// based on the current epoch. Tests the epoch-based fee switching behavior.
 #[tokio::test]
 async fn token22_transfer_fee_epoch_switching() -> anyhow::Result<()> {
-    let program_test: ProgramTest = ProgramTest::new(
-        "manifest",
-        manifest::ID,
-        processor!(manifest::process_instruction),
-    );
+    let program_test: ProgramTest = manifest_program_test();
     solana_logger::setup_with_default(RUST_LOG_DEFAULT);
 
     let market_keypair: Keypair = Keypair::new();
@@ -1042,11 +1026,7 @@ async fn token22_transfer_fee_epoch_switching() -> anyhow::Result<()> {
 /// when the current epoch is before the newer fee epoch.
 #[tokio::test]
 async fn token22_transfer_fee_older_epoch() -> anyhow::Result<()> {
-    let program_test: ProgramTest = ProgramTest::new(
-        "manifest",
-        manifest::ID,
-        processor!(manifest::process_instruction),
-    );
+    let program_test: ProgramTest = manifest_program_test();
     solana_logger::setup_with_default(RUST_LOG_DEFAULT);
 
     let market_keypair: Keypair = Keypair::new();
@@ -1251,11 +1231,7 @@ async fn token22_transfer_fee_older_epoch() -> anyhow::Result<()> {
 /// when the epoch advances.
 #[tokio::test]
 async fn token22_transfer_fee_zero_to_nonzero() -> anyhow::Result<()> {
-    let program_test: ProgramTest = ProgramTest::new(
-        "manifest",
-        manifest::ID,
-        processor!(manifest::process_instruction),
-    );
+    let program_test: ProgramTest = manifest_program_test();
     solana_logger::setup_with_default(RUST_LOG_DEFAULT);
 
     let market_keypair: Keypair = Keypair::new();
