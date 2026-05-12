@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1778618042227,
+  "lastUpdate": 1778619438515,
   "repoUrl": "https://github.com/Bonasa-Tech/manifest",
   "entries": {
     "CU Benchmark": [
@@ -11777,6 +11777,72 @@ window.BENCHMARK_DATA = {
           {
             "name": "MFX_99",
             "value": 13159,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "cyrbritt@gmail.com",
+            "name": "Britt Cyr",
+            "username": "brittcyr"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "4f116c4ab8cc32e0b3109620f4d04acc1cc5f061",
+          "message": "Fix Cargo profile and feature warnings (#614)\n\n- Remove duplicate profile sections from programs/manifest/Cargo.toml (profiles should only be at workspace root)\n- Add missing test-sbf feature to ui-wrapper and wrapper packages",
+          "timestamp": "2026-05-12T16:44:37-04:00",
+          "tree_id": "f12277e00c87791c5c53f1a1279ba1c663e39ff8",
+          "url": "https://github.com/Bonasa-Tech/manifest/commit/4f116c4ab8cc32e0b3109620f4d04acc1cc5f061"
+        },
+        "date": 1778619436641,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "PHX_50",
+            "value": 6897,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "PHX_95",
+            "value": 13208,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "PHX_99",
+            "value": 13902,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_50",
+            "value": 3277,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_95",
+            "value": 12255,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_99",
+            "value": 13166,
             "range": "",
             "unit": "CU",
             "extra": ""
