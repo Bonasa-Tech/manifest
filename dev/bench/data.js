@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1778618034408,
+  "lastUpdate": 1778618042227,
   "repoUrl": "https://github.com/Bonasa-Tech/manifest",
   "entries": {
     "CU Benchmark": [
@@ -11711,6 +11711,72 @@ window.BENCHMARK_DATA = {
           {
             "name": "MFX_99",
             "value": 13192,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "cyrbritt@gmail.com",
+            "name": "Britt Cyr",
+            "username": "brittcyr"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "b63d22ea82be03e26c67b12d848e92982c7a8471",
+          "message": "Mark loader program accounts readonly in testcases (#610)\n\nMark loader program accounts readonly",
+          "timestamp": "2026-05-12T16:20:44-04:00",
+          "tree_id": "1463a5b6e40f2f8909df9ec684413cc20b2c15cf",
+          "url": "https://github.com/Bonasa-Tech/manifest/commit/b63d22ea82be03e26c67b12d848e92982c7a8471"
+        },
+        "date": 1778618039496,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "PHX_50",
+            "value": 6897,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "PHX_95",
+            "value": 13208,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "PHX_99",
+            "value": 13902,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_50",
+            "value": 3276,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_95",
+            "value": 12237,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_99",
+            "value": 13159,
             "range": "",
             "unit": "CU",
             "extra": ""
