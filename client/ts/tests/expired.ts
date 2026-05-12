@@ -5,6 +5,7 @@ import { deposit } from './deposit';
 import { Market } from '../src/market';
 import { assert } from 'chai';
 import { placeOrder } from './placeOrder';
+import { describeIfDirectTest } from './helpers/mocha';
 
 async function testExpiredAsk(): Promise<void> {
   const connection: Connection = new Connection(
@@ -39,7 +40,7 @@ async function testExpiredAsk(): Promise<void> {
   }
 }
 
-describe('Expired Order test', () => {
+describeIfDirectTest(module, 'Expired Order test', () => {
   it('Expired Ask', async () => {
     await testExpiredAsk();
   });

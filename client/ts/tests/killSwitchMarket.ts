@@ -6,6 +6,7 @@ import { Market } from '../src/market';
 import { assert } from 'chai';
 import { placeOrder } from './placeOrder';
 import { OrderType } from '../src/manifest/types';
+import { describeIfDirectTest } from './helpers/mocha';
 
 async function testKillSwitchMarket(): Promise<void> {
   const connection: Connection = new Connection(
@@ -84,7 +85,7 @@ export async function killSwitchMarketOO(
   );
 }
 
-describe('Kill Switch Market test', () => {
+describeIfDirectTest(module, 'Kill Switch Market test', () => {
   it('KillSwitchMarket', async () => {
     await testKillSwitchMarket();
   });

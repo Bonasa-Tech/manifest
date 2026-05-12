@@ -13,6 +13,7 @@ import { deposit } from './deposit';
 import { Market } from '../src/market';
 import { assert } from 'chai';
 import { NO_EXPIRATION_LAST_VALID_SLOT } from '../src/constants';
+import { describeIfDirectTest } from './helpers/mocha';
 
 async function testPlaceOrder(): Promise<void> {
   const connection: Connection = new Connection(
@@ -111,7 +112,7 @@ export async function placeOrder(
   console.log(`Placed order in ${signature}`);
 }
 
-describe('Place Order test', () => {
+describeIfDirectTest(module, 'Place Order test', () => {
   it('Place Order', async () => {
     await testPlaceOrder();
   });

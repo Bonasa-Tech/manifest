@@ -12,6 +12,7 @@ import { deposit } from './deposit';
 import { placeOrder } from './placeOrder';
 import { Market } from '../src/market';
 import { assert } from 'chai';
+import { describeIfDirectTest } from './helpers/mocha';
 
 async function testCancelBidsAsksOnCore(): Promise<void> {
   // Setup connection and accounts
@@ -274,7 +275,7 @@ export async function cancelAsksOnCore(
   }
 }
 
-describe('Cancel Bids/Asks On Core Test', () => {
+describeIfDirectTest(module, 'Cancel Bids/Asks On Core Test', () => {
   it('Should cancel bid and ask orders separately on the core program', async () => {
     await testCancelBidsAsksOnCore();
   });

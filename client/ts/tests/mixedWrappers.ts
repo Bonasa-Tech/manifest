@@ -31,6 +31,8 @@ import {
 } from '@cks-systems/manifest-sdk-old/dist/cjs/ui_wrapper';
 import { UiWrapper } from '@cks-systems/manifest-sdk-old/dist/cjs/uiWrapperObj';
 import { Market as OldMarket } from '@cks-systems/manifest-sdk-old/dist/cjs/market';
+import { waitForTokenAccount } from './helpers/tokenAccount';
+import { describeIfDirectTest } from './helpers/mocha';
 
 async function testMixedWrappers(): Promise<void> {
   const connection: Connection = new Connection(
@@ -106,6 +108,7 @@ async function testMixedWrappers(): Promise<void> {
     baseMint,
     payerKeypair.publicKey,
   );
+  await waitForTokenAccount(connection, traderBaseTokenAccount);
   const baseMintDecimals = (await getMint(connection, baseMint)).decimals;
   const amountBaseAtoms = Math.ceil(100 * 10 ** baseMintDecimals);
   await mintTo(
@@ -240,7 +243,7 @@ async function testMixedWrappers(): Promise<void> {
   market.prettyPrint();
 }
 
-describe('Mixed Wrappers test', () => {
+describeIfDirectTest(module, 'Mixed Wrappers test', () => {
   it('Should allow same wallet to use both UI wrapper and normal wrapper', async () => {
     await testMixedWrappers();
   });

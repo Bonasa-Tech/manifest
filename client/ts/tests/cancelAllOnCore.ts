@@ -12,6 +12,7 @@ import { deposit } from './deposit';
 import { placeOrder } from './placeOrder';
 import { Market } from '../src/market';
 import { assert } from 'chai';
+import { describeIfDirectTest } from './helpers/mocha';
 
 async function testCancelAllOnCore(): Promise<void> {
   // Setup connection and accounts
@@ -141,7 +142,7 @@ export async function cancelAllOnCore(
   }
 }
 
-describe('Cancel All On Core Test', () => {
+describeIfDirectTest(module, 'Cancel All On Core Test', () => {
   it('Should cancel all reverse orders on the core program', async () => {
     await testCancelAllOnCore();
   });

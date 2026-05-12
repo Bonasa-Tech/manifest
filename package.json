@@ -36,7 +36,7 @@
     "validate": "yarn lint && yarn format",
     "prepare": "yarn build",
     "clean": "rm -rf dist",
-    "test": "TS_NODE_PROJECT='./tsconfig.cjs.json' nyc  --reporter=lcov ts-mocha client/ts/tests/*.ts --parallel --jobs 64 --timeout 1200000"
+    "test": "TS_NODE_PROJECT='./tsconfig.cjs.json' nyc --reporter=lcov ts-mocha client/ts/tests/*.ts --parallel --jobs ${TS_MOCHA_JOBS:-8} --timeout 1200000"
   },
   "dependencies": {
     "@metaplex-foundation/beet": "^0.7.1",

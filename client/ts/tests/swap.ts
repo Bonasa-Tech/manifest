@@ -21,6 +21,8 @@ import { depositGlobal } from './globalDeposit';
 import { createGlobal } from './createGlobal';
 import { OrderType } from '../src/manifest/types';
 import { NO_EXPIRATION_LAST_VALID_SLOT } from '../src/constants';
+import { waitForTokenAccount } from './helpers/tokenAccount';
+import { describeIfDirectTest } from './helpers/mocha';
 
 async function testSwap(): Promise<void> {
   const connection: Connection = new Connection(
@@ -48,6 +50,7 @@ async function testSwap(): Promise<void> {
     market.quoteMint(),
     payerKeypair.publicKey,
   );
+  await waitForTokenAccount(connection, traderTokenAccount);
 
   const amountAtoms: number = 1_000_000_000;
   const mintSig = await mintTo(
@@ -127,6 +130,7 @@ async function testSwapGlobal(): Promise<void> {
     market.quoteMint(),
     payerKeypair.publicKey,
   );
+  await waitForTokenAccount(connection, traderBaseTokenAccount);
 
   const amountBaseAtoms: number = 1_000_000_000;
   const mintSig: string = await mintTo(
@@ -206,7 +210,7 @@ async function testSwapGlobal(): Promise<void> {
   );
 }
 
-describe('Swap test', () => {
+describeIfDirectTest(module, 'Swap test', () => {
   it('Swap', async () => {
     await testSwap();
   });

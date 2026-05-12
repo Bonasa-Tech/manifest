@@ -14,6 +14,8 @@ import {
 import { createMarket } from './createMarket';
 import { Market } from '../src/market';
 import { assert } from 'chai';
+import { waitForTokenAccount } from './helpers/tokenAccount';
+import { describeIfDirectTest } from './helpers/mocha';
 
 async function testDeposit(): Promise<void> {
   const connection: Connection = new Connection(
@@ -66,6 +68,7 @@ export async function deposit(
     mint,
     payerKeypair.publicKey,
   );
+  await waitForTokenAccount(connection, traderTokenAccount);
 
   const mintDecimals = (await getMint(connection, mint)).decimals;
   const amountAtoms = Math.ceil(amountTokens * 10 ** mintDecimals);
@@ -89,7 +92,7 @@ export async function deposit(
   console.log(`Deposited ${amountTokens} tokens in ${signature}`);
 }
 
-describe('Deposit test', () => {
+describeIfDirectTest(module, 'Deposit test', () => {
   it('Deposit', async () => {
     await testDeposit();
   });
