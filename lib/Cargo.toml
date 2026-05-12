@@ -7,6 +7,9 @@ authors = ["Britt Cyr <britt@cks.systems>"]
 description = "Data structures for Manifest"
 license-file = "LICENSE"
 
+[lints]
+workspace = true
+
 [features]
 colored = ["dep:colored"]
 fuzz = []

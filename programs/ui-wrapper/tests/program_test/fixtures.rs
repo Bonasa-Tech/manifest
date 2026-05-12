@@ -946,7 +946,7 @@ pub async fn get_and_deserialize<T: Pack>(
     context: Rc<RefCell<ProgramTestContext>>,
     pubkey: Pubkey,
 ) -> T {
-    let mut context: RefMut<ProgramTestContext> = context.borrow_mut();
+    let context: RefMut<ProgramTestContext> = context.borrow_mut();
     loop {
         let account_or: Result<Option<Account>, BanksClientError> =
             context.banks_client.get_account(pubkey).await;

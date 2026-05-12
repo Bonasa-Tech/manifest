@@ -10,6 +10,13 @@ members = [
   "programs/ui-wrapper",
 ]
 
+[workspace.lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = [
+  'cfg(colored)',
+  'cfg(target_os, values("solana"))',
+  'cfg(feature, values("certora-test", "custom-panic", "custom-heap", "fuzz"))',
+] }
+
 [workspace.dependencies]
 shank = "0.4.2"
 spl-token = { version = "8.0.0", features = ["no-entrypoint"] }

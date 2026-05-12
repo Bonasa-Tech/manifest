@@ -1640,17 +1640,6 @@ async fn global_create_with_dusted_address() -> anyhow::Result<()> {
     // Get the global PDA address that will be created for this mint
     let (global_key, _global_bump) = get_global_address(&mint_fixture.key);
 
-    // Get payer's initial balance
-    let payer_initial_balance: u64 = test_fixture
-        .context
-        .borrow_mut()
-        .banks_client
-        .get_account(payer)
-        .await
-        .unwrap()
-        .unwrap()
-        .lamports;
-
     // "Dust" the global address with SOL before it's initialized
     let dust_amount: u64 = 10_000_000; // 0.01 SOL
     send_tx_with_retry(
@@ -1869,7 +1858,7 @@ async fn global_match_multiple_levels_with_unbacked() -> anyhow::Result<()> {
 /// before creating the token account. Tests both regular SPL token and Token-2022.
 #[tokio::test]
 async fn global_create_with_dusted_vault_address() -> anyhow::Result<()> {
-    use manifest::validation::{get_global_address, get_global_vault_address};
+    use manifest::validation::get_global_vault_address;
     use solana_sdk::system_instruction::transfer;
 
     let test_fixture: TestFixture = TestFixture::new().await;

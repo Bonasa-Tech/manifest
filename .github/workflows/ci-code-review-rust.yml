@@ -30,6 +30,7 @@ jobs:
       - name: Set Rust version
         run: |
           rustup toolchain install ${{ env.RUST_TOOLCHAIN }}
+          rustup default ${{ env.RUST_TOOLCHAIN }}
           rustup component add rustfmt
 
       - name: Run fmt

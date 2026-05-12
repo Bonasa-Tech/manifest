@@ -1,5 +1,5 @@
 use std::{
-    cell::{RefCell, RefMut},
+    cell::RefMut,
     rc::Rc,
 };
 
@@ -7,9 +7,7 @@ use borsh::BorshSerialize;
 use manifest::{
     program::{
         batch_update::{CancelOrderParams, PlaceOrderParams},
-        batch_update_instruction,
-        claim_seat_instruction::claim_seat_instruction,
-        deposit_instruction, expand_market_instruction, global_add_trader_instruction,
+        batch_update_instruction, expand_market_instruction, global_add_trader_instruction,
         global_deposit_instruction, global_withdraw_instruction, swap_instruction,
         ManifestInstruction, SwapParams,
     },
@@ -17,18 +15,16 @@ use manifest::{
     state::{constants::NO_EXPIRATION_LAST_VALID_SLOT, OrderType, RestingOrder},
     validation::get_vault_address,
 };
-use solana_program_test::{tokio, ProgramTest, ProgramTestContext};
+use solana_program_test::{tokio, ProgramTestContext};
 use solana_sdk::{
     instruction::{AccountMeta, Instruction},
-    pubkey::Pubkey,
     signature::{Keypair, Signer},
     transaction::Transaction,
 };
 
 use crate::{
-    create_market_with_mints, create_spl_token_account, create_token_2022_account, expand_market,
-    manifest_program_test, mint_token_2022, send_tx_with_retry, MintFixture, Side, TestFixture,
-    Token, TokenAccountFixture, RUST_LOG_DEFAULT, SOL_UNIT_SIZE, USDC_UNIT_SIZE,
+    send_tx_with_retry, Side, TestFixture,
+    Token, TokenAccountFixture, SOL_UNIT_SIZE, USDC_UNIT_SIZE,
 };
 
 #[tokio::test]

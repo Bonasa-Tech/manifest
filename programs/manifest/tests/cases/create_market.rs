@@ -36,7 +36,7 @@ async fn create_market_fail_same_base_and_quote() -> anyhow::Result<()> {
 async fn create_market_fail_already_initialized() -> anyhow::Result<()> {
     let test_fixture: TestFixture = TestFixture::new().await;
 
-    let mut context_cell: RefMut<ProgramTestContext> = test_fixture.context.borrow_mut();
+    let context_cell: RefMut<ProgramTestContext> = test_fixture.context.borrow_mut();
     let market_keypair: Keypair = Keypair::new();
     let payer: &Pubkey = &context_cell.payer.pubkey();
     let create_market_ixs: Vec<Instruction> = create_market_instructions(
