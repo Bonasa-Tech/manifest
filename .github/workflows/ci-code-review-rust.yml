@@ -82,8 +82,8 @@ jobs:
 
       - name: Build all deps
         run: |
-          cargo build-sbf --arch=${{ env.SVM_ARCH }} -- -p manifest-dex -p wrapper -p ui-wrapper
-          cargo build-sbf --arch=${{ env.SVM_ARCH }} -- -p manifest-dex
+          cargo build-sbf --arch=${{ env.SVM_ARCH }} -- -p manifest-dex -p wrapper -p ui-wrapper --features test
+          cargo build-sbf --arch=${{ env.SVM_ARCH }} -- -p manifest-dex --features test
 
       - name: Run sbf tests
         run: cargo test-sbf --arch=${{ env.SVM_ARCH }} --features "test,test-sbf" -- --test-threads 1
@@ -96,16 +96,20 @@ jobs:
       matrix:
         include:
           - name: default
-            features: ''
+            hypertree_features: ''
+            build_features: 'test'
             test_features: 'test,test-sbf'
           - name: opt-unsafe
-            features: 'opt-unsafe'
+            hypertree_features: 'opt-unsafe'
+            build_features: 'test,opt-unsafe'
             test_features: 'test,test-sbf,opt-unsafe'
           - name: opt-asm
-            features: 'opt-asm'
+            hypertree_features: 'opt-asm'
+            build_features: 'test,opt-asm'
             test_features: 'test,test-sbf,opt-asm'
           - name: opt-full
-            features: 'opt-full'
+            hypertree_features: 'opt-full'
+            build_features: 'test,opt-full'
             test_features: 'test,test-sbf,opt-full'
     steps:
       - name: Checkout
@@ -131,21 +135,16 @@ jobs:
 
       - name: Run hypertree tests
         run: |
-          if [ -n "${{ matrix.features }}" ]; then
-            cargo test -p hypertree --features "${{ matrix.features }}"
+          if [ -n "${{ matrix.hypertree_features }}" ]; then
+            cargo test -p hypertree --features "${{ matrix.hypertree_features }}"
           else
             cargo test -p hypertree
           fi
 
       - name: Build all programs
         run: |
-          if [ -n "${{ matrix.features }}" ]; then
-            cargo build-sbf --arch=${{ env.SVM_ARCH }} -- -p manifest-dex -p wrapper -p ui-wrapper --features "${{ matrix.features }}"
-            cargo build-sbf --arch=${{ env.SVM_ARCH }} -- -p manifest-dex --features "${{ matrix.features }}"
-          else
-            cargo build-sbf --arch=${{ env.SVM_ARCH }} -- -p manifest-dex -p wrapper -p ui-wrapper
-            cargo build-sbf --arch=${{ env.SVM_ARCH }} -- -p manifest-dex
-          fi
+          cargo build-sbf --arch=${{ env.SVM_ARCH }} -- -p manifest-dex -p wrapper -p ui-wrapper --features "${{ matrix.build_features }}"
+          cargo build-sbf --arch=${{ env.SVM_ARCH }} -- -p manifest-dex --features "${{ matrix.build_features }}"
 
       - name: Run sbf tests
         run: cargo test-sbf --arch=${{ env.SVM_ARCH }} --features "${{ matrix.test_features }}" -- --test-threads 1
