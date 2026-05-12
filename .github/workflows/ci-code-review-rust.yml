@@ -86,7 +86,7 @@ jobs:
           cargo build-sbf --arch=${{ env.SVM_ARCH }} -- -p manifest-dex --features test
 
       - name: Run sbf tests
-        run: cargo test-sbf --arch=${{ env.SVM_ARCH }} --features "test,test-sbf" -- --test-threads 1
+        run: cargo test-sbf --arch=${{ env.SVM_ARCH }} -p manifest-dex --features "test,test-sbf" -- --test-threads 1
 
   test-feature-combinations:
     name: Test Feature Combination (${{ matrix.name }})
@@ -147,7 +147,7 @@ jobs:
           cargo build-sbf --arch=${{ env.SVM_ARCH }} -- -p manifest-dex --features "${{ matrix.build_features }}"
 
       - name: Run sbf tests
-        run: cargo test-sbf --arch=${{ env.SVM_ARCH }} --features "${{ matrix.test_features }}" -- --test-threads 1
+        run: cargo test-sbf --arch=${{ env.SVM_ARCH }} -p manifest-dex --features "${{ matrix.test_features }}" -- --test-threads 1
 
   coverage:
     name: Coverage
