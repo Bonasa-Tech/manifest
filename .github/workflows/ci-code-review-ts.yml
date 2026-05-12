@@ -116,11 +116,11 @@ jobs:
       - name: Build programs
         run: |
           if [ "${{ matrix.optimization }}" = "opt-full" ]; then
-            cargo build-sbf -- -p manifest-dex -p wrapper -p ui-wrapper --features opt-full
-            cargo build-sbf -- -p manifest-dex --features opt-full
+            cargo build-sbf -- -p manifest-dex -p wrapper -p ui-wrapper --features test,opt-full
+            cargo build-sbf -- -p manifest-dex --features test,opt-full
           else
-            cargo build-sbf -- -p manifest-dex -p wrapper -p ui-wrapper
-            cargo build-sbf -- -p manifest-dex
+            cargo build-sbf -- -p manifest-dex -p wrapper -p ui-wrapper --features test
+            cargo build-sbf -- -p manifest-dex --features test
           fi
 
       - name: Start validator
