@@ -81,8 +81,8 @@ export class FillFeed {
           'finalized',
         )
       )[0];
-      let lastSignature: string | undefined = lastSignatureStatus.signature;
-      let lastSlot: number = lastSignatureStatus.slot;
+      let lastSignature: string | undefined = lastSignatureStatus?.signature;
+      let lastSlot: number = lastSignatureStatus?.slot ?? 0;
 
       // End early is 30 seconds, used for testing.
       const endTime: Date = endEarly
@@ -100,9 +100,7 @@ export class FillFeed {
         const signatures: ConfirmedSignatureInfo[] =
           await this.connection.getSignaturesForAddress(
             PROGRAM_ID,
-            {
-              until: lastSignature,
-            },
+            lastSignature ? { until: lastSignature } : undefined,
             'finalized',
           );
         // Flip it so we do oldest first.
