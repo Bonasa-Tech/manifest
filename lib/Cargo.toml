@@ -22,11 +22,11 @@ certora = ["dep:nondet", "dep:calltrace", "dep:cvt"]
 # opt-unsafe: Uses unsafe Rust optimizations (removes bounds checks, etc.)
 # opt-asm: Uses sBPF assembly for production tree fixups on Solana.
 # opt-full: Enables both unsafe Rust and sBPF assembly optimizations.
-# certora-opt: Certora verification with unsafe optimizations enabled
+# certora-opt: Certora verification with all optimizations enabled
 opt-unsafe = []
 opt-asm = []
 opt-full = ["opt-unsafe", "opt-asm"]
-certora-opt = ["certora", "opt-unsafe"]
+certora-opt = ["certora", "opt-full"]
 
 [dependencies]
 bytemuck = { workspace = true, features = ["derive"] }

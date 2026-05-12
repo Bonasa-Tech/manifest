@@ -27,7 +27,7 @@ certora_vacuity = ["cvt/vacuity"]
 opt-unsafe = ["hypertree/opt-unsafe"]
 opt-asm = ["hypertree/opt-asm"]
 opt-full = ["opt-unsafe", "opt-asm"]
-certora-opt = ["certora", "opt-unsafe", "hypertree/certora-opt"]
+certora-opt = ["certora", "opt-full", "hypertree/certora-opt"]
 
 
 # https://doc.rust-lang.org/cargo/reference/profiles.html

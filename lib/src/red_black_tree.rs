@@ -1,11 +1,11 @@
 use bytemuck::{Pod, Zeroable};
 use std::cmp::Ordering;
 
-#[cfg(all(feature = "opt-asm", target_arch = "bpf", not(feature = "certora")))]
+#[cfg(all(feature = "opt-asm", target_arch = "bpf"))]
 use crate::asm::{insert_fix_asm_wrapper, remove_fix_asm_wrapper};
 #[cfg(all(
     feature = "opt-unsafe",
-    not(all(feature = "opt-asm", target_arch = "bpf", not(feature = "certora")))
+    not(all(feature = "opt-asm", target_arch = "bpf"))
 ))]
 use crate::RedBlackTreeWriteOperationsHelpersOpt;
 use crate::{
@@ -1086,21 +1086,21 @@ impl<'a, V: Payload> HyperTreeWriteOperations<'a, V> for RedBlackTree<'a, V> {
         // Avoid recursion by doing a loop here.
         let mut node_to_fix: DataIndex = index;
         loop {
-            #[cfg(all(feature = "opt-asm", target_arch = "bpf", not(feature = "certora")))]
+            #[cfg(all(feature = "opt-asm", target_arch = "bpf"))]
             {
                 node_to_fix =
                     unsafe { insert_fix_asm_wrapper(self.data, node_to_fix, &mut self.root_index) };
             }
             #[cfg(all(
                 feature = "opt-unsafe",
-                not(all(feature = "opt-asm", target_arch = "bpf", not(feature = "certora")))
+                not(all(feature = "opt-asm", target_arch = "bpf"))
             ))]
             {
                 node_to_fix = self.insert_fix_opt::<V>(node_to_fix);
             }
             #[cfg(not(any(
                 feature = "opt-unsafe",
-                all(feature = "opt-asm", target_arch = "bpf", not(feature = "certora"))
+                all(feature = "opt-asm", target_arch = "bpf")
             )))]
             {
                 node_to_fix = self.insert_fix(node_to_fix);
@@ -1169,7 +1169,7 @@ impl<'a, V: Payload> HyperTreeWriteOperations<'a, V> for RedBlackTree<'a, V> {
         // Avoid recursion by doing a loop here.
         let mut nodes_to_fix: (DataIndex, DataIndex) = (child_index, parent_index);
         loop {
-            #[cfg(all(feature = "opt-asm", target_arch = "bpf", not(feature = "certora")))]
+            #[cfg(all(feature = "opt-asm", target_arch = "bpf"))]
             {
                 nodes_to_fix = unsafe {
                     remove_fix_asm_wrapper(
@@ -1182,14 +1182,14 @@ impl<'a, V: Payload> HyperTreeWriteOperations<'a, V> for RedBlackTree<'a, V> {
             }
             #[cfg(all(
                 feature = "opt-unsafe",
-                not(all(feature = "opt-asm", target_arch = "bpf", not(feature = "certora")))
+                not(all(feature = "opt-asm", target_arch = "bpf"))
             ))]
             {
                 nodes_to_fix = self.remove_fix_opt::<V>(nodes_to_fix.0, nodes_to_fix.1);
             }
             #[cfg(not(any(
                 feature = "opt-unsafe",
-                all(feature = "opt-asm", target_arch = "bpf", not(feature = "certora"))
+                all(feature = "opt-asm", target_arch = "bpf")
             )))]
             {
                 nodes_to_fix = self.remove_fix(nodes_to_fix.0, nodes_to_fix.1);
