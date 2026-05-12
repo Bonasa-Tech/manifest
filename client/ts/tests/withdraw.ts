@@ -10,6 +10,7 @@ import { createMarket } from './createMarket';
 import { deposit } from './deposit';
 import { Market } from '../src/market';
 import { assert } from 'chai';
+import { describeIfDirectTest } from './helpers/mocha';
 
 async function testWithdraw(): Promise<void> {
   const connection: Connection = new Connection(
@@ -65,7 +66,7 @@ export async function withdraw(
   console.log(`Withdrew ${amountTokens} tokens in ${signature}`);
 }
 
-describe('Withdraw test', () => {
+describeIfDirectTest(module, 'Withdraw test', () => {
   it('Withdraw', async () => {
     await testWithdraw();
   });

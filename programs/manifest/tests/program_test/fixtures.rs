@@ -22,7 +22,7 @@ use manifest::{
     validation::{get_global_address, get_vault_address, MintAccountInfo},
 };
 use solana_program::{hash::Hash, pubkey::Pubkey, rent::Rent};
-use solana_program_test::{processor, BanksClientError, ProgramTest, ProgramTestContext};
+use solana_program_test::{BanksClientError, ProgramTest, ProgramTestContext};
 use solana_sdk::{
     account::Account,
     account_info::AccountInfo,
@@ -36,6 +36,8 @@ use solana_sdk::{
 };
 use spl_token_2022::state::Mint;
 use std::rc::Rc;
+
+use crate::manifest_program_test;
 
 #[derive(PartialEq)]
 pub enum Token {
@@ -74,11 +76,7 @@ pub struct TestFixture {
 
 impl TestFixture {
     pub async fn new() -> TestFixture {
-        let mut program: ProgramTest = ProgramTest::new(
-            "manifest",
-            manifest::ID,
-            processor!(manifest::process_instruction),
-        );
+        let mut program: ProgramTest = manifest_program_test();
 
         let second_keypair: Keypair = Keypair::new();
         program.add_account(

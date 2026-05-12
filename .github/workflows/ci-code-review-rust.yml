@@ -82,14 +82,72 @@ jobs:
 
       - name: Build all deps
         run: |
-          cargo build-sbf --arch=${{ env.SVM_ARCH }} -- -p manifest-dex -p wrapper -p ui-wrapper
-
-      - name: Enforce sbf runtime for program tests
-        run: |
-          sed -i 's/processor!(manifest::process_instruction)/None/g' 'programs/manifest/tests/program_test/fixtures.rs'
+          cargo build-sbf --arch=${{ env.SVM_ARCH }} -- -p manifest-dex -p wrapper -p ui-wrapper --features test
+          cargo build-sbf --arch=${{ env.SVM_ARCH }} -- -p manifest-dex --features test
 
       - name: Run sbf tests
-        run: cargo test-sbf --arch=${{ env.SVM_ARCH }} --features test -- --test-threads 1
+        run: cargo test-sbf --arch=${{ env.SVM_ARCH }} -p manifest-dex --features "test,test-sbf" -- --test-threads 1
+
+  test-feature-combinations:
+    name: Test Feature Combination (${{ matrix.name }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: default
+            hypertree_features: ''
+            build_features: 'test'
+            test_features: 'test,test-sbf'
+          - name: opt-unsafe
+            hypertree_features: 'opt-unsafe'
+            build_features: 'test,opt-unsafe'
+            test_features: 'test,test-sbf,opt-unsafe'
+          - name: opt-asm
+            hypertree_features: 'opt-asm'
+            build_features: 'test,opt-asm'
+            test_features: 'test,test-sbf,opt-asm'
+          - name: opt-full
+            hypertree_features: 'opt-full'
+            build_features: 'test,opt-full'
+            test_features: 'test,test-sbf,opt-full'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Cache dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: "solana-${{ env.SOLANA_VERSION }}-opt"
+
+      - name: Set Rust version
+        run: |
+          rustup toolchain install ${{ env.RUST_TOOLCHAIN }}
+
+      - name: Install Solana
+        run: |
+          sh -c "$(curl -sSfL https://release.anza.xyz/v${{ env.SOLANA_VERSION }}/install)"
+          echo "$HOME/.local/share/solana/install/active_release/bin" >> $GITHUB_PATH
+          export PATH="/home/runner/.local/share/solana/install/active_release/bin:$PATH"
+          solana --version
+          echo "Generating keypair..."
+          solana-keygen new -o "$HOME/.config/solana/id.json" --no-passphrase --silent
+
+      - name: Run hypertree tests
+        run: |
+          if [ -n "${{ matrix.hypertree_features }}" ]; then
+            cargo test -p hypertree --features "${{ matrix.hypertree_features }}"
+          else
+            cargo test -p hypertree
+          fi
+
+      - name: Build all programs
+        run: |
+          cargo build-sbf --arch=${{ env.SVM_ARCH }} -- -p manifest-dex -p wrapper -p ui-wrapper --features "${{ matrix.build_features }}"
+          cargo build-sbf --arch=${{ env.SVM_ARCH }} -- -p manifest-dex --features "${{ matrix.build_features }}"
+
+      - name: Run sbf tests
+        run: cargo test-sbf --arch=${{ env.SVM_ARCH }} -p manifest-dex --features "${{ matrix.test_features }}" -- --test-threads 1
 
   coverage:
     name: Coverage

@@ -18,6 +18,16 @@ test = []
 # the code less secure.
 certora = ["dep:nondet", "dep:calltrace", "dep:cvt"]
 
+# Optimization features for improved compute unit performance
+# opt-unsafe: Uses unsafe Rust optimizations (removes bounds checks, etc.)
+# opt-asm: Uses sBPF assembly for production tree fixups on Solana.
+# opt-full: Enables both unsafe Rust and sBPF assembly optimizations.
+# certora-opt: Certora verification with all optimizations enabled
+opt-unsafe = []
+opt-asm = []
+opt-full = ["opt-unsafe", "opt-asm"]
+certora-opt = ["certora", "opt-full"]
+
 [dependencies]
 bytemuck = { workspace = true, features = ["derive"] }
 solana-program = { workspace = true, optional = true }

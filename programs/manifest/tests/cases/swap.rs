@@ -17,7 +17,7 @@ use manifest::{
     state::{constants::NO_EXPIRATION_LAST_VALID_SLOT, OrderType, RestingOrder},
     validation::get_vault_address,
 };
-use solana_program_test::{processor, tokio, ProgramTest, ProgramTestContext};
+use solana_program_test::{tokio, ProgramTest, ProgramTestContext};
 use solana_sdk::{
     instruction::{AccountMeta, Instruction},
     pubkey::Pubkey,
@@ -27,8 +27,8 @@ use solana_sdk::{
 
 use crate::{
     create_market_with_mints, create_spl_token_account, create_token_2022_account, expand_market,
-    mint_token_2022, send_tx_with_retry, MintFixture, Side, TestFixture, Token,
-    TokenAccountFixture, RUST_LOG_DEFAULT, SOL_UNIT_SIZE, USDC_UNIT_SIZE,
+    manifest_program_test, mint_token_2022, send_tx_with_retry, MintFixture, Side, TestFixture,
+    Token, TokenAccountFixture, RUST_LOG_DEFAULT, SOL_UNIT_SIZE, USDC_UNIT_SIZE,
 };
 
 #[tokio::test]
@@ -1488,11 +1488,7 @@ async fn swap_wash_reverse_test() -> anyhow::Result<()> {
 #[tokio::test]
 async fn ljitsps_test() -> anyhow::Result<()> {
     // Set up program test
-    let program_test: ProgramTest = ProgramTest::new(
-        "manifest",
-        manifest::ID,
-        processor!(manifest::process_instruction),
-    );
+    let program_test: ProgramTest = manifest_program_test();
     solana_logger::setup_with_default(RUST_LOG_DEFAULT);
 
     let context: Rc<RefCell<ProgramTestContext>> =

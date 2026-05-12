@@ -8,6 +8,7 @@ import {
 import { createMarket } from './createMarket';
 import { ManifestClient } from '../src';
 import { assert } from 'chai';
+import { describeIfDirectTest } from './helpers/mocha';
 
 async function testGetClientForMarketNoPrivateKey(
   connection: Connection,
@@ -82,40 +83,50 @@ async function testGetSetupIxs(
   console.log(`executed setupIxs: ${signature}`);
 }
 
-describe('when creating a client using getClientForMarketNoPrivateKey', () => {
-  let connection: Connection;
-  let payerKeypair: Keypair;
-  let marketAddress: PublicKey;
+describeIfDirectTest(
+  module,
+  'when creating a client using getClientForMarketNoPrivateKey',
+  () => {
+    let connection: Connection;
+    let payerKeypair: Keypair;
+    let marketAddress: PublicKey;
 
-  before(async () => {
-    connection = new Connection('http://127.0.0.1:8899', 'confirmed');
-    payerKeypair = Keypair.generate();
-    marketAddress = await createMarket(connection, payerKeypair);
-  });
+    before(async () => {
+      connection = new Connection('http://127.0.0.1:8899', 'confirmed');
+      payerKeypair = Keypair.generate();
+      marketAddress = await createMarket(connection, payerKeypair);
+    });
 
-  it('should crash if setupIxs NOT executed', async () => {
-    await testGetClientForMarketNoPrivateKey(
-      connection,
-      marketAddress,
-      payerKeypair,
-      true,
-    );
-  });
+    it('should crash if setupIxs NOT executed', async () => {
+      await testGetClientForMarketNoPrivateKey(
+        connection,
+        marketAddress,
+        payerKeypair,
+        true,
+      );
+    });
 
-  it('should get setupIxs using getSetupIxs and execute successfully', async () => {
-    await testGetSetupIxs(connection, marketAddress, payerKeypair, true, true);
-  });
+    it('should get setupIxs using getSetupIxs and execute successfully', async () => {
+      await testGetSetupIxs(
+        connection,
+        marketAddress,
+        payerKeypair,
+        true,
+        true,
+      );
+    });
 
-  it('should wait 15 seconds to let state catch up', async () => {
-    await new Promise((resolve) => setTimeout(resolve, 15_000));
-  });
+    it('should wait 15 seconds to let state catch up', async () => {
+      await new Promise((resolve) => setTimeout(resolve, 15_000));
+    });
 
-  it('should NOT crash if setupIxs already executed', async () => {
-    await testGetClientForMarketNoPrivateKey(
-      connection,
-      marketAddress,
-      payerKeypair,
-      false,
-    );
-  });
-});
+    it('should NOT crash if setupIxs already executed', async () => {
+      await testGetClientForMarketNoPrivateKey(
+        connection,
+        marketAddress,
+        payerKeypair,
+        false,
+      );
+    });
+  },
+);

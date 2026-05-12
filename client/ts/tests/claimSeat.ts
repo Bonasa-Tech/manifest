@@ -3,6 +3,7 @@ import { ManifestClient } from '../src/client';
 import { createMarket } from './createMarket';
 import { Market } from '../src/market';
 import { assert } from 'chai';
+import { describeIfDirectTest } from './helpers/mocha';
 
 async function testClaimSeat(): Promise<void> {
   const connection: Connection = new Connection(
@@ -68,7 +69,7 @@ export async function claimSeat(
   await ManifestClient.getClientForMarket(connection, market, payerKeypair);
 }
 
-describe('Claim Seat test', () => {
+describeIfDirectTest(module, 'Claim Seat test', () => {
   it('Claim seat', async () => {
     await testClaimSeat();
   });

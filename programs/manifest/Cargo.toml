@@ -16,12 +16,18 @@ no-entrypoint = []
 cpi = ["no-entrypoint"]
 default = []
 test = []
+test-sbf = []
 fuzz = []
 trace = ["hypertree/trace"]
 no-clock = []
 certora = ["no-entrypoint", "dep:cvt", "dep:nondet", "dep:cvt-macros", "dep:early-panic", "dep:calltrace", "dep:solana_cvt", "dep:vectors", "dep:hook_macro",
            "hypertree/certora", "dep:cvlr"]
 certora_vacuity = ["cvt/vacuity"]
+# Optimization features - propagate to hypertree
+opt-unsafe = ["hypertree/opt-unsafe"]
+opt-asm = ["hypertree/opt-asm"]
+opt-full = ["opt-unsafe", "opt-asm"]
+certora-opt = ["certora", "opt-full", "hypertree/certora-opt"]
 
 
 # https://doc.rust-lang.org/cargo/reference/profiles.html

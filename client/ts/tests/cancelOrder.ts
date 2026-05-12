@@ -12,6 +12,7 @@ import { deposit } from './deposit';
 import { placeOrder } from './placeOrder';
 import { Market } from '../src/market';
 import { assert } from 'chai';
+import { describeIfDirectTest } from './helpers/mocha';
 
 async function testCancelOrder(): Promise<void> {
   const connection: Connection = new Connection(
@@ -141,7 +142,7 @@ export async function cancelOrder(
   console.log(`Canceled order in ${signature}`);
 }
 
-describe('Cancel test', () => {
+describeIfDirectTest(module, 'Cancel test', () => {
   it('Place and cancel orders', async () => {
     await testCancelOrder();
   });

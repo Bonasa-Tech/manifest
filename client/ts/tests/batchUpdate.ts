@@ -13,6 +13,7 @@ import { Market } from '../src/market';
 import { assert } from 'chai';
 import { depositGlobal } from './globalDeposit';
 import { createGlobal } from './createGlobal';
+import { describeIfDirectTest } from './helpers/mocha';
 
 async function testBatchUpdate(): Promise<void> {
   const connection: Connection = new Connection(
@@ -142,7 +143,7 @@ async function batchUpdate(
   console.log(`Placed order in ${signature}`);
 }
 
-describe('Batch update test', () => {
+describeIfDirectTest(module, 'Batch update test', () => {
   it('BatchUpdate', async () => {
     await testBatchUpdate();
   });

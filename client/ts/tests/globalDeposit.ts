@@ -18,9 +18,14 @@ import { Global } from '../src/global';
 import { assert } from 'chai';
 import { getGlobalAddress } from '../src/utils/global';
 import { airdropSol } from '../src/utils/solana';
+import { waitForTokenAccount } from './helpers/tokenAccount';
+import { describeIfDirectTest } from './helpers/mocha';
 
 async function testGlobalDeposit(): Promise<void> {
-  const connection: Connection = new Connection('http://127.0.0.1:8899');
+  const connection: Connection = new Connection(
+    'http://127.0.0.1:8899',
+    'confirmed',
+  );
   const payerKeypair: Keypair = Keypair.generate();
   // Get SOL for rent.
   await airdropSol(connection, payerKeypair.publicKey);
@@ -85,6 +90,7 @@ export async function depositGlobal(
       mint,
       traderKeypair.publicKey,
     );
+  await waitForTokenAccount(connection, traderTokenAccount);
 
   const mintDecimals: number = (await getMint(connection, mint)).decimals;
   const amountAtoms: number = Math.ceil(amountTokens * 10 ** mintDecimals);
@@ -113,7 +119,7 @@ export async function depositGlobal(
   );
 }
 
-describe('Global Deposit test', () => {
+describeIfDirectTest(module, 'Global Deposit test', () => {
   it('Global Deposit', async () => {
     await testGlobalDeposit();
   });

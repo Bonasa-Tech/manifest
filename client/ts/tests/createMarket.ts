@@ -13,6 +13,7 @@ import { Market } from '../src/market';
 import { airdropSol, getClusterFromConnection } from '../src/utils/solana';
 import { createMint } from '@solana/spl-token';
 import { FIXED_MANIFEST_HEADER_SIZE } from '../src/constants';
+import { describeIfDirectTest } from './helpers/mocha';
 
 async function testCreateMarket(): Promise<void> {
   const connection: Connection = new Connection(
@@ -82,7 +83,7 @@ export async function createMarket(
   return marketKeypair.publicKey;
 }
 
-describe('Create Market test', () => {
+describeIfDirectTest(module, 'Create Market test', () => {
   it('Create Market', async () => {
     await testCreateMarket();
   });

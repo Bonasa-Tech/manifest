@@ -7,6 +7,7 @@ import { placeOrder } from './placeOrder';
 import { OrderType } from '../src/manifest';
 import { deposit } from './deposit';
 import { areFloatsEqual } from './utils';
+import { describeIfDirectTest } from './helpers/mocha';
 
 async function setupMarketState(): Promise<Market> {
   const connection: Connection = new Connection(
@@ -158,7 +159,7 @@ async function testMarket(): Promise<void> {
   market.prettyPrint();
 }
 
-describe('Market test', () => {
+describeIfDirectTest(module, 'Market test', () => {
   let market: Market;
   let connection: Connection;
 
