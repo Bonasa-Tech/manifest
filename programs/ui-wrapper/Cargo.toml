@@ -14,9 +14,10 @@ name = "ui_wrapper"
 [features]
 no-entrypoint = []
 cpi = ["no-entrypoint"]
-default = ["trace"] 
+default = ["trace"]
 trace = [ "hypertree/fuzz", "hypertree/trace", "manifest-dex/trace" ]
 test = []
+test-sbf = []
 
 [dependencies]
 manifest-dex = { path = "../manifest", features = ["no-entrypoint"]  }

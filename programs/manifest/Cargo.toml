@@ -24,23 +24,6 @@ certora = ["no-entrypoint", "dep:cvt", "dep:nondet", "dep:cvt-macros", "dep:earl
            "hypertree/certora", "dep:cvlr"]
 certora_vacuity = ["cvt/vacuity"]
 
-
-# https://doc.rust-lang.org/cargo/reference/profiles.html
-[profile.release]
-lto = "fat"
-codegen-units = 1
-overflow-checks = true
-strip = "debuginfo"
-
-# Test with release settings so CU usage is accurately measured.
-[profile.test]
-lto = "fat"
-opt-level = 3
-debug = false
-codegen-units = 1
-overflow-checks = true
-strip = "debuginfo"
-
 [dependencies]
 hypertree = { path = "../../lib" }
 # Cannot use workspace because the generator needs to see a version here

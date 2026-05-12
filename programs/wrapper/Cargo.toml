@@ -17,6 +17,7 @@ cpi = ["no-entrypoint"]
 default = []
 trace = [ "manifest-dex/trace" ]
 test = []
+test-sbf = []
 
 [dependencies]
 manifest-dex = { path = "../manifest", features = ["no-entrypoint"]  }
