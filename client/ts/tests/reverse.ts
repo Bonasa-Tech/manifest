@@ -5,6 +5,7 @@ import { deposit } from './deposit';
 import { Market } from '../src/market';
 import { assert } from 'chai';
 import { placeOrder } from './placeOrder';
+import { describeIfDirectTest } from './helpers/mocha';
 
 async function testReverse(): Promise<void> {
   const connection: Connection = new Connection(
@@ -87,7 +88,7 @@ async function testReverse(): Promise<void> {
   );
 }
 
-describe('Reverse test', () => {
+describeIfDirectTest(module, 'Reverse test', () => {
   it('Reverse', async () => {
     await testReverse();
   });

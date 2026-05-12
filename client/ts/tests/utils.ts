@@ -2,6 +2,7 @@ import { Connection } from '@solana/web3.js';
 import { assert } from 'chai';
 import { getClusterFromConnection } from '../src/utils/solana';
 import { toMantissaAndExponent } from '../src';
+import { describeIfDirectTest } from './helpers/mocha';
 
 export const areFloatsEqual = (
   num1: number,
@@ -37,7 +38,7 @@ function testToMantissaAndExponent(): void {
   );
 }
 
-describe('Utils test', () => {
+describeIfDirectTest(module, 'Utils test', () => {
   it('Utils', async () => {
     await testUtils();
   });

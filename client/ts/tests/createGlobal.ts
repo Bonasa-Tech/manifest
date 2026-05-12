@@ -10,9 +10,13 @@ import { Global } from '../src/global';
 import { airdropSol, getClusterFromConnection } from '../src/utils/solana';
 import { createMint } from '@solana/spl-token';
 import { getGlobalAddress } from '../src/utils/global';
+import { describeIfDirectTest } from './helpers/mocha';
 
 async function testCreateGlobal(): Promise<void> {
-  const connection: Connection = new Connection('http://127.0.0.1:8899');
+  const connection: Connection = new Connection(
+    'http://127.0.0.1:8899',
+    'confirmed',
+  );
   const payerKeypair: Keypair = Keypair.generate();
   // Get SOL for rent.
   await airdropSol(connection, payerKeypair.publicKey);
@@ -68,7 +72,7 @@ export async function createGlobal(
   console.log(`Created global for ${tokenMint} in ${signature}`);
 }
 
-describe('Create Global test', () => {
+describeIfDirectTest(module, 'Create Global test', () => {
   it('Create Global', async () => {
     await testCreateGlobal();
   });

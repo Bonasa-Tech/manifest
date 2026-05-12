@@ -13,9 +13,13 @@ import { assert } from 'chai';
 import { getGlobalAddress } from '../src/utils/global';
 import { createMint } from '@solana/spl-token';
 import { airdropSol } from '../src/utils/solana';
+import { describeIfDirectTest } from './helpers/mocha';
 
 async function testGlobalWithdraw(): Promise<void> {
-  const connection: Connection = new Connection('http://127.0.0.1:8899');
+  const connection: Connection = new Connection(
+    'http://127.0.0.1:8899',
+    'confirmed',
+  );
   const payerKeypair: Keypair = Keypair.generate();
   // Get SOL for rent.
   await airdropSol(connection, payerKeypair.publicKey);
@@ -76,7 +80,7 @@ export async function withdrawGlobal(
   console.log(`Global Withdrew ${amountTokens} tokens in ${signature}`);
 }
 
-describe('Global Withdraw test', () => {
+describeIfDirectTest(module, 'Global Withdraw test', () => {
   it('Global Withdraw', async () => {
     await testGlobalWithdraw();
   });

@@ -7,9 +7,13 @@ import { Market } from '../src/market';
 import { assert } from 'chai';
 import { placeOrder } from './placeOrder';
 import { WrapperMarketInfo, Wrapper } from '../src';
+import { describeIfDirectTest } from './helpers/mocha';
 
 async function testVolume(): Promise<void> {
-  const connection: Connection = new Connection('http://127.0.0.1:8899');
+  const connection: Connection = new Connection(
+    'http://127.0.0.1:8899',
+    'confirmed',
+  );
   const payerKeypair: Keypair = Keypair.generate();
 
   const marketAddress: PublicKey = await createMarket(connection, payerKeypair);
@@ -71,7 +75,7 @@ async function testVolume(): Promise<void> {
   );
 }
 
-describe('Volume test', () => {
+describeIfDirectTest(module, 'Volume test', () => {
   it('Volume', async () => {
     await testVolume();
   });

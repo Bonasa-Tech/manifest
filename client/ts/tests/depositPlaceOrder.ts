@@ -16,6 +16,8 @@ import {
   createAssociatedTokenAccountIdempotent,
   mintTo,
 } from '@solana/spl-token';
+import { waitForTokenAccount } from './helpers/tokenAccount';
+import { describeIfDirectTest } from './helpers/mocha';
 
 async function testDepositPlaceOrder(): Promise<void> {
   const connection: Connection = new Connection(
@@ -49,6 +51,7 @@ async function testDepositPlaceOrder(): Promise<void> {
     market.quoteMint(),
     payerKeypair.publicKey,
   );
+  await waitForTokenAccount(connection, traderTokenAccount);
   const quoteSize = 3;
   const quotePrice = 3;
   const quoteNotional = quotePrice * quoteSize;
@@ -148,7 +151,7 @@ export async function depositPlaceOrder(
   console.log(`Required Deposit and Placed order in ${signature}`);
 }
 
-describe('Deposit Place Order test', () => {
+describeIfDirectTest(module, 'Deposit Place Order test', () => {
   it('Deposit Place Order', async () => {
     await testDepositPlaceOrder();
   });

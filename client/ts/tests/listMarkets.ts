@@ -3,6 +3,7 @@ import { ManifestClient } from '../src/client';
 import { Market } from '../src/market';
 import { assert } from 'chai';
 import { createMarket } from './createMarket';
+import { describeIfDirectTest } from './helpers/mocha';
 
 async function testListMarket(): Promise<void> {
   const connection: Connection = new Connection(
@@ -26,7 +27,7 @@ async function testListMarket(): Promise<void> {
   assert(marketPks[0].toBase58() == marketAddress.toBase58());
 }
 
-describe('List Market test', () => {
+describeIfDirectTest(module, 'List Market test', () => {
   it('List Market', async () => {
     await testListMarket();
   });

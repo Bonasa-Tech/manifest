@@ -7,6 +7,7 @@ import { assert } from 'chai';
 import { FillFeed } from '../src/fillFeed';
 import { placeOrder } from './placeOrder';
 import WebSocket from 'ws';
+import { describeIfDirectTest } from './helpers/mocha';
 
 async function testFillFeed(): Promise<void> {
   const connection: Connection = new Connection(
@@ -88,7 +89,7 @@ async function checkForFillMessage(
   ws.close();
 }
 
-describe('FillListener test', () => {
+describeIfDirectTest(module, 'FillListener test', () => {
   it('FillListener', async () => {
     await testFillFeed();
   });

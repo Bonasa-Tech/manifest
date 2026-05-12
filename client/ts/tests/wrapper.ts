@@ -21,6 +21,7 @@ import {
 import { Wrapper } from '../src/wrapperObj';
 import { FIXED_WRAPPER_HEADER_SIZE } from '../src/constants';
 import { airdropSol } from '../src/utils/solana';
+import { describeIfDirectTest } from './helpers/mocha';
 
 async function testWrapper(): Promise<void> {
   const connection: Connection = new Connection(
@@ -151,7 +152,7 @@ async function testWrapper(): Promise<void> {
   );
 }
 
-describe('Wrapper test', () => {
+describeIfDirectTest(module, 'Wrapper test', () => {
   it('Wrapper', async () => {
     await testWrapper();
   });
