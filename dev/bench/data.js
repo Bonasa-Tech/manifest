@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1778630691709,
+  "lastUpdate": 1778631253379,
   "repoUrl": "https://github.com/Bonasa-Tech/manifest",
   "entries": {
     "CU Benchmark": [
@@ -11909,6 +11909,72 @@ window.BENCHMARK_DATA = {
           {
             "name": "MFX_99",
             "value": 13190,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "cyrbritt@gmail.com",
+            "name": "Britt Cyr",
+            "username": "brittcyr"
+          },
+          "committer": {
+            "email": "cyrbritt@gmail.com",
+            "name": "Britt Cyr",
+            "username": "brittcyr"
+          },
+          "distinct": true,
+          "id": "9f388ebb803f7937ca8ef4078b88906e19a88300",
+          "message": "Revert \"Fix all Rust warnings\"\n\nThis reverts commit 51b2dd10bea624b354b1837576eda84e79881bd0.",
+          "timestamp": "2026-05-13T00:00:38Z",
+          "tree_id": "f12277e00c87791c5c53f1a1279ba1c663e39ff8",
+          "url": "https://github.com/Bonasa-Tech/manifest/commit/9f388ebb803f7937ca8ef4078b88906e19a88300"
+        },
+        "date": 1778631251223,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "PHX_50",
+            "value": 6897,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "PHX_95",
+            "value": 13208,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "PHX_99",
+            "value": 13902,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_50",
+            "value": 3276,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_95",
+            "value": 12266,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_99",
+            "value": 13184,
             "range": "",
             "unit": "CU",
             "extra": ""
