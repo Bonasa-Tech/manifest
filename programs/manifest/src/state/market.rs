@@ -432,7 +432,7 @@ pub use cvt_mock_types::*;
 impl<Fixed: DerefOrBorrow<MarketFixed>, Dynamic: DerefOrBorrow<[u8]>>
     DynamicAccount<Fixed, Dynamic>
 {
-    fn borrow_market(&self) -> MarketRef {
+    fn borrow_market(&self) -> MarketRef<'_> {
         MarketRef {
             fixed: self.fixed.deref_or_borrow(),
             dynamic: self.dynamic.deref_or_borrow(),
