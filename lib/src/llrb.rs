@@ -100,31 +100,16 @@ impl<'a, V: Payload> LLRB<'a, V> {
         }
     }
 
-    /// Flip the color of this node and the children
+    /// Flip the color of this node and the children.
+    /// Optimized to use toggle_color which avoids branching.
     fn color_flip(&mut self, index: DataIndex) {
         let left_index: DataIndex = self.get_left_index::<V>(index);
-        if left_index != NIL {
-            if self.get_color::<V>(left_index) == Color::Black {
-                self.set_color::<V>(left_index, Color::Red);
-            } else {
-                self.set_color::<V>(left_index, Color::Black);
-            }
-        }
+        self.toggle_color::<V>(left_index);
 
         let right_index: DataIndex = self.get_right_index::<V>(index);
-        if right_index != NIL {
-            if self.get_color::<V>(right_index) == Color::Black {
-                self.set_color::<V>(right_index, Color::Red);
-            } else {
-                self.set_color::<V>(right_index, Color::Black);
-            }
-        }
+        self.toggle_color::<V>(right_index);
 
-        if self.get_color::<V>(index) == Color::Black {
-            self.set_color::<V>(index, Color::Red);
-        } else {
-            self.set_color::<V>(index, Color::Black);
-        }
+        self.toggle_color::<V>(index);
     }
 
     fn insert_recursive(

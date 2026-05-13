@@ -7,12 +7,14 @@ pub type DataIndex = u32;
 pub trait Get: bytemuck::Pod {}
 
 /// Read a struct of type T in an array of data at a given index.
+#[inline(always)]
 pub fn get_helper<T: Get>(data: &[u8], index: DataIndex) -> &T {
     let index_usize: usize = index as usize;
     bytemuck::from_bytes(&data[index_usize..index_usize + size_of::<T>()])
 }
 
 /// Read a struct of type T in an array of data at a given index.
+#[inline(always)]
 pub fn get_mut_helper<T: Get>(data: &mut [u8], index: DataIndex) -> &mut T {
     let index_usize: usize = index as usize;
     bytemuck::from_bytes_mut(&mut data[index_usize..index_usize + size_of::<T>()])

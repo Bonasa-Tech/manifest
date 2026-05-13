@@ -189,6 +189,10 @@ pub trait RedBlackTreeReadOperationsHelpers<'a> {
     fn get_parent_index<V: Payload>(&self, index: DataIndex) -> DataIndex;
     fn is_left_child<V: Payload>(&self, index: DataIndex) -> bool;
     fn is_right_child<V: Payload>(&self, index: DataIndex) -> bool;
+    /// Optimized version when parent index is already known
+    fn is_left_child_of<V: Payload>(&self, index: DataIndex, parent_index: DataIndex) -> bool;
+    /// Optimized version when parent index is already known
+    fn is_right_child_of<V: Payload>(&self, index: DataIndex, parent_index: DataIndex) -> bool;
     fn get_node<V: Payload>(&'a self, index: DataIndex) -> &'a RBNode<V>;
     fn get_child_index<V: Payload>(&self, index: DataIndex) -> DataIndex;
     fn is_internal<V: Payload>(&self, index: DataIndex) -> bool;
@@ -206,6 +210,10 @@ pub(crate) trait RedBlackTreeReadOperationsHelpers<'a> {
     fn get_parent_index<V: Payload>(&self, index: DataIndex) -> DataIndex;
     fn is_left_child<V: Payload>(&self, index: DataIndex) -> bool;
     fn is_right_child<V: Payload>(&self, index: DataIndex) -> bool;
+    /// Optimized version when parent index is already known
+    fn is_left_child_of<V: Payload>(&self, index: DataIndex, parent_index: DataIndex) -> bool;
+    /// Optimized version when parent index is already known
+    fn is_right_child_of<V: Payload>(&self, index: DataIndex, parent_index: DataIndex) -> bool;
     fn get_node<V: Payload>(&'a self, index: DataIndex) -> &'a RBNode<V>;
     fn get_child_index<V: Payload>(&self, index: DataIndex) -> DataIndex;
     fn is_internal<V: Payload>(&self, index: DataIndex) -> bool;
@@ -222,16 +230,19 @@ where
         let node: &RBNode<V> = get_helper::<RBNode<V>>(self.data(), index);
         &node.value
     }
+    #[inline(always)]
     fn has_left<V: Payload>(&self, index: DataIndex) -> bool {
         debug_assert_ne!(index, NIL);
         let node: &RBNode<V> = get_helper::<RBNode<V>>(self.data(), index);
         node.left != NIL
     }
+    #[inline(always)]
     fn has_right<V: Payload>(&self, index: DataIndex) -> bool {
         debug_assert_ne!(index, NIL);
         let node: &RBNode<V> = get_helper::<RBNode<V>>(self.data(), index);
         node.right != NIL
     }
+    #[inline(always)]
     fn get_color<V: Payload>(&self, index: DataIndex) -> Color {
         if index == NIL {
             return Color::Black;
@@ -239,6 +250,7 @@ where
         let node: &RBNode<V> = get_helper::<RBNode<V>>(self.data(), index);
         node.color
     }
+    #[inline(always)]
     fn get_right_index<V: Payload>(&self, index: DataIndex) -> DataIndex {
         if index == NIL {
             return NIL;
@@ -246,6 +258,7 @@ where
         let node: &RBNode<V> = get_helper::<RBNode<V>>(self.data(), index);
         node.right
     }
+    #[inline(always)]
     fn get_left_index<V: Payload>(&self, index: DataIndex) -> DataIndex {
         if index == NIL {
             return NIL;
@@ -253,6 +266,7 @@ where
         let node: &RBNode<V> = get_helper::<RBNode<V>>(self.data(), index);
         node.left
     }
+    #[inline(always)]
     fn get_parent_index<V: Payload>(&self, index: DataIndex) -> DataIndex {
         if index == NIL {
             return NIL;
@@ -273,6 +287,16 @@ where
             return false;
         }
         let parent_index: DataIndex = self.get_parent_index::<V>(index);
+        self.get_right_index::<V>(parent_index) == index
+    }
+    /// Optimized: check if index is left child when parent is already known
+    #[inline(always)]
+    fn is_left_child_of<V: Payload>(&self, index: DataIndex, parent_index: DataIndex) -> bool {
+        self.get_left_index::<V>(parent_index) == index
+    }
+    /// Optimized: check if index is right child when parent is already known
+    #[inline(always)]
+    fn is_right_child_of<V: Payload>(&self, index: DataIndex, parent_index: DataIndex) -> bool {
         self.get_right_index::<V>(parent_index) == index
     }
     fn get_node<V: Payload>(&'a self, index: DataIndex) -> &'a RBNode<V> {
@@ -319,6 +343,7 @@ where
 #[cfg(feature = "certora")]
 pub trait RedBlackTreeWriteOperationsHelpers<'a> {
     fn set_color<V: Payload>(&mut self, index: DataIndex, color: Color);
+    fn toggle_color<V: Payload>(&mut self, index: DataIndex);
     fn set_parent_index<V: Payload>(&mut self, index: DataIndex, parent_index: DataIndex);
     fn set_left_index<V: Payload>(&mut self, index: DataIndex, left_index: DataIndex);
     fn set_right_index<V: Payload>(&mut self, index: DataIndex, right_index: DataIndex);
@@ -330,6 +355,7 @@ pub trait RedBlackTreeWriteOperationsHelpers<'a> {
 #[cfg(not(feature = "certora"))]
 pub(crate) trait RedBlackTreeWriteOperationsHelpers<'a> {
     fn set_color<V: Payload>(&mut self, index: DataIndex, color: Color);
+    fn toggle_color<V: Payload>(&mut self, index: DataIndex);
     fn set_parent_index<V: Payload>(&mut self, index: DataIndex, parent_index: DataIndex);
     fn set_left_index<V: Payload>(&mut self, index: DataIndex, left_index: DataIndex);
     fn set_right_index<V: Payload>(&mut self, index: DataIndex, right_index: DataIndex);
@@ -350,6 +376,20 @@ where
         }
         let node: &mut RBNode<V> = get_mut_helper::<RBNode<V>>(self.data(), index);
         node.color = color;
+    }
+    /// Toggle color between Red and Black using XOR. More efficient than if/else branching.
+    #[inline(always)]
+    fn toggle_color<V: Payload>(&mut self, index: DataIndex) {
+        if index == NIL {
+            return;
+        }
+        let node: &mut RBNode<V> = get_mut_helper::<RBNode<V>>(self.data(), index);
+        // Color::Black = 0, Color::Red = 1, so XOR with 1 toggles
+        node.color = if node.color == Color::Black {
+            Color::Red
+        } else {
+            Color::Black
+        };
     }
     fn set_parent_index<V: Payload>(&mut self, index: DataIndex, parent_index: DataIndex) {
         if index == NIL {
@@ -564,50 +604,22 @@ where
     T: GetRedBlackTreeReadOnlyData<'a>,
 {
     /// Lookup the index of a given value.
+    /// Optimized to use single cmp() call per node instead of multiple comparisons.
     fn lookup_index<V: Payload>(&'a self, value: &V) -> DataIndex {
-        if self.root_index() == NIL {
-            return NIL;
-        }
-
         let mut current_index: DataIndex = self.root_index();
 
-        while self.get_value::<V>(current_index) != value {
-            if self.get_value::<V>(current_index) > value {
-                if self.has_left::<V>(current_index) {
+        while current_index != NIL {
+            match self.get_value::<V>(current_index).cmp(value) {
+                core::cmp::Ordering::Equal => return current_index,
+                core::cmp::Ordering::Greater => {
                     current_index = self.get_left_index::<V>(current_index);
-                } else {
-                    return NIL;
                 }
-            } else if self.get_value::<V>(current_index) < value {
-                if self.has_right::<V>(current_index) {
+                core::cmp::Ordering::Less => {
                     current_index = self.get_right_index::<V>(current_index);
-                } else {
-                    return NIL;
                 }
-            } else {
-                // Check both subtrees for equal keys.
-                let left_lookup: DataIndex = RedBlackTreeReadOnly::<V>::new(
-                    self.data(),
-                    self.get_left_index::<V>(current_index),
-                    NIL,
-                )
-                .lookup_index(value);
-                if left_lookup != NIL {
-                    return left_lookup;
-                }
-                let right_lookup: DataIndex = RedBlackTreeReadOnly::<V>::new(
-                    self.data(),
-                    self.get_right_index::<V>(current_index),
-                    NIL,
-                )
-                .lookup_index(value);
-                if right_lookup != NIL {
-                    return right_lookup;
-                }
-                return NIL;
             }
         }
-        current_index
+        NIL
     }
 
     fn lookup_max_index<V: Payload>(&'a self) -> DataIndex {
