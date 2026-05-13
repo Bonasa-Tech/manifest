@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1778693063291,
+  "lastUpdate": 1778700492283,
   "repoUrl": "https://github.com/Bonasa-Tech/manifest",
   "entries": {
     "CU Benchmark": [
@@ -12107,6 +12107,72 @@ window.BENCHMARK_DATA = {
           {
             "name": "MFX_99",
             "value": 13170,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "cyrbritt@gmail.com",
+            "name": "Britt Cyr",
+            "username": "brittcyr"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "eb737c08ac7d10b199f5865b165efca8bfdd8424",
+          "message": "Remove solana sdk dep (#618)\n\n* remove solana sdk dep\n\n* pin\n\n* Apply nightly rustfmt formatting",
+          "timestamp": "2026-05-13T15:15:26-04:00",
+          "tree_id": "171b780e43139de16767989f155ddf467e1d5a60",
+          "url": "https://github.com/Bonasa-Tech/manifest/commit/eb737c08ac7d10b199f5865b165efca8bfdd8424"
+        },
+        "date": 1778700489775,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "PHX_50",
+            "value": 6897,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "PHX_95",
+            "value": 13208,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "PHX_99",
+            "value": 13902,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_50",
+            "value": 3277,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_95",
+            "value": 12255,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_99",
+            "value": 13180,
             "range": "",
             "unit": "CU",
             "extra": ""
