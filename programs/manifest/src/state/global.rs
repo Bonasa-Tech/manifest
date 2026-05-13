@@ -249,7 +249,7 @@ pub type GlobalRefMut<'a> = DynamicAccount<&'a mut GlobalFixed, &'a mut [u8]>;
 impl<Fixed: DerefOrBorrow<GlobalFixed>, Dynamic: DerefOrBorrow<[u8]>>
     DynamicAccount<Fixed, Dynamic>
 {
-    fn borrow_global(&self) -> GlobalRef {
+    fn borrow_global(&self) -> GlobalRef<'_> {
         GlobalRef {
             fixed: self.fixed.deref_or_borrow(),
             dynamic: self.dynamic.deref_or_borrow(),
