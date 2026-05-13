@@ -181,7 +181,7 @@ export class ManifestStatsServer {
     this.depth = metrics.depth;
     this.dbQueryCount = metrics.dbQueryCount;
     this.dbQueryDuration = metrics.dbQueryDuration;
-    this.discordWebhookUrl = process.env.DISCORD_WEBHOOK_URL;
+    this.discordWebhookUrl = process.env.TVL_DISCORD_WEBHOOK_URL;
     this.allquietWebhookUrl = process.env.ALLQUIET_WEBHOOK_URL;
 
     this.pool = new Pool({
@@ -201,7 +201,7 @@ export class ManifestStatsServer {
 
     // Initialize volume monitor for alerts
     this.volumeMonitor = new VolumeMonitor(
-      this.discordWebhookUrl,
+      process.env.TVL_DISCORD_WEBHOOK_URL,
       (): number => this.getSolPrice(),
       (marketPk: string): Market | undefined => this.markets.get(marketPk),
       (marketPk: string): [string, string] | undefined =>
@@ -210,7 +210,7 @@ export class ManifestStatsServer {
 
     // Initialize market maker monitor
     this.marketMakerMonitor = new MarketMakerMonitor(
-      this.discordWebhookUrl,
+      process.env.TVL_DISCORD_WEBHOOK_URL,
       (): Map<string, number> => this.traderMakerNotionalVolume,
     );
   }
