@@ -17,7 +17,8 @@ use solana_program::{
     sysvar::rent::Rent,
 };
 use solana_program_test::tokio;
-use solana_sdk::{signature::Keypair, signer::Signer};
+use solana_keypair::Keypair;
+use solana_signer::Signer;
 
 use crate::{
     send_tx_with_retry, GlobalFixture, MintFixture, Side, TestFixture, Token, TokenAccountFixture,

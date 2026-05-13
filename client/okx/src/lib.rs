@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 use solana_client::rpc_client::RpcClient;
-use solana_sdk::pubkey::Pubkey;
+use solana_program::pubkey::Pubkey;
 use std::{collections::HashMap, error::Error};
 use tokio::sync::mpsc::Sender;
 

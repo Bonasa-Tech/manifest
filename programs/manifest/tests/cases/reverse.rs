@@ -5,10 +5,11 @@ use manifest::{
     quantities::WrapperU64,
     state::{BooksideReadOnly, RestingOrder},
 };
-use solana_sdk::{
-    compute_budget::ComputeBudgetInstruction, instruction::Instruction, pubkey, pubkey::Pubkey,
-    signature::Signer, signer::keypair::Keypair,
-};
+use solana_compute_budget_interface::ComputeBudgetInstruction;
+use solana_instruction::Instruction;
+use solana_keypair::Keypair;
+use solana_program::{pubkey, pubkey::Pubkey};
+use solana_signer::Signer;
 use spl_associated_token_account::get_associated_token_address;
 use std::{rc::Rc, str::FromStr};
 

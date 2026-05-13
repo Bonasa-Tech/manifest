@@ -3,12 +3,11 @@ use std::rc::Rc;
 use borsh::BorshSerialize;
 use manifest::program::{withdraw::WithdrawParams, withdraw_instruction, ManifestInstruction};
 use solana_program_test::{tokio, ProgramTestContext};
-use solana_sdk::{
-    instruction::{AccountMeta, Instruction},
-    pubkey::Pubkey,
-    signature::{Keypair, Signer},
-    transaction::Transaction,
-};
+use solana_instruction::Instruction;
+use solana_keypair::Keypair;
+use solana_program::{instruction::AccountMeta, pubkey::Pubkey};
+use solana_signer::Signer;
+use solana_transaction::Transaction;
 
 use crate::{MintFixture, TestFixture, Token, TokenAccountFixture, SOL_UNIT_SIZE};
 
@@ -58,7 +57,7 @@ async fn withdraw_user_insufficient_funds_test() -> anyhow::Result<()> {
 
     // Deposit is on a different keypair, so the out of funds is not from token
     // program.
-    let second_keypair: solana_sdk::signature::Keypair =
+    let second_keypair: solana_keypair::Keypair =
         test_fixture.second_keypair.insecure_clone();
     test_fixture.claim_seat_for_keypair(&second_keypair).await?;
     test_fixture

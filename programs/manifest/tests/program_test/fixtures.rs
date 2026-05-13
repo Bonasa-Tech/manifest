@@ -21,19 +21,17 @@ use manifest::{
     state::{GlobalFixed, GlobalValue, MarketFixed, MarketValue, OrderType, RestingOrder},
     validation::{get_global_address, get_vault_address, MintAccountInfo},
 };
-use solana_program::{hash::Hash, pubkey::Pubkey, rent::Rent};
-use solana_program_test::{BanksClientError, ProgramTest, ProgramTestContext};
-use solana_sdk::{
-    account::Account,
-    account_info::AccountInfo,
-    clock::Clock,
-    instruction::{AccountMeta, Instruction},
-    program_pack::Pack,
-    signature::Keypair,
-    signer::Signer,
-    system_instruction::create_account,
-    transaction::Transaction,
+use solana_account::Account;
+use solana_clock::Clock;
+use solana_instruction::Instruction;
+use solana_keypair::Keypair;
+use solana_program::{
+    account_info::AccountInfo, hash::Hash, instruction::AccountMeta, program_pack::Pack,
+    pubkey::Pubkey, rent::Rent, system_instruction::create_account,
 };
+use solana_program_test::{BanksClientError, ProgramTest, ProgramTestContext};
+use solana_signer::Signer;
+use solana_transaction::Transaction;
 use spl_token_2022::state::Mint;
 use std::rc::Rc;
 
@@ -81,10 +79,10 @@ impl TestFixture {
         let second_keypair: Keypair = Keypair::new();
         program.add_account(
             second_keypair.pubkey(),
-            solana_sdk::account::Account::new(
+            solana_account::Account::new(
                 u32::MAX as u64,
                 0,
-                &solana_sdk::system_program::id(),
+                &solana_program::system_program::id(),
             ),
         );
 
@@ -116,7 +114,7 @@ impl TestFixture {
         let usdc_mint: Pubkey =
             Pubkey::from_str("EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v").unwrap();
         let user_usdc_ata: Pubkey = get_associated_token_address(&second_payer, &usdc_mint);
-        let mut account: solana_sdk::account::Account = solana_sdk::account::Account::new(
+        let mut account: solana_account::Account = solana_account::Account::new(
             u32::MAX as u64,
             spl_token::state::Account::get_packed_len(),
             &spl_token::id(),
@@ -134,7 +132,7 @@ impl TestFixture {
         let usdt_mint: Pubkey =
             Pubkey::from_str("Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB").unwrap();
         let user_usdt_ata: Pubkey = get_associated_token_address(&second_payer, &usdt_mint);
-        let mut account: solana_sdk::account::Account = solana_sdk::account::Account::new(
+        let mut account: solana_account::Account = solana_account::Account::new(
             u32::MAX as u64,
             spl_token::state::Account::get_packed_len(),
             &spl_token::id(),
@@ -152,7 +150,7 @@ impl TestFixture {
         let sol_mint: Pubkey =
             Pubkey::from_str("So11111111111111111111111111111111111111112").unwrap();
         let user_sol_ata: Pubkey = get_associated_token_address(&second_payer, &sol_mint);
-        let mut account: solana_sdk::account::Account = solana_sdk::account::Account::new(
+        let mut account: solana_account::Account = solana_account::Account::new(
             u32::MAX as u64,
             spl_token::state::Account::get_packed_len(),
             &spl_token::id(),

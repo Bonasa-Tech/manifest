@@ -20,8 +20,10 @@ hypertree = { path = "../../../lib" }
 
 [dev-dependencies]
 solana-program-test = { workspace = true }
-solana-sdk = { workspace = true }
 solana-program = { workspace = true }
+solana-keypair = { workspace = true }
+solana-signer = { workspace = true }
+solana-transaction = { workspace = true }
 manifest-dex = { path = "../../../programs/manifest" }
 spl-token = { workspace = true }
 spl-token-2022 = { workspace = true }

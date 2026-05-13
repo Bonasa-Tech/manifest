@@ -9,10 +9,12 @@ use manifest::{
     state::{OrderType, NO_EXPIRATION_LAST_VALID_SLOT},
 };
 use solana_program_test::{ProgramTest, ProgramTestContext};
-use solana_sdk::{
-    instruction::Instruction, program_pack::Pack, pubkey::Pubkey, rent::Rent, signature::Keypair,
-    signer::Signer, system_instruction::create_account,
+use solana_instruction::Instruction;
+use solana_keypair::Keypair;
+use solana_program::{
+    program_pack::Pack, pubkey::Pubkey, rent::Rent, system_instruction::create_account,
 };
+use solana_signer::Signer;
 
 use crate::{manifest_program_test, send_tx_with_retry, MintFixture, RUST_LOG_DEFAULT};
 
@@ -201,7 +203,7 @@ async fn token22_base() -> anyhow::Result<()> {
     )
     .await?;
     {
-        let market_account: solana_sdk::account::Account = context
+        let market_account: solana_account::Account = context
             .borrow_mut()
             .banks_client
             .get_account(market_keypair.pubkey())
@@ -713,7 +715,7 @@ async fn token22_deposit_transfer_fee() -> anyhow::Result<()> {
     )
     .await?;
 
-    let market_account: solana_sdk::account::Account = context
+    let market_account: solana_account::Account = context
         .borrow_mut()
         .banks_client
         .get_account(market_keypair.pubkey())
@@ -925,7 +927,7 @@ async fn token22_transfer_fee_epoch_switching() -> anyhow::Result<()> {
 
     // Verify 5% fee was applied (1_000_000_000 * 0.95 = 950_000_000)
     {
-        let market_account: solana_sdk::account::Account = context
+        let market_account: solana_account::Account = context
             .borrow_mut()
             .banks_client
             .get_account(market_keypair.pubkey())
@@ -946,7 +948,7 @@ async fn token22_transfer_fee_epoch_switching() -> anyhow::Result<()> {
 
     // Now schedule a new fee (10% = 1000 bps) for a future epoch
     // Get current epoch and schedule for epoch + 1
-    let current_clock: solana_sdk::clock::Clock = context
+    let current_clock: solana_clock::Clock = context
         .borrow_mut()
         .banks_client
         .get_sysvar()
@@ -1000,7 +1002,7 @@ async fn token22_transfer_fee_epoch_switching() -> anyhow::Result<()> {
 
     // Verify 10% fee was applied (previous 950_000_000 + 900_000_000 = 1_850_000_000)
     {
-        let market_account: solana_sdk::account::Account = context
+        let market_account: solana_account::Account = context
             .borrow_mut()
             .banks_client
             .get_account(market_keypair.pubkey())
@@ -1205,7 +1207,7 @@ async fn token22_transfer_fee_older_epoch() -> anyhow::Result<()> {
 
     // Verify 0% fee was applied (full amount credited)
     {
-        let market_account: solana_sdk::account::Account = context
+        let market_account: solana_account::Account = context
             .borrow_mut()
             .banks_client
             .get_account(market_keypair.pubkey())
@@ -1390,7 +1392,7 @@ async fn token22_transfer_fee_zero_to_nonzero() -> anyhow::Result<()> {
 
     // Verify full amount credited with 0% fee
     {
-        let market_account: solana_sdk::account::Account = context
+        let market_account: solana_account::Account = context
             .borrow_mut()
             .banks_client
             .get_account(market_keypair.pubkey())
@@ -1430,7 +1432,7 @@ async fn token22_transfer_fee_zero_to_nonzero() -> anyhow::Result<()> {
     .await?;
 
     // Advance to new epoch where 15% fee is active
-    let current_clock: solana_sdk::clock::Clock = context
+    let current_clock: solana_clock::Clock = context
         .borrow_mut()
         .banks_client
         .get_sysvar()
@@ -1461,7 +1463,7 @@ async fn token22_transfer_fee_zero_to_nonzero() -> anyhow::Result<()> {
 
     // Verify 15% fee applied (1_000_000_000 + 850_000_000 = 1_850_000_000)
     {
-        let market_account: solana_sdk::account::Account = context
+        let market_account: solana_account::Account = context
             .borrow_mut()
             .banks_client
             .get_account(market_keypair.pubkey())

@@ -2,12 +2,11 @@ use std::cell::RefMut;
 
 use manifest::program::create_market_instructions;
 use solana_program_test::{tokio, ProgramTestContext};
-use solana_sdk::{
-    instruction::Instruction,
-    pubkey::Pubkey,
-    signature::{Keypair, Signer},
-    transaction::Transaction,
-};
+use solana_instruction::Instruction;
+use solana_keypair::Keypair;
+use solana_program::pubkey::Pubkey;
+use solana_signer::Signer;
+use solana_transaction::Transaction;
 
 use crate::TestFixture;
 

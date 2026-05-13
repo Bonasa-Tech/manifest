@@ -2,7 +2,7 @@ use manifest::{
     program::batch_update::{CancelOrderParams, PlaceOrderParams},
     state::{OrderType, NO_EXPIRATION_LAST_VALID_SLOT},
 };
-use solana_sdk::signer::Signer;
+use solana_signer::Signer;
 
 use crate::{TestFixture, SOL_UNIT_SIZE, USDC_UNIT_SIZE};
 

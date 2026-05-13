@@ -3,12 +3,10 @@ use std::rc::Rc;
 use borsh::ser::BorshSerialize;
 use manifest::program::{deposit::DepositParams, deposit_instruction, ManifestInstruction};
 use solana_program_test::tokio;
-use solana_sdk::{
-    instruction::{AccountMeta, Instruction},
-    pubkey::Pubkey,
-    signature::Keypair,
-    signer::Signer,
-};
+use solana_instruction::Instruction;
+use solana_keypair::Keypair;
+use solana_program::{instruction::AccountMeta, pubkey::Pubkey};
+use solana_signer::Signer;
 
 use crate::{
     send_tx_with_retry, MintFixture, TestFixture, Token, TokenAccountFixture, SOL_UNIT_SIZE,

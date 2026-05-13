@@ -10,7 +10,8 @@ use manifest::{
     validation::get_vault_address,
 };
 use solana_program_test::tokio;
-use solana_sdk::signature::{Keypair, Signer};
+use solana_keypair::Keypair;
+use solana_signer::Signer;
 
 use crate::{Side, TestFixture, Token, SOL_UNIT_SIZE, USDC_UNIT_SIZE};
 

@@ -14,11 +14,11 @@ use manifest::{
         NO_EXPIRATION_LAST_VALID_SLOT,
     },
 };
+use solana_instruction::Instruction;
+use solana_keypair::Keypair;
+use solana_program::{pubkey::Pubkey, system_instruction::transfer};
 use solana_program_test::tokio;
-use solana_sdk::{
-    instruction::Instruction, pubkey::Pubkey, signature::Keypair, signer::Signer,
-    system_instruction::transfer,
-};
+use solana_signer::Signer;
 
 use crate::{
     send_tx_with_retry, GlobalFixture, MarketFixture, MintFixture, TestFixture, Token,
@@ -1626,7 +1626,7 @@ async fn global_match_multiple_levels() -> anyhow::Result<()> {
 #[tokio::test]
 async fn global_create_with_dusted_address() -> anyhow::Result<()> {
     use manifest::validation::get_global_address;
-    use solana_sdk::system_instruction::transfer;
+    use solana_program::system_instruction::transfer;
 
     let test_fixture: TestFixture = TestFixture::new().await;
     let payer: Pubkey = test_fixture.payer();
@@ -1859,7 +1859,7 @@ async fn global_match_multiple_levels_with_unbacked() -> anyhow::Result<()> {
 #[tokio::test]
 async fn global_create_with_dusted_vault_address() -> anyhow::Result<()> {
     use manifest::validation::get_global_vault_address;
-    use solana_sdk::system_instruction::transfer;
+    use solana_program::system_instruction::transfer;
 
     let test_fixture: TestFixture = TestFixture::new().await;
     let payer: Pubkey = test_fixture.payer();

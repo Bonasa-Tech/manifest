@@ -10,13 +10,16 @@ use manifest::{
     state::{GlobalFixed, GlobalValue, MarketFixed, MarketValue},
     validation::{get_global_address, MintAccountInfo},
 };
-use solana_program::{hash::Hash, pubkey::Pubkey, rent::Rent};
-use solana_program_test::{processor, BanksClientError, ProgramTest, ProgramTestContext};
-use solana_sdk::{
-    account::Account, account_info::AccountInfo, instruction::Instruction, program_pack::Pack,
-    signature::Keypair, signer::Signer, system_instruction::create_account,
-    transaction::Transaction,
+use solana_account::Account;
+use solana_instruction::Instruction;
+use solana_keypair::Keypair;
+use solana_program::{
+    account_info::AccountInfo, hash::Hash, program_pack::Pack, pubkey::Pubkey, rent::Rent,
+    system_instruction::create_account,
 };
+use solana_program_test::{processor, BanksClientError, ProgramTest, ProgramTestContext};
+use solana_signer::Signer;
+use solana_transaction::Transaction;
 use spl_token_2022::{
     extension::{
         transfer_fee::instruction::initialize_transfer_fee_config, transfer_hook,
@@ -84,7 +87,7 @@ impl TestFixture {
         let second_keypair: Keypair = Keypair::new();
         program.add_account(
             second_keypair.pubkey(),
-            solana_sdk::account::Account::new(SOL_UNIT_SIZE, 0, &solana_sdk::system_program::id()),
+            solana_account::Account::new(SOL_UNIT_SIZE, 0, &solana_program::system_program::id()),
         );
 
         let market_keypair: Keypair = Keypair::new();
@@ -176,7 +179,7 @@ impl TestFixture {
         let second_keypair: Keypair = Keypair::new();
         program.add_account(
             second_keypair.pubkey(),
-            solana_sdk::account::Account::new(SOL_UNIT_SIZE, 0, &solana_sdk::system_program::id()),
+            solana_account::Account::new(SOL_UNIT_SIZE, 0, &solana_program::system_program::id()),
         );
 
         let market_keypair: Keypair = Keypair::new();

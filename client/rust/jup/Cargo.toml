@@ -18,8 +18,8 @@ anyhow = { workspace = true }
 manifest-dex = { path = "../../../programs/manifest" }
 hypertree = { path = "../../../lib" }
 jupiter-amm-interface = "0.5.1"
-solana-sdk = { workspace = true }
 solana-program = { workspace = true }
+solana-account = { workspace = true }
 spl-token = { workspace = true }
 spl-token-2022 = { workspace = true }
 tokio = { workspace = true }

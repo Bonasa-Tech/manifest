@@ -17,7 +17,6 @@ test = []
 anyhow = { workspace = true }
 manifest-dex = { path = "../../programs/manifest" }
 hypertree = { path = "../../lib" }
-solana-sdk = { workspace = true }
 solana-program = { workspace = true }
 spl-token = { workspace = true }
 spl-token-2022 = { workspace = true }

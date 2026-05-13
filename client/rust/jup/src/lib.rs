@@ -15,8 +15,7 @@ use manifest::{
         loaders::GlobalTradeAccounts, ManifestAccountInfo,
     },
 };
-use solana_program::{account_info::AccountInfo, system_program};
-use solana_sdk::{instruction::AccountMeta, pubkey::Pubkey};
+use solana_program::{account_info::AccountInfo, instruction::AccountMeta, pubkey::Pubkey, system_program};
 use std::{cell::RefCell, mem::size_of, rc::Rc};
 
 macro_rules! dynamic_value_opt_to_account_info {
@@ -141,7 +140,7 @@ impl Amm for ManifestMarket {
             });
         };
 
-        let market_account: &solana_sdk::account::Account = account_map.get(&self.key).unwrap();
+        let market_account: &solana_account::Account = account_map.get(&self.key).unwrap();
 
         let (header_bytes, dynamic_data) = market_account.data.split_at(size_of::<MarketFixed>());
         let market_fixed: &MarketFixed = get_helper::<MarketFixed>(header_bytes, 0_u32);
@@ -350,7 +349,8 @@ mod test {
         },
         validation::{MintAccountInfo, Signer},
     };
-    use solana_sdk::{account::Account, account_info::AccountInfo, pubkey};
+    use solana_account::Account;
+    use solana_program::{account_info::AccountInfo, pubkey};
     use spl_token_2022::state::Mint;
     use std::{cell::RefCell, rc::Rc};
 

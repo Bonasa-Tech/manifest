@@ -13,35 +13,32 @@ mod integration_tests {
     };
     use solana_pubkey::Pubkey;
 
-    use solana_program::{program_pack::Pack, system_instruction};
+    use solana_instruction::Instruction as SolanaInstruction;
+    use solana_keypair::Keypair;
+    use solana_program::{program_pack::Pack, pubkey::Pubkey as SolanaPubkey, rent::Rent, system_instruction};
     use solana_program_test::{processor, ProgramTest};
-    use solana_sdk::{
-        instruction::Instruction as SolanaInstruction,
-        pubkey::Pubkey as SolanaPubkey,
-        rent::Rent,
-        signature::{Keypair, Signer},
-        transaction::Transaction,
-    };
+    use solana_signer::Signer;
+    use solana_transaction::Transaction;
     use spl_token::state::Mint;
 
-    /// Convert our Pubkey to solana_sdk::Pubkey
+    /// Convert our Pubkey to solana_program::pubkey::Pubkey
     fn to_solana_pubkey(pk: &Pubkey) -> SolanaPubkey {
         SolanaPubkey::new_from_array(pk.to_bytes())
     }
 
-    /// Convert solana_sdk::Pubkey to our Pubkey
+    /// Convert solana_program::pubkey::Pubkey to our Pubkey
     fn from_solana_pubkey(pk: &SolanaPubkey) -> Pubkey {
         Pubkey::new_from_array(pk.to_bytes())
     }
 
-    /// Convert our Instruction to solana_sdk::Instruction
+    /// Convert our Instruction to solana_instruction::Instruction
     fn to_solana_instruction(ix: &crate::Instruction) -> SolanaInstruction {
         SolanaInstruction {
             program_id: to_solana_pubkey(&ix.program_id),
             accounts: ix
                 .accounts
                 .iter()
-                .map(|a| solana_sdk::instruction::AccountMeta {
+                .map(|a| solana_program::instruction::AccountMeta {
                     pubkey: to_solana_pubkey(&a.pubkey),
                     is_signer: a.is_signer,
                     is_writable: a.is_writable,
@@ -54,7 +51,7 @@ mod integration_tests {
     async fn setup_test() -> (
         solana_program_test::BanksClient,
         Keypair,
-        solana_sdk::hash::Hash,
+        solana_program::hash::Hash,
     ) {
         let program_test = ProgramTest::new(
             "manifest",
@@ -68,7 +65,7 @@ mod integration_tests {
     async fn create_mint(
         banks_client: &mut solana_program_test::BanksClient,
         payer: &Keypair,
-        recent_blockhash: solana_sdk::hash::Hash,
+        recent_blockhash: solana_program::hash::Hash,
         decimals: u8,
     ) -> SolanaPubkey {
         let mint = Keypair::new();
@@ -107,7 +104,7 @@ mod integration_tests {
     async fn create_token_account(
         banks_client: &mut solana_program_test::BanksClient,
         payer: &Keypair,
-        recent_blockhash: solana_sdk::hash::Hash,
+        recent_blockhash: solana_program::hash::Hash,
         mint: &SolanaPubkey,
         owner: &SolanaPubkey,
     ) -> SolanaPubkey {
@@ -146,7 +143,7 @@ mod integration_tests {
     async fn mint_tokens(
         banks_client: &mut solana_program_test::BanksClient,
         payer: &Keypair,
-        recent_blockhash: solana_sdk::hash::Hash,
+        recent_blockhash: solana_program::hash::Hash,
         mint: &SolanaPubkey,
         token_account: &SolanaPubkey,
         amount: u64,
