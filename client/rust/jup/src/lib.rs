@@ -15,7 +15,9 @@ use manifest::{
         loaders::GlobalTradeAccounts, ManifestAccountInfo,
     },
 };
-use solana_program::{account_info::AccountInfo, instruction::AccountMeta, pubkey::Pubkey, system_program};
+use solana_program::{
+    account_info::AccountInfo, instruction::AccountMeta, pubkey::Pubkey, system_program,
+};
 use std::{cell::RefCell, mem::size_of, rc::Rc};
 
 macro_rules! dynamic_value_opt_to_account_info {

@@ -15,7 +15,9 @@ mod integration_tests {
 
     use solana_instruction::Instruction as SolanaInstruction;
     use solana_keypair::Keypair;
-    use solana_program::{program_pack::Pack, pubkey::Pubkey as SolanaPubkey, rent::Rent, system_instruction};
+    use solana_program::{
+        program_pack::Pack, pubkey::Pubkey as SolanaPubkey, rent::Rent, system_instruction,
+    };
     use solana_program_test::{processor, ProgramTest};
     use solana_signer::Signer;
     use solana_transaction::Transaction;

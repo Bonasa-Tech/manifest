@@ -10,6 +10,7 @@ use manifest::{
     state::{MarketFixed, OrderType, NO_EXPIRATION_LAST_VALID_SLOT},
     validation::{get_global_address, get_global_vault_address, get_vault_address},
 };
+use solana_keypair::Keypair;
 use solana_program::{
     instruction::{AccountMeta, Instruction},
     pubkey::Pubkey,
@@ -17,7 +18,6 @@ use solana_program::{
     sysvar::rent::Rent,
 };
 use solana_program_test::tokio;
-use solana_keypair::Keypair;
 use solana_signer::Signer;
 
 use crate::{

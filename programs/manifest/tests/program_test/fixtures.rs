@@ -79,11 +79,7 @@ impl TestFixture {
         let second_keypair: Keypair = Keypair::new();
         program.add_account(
             second_keypair.pubkey(),
-            solana_account::Account::new(
-                u32::MAX as u64,
-                0,
-                &solana_program::system_program::id(),
-            ),
+            solana_account::Account::new(u32::MAX as u64, 0, &solana_program::system_program::id()),
         );
 
         // Add testdata for the reverse coalesce test.
