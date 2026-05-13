@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1778619438515,
+  "lastUpdate": 1778630691709,
   "repoUrl": "https://github.com/Bonasa-Tech/manifest",
   "entries": {
     "CU Benchmark": [
@@ -11843,6 +11843,72 @@ window.BENCHMARK_DATA = {
           {
             "name": "MFX_99",
             "value": 13166,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "cyrbritt@gmail.com",
+            "name": "Britt Cyr",
+            "username": "brittcyr"
+          },
+          "committer": {
+            "email": "cyrbritt@gmail.com",
+            "name": "Britt Cyr",
+            "username": "brittcyr"
+          },
+          "distinct": true,
+          "id": "51b2dd10bea624b354b1837576eda84e79881bd0",
+          "message": "Fix all Rust warnings\n\n- Add check-cfg configuration to workspace Cargo.toml for Solana-specific cfgs\n- Add [lints] workspace = true to all workspace members\n- Fix unused imports via cargo fix\n- Fix unused mut variable (prefix with underscore)\n- Fix unused return values from format! in Display tests",
+          "timestamp": "2026-05-12T23:51:46Z",
+          "tree_id": "943d461d60501cf8fbda4cc43ddd803d13801a9d",
+          "url": "https://github.com/Bonasa-Tech/manifest/commit/51b2dd10bea624b354b1837576eda84e79881bd0"
+        },
+        "date": 1778630689911,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "PHX_50",
+            "value": 6897,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "PHX_95",
+            "value": 13208,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "PHX_99",
+            "value": 13902,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_50",
+            "value": 3277,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_95",
+            "value": 12249,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_99",
+            "value": 13190,
             "range": "",
             "unit": "CU",
             "extra": ""
