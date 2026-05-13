@@ -93,7 +93,7 @@ impl std::fmt::Display for MarketInfo {
 #[test]
 fn test_display() {
     let market_info: MarketInfo = MarketInfo::new_empty(Pubkey::default(), 0);
-    format!("{}", market_info);
+    let _ = format!("{}", market_info);
 }
 
 #[test]

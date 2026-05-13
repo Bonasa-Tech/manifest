@@ -7,6 +7,9 @@ authors = ["Britt Cyr <britt@cks.systems>"]
 description = "OKX AMM interface for Manifest exchange"
 license-file = "LICENSE"
 
+[lints]
+workspace = true
+
 [features]
 test = []
 

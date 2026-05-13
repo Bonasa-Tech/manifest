@@ -7,6 +7,9 @@ authors = ["Britt Cyr <britt@manifest.trade>"]
 description = "Minimal dependency Manifest client for instruction building and market parsing"
 license-file = "LICENSE"
 
+[lints]
+workspace = true
+
 [features]
 default = []
 

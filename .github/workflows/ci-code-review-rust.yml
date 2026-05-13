@@ -29,11 +29,11 @@ jobs:
 
       - name: Set Rust version
         run: |
-          rustup toolchain install ${{ env.RUST_TOOLCHAIN }}
-          rustup component add rustfmt
+          rustup toolchain install nightly
+          rustup component add rustfmt --toolchain nightly
 
       - name: Run fmt
-        run: cargo fmt -- --check
+        run: cargo +nightly fmt -- --check
 
   clippy:
     name: Clippy

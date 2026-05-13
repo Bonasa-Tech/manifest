@@ -87,5 +87,5 @@ impl std::fmt::Display for ClaimedSeat {
 #[test]
 fn test_display() {
     let claimed_seat: ClaimedSeat = ClaimedSeat::new_empty(Pubkey::default());
-    format!("{}", claimed_seat);
+    let _ = format!("{}", claimed_seat);
 }

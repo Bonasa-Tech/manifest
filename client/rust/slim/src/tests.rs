@@ -5,25 +5,15 @@
 
 #[cfg(test)]
 mod integration_tests {
-    use crate::batch_update_instruction;
-    use crate::claim_seat_instruction;
-    use crate::create_market_instruction;
-    use crate::deposit_instruction;
-    use crate::swap_instruction;
-    use crate::withdraw_instruction;
-    use crate::BatchUpdateParams;
-    use crate::DepositParams;
-    use crate::Market;
-    use crate::PlaceOrderParams;
-    use crate::SwapParams;
-    use crate::WithdrawParams;
-    use crate::MARKET_FIXED_SIZE;
-    use crate::TOKEN_2022_PROGRAM_ID;
-    use crate::TOKEN_PROGRAM_ID;
+    use crate::{
+        batch_update_instruction, claim_seat_instruction, create_market_instruction,
+        deposit_instruction, swap_instruction, withdraw_instruction, BatchUpdateParams,
+        DepositParams, Market, PlaceOrderParams, SwapParams, WithdrawParams, MARKET_FIXED_SIZE,
+        TOKEN_2022_PROGRAM_ID, TOKEN_PROGRAM_ID,
+    };
     use solana_pubkey::Pubkey;
 
-    use solana_program::program_pack::Pack;
-    use solana_program::system_instruction;
+    use solana_program::{program_pack::Pack, system_instruction};
     use solana_program_test::{processor, ProgramTest};
     use solana_sdk::{
         instruction::Instruction as SolanaInstruction,
