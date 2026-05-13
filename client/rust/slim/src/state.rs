@@ -1,14 +1,10 @@
 //! Market state parsing for Manifest.
 
-use crate::constants::OrderType;
-use crate::constants::CLAIMED_SEAT_SIZE;
-use crate::constants::MARKET_FIXED_DISCRIMINANT;
-use crate::constants::MARKET_FIXED_SIZE;
-use crate::constants::NO_EXPIRATION_LAST_VALID_SLOT;
-use crate::constants::RESTING_ORDER_SIZE;
-use hypertree::DataIndex;
-use hypertree::NIL;
-use hypertree::RBTREE_OVERHEAD_BYTES;
+use crate::constants::{
+    OrderType, CLAIMED_SEAT_SIZE, MARKET_FIXED_DISCRIMINANT, MARKET_FIXED_SIZE,
+    NO_EXPIRATION_LAST_VALID_SLOT, RESTING_ORDER_SIZE,
+};
+use hypertree::{DataIndex, NIL, RBTREE_OVERHEAD_BYTES};
 use solana_pubkey::Pubkey;
 
 /// The fixed header of a market account.

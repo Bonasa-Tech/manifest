@@ -1,7 +1,4 @@
-use std::{
-    cell::RefMut,
-    rc::Rc,
-};
+use std::{cell::RefMut, rc::Rc};
 
 use borsh::BorshSerialize;
 use manifest::{
@@ -23,8 +20,8 @@ use solana_sdk::{
 };
 
 use crate::{
-    send_tx_with_retry, Side, TestFixture,
-    Token, TokenAccountFixture, SOL_UNIT_SIZE, USDC_UNIT_SIZE,
+    send_tx_with_retry, Side, TestFixture, Token, TokenAccountFixture, SOL_UNIT_SIZE,
+    USDC_UNIT_SIZE,
 };
 
 #[tokio::test]

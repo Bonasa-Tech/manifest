@@ -3,8 +3,7 @@
 //! These are the log events that can be parsed from transaction logs.
 //! Each event has an 8-byte discriminant prefix followed by the struct data.
 
-use crate::constants::OrderType;
-use crate::Pubkey;
+use crate::{constants::OrderType, Pubkey};
 
 /// Boolean type that is Pod-compatible (1 byte).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

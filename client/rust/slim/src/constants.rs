@@ -3,8 +3,7 @@
 use solana_pubkey::Pubkey;
 
 // Re-export types from hypertree
-pub use hypertree::DataIndex;
-pub use hypertree::NIL;
+pub use hypertree::{DataIndex, NIL};
 
 /// Order type enum for placing and parsing orders.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
