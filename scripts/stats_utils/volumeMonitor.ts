@@ -10,6 +10,8 @@ import {
 
 // Volume decrease threshold (90% decrease to trigger alert)
 const VOLUME_DECREASE_THRESHOLD: number = 0.9;
+// Volume increase threshold (10x increase = 900% change)
+const VOLUME_INCREASE_THRESHOLD: number = 9.0;
 
 // Large fill threshold in USDC ($1 million)
 const LARGE_FILL_THRESHOLD_USDC: number = 1_000_000;
@@ -168,8 +170,8 @@ export class VolumeMonitor {
       const currentVolume: number = currentSnapshot.totalVolumeUsdc;
       const percentChange: number = (currentVolume - previousVolume) / previousVolume;
 
-      // Only alert on decreases of more than 90%
-      if (percentChange < -VOLUME_DECREASE_THRESHOLD) {
+      // Alert on decreases of more than 90% or increases of more than 10x
+      if (percentChange < -VOLUME_DECREASE_THRESHOLD || percentChange > VOLUME_INCREASE_THRESHOLD) {
         await this.sendVolumeChangeAlert(
           previousVolume,
           currentVolume,
