@@ -8,8 +8,8 @@ import {
   STABLECOIN_MINTS,
 } from './constants';
 
-// Volume change threshold (25%)
-const VOLUME_CHANGE_THRESHOLD: number = 0.25;
+// Volume decrease threshold (90% decrease to trigger alert)
+const VOLUME_DECREASE_THRESHOLD: number = 0.9;
 
 // Large fill threshold in USDC ($1 million)
 const LARGE_FILL_THRESHOLD_USDC: number = 1_000_000;
@@ -167,9 +167,9 @@ export class VolumeMonitor {
       const previousVolume: number = this.previousHourlyVolume.totalVolumeUsdc;
       const currentVolume: number = currentSnapshot.totalVolumeUsdc;
       const percentChange: number = (currentVolume - previousVolume) / previousVolume;
-      const percentChangeAbs: number = Math.abs(percentChange);
 
-      if (percentChangeAbs >= VOLUME_CHANGE_THRESHOLD) {
+      // Only alert on decreases of more than 90%
+      if (percentChange < -VOLUME_DECREASE_THRESHOLD) {
         await this.sendVolumeChangeAlert(
           previousVolume,
           currentVolume,

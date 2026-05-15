@@ -6,8 +6,8 @@ const NEW_MARKET_MAKER_THRESHOLD_USDC: number = 100_000;
 // Threshold for $1M lifetime volume milestone
 const MILLION_MAKER_THRESHOLD_USDC: number = 1_000_000;
 
-// Large hourly volume threshold ($1 million in one hour)
-const MAKER_HOURLY_VOLUME_THRESHOLD_USDC: number = 1_000_000;
+// Large hourly volume threshold ($25 million in one hour)
+const MAKER_HOURLY_VOLUME_THRESHOLD_USDC: number = 25_000_000;
 
 // Percentage change threshold for hourly volume (50%)
 const MAKER_VOLUME_CHANGE_PERCENT_THRESHOLD: number = 0.5;
@@ -209,7 +209,7 @@ export class MarketMakerMonitor {
     }
 
     const message: string = [
-      `**$1M+ maker volume in last hour**`,
+      `**$25M+ maker volume in last hour**`,
       `Trader: \`${trader.slice(0, 8)}...${trader.slice(-4)}\``,
       `Hourly Volume: +${this.formatUsdValue(hourlyVolume)}`,
       `Total Volume: ${this.formatUsdValue(currentVolume)}`,

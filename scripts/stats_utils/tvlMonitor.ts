@@ -22,8 +22,10 @@ const MONITORED_MINTS: MonitoredMintsMap = {
   PYUSD: PYUSD_MINT,
 } as const;
 
-// TVL change threshold (10%)
-const TVL_CHANGE_THRESHOLD: number = 0.1;
+// TVL increase threshold (5x increase = 400% change)
+const TVL_INCREASE_THRESHOLD: number = 4.0;
+// TVL decrease threshold (80% decrease)
+const TVL_DECREASE_THRESHOLD: number = 0.8;
 
 // Persistence check delay (5 minutes in milliseconds)
 const PERSISTENCE_CHECK_DELAY_MS: number = 5 * 60 * 1000;
@@ -243,9 +245,13 @@ export class TvlMonitor {
         const previousNum: number = Number(previousTvl);
         const currentNum: number = Number(currentTvl);
         const percentChange: number = (currentNum - previousNum) / previousNum;
-        const percentChangeAbs: number = Math.abs(percentChange);
 
-        if (percentChangeAbs >= TVL_CHANGE_THRESHOLD) {
+        // Alert on >5x increase (percentChange > 4.0) or >80% decrease (percentChange < -0.8)
+        const shouldAlert: boolean =
+          percentChange > TVL_INCREASE_THRESHOLD ||
+          percentChange < -TVL_DECREASE_THRESHOLD;
+
+        if (shouldAlert) {
           // Threshold exceeded - schedule persistence check
           this.pendingAlerts.set(mint, {
             symbol,
@@ -296,7 +302,8 @@ export class TvlMonitor {
 
       // Alert only if direction matches and still exceeds threshold
       const stillExceedsThreshold: boolean =
-        Math.abs(currentPercentChange) >= TVL_CHANGE_THRESHOLD;
+        currentPercentChange > TVL_INCREASE_THRESHOLD ||
+        currentPercentChange < -TVL_DECREASE_THRESHOLD;
       const directionPersists: boolean =
         (wasIncrease && stillIncreased) || (wasDecrease && stillDecreased);
 
