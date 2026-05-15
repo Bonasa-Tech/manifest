@@ -9,8 +9,8 @@ const MILLION_MAKER_THRESHOLD_USDC: number = 1_000_000;
 // Large hourly volume threshold ($50 million in one hour)
 const MAKER_HOURLY_VOLUME_THRESHOLD_USDC: number = 50_000_000;
 
-// Percentage change threshold for hourly volume (50%)
-const MAKER_VOLUME_CHANGE_PERCENT_THRESHOLD: number = 0.5;
+// Percentage change threshold for hourly volume (5x / 500%)
+const MAKER_VOLUME_CHANGE_PERCENT_THRESHOLD: number = 5.0;
 
 // Minimum volume to track for percentage-based change alerts
 const MIN_VOLUME_FOR_PERCENT_ALERT_USDC: number = 50_000;
