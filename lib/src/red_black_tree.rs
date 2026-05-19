@@ -133,6 +133,47 @@ impl<'a, V: Payload> RedBlackTreeReadOnly<'a, V> {
     }
 }
 
+pub struct RedBlackTreeRangeIterator<'a, T: GetRedBlackTreeReadOnlyData<'a>, V: Payload> {
+    pub(crate) tree: &'a T,
+    pub(crate) min: &'a V,
+    pub(crate) max: &'a V,
+    pub(crate) current_index: DataIndex,
+    pub(crate) phantom: std::marker::PhantomData<&'a V>,
+}
+
+impl<'a, T, V> Iterator for RedBlackTreeRangeIterator<'a, T, V>
+where
+    T: GetRedBlackTreeReadOnlyData<'a> + HyperTreeReadOperations<'a>,
+    V: Payload,
+{
+    type Item = (DataIndex, &'a V);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        while self.current_index != NIL {
+            let current_value = self.tree.get_value::<V>(self.current_index);
+
+            if current_value >= self.min && current_value <= self.max {
+                // Store the current index to return
+                let result_index = self.current_index;
+                let result_value = current_value;
+
+                // Move to the next lower index
+                self.current_index = self.tree.get_next_lower_index::<V>(self.current_index);
+
+                return Some((result_index, result_value));
+            }
+
+            // If the current value is out of range, move to the next relevant node
+            if current_value < self.min {
+                self.current_index = self.tree.get_next_higher_index::<V>(self.current_index);
+            } else {
+                self.current_index = self.tree.get_next_lower_index::<V>(self.current_index);
+            }
+        }
+        None
+    }
+}
+
 // Specific to red black trees and not all data structures. Implementing this
 // gets a lot of other stuff for free.
 pub trait GetRedBlackTreeReadOnlyData<'a> {
@@ -608,6 +649,21 @@ where
             }
         }
         current_index
+    }
+
+    fn range<V: Payload>(&'a self, min: &V, max: &V) -> RedBlackTreeRangeIterator<'a, T, V> {
+        let root = self.get_root_index();
+        RedBlackTreeRangeIterator {
+            tree: self,
+            min,
+            max,
+            current_index: if root != NIL {
+                self.lookup_index(min)
+            } else {
+                NIL
+            },
+            phantom: std::marker::PhantomData,
+        }
     }
 
     fn lookup_max_index<V: Payload>(&'a self) -> DataIndex {
@@ -2733,4 +2789,27 @@ pub(crate) mod test {
         tree.lookup_index(&TestOrder2::new(1_000, 4567));
         tree.lookup_index(&TestOrder2::new(1_000, 7890));
     }
+}
+
+#[test]
+fn test_hypertree_range_query() {
+    let mut data: [u8; 100000] = [0; 100000];
+    let tree = RedBlackTree::new(&mut data, NIL, NIL);
+    let hypertree = HyperTree::new(tree);
+
+    hypertree.insert(0, TestOrderBid::new(1000));
+    hypertree.insert(1, TestOrderBid::new(2000));
+    hypertree.insert(2, TestOrderBid::new(3000));
+    hypertree.insert(3, TestOrderBid::new(4000));
+    hypertree.insert(4, TestOrderBid::new(5000));
+
+    let range_min = TestOrderBid::new(2000);
+    let range_max = TestOrderBid::new(4000);
+
+    let results: Vec<_> = hypertree.range(&range_min, &range_max).collect();
+
+    assert_eq!(results.len(), 3);
+    assert_eq!(results[0].1.order_id, 2000);
+    assert_eq!(results[1].1.order_id, 3000);
+    assert_eq!(results[2].1.order_id, 4000);
 }
