@@ -1,18 +1,15 @@
 import { FillLogResult, Market } from '../../client/ts/src';
 import { sendDiscordNotification } from './utils';
-import {
-  SOL_MINT,
-  USDC_MINT,
-  USDT_MINT,
-  PYUSD_MINT,
-  STABLECOIN_MINTS,
-} from './constants';
+import { SOL_MINT, STABLECOIN_MINTS } from './constants';
 
 // Volume change threshold (25%)
 const VOLUME_CHANGE_THRESHOLD: number = 0.25;
 
 // Large fill threshold in USDC ($1 million)
 const LARGE_FILL_THRESHOLD_USDC: number = 1_000_000;
+
+// Time to wait before finalizing a transaction's fills (ms)
+const TRANSACTION_FINALIZE_DELAY_MS: number = 5_000;
 
 // Type for hourly volume snapshot
 interface HourlyVolumeSnapshot {
@@ -26,11 +23,24 @@ interface FillValueResult {
   symbol: string;
 }
 
+// Type for buffered transaction fills
+interface TransactionFillBuffer {
+  fills: FillLogResult[];
+  totalValueUsdc: number;
+  lastSeenMs: number;
+  markets: Set<string>;
+  taker: string;
+  aggregator?: string;
+}
+
 export class VolumeMonitor {
   private readonly discordWebhookUrl: string | undefined;
   private previousHourlyVolume: HourlyVolumeSnapshot | null = null;
   private currentHourVolumeUsdc: number = 0;
   private currentHourStartTime: number = Date.now();
+
+  // Buffer for aggregating fills by transaction signature
+  private transactionBuffer: Map<string, TransactionFillBuffer> = new Map();
 
   // Callback to get SOL price from stats server
   private readonly getSolPrice: () => number;
@@ -55,6 +65,7 @@ export class VolumeMonitor {
 
   /**
    * Process a fill and check for large fill alerts.
+   * Aggregates fills by transaction signature before checking threshold.
    * Also accumulates volume for hourly tracking.
    */
   async processFill(fill: FillLogResult): Promise<void> {
@@ -74,9 +85,52 @@ export class VolumeMonitor {
     // Accumulate hourly volume
     this.currentHourVolumeUsdc += fillValue.valueUsdc;
 
-    // Check for large fill alert
-    if (fillValue.valueUsdc >= LARGE_FILL_THRESHOLD_USDC) {
-      await this.sendLargeFillAlert(fill, fillValue, market);
+    // Finalize any old transactions before processing new fill
+    await this.finalizeOldTransactions();
+
+    // Buffer this fill by transaction signature
+    const signature: string = fill.signature;
+    const existing: TransactionFillBuffer | undefined =
+      this.transactionBuffer.get(signature);
+
+    if (existing) {
+      existing.fills.push(fill);
+      existing.totalValueUsdc += fillValue.valueUsdc;
+      existing.lastSeenMs = Date.now();
+      existing.markets.add(fillValue.symbol);
+    } else {
+      this.transactionBuffer.set(signature, {
+        fills: [fill],
+        totalValueUsdc: fillValue.valueUsdc,
+        lastSeenMs: Date.now(),
+        markets: new Set([fillValue.symbol]),
+        taker: fill.taker,
+        aggregator: fill.aggregator,
+      });
+    }
+  }
+
+  /**
+   * Finalize transactions that haven't received new fills recently.
+   * Sends alerts for transactions exceeding the threshold.
+   */
+  private async finalizeOldTransactions(): Promise<void> {
+    const now: number = Date.now();
+    const signaturestoFinalize: string[] = [];
+
+    this.transactionBuffer.forEach((buffer, signature) => {
+      if (now - buffer.lastSeenMs >= TRANSACTION_FINALIZE_DELAY_MS) {
+        signaturestoFinalize.push(signature);
+      }
+    });
+
+    for (const signature of signaturestoFinalize) {
+      const buffer: TransactionFillBuffer | undefined =
+        this.transactionBuffer.get(signature);
+      if (buffer && buffer.totalValueUsdc >= LARGE_FILL_THRESHOLD_USDC) {
+        await this.sendLargeTransactionAlert(signature, buffer);
+      }
+      this.transactionBuffer.delete(signature);
     }
   }
 
@@ -114,40 +168,45 @@ export class VolumeMonitor {
   }
 
   /**
-   * Send alert for a large fill
+   * Send alert for a large transaction (aggregated fills)
    */
-  private async sendLargeFillAlert(
-    fill: FillLogResult,
-    fillValue: FillValueResult,
-    market: Market,
+  private async sendLargeTransactionAlert(
+    signature: string,
+    buffer: TransactionFillBuffer,
   ): Promise<void> {
     if (!this.discordWebhookUrl) {
       return;
     }
 
-    const formattedValue: string = this.formatUsdValue(fillValue.valueUsdc);
-    const baseAtoms: number = Number(fill.baseAtoms);
-    const baseTokens: number = baseAtoms / 10 ** market.baseDecimals();
-    const quoteAtoms: number = Number(fill.quoteAtoms);
-    const quoteTokens: number = quoteAtoms / 10 ** market.quoteDecimals();
+    const formattedValue: string = this.formatUsdValue(buffer.totalValueUsdc);
+    const marketsStr: string = Array.from(buffer.markets).join(', ');
+    const fillCount: number = buffer.fills.length;
 
-    const ticker: [string, string] | undefined = this.getTicker(fill.market);
-    const baseSymbol: string = ticker?.[0] ?? 'BASE';
-    const quoteSymbol: string = ticker?.[1] ?? 'QUOTE';
+    // Determine overall side from first fill (all fills in aggregator tx have same direction)
+    const firstFill: FillLogResult = buffer.fills[0];
+    const side: string = firstFill.takerIsBuy ? 'BUY' : 'SELL';
 
-    const side: string = fill.takerIsBuy ? 'BUY' : 'SELL';
+    // Get original signer if available
+    const originalSigner: string | undefined = (firstFill as any).originalSigner;
+    const signerDisplay: string = originalSigner
+      ? `\`${originalSigner.slice(0, 8)}...\``
+      : `\`${buffer.taker.slice(0, 8)}...\``;
 
-    const message: string = [
-      `**${side} ${this.formatNumber(baseTokens)} ${baseSymbol}**`,
-      `Quote: ${this.formatNumber(quoteTokens)} ${quoteSymbol}`,
-      `Value: ${formattedValue}`,
-      `Market: ${fillValue.symbol}`,
-      `Taker: \`${fill.taker.slice(0, 8)}...\``,
-      `Maker: \`${fill.maker.slice(0, 8)}...\``,
-    ].join('\n');
+    const message: string[] = [
+      `**${side} across ${fillCount} fills**`,
+      `Total Value: ${formattedValue}`,
+      `Markets: ${marketsStr}`,
+      `Signer: ${signerDisplay}`,
+    ];
 
-    await sendDiscordNotification(this.discordWebhookUrl, message, {
-      title: '💰 Large Fill Alert',
+    if (buffer.aggregator) {
+      message.push(`Aggregator: ${buffer.aggregator}`);
+    }
+
+    message.push(`Tx: \`${signature.slice(0, 16)}...\``);
+
+    await sendDiscordNotification(this.discordWebhookUrl, message.join('\n'), {
+      title: '💰 Large Transaction Alert',
       color: 0xffd700, // Gold color
       timestamp: true,
     });
