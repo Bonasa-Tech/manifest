@@ -194,6 +194,10 @@ export class VolumeMonitor {
       ? `\`${originalSigner.slice(0, 8)}...\``
       : `\`${buffer.taker.slice(0, 8)}...\``;
 
+    // Build links
+    const solscanLink: string = `https://solscan.io/tx/${signature}`;
+    const marketLink: string = `https://app.manifest.trade/trade/${firstFill.market}`;
+
     const message: string[] = [
       `**${side} across ${fillCount} fills**`,
       `Total Value: ${formattedValue}`,
@@ -205,7 +209,7 @@ export class VolumeMonitor {
       message.push(`Aggregator: ${buffer.aggregator}`);
     }
 
-    message.push(`Tx: \`${signature.slice(0, 16)}...\``);
+    message.push(`[View on Solscan](${solscanLink}) | [View Market](${marketLink})`);
 
     await sendDiscordNotification(this.discordWebhookUrl, message.join('\n'), {
       title: '💰 Large Transaction Alert',
