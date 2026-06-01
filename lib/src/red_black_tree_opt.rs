@@ -1,49 +1,15 @@
-//! Optimized Red-Black Tree operations using unsafe Rust.
-//!
-//! This module provides optimized versions of the core Red-Black tree operations
-//! that skip bounds checking and NIL checks where safe to do so, improving
-//! compute unit performance on Solana.
-//!
-//! # Feature Flags
-//!
-//! This module is only compiled when the `opt-unsafe` feature is enabled.
-//!
-//! # Safety
-//!
-//! The functions in this module are unsafe because they:
-//! - Skip bounds checking on array accesses
-//! - Skip NIL index validation in some cases
-//! - Use raw pointer manipulation
-//!
-//! Callers must ensure:
-//! - All indices point to valid, initialized RBNode data
-//! - The backing data slice is large enough
-//! - Tree invariants are maintained
-
 use crate::{
     utils_opt::{get_helper_unchecked, get_mut_helper_unchecked},
     Color, DataIndex, GetRedBlackTreeData, GetRedBlackTreeReadOnlyData, Payload, RBNode,
-    RedBlackTreeReadOperationsHelpers, RedBlackTreeWriteOperationsHelpers, NIL,
+    RedBlackTreeReadOperationsHelpers, NIL,
 };
 
-/// Optimized read operations for Red-Black trees.
-///
-/// These operations skip bounds checking for improved performance.
 #[cfg(feature = "certora")]
 pub trait RedBlackTreeReadOperationsHelpersOpt<'a> {
-    /// Get node color without NIL check (caller ensures index != NIL)
     unsafe fn get_color_unchecked<V: Payload>(&self, index: DataIndex) -> Color;
-
-    /// Get right index without NIL check
     unsafe fn get_right_index_unchecked<V: Payload>(&self, index: DataIndex) -> DataIndex;
-
-    /// Get left index without NIL check
     unsafe fn get_left_index_unchecked<V: Payload>(&self, index: DataIndex) -> DataIndex;
-
-    /// Get parent index without NIL check
     unsafe fn get_parent_index_unchecked<V: Payload>(&self, index: DataIndex) -> DataIndex;
-
-    /// Get node reference without bounds check
     unsafe fn get_node_unchecked<V: Payload>(&'a self, index: DataIndex) -> &'a RBNode<V>;
 }
 
@@ -62,26 +28,22 @@ where
 {
     #[inline(always)]
     unsafe fn get_color_unchecked<V: Payload>(&self, index: DataIndex) -> Color {
-        let node: &RBNode<V> = get_helper_unchecked::<RBNode<V>>(self.data(), index);
-        node.color
+        get_helper_unchecked::<RBNode<V>>(self.data(), index).color
     }
 
     #[inline(always)]
     unsafe fn get_right_index_unchecked<V: Payload>(&self, index: DataIndex) -> DataIndex {
-        let node: &RBNode<V> = get_helper_unchecked::<RBNode<V>>(self.data(), index);
-        node.right
+        get_helper_unchecked::<RBNode<V>>(self.data(), index).right
     }
 
     #[inline(always)]
     unsafe fn get_left_index_unchecked<V: Payload>(&self, index: DataIndex) -> DataIndex {
-        let node: &RBNode<V> = get_helper_unchecked::<RBNode<V>>(self.data(), index);
-        node.left
+        get_helper_unchecked::<RBNode<V>>(self.data(), index).left
     }
 
     #[inline(always)]
     unsafe fn get_parent_index_unchecked<V: Payload>(&self, index: DataIndex) -> DataIndex {
-        let node: &RBNode<V> = get_helper_unchecked::<RBNode<V>>(self.data(), index);
-        node.parent
+        get_helper_unchecked::<RBNode<V>>(self.data(), index).parent
     }
 
     #[inline(always)]
@@ -90,43 +52,27 @@ where
     }
 }
 
-/// Optimized write operations for Red-Black trees.
 #[cfg(feature = "certora")]
 pub trait RedBlackTreeWriteOperationsHelpersOpt<'a> {
-    /// Set color without NIL check (caller ensures index != NIL)
     unsafe fn set_color_unchecked<V: Payload>(&mut self, index: DataIndex, color: Color);
-
-    /// Set parent without NIL check
     unsafe fn set_parent_index_unchecked<V: Payload>(
         &mut self,
         index: DataIndex,
         parent_index: DataIndex,
     );
-
-    /// Set left child without NIL check
     unsafe fn set_left_index_unchecked<V: Payload>(
         &mut self,
         index: DataIndex,
         left_index: DataIndex,
     );
-
-    /// Set right child without NIL check
     unsafe fn set_right_index_unchecked<V: Payload>(
         &mut self,
         index: DataIndex,
         right_index: DataIndex,
     );
-
-    /// Optimized left rotation that minimizes redundant memory accesses
     fn rotate_left_opt<V: Payload>(&mut self, index: DataIndex);
-
-    /// Optimized right rotation that minimizes redundant memory accesses
     fn rotate_right_opt<V: Payload>(&mut self, index: DataIndex);
-
-    /// Optimized insert fix that uses unchecked operations
     fn insert_fix_opt<V: Payload>(&mut self, index_to_fix: DataIndex) -> DataIndex;
-
-    /// Optimized remove fix that uses unchecked operations
     fn remove_fix_opt<V: Payload>(
         &mut self,
         current_index: DataIndex,
@@ -171,8 +117,7 @@ where
 {
     #[inline(always)]
     unsafe fn set_color_unchecked<V: Payload>(&mut self, index: DataIndex, color: Color) {
-        let node: &mut RBNode<V> = get_mut_helper_unchecked::<RBNode<V>>(self.data(), index);
-        node.color = color;
+        get_mut_helper_unchecked::<RBNode<V>>(self.data(), index).color = color;
     }
 
     #[inline(always)]
@@ -181,8 +126,7 @@ where
         index: DataIndex,
         parent_index: DataIndex,
     ) {
-        let node: &mut RBNode<V> = get_mut_helper_unchecked::<RBNode<V>>(self.data(), index);
-        node.parent = parent_index;
+        get_mut_helper_unchecked::<RBNode<V>>(self.data(), index).parent = parent_index;
     }
 
     #[inline(always)]
@@ -191,8 +135,7 @@ where
         index: DataIndex,
         left_index: DataIndex,
     ) {
-        let node: &mut RBNode<V> = get_mut_helper_unchecked::<RBNode<V>>(self.data(), index);
-        node.left = left_index;
+        get_mut_helper_unchecked::<RBNode<V>>(self.data(), index).left = left_index;
     }
 
     #[inline(always)]
@@ -201,13 +144,11 @@ where
         index: DataIndex,
         right_index: DataIndex,
     ) {
-        let node: &mut RBNode<V> = get_mut_helper_unchecked::<RBNode<V>>(self.data(), index);
-        node.right = right_index;
+        get_mut_helper_unchecked::<RBNode<V>>(self.data(), index).right = right_index;
     }
 
     fn rotate_left_opt<V: Payload>(&mut self, index: DataIndex) {
         // Left rotate of G
-        //
         //         GG                     GG
         //         |                      |
         //         G                      P
@@ -215,55 +156,51 @@ where
         //      U     P     --->      G      X
         //          /   \           /   \
         //        Y      X        U       Y
-
         let g_index: DataIndex = index;
 
-        // Read all needed indices upfront to minimize memory accesses
+        // Batch-read G and P in two unchecked loads
         let (p_index, y_index, gg_index) = unsafe {
-            let g_node: &RBNode<V> = get_helper_unchecked::<RBNode<V>>(self.data(), g_index);
+            let g_node: &RBNode<V> = get_helper_unchecked(self.data(), g_index);
             let p_idx = g_node.right;
             let gg_idx = g_node.parent;
-            let p_node: &RBNode<V> = get_helper_unchecked::<RBNode<V>>(self.data(), p_idx);
-            let y_idx = p_node.left;
-            (p_idx, y_idx, gg_idx)
+            let p_node: &RBNode<V> = get_helper_unchecked(self.data(), p_idx);
+            (p_idx, p_node.left, gg_idx)
         };
 
-        // P: Update parent and left child
+        // P: set parent and left in one write
         unsafe {
-            let p_node: &mut RBNode<V> =
-                get_mut_helper_unchecked::<RBNode<V>>(self.data(), p_index);
+            let p_node: &mut RBNode<V> = get_mut_helper_unchecked(self.data(), p_index);
             p_node.parent = gg_index;
             p_node.left = g_index;
         }
 
-        // Y: Update parent (only if Y is not NIL)
+        // Y: update parent only if non-NIL
         if y_index != NIL {
             unsafe {
-                self.set_parent_index_unchecked::<V>(y_index, g_index);
+                get_mut_helper_unchecked::<RBNode<V>>(self.data(), y_index).parent = g_index;
             }
         }
 
-        // G: Update parent and right child
+        // G: set parent and right in one write
         unsafe {
-            let g_node: &mut RBNode<V> =
-                get_mut_helper_unchecked::<RBNode<V>>(self.data(), g_index);
+            let g_node: &mut RBNode<V> = get_mut_helper_unchecked(self.data(), g_index);
             g_node.parent = p_index;
             g_node.right = y_index;
         }
 
-        // GG: Update the appropriate child pointer
+        // GG: update child pointer — fully unchecked
         if gg_index != NIL {
-            let gg_left = self.get_left_index::<V>(gg_index);
-            let gg_right = self.get_right_index::<V>(gg_index);
-            if gg_left == index {
-                self.set_left_index::<V>(gg_index, p_index);
-            }
-            if gg_right == index {
-                self.set_right_index::<V>(gg_index, p_index);
+            unsafe {
+                let gg_node: &mut RBNode<V> = get_mut_helper_unchecked(self.data(), gg_index);
+                if gg_node.left == index {
+                    gg_node.left = p_index;
+                }
+                if gg_node.right == index {
+                    gg_node.right = p_index;
+                }
             }
         }
 
-        // Root: Update if G was root
         if self.root_index() == g_index {
             self.set_root_index(p_index);
         }
@@ -271,7 +208,6 @@ where
 
     fn rotate_right_opt<V: Payload>(&mut self, index: DataIndex) {
         // Right rotate of G
-        //
         //         GG                     GG
         //         |                      |
         //         G                      P
@@ -279,55 +215,46 @@ where
         //      P     U     --->      X       G
         //    /  \                          /   \
         //  X     Y                       Y       U
-
         let g_index: DataIndex = index;
 
-        // Read all needed indices upfront
         let (p_index, y_index, gg_index) = unsafe {
-            let g_node: &RBNode<V> = get_helper_unchecked::<RBNode<V>>(self.data(), g_index);
+            let g_node: &RBNode<V> = get_helper_unchecked(self.data(), g_index);
             let p_idx = g_node.left;
             let gg_idx = g_node.parent;
-            let p_node: &RBNode<V> = get_helper_unchecked::<RBNode<V>>(self.data(), p_idx);
-            let y_idx = p_node.right;
-            (p_idx, y_idx, gg_idx)
+            let p_node: &RBNode<V> = get_helper_unchecked(self.data(), p_idx);
+            (p_idx, p_node.right, gg_idx)
         };
 
-        // P: Update parent and right child
         unsafe {
-            let p_node: &mut RBNode<V> =
-                get_mut_helper_unchecked::<RBNode<V>>(self.data(), p_index);
+            let p_node: &mut RBNode<V> = get_mut_helper_unchecked(self.data(), p_index);
             p_node.parent = gg_index;
             p_node.right = g_index;
         }
 
-        // Y: Update parent (only if Y is not NIL)
         if y_index != NIL {
             unsafe {
-                self.set_parent_index_unchecked::<V>(y_index, g_index);
+                get_mut_helper_unchecked::<RBNode<V>>(self.data(), y_index).parent = g_index;
             }
         }
 
-        // G: Update parent and left child
         unsafe {
-            let g_node: &mut RBNode<V> =
-                get_mut_helper_unchecked::<RBNode<V>>(self.data(), g_index);
+            let g_node: &mut RBNode<V> = get_mut_helper_unchecked(self.data(), g_index);
             g_node.parent = p_index;
             g_node.left = y_index;
         }
 
-        // GG: Update the appropriate child pointer
         if gg_index != NIL {
-            let gg_left = self.get_left_index::<V>(gg_index);
-            let gg_right = self.get_right_index::<V>(gg_index);
-            if gg_left == index {
-                self.set_left_index::<V>(gg_index, p_index);
-            }
-            if gg_right == index {
-                self.set_right_index::<V>(gg_index, p_index);
+            unsafe {
+                let gg_node: &mut RBNode<V> = get_mut_helper_unchecked(self.data(), gg_index);
+                if gg_node.left == index {
+                    gg_node.left = p_index;
+                }
+                if gg_node.right == index {
+                    gg_node.right = p_index;
+                }
             }
         }
 
-        // Root: Update if G was root
         if self.root_index() == g_index {
             self.set_root_index(p_index);
         }
@@ -335,73 +262,102 @@ where
 
     fn insert_fix_opt<V: Payload>(&mut self, index_to_fix: DataIndex) -> DataIndex {
         if self.root_index() == index_to_fix {
-            self.set_color::<V>(index_to_fix, Color::Black);
+            unsafe {
+                self.set_color_unchecked::<V>(index_to_fix, Color::Black);
+            }
             return NIL;
         }
 
-        // Get parent info using unchecked access since we know index_to_fix != NIL
-        let parent_index: DataIndex = unsafe { self.get_parent_index_unchecked::<V>(index_to_fix) };
-        let parent_color: Color = self.get_color::<V>(parent_index);
+        // Batch-read: node → parent → parent color
+        let (parent_index, parent_color) = unsafe {
+            let node: &RBNode<V> = get_helper_unchecked(self.data(), index_to_fix);
+            let pi = node.parent;
+            let pn: &RBNode<V> = get_helper_unchecked(self.data(), pi);
+            (pi, pn.color)
+        };
 
         if parent_color == Color::Black {
             return NIL;
         }
 
-        let grandparent_index: DataIndex = self.get_parent_index::<V>(parent_index);
-
-        // Get uncle index
-        let uncle_index: DataIndex = if self.get_left_index::<V>(grandparent_index) == parent_index
-        {
-            self.get_right_index::<V>(grandparent_index)
-        } else {
-            self.get_left_index::<V>(grandparent_index)
+        // Read grandparent
+        let grandparent_index = unsafe {
+            get_helper_unchecked::<RBNode<V>>(self.data(), parent_index).parent
         };
-        let uncle_color: Color = self.get_color::<V>(uncle_index);
 
-        // Case I: Uncle is red
-        if uncle_color == Color::Red {
-            self.set_color::<V>(parent_index, Color::Black);
-            self.set_color::<V>(uncle_index, Color::Black);
-            self.set_color::<V>(grandparent_index, Color::Red);
-            return grandparent_index;
-        }
-
-        let grandparent_color: Color = self.get_color::<V>(grandparent_index);
-        let parent_is_left: bool = self.is_left_child::<V>(parent_index);
-        let current_is_left: bool = self.is_left_child::<V>(index_to_fix);
-
-        if grandparent_index == NIL && parent_color == Color::Red {
-            self.set_color::<V>(parent_index, Color::Black);
+        if grandparent_index == NIL {
+            unsafe {
+                self.set_color_unchecked::<V>(parent_index, Color::Black);
+            }
             return NIL;
         }
 
-        let index_to_fix_color: Color = self.get_color::<V>(index_to_fix);
+        // Batch-read grandparent: left, color, derive uncle
+        let (gp_left, gp_color, uncle_index) = unsafe {
+            let gp: &RBNode<V> = get_helper_unchecked(self.data(), grandparent_index);
+            let uncle = if gp.left == parent_index {
+                gp.right
+            } else {
+                gp.left
+            };
+            (gp.left, gp.color, uncle)
+        };
 
-        // Case II: Uncle is black, left left
-        if parent_is_left && current_is_left {
-            self.rotate_right_opt::<V>(grandparent_index);
-            self.set_color::<V>(grandparent_index, parent_color);
-            self.set_color::<V>(parent_index, grandparent_color);
+        let uncle_color = if uncle_index == NIL {
+            Color::Black
+        } else {
+            unsafe { get_helper_unchecked::<RBNode<V>>(self.data(), uncle_index).color }
+        };
+
+        // Case I: Uncle is red — recolor and recurse up
+        if uncle_color == Color::Red {
+            unsafe {
+                self.set_color_unchecked::<V>(parent_index, Color::Black);
+                self.set_color_unchecked::<V>(uncle_index, Color::Black);
+                self.set_color_unchecked::<V>(grandparent_index, Color::Red);
+            }
+            return grandparent_index;
         }
-        // Case III: Uncle is black, left right
-        else if parent_is_left && !current_is_left {
+
+        // Cases II-V: Uncle is black — rotate
+        let parent_is_left = gp_left == parent_index;
+        let current_is_left = unsafe {
+            get_helper_unchecked::<RBNode<V>>(self.data(), parent_index).left == index_to_fix
+        };
+        let index_to_fix_color = unsafe {
+            get_helper_unchecked::<RBNode<V>>(self.data(), index_to_fix).color
+        };
+
+        if parent_is_left && current_is_left {
+            // Case II: left-left
+            self.rotate_right_opt::<V>(grandparent_index);
+            unsafe {
+                self.set_color_unchecked::<V>(grandparent_index, parent_color);
+                self.set_color_unchecked::<V>(parent_index, gp_color);
+            }
+        } else if parent_is_left {
+            // Case III: left-right
             self.rotate_left_opt::<V>(parent_index);
             self.rotate_right_opt::<V>(grandparent_index);
-            self.set_color::<V>(index_to_fix, grandparent_color);
-            self.set_color::<V>(grandparent_index, index_to_fix_color);
-        }
-        // Case IV: Uncle is black, right right
-        else if !parent_is_left && !current_is_left {
+            unsafe {
+                self.set_color_unchecked::<V>(index_to_fix, gp_color);
+                self.set_color_unchecked::<V>(grandparent_index, index_to_fix_color);
+            }
+        } else if !current_is_left {
+            // Case IV: right-right
             self.rotate_left_opt::<V>(grandparent_index);
-            self.set_color::<V>(grandparent_index, parent_color);
-            self.set_color::<V>(parent_index, grandparent_color);
-        }
-        // Case V: Uncle is black, right left
-        else if !parent_is_left && current_is_left {
+            unsafe {
+                self.set_color_unchecked::<V>(grandparent_index, parent_color);
+                self.set_color_unchecked::<V>(parent_index, gp_color);
+            }
+        } else {
+            // Case V: right-left
             self.rotate_right_opt::<V>(parent_index);
             self.rotate_left_opt::<V>(grandparent_index);
-            self.set_color::<V>(index_to_fix, grandparent_color);
-            self.set_color::<V>(grandparent_index, index_to_fix_color);
+            unsafe {
+                self.set_color_unchecked::<V>(index_to_fix, gp_color);
+                self.set_color_unchecked::<V>(grandparent_index, index_to_fix_color);
+            }
         }
 
         NIL
@@ -412,62 +368,84 @@ where
         current_index: DataIndex,
         parent_index: DataIndex,
     ) -> (DataIndex, DataIndex) {
-        // Current is double black. It could be NIL if we just deleted a leaf.
         if self.root_index() == current_index {
             return (NIL, NIL);
         }
 
-        let sibling_index: DataIndex = self.get_sibling_index::<V>(current_index, parent_index);
-        let sibling_color: Color = self.get_color::<V>(sibling_index);
-        let parent_color: Color = self.get_color::<V>(parent_index);
+        // Determine sibling from parent's children — one unchecked read
+        let (sibling_index, sibling_is_left) = unsafe {
+            let pn: &RBNode<V> = get_helper_unchecked(self.data(), parent_index);
+            if pn.left == current_index {
+                (pn.right, false)
+            } else {
+                (pn.left, true)
+            }
+        };
 
-        let sibling_has_red_child: bool =
-            self.get_color::<V>(self.get_left_index::<V>(sibling_index)) == Color::Red
-                || self.get_color::<V>(self.get_right_index::<V>(sibling_index)) == Color::Red;
+        // Batch-read sibling fields
+        let (sibling_color, sib_left, sib_right) = unsafe {
+            let sn: &RBNode<V> = get_helper_unchecked(self.data(), sibling_index);
+            (sn.color, sn.left, sn.right)
+        };
+
+        let parent_color =
+            unsafe { get_helper_unchecked::<RBNode<V>>(self.data(), parent_index).color };
+
+        // Read sibling children colors with NIL guard (NIL = Black)
+        let sib_left_color = if sib_left == NIL {
+            Color::Black
+        } else {
+            unsafe { get_helper_unchecked::<RBNode<V>>(self.data(), sib_left).color }
+        };
+        let sib_right_color = if sib_right == NIL {
+            Color::Black
+        } else {
+            unsafe { get_helper_unchecked::<RBNode<V>>(self.data(), sib_right).color }
+        };
+
+        let sibling_has_red_child =
+            sib_left_color == Color::Red || sib_right_color == Color::Red;
 
         // 3a: Sibling is black and has a red child
         if sibling_color == Color::Black && sibling_has_red_child {
-            let sibling_left_child_index: DataIndex = self.get_left_index::<V>(sibling_index);
-            let sibling_right_child_index: DataIndex = self.get_right_index::<V>(sibling_index);
-
-            // i: left left
-            if self.get_color::<V>(sibling_left_child_index) == Color::Red
-                && self.is_left_child::<V>(sibling_index)
-            {
-                self.set_color::<V>(sibling_left_child_index, Color::Black);
-                self.set_color::<V>(parent_index, sibling_color);
-                self.set_color::<V>(sibling_index, parent_color);
+            // i: left-left
+            if sib_left_color == Color::Red && sibling_is_left {
+                unsafe {
+                    self.set_color_unchecked::<V>(sib_left, Color::Black);
+                    self.set_color_unchecked::<V>(parent_index, sibling_color);
+                    self.set_color_unchecked::<V>(sibling_index, parent_color);
+                }
                 self.rotate_right_opt::<V>(parent_index);
                 return (NIL, NIL);
             }
-            // ii: left right
-            if self.get_color::<V>(sibling_right_child_index) == Color::Red
-                && self.is_left_child::<V>(sibling_index)
-            {
-                self.set_color::<V>(sibling_right_child_index, parent_color);
-                self.set_color::<V>(parent_index, Color::Black);
-                self.set_color::<V>(sibling_index, Color::Black);
+            // ii: left-right
+            if sib_right_color == Color::Red && sibling_is_left {
+                unsafe {
+                    self.set_color_unchecked::<V>(sib_right, parent_color);
+                    self.set_color_unchecked::<V>(parent_index, Color::Black);
+                    self.set_color_unchecked::<V>(sibling_index, Color::Black);
+                }
                 self.rotate_left_opt::<V>(sibling_index);
                 self.rotate_right_opt::<V>(parent_index);
                 return (NIL, NIL);
             }
-            // iii: right right
-            if self.get_color::<V>(sibling_right_child_index) == Color::Red
-                && self.is_right_child::<V>(sibling_index)
-            {
-                self.set_color::<V>(sibling_right_child_index, Color::Black);
-                self.set_color::<V>(parent_index, sibling_color);
-                self.set_color::<V>(sibling_index, parent_color);
+            // iii: right-right
+            if sib_right_color == Color::Red && !sibling_is_left {
+                unsafe {
+                    self.set_color_unchecked::<V>(sib_right, Color::Black);
+                    self.set_color_unchecked::<V>(parent_index, sibling_color);
+                    self.set_color_unchecked::<V>(sibling_index, parent_color);
+                }
                 self.rotate_left_opt::<V>(parent_index);
                 return (NIL, NIL);
             }
-            // iv: right left
-            if self.get_color::<V>(sibling_left_child_index) == Color::Red
-                && self.is_right_child::<V>(sibling_index)
-            {
-                self.set_color::<V>(sibling_left_child_index, parent_color);
-                self.set_color::<V>(parent_index, Color::Black);
-                self.set_color::<V>(sibling_index, Color::Black);
+            // iv: right-left
+            if sib_left_color == Color::Red && !sibling_is_left {
+                unsafe {
+                    self.set_color_unchecked::<V>(sib_left, parent_color);
+                    self.set_color_unchecked::<V>(parent_index, Color::Black);
+                    self.set_color_unchecked::<V>(sibling_index, Color::Black);
+                }
                 self.rotate_right_opt::<V>(sibling_index);
                 self.rotate_left_opt::<V>(parent_index);
                 return (NIL, NIL);
@@ -475,31 +453,35 @@ where
             unreachable!();
         }
 
-        // 3b: Sibling is black and both children are black
+        // 3b: Sibling is black, both children black
         if sibling_color == Color::Black {
-            self.set_color::<V>(sibling_index, Color::Red);
+            unsafe {
+                self.set_color_unchecked::<V>(sibling_index, Color::Red);
+            }
             if parent_color == Color::Black {
-                return (parent_index, self.get_parent_index::<V>(parent_index));
+                let pp = unsafe {
+                    get_helper_unchecked::<RBNode<V>>(self.data(), parent_index).parent
+                };
+                return (parent_index, pp);
             } else {
-                self.set_color::<V>(parent_index, Color::Black);
+                unsafe {
+                    self.set_color_unchecked::<V>(parent_index, Color::Black);
+                }
                 return (NIL, NIL);
             }
         }
 
         // 3c: Sibling is red
-        if self.is_left_child::<V>(sibling_index) {
+        if sibling_is_left {
             self.rotate_right_opt::<V>(parent_index);
-            self.set_color::<V>(parent_index, Color::Red);
-            self.set_color::<V>(sibling_index, Color::Black);
-            return (current_index, parent_index);
-        } else if self.is_right_child::<V>(sibling_index) {
+        } else {
             self.rotate_left_opt::<V>(parent_index);
-            self.set_color::<V>(parent_index, Color::Red);
-            self.set_color::<V>(sibling_index, Color::Black);
-            return (current_index, parent_index);
         }
-
-        (NIL, NIL)
+        unsafe {
+            self.set_color_unchecked::<V>(parent_index, Color::Red);
+            self.set_color_unchecked::<V>(sibling_index, Color::Black);
+        }
+        (current_index, parent_index)
     }
 }
 
@@ -558,11 +540,9 @@ mod tests {
 
     #[test]
     fn test_rotate_left_opt_equivalence() {
-        // Test that rotate_left_opt produces the same result as rotate_left
         let mut data1: [u8; 100000] = [0; 100000];
         let mut data2: [u8; 100000] = [0; 100000];
 
-        // Set up identical trees
         let mut tree1: RedBlackTree<TestOrderBid> = RedBlackTree::new(&mut data1, NIL, NIL);
         let mut tree2: RedBlackTree<TestOrderBid> = RedBlackTree::new(&mut data2, NIL, NIL);
 
@@ -571,7 +551,6 @@ mod tests {
             tree2.insert(TEST_BLOCK_WIDTH * i, TestOrderBid::new(i as u64 * 100));
         }
 
-        // Verify trees are equivalent after setup
         assert_eq!(tree1.root_index(), tree2.root_index());
     }
 
@@ -583,7 +562,6 @@ mod tests {
         let mut tree1: RedBlackTree<TestOrderBid> = RedBlackTree::new(&mut data1, NIL, NIL);
         let mut tree2: RedBlackTree<TestOrderBid> = RedBlackTree::new(&mut data2, NIL, NIL);
 
-        // Insert in reverse order to trigger right rotations
         for i in (1..8).rev() {
             tree1.insert(TEST_BLOCK_WIDTH * i, TestOrderBid::new(i as u64 * 100));
             tree2.insert(TEST_BLOCK_WIDTH * i, TestOrderBid::new(i as u64 * 100));
@@ -604,7 +582,6 @@ mod tests {
         let root = tree.root_index();
         assert_ne!(root, NIL);
 
-        // Test unchecked getters produce same results as checked ones
         unsafe {
             let color_checked = tree.get_color::<TestOrderBid>(root);
             let color_unchecked = tree.get_color_unchecked::<TestOrderBid>(root);
