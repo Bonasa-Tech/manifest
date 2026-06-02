@@ -281,9 +281,8 @@ where
         }
 
         // Read grandparent
-        let grandparent_index = unsafe {
-            get_helper_unchecked::<RBNode<V>>(self.data(), parent_index).parent
-        };
+        let grandparent_index =
+            unsafe { get_helper_unchecked::<RBNode<V>>(self.data(), parent_index).parent };
 
         if grandparent_index == NIL {
             unsafe {
@@ -324,9 +323,8 @@ where
         let current_is_left = unsafe {
             get_helper_unchecked::<RBNode<V>>(self.data(), parent_index).left == index_to_fix
         };
-        let index_to_fix_color = unsafe {
-            get_helper_unchecked::<RBNode<V>>(self.data(), index_to_fix).color
-        };
+        let index_to_fix_color =
+            unsafe { get_helper_unchecked::<RBNode<V>>(self.data(), index_to_fix).color };
 
         if parent_is_left && current_is_left {
             // Case II: left-left
@@ -403,8 +401,7 @@ where
             unsafe { get_helper_unchecked::<RBNode<V>>(self.data(), sib_right).color }
         };
 
-        let sibling_has_red_child =
-            sib_left_color == Color::Red || sib_right_color == Color::Red;
+        let sibling_has_red_child = sib_left_color == Color::Red || sib_right_color == Color::Red;
 
         // 3a: Sibling is black and has a red child
         if sibling_color == Color::Black && sibling_has_red_child {
@@ -459,9 +456,8 @@ where
                 self.set_color_unchecked::<V>(sibling_index, Color::Red);
             }
             if parent_color == Color::Black {
-                let pp = unsafe {
-                    get_helper_unchecked::<RBNode<V>>(self.data(), parent_index).parent
-                };
+                let pp =
+                    unsafe { get_helper_unchecked::<RBNode<V>>(self.data(), parent_index).parent };
                 return (parent_index, pp);
             } else {
                 unsafe {

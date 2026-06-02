@@ -3,13 +3,13 @@ use std::cmp::Ordering;
 
 #[cfg(all(feature = "opt-asm", target_arch = "bpf"))]
 use crate::asm::{insert_fix_asm_wrapper, remove_fix_asm_wrapper};
+#[cfg(feature = "opt-unsafe")]
+use crate::utils_opt::{get_helper_unchecked, get_mut_helper_unchecked};
 #[cfg(all(
     feature = "opt-unsafe",
     not(all(feature = "opt-asm", target_arch = "bpf"))
 ))]
 use crate::RedBlackTreeWriteOperationsHelpersOpt;
-#[cfg(feature = "opt-unsafe")]
-use crate::utils_opt::{get_helper_unchecked, get_mut_helper_unchecked};
 use crate::{
     get_helper, get_mut_helper, trace, DataIndex, Get, HyperTreeReadOperations,
     HyperTreeValueIteratorTrait, HyperTreeValueReadOnlyIterator, HyperTreeWriteOperations, Payload,
@@ -601,21 +601,15 @@ where
                         return NIL;
                     }
                 } else {
-                    let left_lookup: DataIndex = RedBlackTreeReadOnly::<V>::new(
-                        self.data(),
-                        node.left,
-                        NIL,
-                    )
-                    .lookup_index(value);
+                    let left_lookup: DataIndex =
+                        RedBlackTreeReadOnly::<V>::new(self.data(), node.left, NIL)
+                            .lookup_index(value);
                     if left_lookup != NIL {
                         return left_lookup;
                     }
-                    let right_lookup: DataIndex = RedBlackTreeReadOnly::<V>::new(
-                        self.data(),
-                        node.right,
-                        NIL,
-                    )
-                    .lookup_index(value);
+                    let right_lookup: DataIndex =
+                        RedBlackTreeReadOnly::<V>::new(self.data(), node.right, NIL)
+                            .lookup_index(value);
                     if right_lookup != NIL {
                         return right_lookup;
                     }
@@ -757,8 +751,7 @@ where
 
         #[cfg(feature = "opt-unsafe")]
         unsafe {
-            let mut ci: DataIndex =
-                get_helper_unchecked::<RBNode<V>>(self.data(), index).right;
+            let mut ci: DataIndex = get_helper_unchecked::<RBNode<V>>(self.data(), index).right;
             debug_assert!(ci != NIL);
             loop {
                 let n: &RBNode<V> = get_helper_unchecked(self.data(), ci);
@@ -1450,8 +1443,7 @@ impl<'a, V: Payload> RedBlackTree<'a, V> {
                     Ordering::Less | Ordering::Equal => {
                         let left_index = current_parent.left;
                         if left_index != NIL {
-                            current_parent =
-                                unsafe { get_helper_unchecked(self.data, left_index) };
+                            current_parent = unsafe { get_helper_unchecked(self.data, left_index) };
                             current_parent_index = left_index;
                         } else {
                             break;
@@ -1475,8 +1467,7 @@ impl<'a, V: Payload> RedBlackTree<'a, V> {
             }
 
             unsafe {
-                let new_node: &mut RBNode<V> =
-                    get_mut_helper_unchecked(self.data, new_node_index);
+                let new_node: &mut RBNode<V> = get_mut_helper_unchecked(self.data, new_node_index);
                 *new_node = node_to_insert;
                 new_node.parent = current_parent_index;
             }
