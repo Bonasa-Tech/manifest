@@ -3,6 +3,8 @@ use std::cmp::Ordering;
 
 #[cfg(all(feature = "opt-asm", target_arch = "bpf"))]
 use crate::asm::{insert_fix_asm_wrapper, remove_fix_asm_wrapper};
+#[cfg(feature = "opt-unsafe")]
+use crate::utils_opt::{get_helper_unchecked, get_mut_helper_unchecked};
 #[cfg(all(
     feature = "opt-unsafe",
     not(all(feature = "opt-asm", target_arch = "bpf"))
@@ -491,58 +493,57 @@ where
     }
 
     fn swap_node_with_successor<V: Payload>(&mut self, index_0: DataIndex, index_1: DataIndex) {
-        let parent_0: DataIndex = self.get_parent_index::<V>(index_0);
-        let parent_1: DataIndex = self.get_parent_index::<V>(index_1);
-        let left_0: DataIndex = self.get_left_index::<V>(index_0);
-        let left_1: DataIndex = self.get_left_index::<V>(index_1);
-        let right_0: DataIndex = self.get_right_index::<V>(index_0);
-        let right_1: DataIndex = self.get_right_index::<V>(index_1);
+        {
+            let parent_0: DataIndex = self.get_parent_index::<V>(index_0);
+            let parent_1: DataIndex = self.get_parent_index::<V>(index_1);
+            let left_0: DataIndex = self.get_left_index::<V>(index_0);
+            let left_1: DataIndex = self.get_left_index::<V>(index_1);
+            let right_0: DataIndex = self.get_right_index::<V>(index_0);
+            let right_1: DataIndex = self.get_right_index::<V>(index_1);
 
-        let is_left_0: bool = self.is_left_child::<V>(index_0);
-        let is_left_1: bool = self.is_left_child::<V>(index_1);
+            let is_left_0: bool = self.is_left_child::<V>(index_0);
+            let is_left_1: bool = self.is_left_child::<V>(index_1);
 
-        // Setting the above parent coming down for both.
-        if is_left_0 {
-            self.set_left_index::<V>(parent_0, index_1);
-        } else {
-            self.set_right_index::<V>(parent_0, index_1);
-        }
-        if is_left_1 {
-            self.set_left_index::<V>(parent_1, index_0);
-        } else {
-            self.set_right_index::<V>(parent_1, index_0);
-        }
+            if is_left_0 {
+                self.set_left_index::<V>(parent_0, index_1);
+            } else {
+                self.set_right_index::<V>(parent_0, index_1);
+            }
+            if is_left_1 {
+                self.set_left_index::<V>(parent_1, index_0);
+            } else {
+                self.set_right_index::<V>(parent_1, index_0);
+            }
 
-        self.set_left_index::<V>(index_0, left_1);
-        self.set_right_index::<V>(index_0, right_1);
-        self.set_parent_index::<V>(index_0, parent_1);
+            self.set_left_index::<V>(index_0, left_1);
+            self.set_right_index::<V>(index_0, right_1);
+            self.set_parent_index::<V>(index_0, parent_1);
 
-        self.set_left_index::<V>(index_1, left_0);
-        self.set_right_index::<V>(index_1, right_0);
-        self.set_parent_index::<V>(index_1, parent_0);
-
-        self.set_parent_index::<V>(left_0, index_1);
-        self.set_parent_index::<V>(left_1, index_0);
-        self.set_parent_index::<V>(right_0, index_1);
-        self.set_parent_index::<V>(right_1, index_0);
-
-        if parent_1 == index_0 {
-            self.set_parent_index::<V>(index_0, index_1);
+            self.set_left_index::<V>(index_1, left_0);
+            self.set_right_index::<V>(index_1, right_0);
             self.set_parent_index::<V>(index_1, parent_0);
-            self.set_right_index::<V>(index_1, index_0);
-        }
 
-        // Should not happen because we only swap with successor of an
-        // internal node. Root is a successor of a leaf.
-        debug_assert_ne!(self.root_index(), index_1);
-        if self.root_index() == index_0 {
-            self.set_root_index(index_1);
-        }
+            self.set_parent_index::<V>(left_0, index_1);
+            self.set_parent_index::<V>(left_1, index_0);
+            self.set_parent_index::<V>(right_0, index_1);
+            self.set_parent_index::<V>(right_1, index_0);
 
-        let index_0_color: Color = self.get_color::<V>(index_0);
-        let index_1_color: Color = self.get_color::<V>(index_1);
-        self.set_color::<V>(index_0, index_1_color);
-        self.set_color::<V>(index_1, index_0_color);
+            if parent_1 == index_0 {
+                self.set_parent_index::<V>(index_0, index_1);
+                self.set_parent_index::<V>(index_1, parent_0);
+                self.set_right_index::<V>(index_1, index_0);
+            }
+
+            debug_assert_ne!(self.root_index(), index_1);
+            if self.root_index() == index_0 {
+                self.set_root_index(index_1);
+            }
+
+            let index_0_color: Color = self.get_color::<V>(index_0);
+            let index_1_color: Color = self.get_color::<V>(index_1);
+            self.set_color::<V>(index_0, index_1_color);
+            self.set_color::<V>(index_1, index_0_color);
+        }
     }
 
     // Take out the node in the middle and fix parent child relationships
@@ -578,43 +579,84 @@ where
 
         let mut current_index: DataIndex = self.root_index();
 
-        while self.get_value::<V>(current_index) != value {
-            if self.get_value::<V>(current_index) > value {
-                if self.has_left::<V>(current_index) {
-                    current_index = self.get_left_index::<V>(current_index);
+        #[cfg(feature = "opt-unsafe")]
+        {
+            loop {
+                let node: &RBNode<V> =
+                    unsafe { get_helper_unchecked::<RBNode<V>>(self.data(), current_index) };
+                let node_value = &node.value;
+                if node_value == value {
+                    return current_index;
+                }
+                if node_value > value {
+                    if node.left != NIL {
+                        current_index = node.left;
+                    } else {
+                        return NIL;
+                    }
+                } else if node_value < value {
+                    if node.right != NIL {
+                        current_index = node.right;
+                    } else {
+                        return NIL;
+                    }
                 } else {
+                    let left_lookup: DataIndex =
+                        RedBlackTreeReadOnly::<V>::new(self.data(), node.left, NIL)
+                            .lookup_index(value);
+                    if left_lookup != NIL {
+                        return left_lookup;
+                    }
+                    let right_lookup: DataIndex =
+                        RedBlackTreeReadOnly::<V>::new(self.data(), node.right, NIL)
+                            .lookup_index(value);
+                    if right_lookup != NIL {
+                        return right_lookup;
+                    }
                     return NIL;
                 }
-            } else if self.get_value::<V>(current_index) < value {
-                if self.has_right::<V>(current_index) {
-                    current_index = self.get_right_index::<V>(current_index);
-                } else {
-                    return NIL;
-                }
-            } else {
-                // Check both subtrees for equal keys.
-                let left_lookup: DataIndex = RedBlackTreeReadOnly::<V>::new(
-                    self.data(),
-                    self.get_left_index::<V>(current_index),
-                    NIL,
-                )
-                .lookup_index(value);
-                if left_lookup != NIL {
-                    return left_lookup;
-                }
-                let right_lookup: DataIndex = RedBlackTreeReadOnly::<V>::new(
-                    self.data(),
-                    self.get_right_index::<V>(current_index),
-                    NIL,
-                )
-                .lookup_index(value);
-                if right_lookup != NIL {
-                    return right_lookup;
-                }
-                return NIL;
             }
         }
-        current_index
+
+        #[cfg(not(feature = "opt-unsafe"))]
+        {
+            while self.get_value::<V>(current_index) != value {
+                if self.get_value::<V>(current_index) > value {
+                    if self.has_left::<V>(current_index) {
+                        current_index = self.get_left_index::<V>(current_index);
+                    } else {
+                        return NIL;
+                    }
+                } else if self.get_value::<V>(current_index) < value {
+                    if self.has_right::<V>(current_index) {
+                        current_index = self.get_right_index::<V>(current_index);
+                    } else {
+                        return NIL;
+                    }
+                } else {
+                    let left_lookup: DataIndex = RedBlackTreeReadOnly::<V>::new(
+                        self.data(),
+                        self.get_left_index::<V>(current_index),
+                        NIL,
+                    )
+                    .lookup_index(value);
+                    if left_lookup != NIL {
+                        return left_lookup;
+                    }
+                    let right_lookup: DataIndex = RedBlackTreeReadOnly::<V>::new(
+                        self.data(),
+                        self.get_right_index::<V>(current_index),
+                        NIL,
+                    )
+                    .lookup_index(value);
+                    if right_lookup != NIL {
+                        return right_lookup;
+                    }
+                    return NIL;
+                }
+            }
+            current_index
+        }
     }
 
     fn lookup_max_index<V: Payload>(&'a self) -> DataIndex {
@@ -647,23 +689,57 @@ where
         if index == NIL {
             return NIL;
         }
-        // Predecessor is below us.
-        if self.get_left_index::<V>(index) != NIL {
-            let mut current_index: DataIndex = self.get_left_index::<V>(index);
-            while self.get_right_index::<V>(current_index) != NIL {
-                current_index = self.get_right_index::<V>(current_index);
+
+        #[cfg(feature = "opt-unsafe")]
+        unsafe {
+            let node: &RBNode<V> = get_helper_unchecked(self.data(), index);
+            // Predecessor is below us: go left then all the way right.
+            if node.left != NIL {
+                let mut ci = node.left;
+                loop {
+                    let n: &RBNode<V> = get_helper_unchecked(self.data(), ci);
+                    if n.right == NIL {
+                        return ci;
+                    }
+                    ci = n.right;
+                }
             }
-            return current_index;
+            // Predecessor is above: walk up while we are a left child.
+            let mut ci = index;
+            loop {
+                let n: &RBNode<V> = get_helper_unchecked(self.data(), ci);
+                let parent = n.parent;
+                if parent == NIL {
+                    return NIL;
+                }
+                let pn: &RBNode<V> = get_helper_unchecked(self.data(), parent);
+                if pn.left != ci {
+                    return parent;
+                }
+                ci = parent;
+            }
         }
 
-        // Successor is above, keep going up while we are the left child
-        let mut current_index: DataIndex = index;
-        while self.is_left_child::<V>(current_index) {
+        #[cfg(not(feature = "opt-unsafe"))]
+        {
+            // Predecessor is below us.
+            if self.get_left_index::<V>(index) != NIL {
+                let mut current_index: DataIndex = self.get_left_index::<V>(index);
+                while self.get_right_index::<V>(current_index) != NIL {
+                    current_index = self.get_right_index::<V>(current_index);
+                }
+                return current_index;
+            }
+
+            // Successor is above, keep going up while we are the left child
+            let mut current_index: DataIndex = index;
+            while self.is_left_child::<V>(current_index) {
+                current_index = self.get_parent_index::<V>(current_index);
+            }
             current_index = self.get_parent_index::<V>(current_index);
-        }
-        current_index = self.get_parent_index::<V>(current_index);
 
-        current_index
+            current_index
+        }
     }
 
     /// Get the next index. This walks the tree, so does not care about equal
@@ -672,12 +748,29 @@ where
     /// It should never be called on leaf nodes.
     fn get_next_higher_index<V: Payload>(&'a self, index: DataIndex) -> DataIndex {
         debug_assert!(index != NIL);
-        debug_assert!(self.get_right_index::<V>(index) != NIL);
-        let mut current_index: DataIndex = self.get_right_index::<V>(index);
-        while self.get_left_index::<V>(current_index) != NIL {
-            current_index = self.get_left_index::<V>(current_index);
+
+        #[cfg(feature = "opt-unsafe")]
+        unsafe {
+            let mut ci: DataIndex = get_helper_unchecked::<RBNode<V>>(self.data(), index).right;
+            debug_assert!(ci != NIL);
+            loop {
+                let n: &RBNode<V> = get_helper_unchecked(self.data(), ci);
+                if n.left == NIL {
+                    return ci;
+                }
+                ci = n.left;
+            }
         }
-        current_index
+
+        #[cfg(not(feature = "opt-unsafe"))]
+        {
+            debug_assert!(self.get_right_index::<V>(index) != NIL);
+            let mut current_index: DataIndex = self.get_right_index::<V>(index);
+            while self.get_left_index::<V>(current_index) != NIL {
+                current_index = self.get_left_index::<V>(current_index);
+            }
+            current_index
+        }
     }
 }
 
@@ -1131,12 +1224,7 @@ impl<'a, V: Payload> HyperTreeWriteOperations<'a, V> for RedBlackTree<'a, V> {
             self.max_index = self.get_next_lower_index::<V>(self.max_index);
         }
 
-        // If it is an internal node, we copy the successor value here and call
-        // delete on the successor. We could do either the successor or
-        // predecessor. We pick the successor because we would prefer the side
-        // of the tree with the max to be sparser.
         if self.is_internal::<V>(index) {
-            // Swap nodes
             let successor_index: DataIndex = self.get_next_higher_index::<V>(index);
             self.swap_node_with_successor::<V>(index, successor_index);
         }
@@ -1334,58 +1422,106 @@ impl<'a, V: Payload> RedBlackTree<'a, V> {
     /// Insert a node into the subtree without fixing. This node could be a leaf
     /// or a subtree itself.
     fn insert_node_no_fix(&mut self, node_to_insert: RBNode<V>, new_node_index: DataIndex) {
-        let mut current_parent: &RBNode<V> = get_helper::<RBNode<V>>(self.data, self.root_index);
-        let mut current_parent_index: DataIndex = self.root_index;
+        #[cfg(feature = "opt-unsafe")]
+        {
+            let mut current_parent_index: DataIndex = self.root_index;
+            let mut current_parent: &RBNode<V> =
+                unsafe { get_helper_unchecked(self.data, current_parent_index) };
 
-        // Keep trying to walk while there are children. Breaks when there isnt
-        // the expected child or at a leaf.
-        while current_parent.left != NIL || current_parent.right != NIL {
-            match node_to_insert.cmp(current_parent) {
-                Ordering::Greater => {
-                    let right_index: DataIndex = current_parent.get_right_index();
-                    if right_index != NIL {
-                        // Keep going down the right subtree
-                        current_parent = get_helper::<RBNode<V>>(self.data, right_index);
-                        current_parent_index = right_index;
-                    } else {
-                        break;
+            while current_parent.left != NIL || current_parent.right != NIL {
+                match node_to_insert.cmp(current_parent) {
+                    Ordering::Greater => {
+                        let right_index = current_parent.right;
+                        if right_index != NIL {
+                            current_parent =
+                                unsafe { get_helper_unchecked(self.data, right_index) };
+                            current_parent_index = right_index;
+                        } else {
+                            break;
+                        }
                     }
-                }
-                Ordering::Less => {
-                    let left_index: DataIndex = current_parent.get_left_index();
-                    if left_index != NIL {
-                        // Keep going down the left subtree
-                        current_parent = get_helper::<RBNode<V>>(self.data, left_index);
-                        current_parent_index = left_index;
-                    } else {
-                        break;
-                    }
-                }
-                Ordering::Equal => {
-                    // Equal. Defaults to left to preserve FIFO.
-                    let left_index: DataIndex = current_parent.get_left_index();
-                    if left_index != NIL {
-                        // Keep going down the left subtree
-                        current_parent = get_helper::<RBNode<V>>(self.data, left_index);
-                        current_parent_index = left_index;
-                    } else {
-                        break;
+                    Ordering::Less | Ordering::Equal => {
+                        let left_index = current_parent.left;
+                        if left_index != NIL {
+                            current_parent = unsafe { get_helper_unchecked(self.data, left_index) };
+                            current_parent_index = left_index;
+                        } else {
+                            break;
+                        }
                     }
                 }
             }
-        }
-        // We ended at a leaf and need to add below.
-        if *self.get_node(current_parent_index) < node_to_insert {
-            self.set_right_index::<V>(current_parent_index, new_node_index);
-        } else {
-            self.set_left_index::<V>(current_parent_index, new_node_index);
+
+            let parent_node: &RBNode<V> =
+                unsafe { get_helper_unchecked(self.data, current_parent_index) };
+            if *parent_node < node_to_insert {
+                unsafe {
+                    get_mut_helper_unchecked::<RBNode<V>>(self.data, current_parent_index).right =
+                        new_node_index;
+                }
+            } else {
+                unsafe {
+                    get_mut_helper_unchecked::<RBNode<V>>(self.data, current_parent_index).left =
+                        new_node_index;
+                }
+            }
+
+            unsafe {
+                let new_node: &mut RBNode<V> = get_mut_helper_unchecked(self.data, new_node_index);
+                *new_node = node_to_insert;
+                new_node.parent = current_parent_index;
+            }
         }
 
-        // Put the leaf in the tree and update its parent.
+        #[cfg(not(feature = "opt-unsafe"))]
         {
-            let new_node: &mut RBNode<V> = get_mut_helper::<RBNode<V>>(self.data, new_node_index);
-            *new_node = node_to_insert;
-            new_node.parent = current_parent_index;
+            let mut current_parent: &RBNode<V> =
+                get_helper::<RBNode<V>>(self.data, self.root_index);
+            let mut current_parent_index: DataIndex = self.root_index;
+
+            while current_parent.left != NIL || current_parent.right != NIL {
+                match node_to_insert.cmp(current_parent) {
+                    Ordering::Greater => {
+                        let right_index: DataIndex = current_parent.get_right_index();
+                        if right_index != NIL {
+                            current_parent = get_helper::<RBNode<V>>(self.data, right_index);
+                            current_parent_index = right_index;
+                        } else {
+                            break;
+                        }
+                    }
+                    Ordering::Less => {
+                        let left_index: DataIndex = current_parent.get_left_index();
+                        if left_index != NIL {
+                            current_parent = get_helper::<RBNode<V>>(self.data, left_index);
+                            current_parent_index = left_index;
+                        } else {
+                            break;
+                        }
+                    }
+                    Ordering::Equal => {
+                        let left_index: DataIndex = current_parent.get_left_index();
+                        if left_index != NIL {
+                            current_parent = get_helper::<RBNode<V>>(self.data, left_index);
+                            current_parent_index = left_index;
+                        } else {
+                            break;
+                        }
+                    }
+                }
+            }
+            if *self.get_node(current_parent_index) < node_to_insert {
+                self.set_right_index::<V>(current_parent_index, new_node_index);
+            } else {
+                self.set_left_index::<V>(current_parent_index, new_node_index);
+            }
+
+            {
+                let new_node: &mut RBNode<V> =
+                    get_mut_helper::<RBNode<V>>(self.data, new_node_index);
+                *new_node = node_to_insert;
+                new_node.parent = current_parent_index;
+            }
         }
     }
 
