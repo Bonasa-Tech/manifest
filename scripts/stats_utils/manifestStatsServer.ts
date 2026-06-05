@@ -20,6 +20,7 @@ import { Pool, PoolClient, QueryResult } from 'pg';
 import {
   VOLUME_CHECKPOINT_DURATION_SEC,
   ONE_DAY_SEC,
+  SLOTS_PER_DAY,
   DEPTHS_BPS,
   SOL_USDC_MARKET,
   CBBTC_USDC_MARKET,
@@ -1687,9 +1688,19 @@ export class ManifestStatsServer {
       signature,
       limit = 100,
       offset = 0,
-      fromSlot,
       toSlot,
     } = options;
+
+    // Apply default slot filter only if no efficient index filter is present
+    const hasEfficientFilter = market || signature || taker || maker;
+    let { fromSlot } = options;
+    if (fromSlot === undefined && !hasEfficientFilter) {
+      console.log(
+        `[completeFills] Query without efficient filter, applying default slot range. Options: ${JSON.stringify(options)}`,
+      );
+      const currentSlot = await this.connection.getSlot();
+      fromSlot = currentSlot - SLOTS_PER_DAY;
+    }
 
     try {
       const conditions: string[] = [];
@@ -1751,7 +1762,7 @@ export class ManifestStatsServer {
       const dataQuery = `
       ${queries.SELECT_FILLS_COMPLETE_DATA_BASE}
       ${whereClause}
-      ORDER BY slot DESC, timestamp DESC
+      ORDER BY timestamp DESC
       LIMIT $${paramIndex++} OFFSET $${paramIndex++}
     `;
 
