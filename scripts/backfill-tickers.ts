@@ -79,21 +79,37 @@ async function findFirstFillSignature(
 }
 
 async function backfillSignature(signature: string): Promise<boolean> {
-  try {
-    const url = `${STATS_SERVER_URL}/backfill?signature=${signature}`;
-    const response = await fetch(url);
+  const RETRY_DELAY_MS = 3000;
 
-    if (!response.ok) {
-      console.error(`Backfill failed for ${signature}: ${response.status} ${response.statusText}`);
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const url = `${STATS_SERVER_URL}/backfill?signature=${signature}`;
+      const response = await fetch(url);
+
+      if (!response.ok) {
+        if (attempt === 0) {
+          console.error(`Backfill failed for ${signature}: ${response.status}, retrying in ${RETRY_DELAY_MS}ms...`);
+          await sleep(RETRY_DELAY_MS);
+          continue;
+        }
+        console.error(`Backfill failed for ${signature}: ${response.status} ${response.statusText}`);
+        return false;
+      }
+
+      const result = await response.json();
+      return result.success === true;
+    } catch (error) {
+      if (attempt === 0) {
+        console.error(`Failed to backfill ${signature}, retrying in ${RETRY_DELAY_MS}ms...`);
+        await sleep(RETRY_DELAY_MS);
+        continue;
+      }
+      console.error(`Failed to backfill ${signature}:`, error);
       return false;
     }
-
-    const result = await response.json();
-    return result.success === true;
-  } catch (error) {
-    console.error(`Failed to backfill ${signature}:`, error);
-    return false;
   }
+
+  return false;
 }
 
 async function run() {
