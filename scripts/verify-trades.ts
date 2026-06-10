@@ -53,19 +53,44 @@ const hasTokenTransfer = async (
       }
     }
 
-    // Check if any instruction involves token programs
+    // Token balance changes are the most reliable signal: any SPL transfer
+    // shows up as a pre/post token balance entry, regardless of whether the
+    // token program was invoked at the top level or via CPI.
+    if (
+      (tx.meta?.preTokenBalances?.length ?? 0) > 0 ||
+      (tx.meta?.postTokenBalances?.length ?? 0) > 0
+    ) {
+      return true;
+    }
+
+    const involvesTokenProgram = (programIdIndex: number): boolean => {
+      const programId = accountKeys[programIdIndex];
+      return (
+        programId != null &&
+        (programId.equals(TOKEN_PROGRAM_ID) ||
+          programId.equals(TOKEN_2022_PROGRAM_ID))
+      );
+    };
+
+    // Check if any top-level instruction involves token programs.
     // Legacy transactions use 'instructions', versioned use 'compiledInstructions'
     const instructions =
       'instructions' in message
         ? message.instructions
         : message.compiledInstructions;
     for (const instruction of instructions) {
-      const programId = accountKeys[instruction.programIdIndex];
-      if (
-        programId.equals(TOKEN_PROGRAM_ID) ||
-        programId.equals(TOKEN_2022_PROGRAM_ID)
-      ) {
+      if (involvesTokenProgram(instruction.programIdIndex)) {
         return true;
+      }
+    }
+
+    // Aggregator/CPI swaps (e.g. Jupiter -> Manifest) invoke the token program
+    // only via inner instructions, so the top-level scan alone misses them.
+    for (const inner of tx.meta?.innerInstructions ?? []) {
+      for (const instruction of inner.instructions) {
+        if (involvesTokenProgram(instruction.programIdIndex)) {
+          return true;
+        }
       }
     }
 
@@ -149,6 +174,32 @@ const toFillLogResult = (
   return result;
 };
 
+// Tracks transactions that getTransaction failed to return during the run, for
+// end-of-run reporting. Sets (keyed by signature) so a signature fetched more
+// than once - e.g. once via the bulk vault scan and again via a targeted
+// re-parse - is only counted once.
+const txFetchStats = {
+  // Not found / errored on the first getTransaction attempt (entered the retry).
+  notFoundFirstAttempt: new Set<string>(),
+  // Still not found / errored after the 10s retry.
+  notFoundAfterRetry: new Set<string>(),
+};
+
+// Prints the not-found transaction tallies at the bottom of the report. These
+// transactions yield no fills, so a high count means the report's onchain view
+// is incomplete (typically RPC throttling) rather than genuinely missing fills.
+const printTxFetchSummary = (): void => {
+  const notFoundOverall = txFetchStats.notFoundFirstAttempt.size;
+  const notFoundAfterRetry = txFetchStats.notFoundAfterRetry.size;
+  console.log('');
+  console.log('📊 TRANSACTION FETCH SUMMARY:');
+  console.log(`Transactions not found on first attempt: ${notFoundOverall}`);
+  console.log(
+    `Transactions still not found after retry: ${notFoundAfterRetry}`,
+  );
+  console.log(`Recovered on retry: ${notFoundOverall - notFoundAfterRetry}`);
+};
+
 const parseTransactionForFills = async (
   connection: Connection,
   signature: string,
@@ -173,6 +224,7 @@ const parseTransactionForFills = async (
 
     // Retry once after 10 seconds if transaction not found or error (transient RPC error/throttling)
     if (!tx) {
+      txFetchStats.notFoundFirstAttempt.add(signature);
       const errorMsg = fetchError
         ? `: ${fetchError instanceof Error ? fetchError.message : String(fetchError)}`
         : '';
@@ -196,6 +248,10 @@ const parseTransactionForFills = async (
             retryError,
           );
         }
+      }
+
+      if (!tx) {
+        txFetchStats.notFoundAfterRetry.add(signature);
       }
     }
 
@@ -523,6 +579,43 @@ const fetchOnchainFills = async (
   return { fills, truncatedSignatures };
 };
 
+// Re-parse a specific signature directly and check whether a given DB fill is
+// actually present in that transaction.
+//
+// `fetchOnchainFills` reconstructs the onchain fill set by enumerating *every*
+// transaction touching the market's base vault and re-fetching each one. For
+// very high-volume vaults (e.g. USDC/USDT markets whose vault sees thousands of
+// txs per minute) that enumeration is unreliable: rate-limited getTransaction
+// calls return null and the fill silently drops out of the reconstructed set,
+// producing false "unparseable" reports for fills that are perfectly parseable.
+//
+// This does an O(1) targeted re-parse of the fill's own signature so we only
+// flag a fill when its specific transaction genuinely cannot be parsed.
+const fillExistsInTransaction = async (
+  connection: Connection,
+  dbFill: FillLogResult,
+  logPrefix: string,
+): Promise<boolean> => {
+  const { fills } = await parseTransactionForFills(
+    connection,
+    dbFill.signature,
+    dbFill.slot,
+    dbFill.blockTime ?? null,
+    logPrefix,
+  );
+
+  return fills.some(
+    (f) =>
+      f.market === dbFill.market &&
+      f.maker === dbFill.maker &&
+      f.taker === dbFill.taker &&
+      f.baseAtoms === dbFill.baseAtoms &&
+      f.quoteAtoms === dbFill.quoteAtoms &&
+      f.makerSequenceNumber === dbFill.makerSequenceNumber &&
+      f.takerSequenceNumber === dbFill.takerSequenceNumber,
+  );
+};
+
 const compareFills = async (
   connection: Connection,
   dbFills: FillLogResult[],
@@ -531,7 +624,10 @@ const compareFills = async (
   market: string,
   dbBufferTime: number,
   logPrefix: string,
-): Promise<{ mismatches: TradeMismatch[]; unparseableFills: UnparseableFill[] }> => {
+): Promise<{
+  mismatches: TradeMismatch[];
+  unparseableFills: UnparseableFill[];
+}> => {
   const mismatches: TradeMismatch[] = [];
   const unparseableFills: UnparseableFill[] = [];
 
@@ -562,28 +658,40 @@ const compareFills = async (
     const onchainFills = onchainFillsMap.get(signature);
 
     if (!onchainFills) {
-      // Entire transaction missing from onchain - check if it has token transfers
-      const hasTransfers = await hasTokenTransfer(connection, signature);
+      // Entire transaction missing from the bulk vault enumeration. Re-parse
+      // each fill's own signature directly before flagging - the enumeration is
+      // unreliable for high-volume vaults (see fillExistsInTransaction).
+      for (const fill of fills) {
+        const verified = await fillExistsInTransaction(
+          connection,
+          fill,
+          logPrefix,
+        );
+        if (verified) {
+          continue;
+        }
 
-      if (hasTransfers) {
-        // Transaction exists onchain with token transfers but we couldn't parse the fill
-        // Track as unparseable rather than a mismatch
-        for (const fill of fills) {
+        // Targeted re-parse also failed - check if it has token transfers
+        const hasTransfers = await hasTokenTransfer(connection, signature);
+
+        if (hasTransfers) {
+          // Transaction exists onchain with token transfers but we couldn't parse the fill
+          // Track as unparseable rather than a mismatch
           unparseableFills.push({
             market,
             signature,
             fill,
           });
+          console.log(
+            logPrefix,
+            `Transaction ${signature} found onchain but fill could not be parsed`,
+          );
+        } else {
+          console.log(
+            logPrefix,
+            `Ignoring missing onchain fill for ${signature} - no token transfers detected`,
+          );
         }
-        console.log(
-          logPrefix,
-          `Transaction ${signature} found onchain but fill could not be parsed`,
-        );
-      } else {
-        console.log(
-          logPrefix,
-          `Ignoring missing onchain fill for ${signature} - no token transfers detected`,
-        );
       }
     } else {
       // Check if specific fills within the transaction match
@@ -599,6 +707,18 @@ const compareFills = async (
         );
 
         if (!matchingFill) {
+          // The enumerated fills for this signature didn't include this specific
+          // fill. Re-parse the signature directly before flagging - the bulk
+          // enumeration can return a partial result (see fillExistsInTransaction).
+          const verified = await fillExistsInTransaction(
+            connection,
+            dbFill,
+            logPrefix,
+          );
+          if (verified) {
+            continue;
+          }
+
           // Check if this specific transaction has token transfers before reporting
           const hasTransfers = await hasTokenTransfer(
             connection,
@@ -751,7 +871,10 @@ const run = async () => {
 
     const verifyMarket = async (
       market: Market,
-    ): Promise<{ mismatches: TradeMismatch[]; unparseableFills: UnparseableFill[] }> => {
+    ): Promise<{
+      mismatches: TradeMismatch[];
+      unparseableFills: UnparseableFill[];
+    }> => {
       const logPrefix = `[${market.ticker_id}]`;
       console.log(logPrefix, 'Verifying market');
 
@@ -845,11 +968,13 @@ const run = async () => {
         pending.size < MARKET_VERIFY_CONCURRENCY
       ) {
         const market = marketQueue.shift()!;
-        const p = verifyMarket(market).then(({ mismatches, unparseableFills }) => {
-          allMismatches.push(...mismatches);
-          allUnparseableFills.push(...unparseableFills);
-          pending.delete(p);
-        });
+        const p = verifyMarket(market).then(
+          ({ mismatches, unparseableFills }) => {
+            allMismatches.push(...mismatches);
+            allUnparseableFills.push(...unparseableFills);
+            pending.delete(p);
+          },
+        );
         pending.add(p);
       }
       if (pending.size > 0) {
@@ -938,7 +1063,9 @@ const run = async () => {
       console.log(
         `Total unparseable transactions: ${unparseableSignatures.size}`,
       );
-      console.log(`Signatures: ${Array.from(unparseableSignatures).join(', ')}`);
+      console.log(
+        `Signatures: ${Array.from(unparseableSignatures).join(', ')}`,
+      );
       console.log('');
 
       console.log(`📊 BREAKDOWN BY MARKET:`);
@@ -1014,6 +1141,7 @@ const run = async () => {
 
       console.log(`\nTotal mismatches: ${allMismatches.length}`);
       console.log(`Unique transactions: ${allMismatchSignatures.size}`);
+      printTxFetchSummary();
       process.exit(1);
     } else {
       if (allUnparseableFills.length > 0) {
@@ -1025,6 +1153,7 @@ const run = async () => {
           '\n✅ All trades verified successfully! No mismatches found.',
         );
       }
+      printTxFetchSummary();
     }
   } catch (error) {
     console.error('Fatal error:', error);
