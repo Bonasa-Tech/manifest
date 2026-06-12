@@ -426,13 +426,30 @@ const fetchDatabaseFills = async (
         params.set('fromSlot', fromSlot.toString());
       }
 
-      const response = await fetch(`${statsServerUrl}/completeFills?${params}`);
-      if (!response.ok) {
+      // The stats server can return transient 503s when the database is
+      // temporarily unavailable. Retry with backoff before giving up so a
+      // brief blip doesn't abort the whole market.
+      const maxFetchAttempts = 5;
+      let response: Response | undefined;
+      for (let attempt = 1; attempt <= maxFetchAttempts; attempt++) {
+        response = await fetch(`${statsServerUrl}/completeFills?${params}`);
+        if (response.ok) {
+          break;
+        }
+        if (response.status === 503 && attempt < maxFetchAttempts) {
+          const delayMs = 1000 * 2 ** (attempt - 1);
+          console.warn(
+            logPrefix,
+            `completeFills returned 503, retrying in ${delayMs / 1000}s (attempt ${attempt}/${maxFetchAttempts})...`,
+          );
+          await sleep(delayMs);
+          continue;
+        }
         throw new Error(
           `Failed to fetch fills: ${response.status} ${response.statusText}`,
         );
       }
-      const data = await response.json();
+      const data = await response!.json();
 
       const { fills: batchFills, hasMore } = data;
 
