@@ -873,26 +873,41 @@ const run = async () => {
         );
 
         const backfilledSignatures = new Set<string>();
+        const maxBackfillAttempts = 3;
         for (const signature of uniqueSignaturesToBackfill) {
-          try {
-            const response = await fetch(
-              `${statsServerUrl}/backfill?signature=${signature}`,
-            );
-            if (response.ok) {
-              const result = await response.json();
-              if (result.success) {
-                console.log(
-                  `✅ Backfilled ${signature}: ${result.backfilled} new, ${result.alreadyExisted} existed`,
-                );
-                backfilledSignatures.add(signature);
-              }
-            } else {
-              console.log(
-                `❌ Failed to backfill ${signature}: ${response.status}`,
+          for (let attempt = 1; attempt <= maxBackfillAttempts; attempt++) {
+            try {
+              const response = await fetch(
+                `${statsServerUrl}/backfill?signature=${signature}`,
               );
+              if (response.ok) {
+                const result = await response.json();
+                if (result.success) {
+                  console.log(
+                    `✅ Backfilled ${signature}: ${result.backfilled} new, ${result.alreadyExisted} existed`,
+                  );
+                  backfilledSignatures.add(signature);
+                }
+                break;
+              } else if (
+                response.status === 503 &&
+                attempt < maxBackfillAttempts
+              ) {
+                console.log(
+                  `⏳ Backfill ${signature} returned 503, retrying in 5s (attempt ${attempt}/${maxBackfillAttempts})...`,
+                );
+                await sleep(5000);
+                continue;
+              } else {
+                console.log(
+                  `❌ Failed to backfill ${signature}: ${response.status}`,
+                );
+                break;
+              }
+            } catch (error) {
+              console.log(`❌ Error backfilling ${signature}:`, error);
+              break;
             }
-          } catch (error) {
-            console.log(`❌ Error backfilling ${signature}:`, error);
           }
         }
 
