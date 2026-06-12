@@ -394,6 +394,27 @@ const fetchDatabaseFills = async (
   // Cache for block times to avoid repeated RPC calls
   const blockTimeCache = new Map<number, number>();
 
+  // Bound the query by slot so we don't scan the market's entire history.
+  // /completeFills is ordered by insert timestamp (not block time), so we
+  // cannot rely on block-time ordering to terminate early (see below). Instead
+  // we constrain the slot range to (roughly) the requested time window with
+  // generous padding, then filter precisely by block time on the client.
+  let fromSlot: number | undefined;
+  try {
+    const APPROX_SLOT_MS = 400; // Solana targets ~400ms/slot
+    const windowSlots = Math.ceil((endTime - startTime) / APPROX_SLOT_MS);
+    // Pad heavily: missing a fill is a false positive, over-fetching is cheap.
+    const paddedSlots = Math.ceil(windowSlots * 1.5) + 10000;
+    const currentSlot = await connection.getSlot();
+    fromSlot = Math.max(0, currentSlot - paddedSlots);
+  } catch (error) {
+    console.warn(
+      logPrefix,
+      'Could not determine current slot, fetching without slot bound:',
+      error,
+    );
+  }
+
   while (true) {
     try {
       const params = new URLSearchParams({
@@ -401,6 +422,9 @@ const fetchDatabaseFills = async (
         limit: limit.toString(),
         offset: offset.toString(),
       });
+      if (fromSlot !== undefined) {
+        params.set('fromSlot', fromSlot.toString());
+      }
 
       const response = await fetch(`${statsServerUrl}/completeFills?${params}`);
       if (!response.ok) {
@@ -467,15 +491,13 @@ const fetchDatabaseFills = async (
             fill.blockTime = blockTimeCache.get(fill.slot);
           }
           fills.push(fill);
-        } else if (fillTime < startTime) {
-          // Once we hit fills older than our time window, we're done
-          console.log(
-            logPrefix,
-            `Reached fills older than time window, stopping at slot ${fill.slot}`,
-          );
-          return fills;
         }
-        // If fillTime > endTime, skip this fill but continue (it's newer than our window)
+        // Fills outside [startTime, endTime] are skipped but we keep paginating.
+        // We can't stop early here: /completeFills is ordered by insert timestamp,
+        // not block time, so older-block-time fills (e.g. backfilled rows) can
+        // appear before newer ones. Terminating early dropped in-window fills and
+        // produced spurious "missing_in_db" mismatches. The slot bound above keeps
+        // this bounded; pagination ends when a batch comes back empty.
       }
 
       if (!hasMore) {
@@ -998,26 +1020,41 @@ const run = async () => {
         );
 
         const backfilledSignatures = new Set<string>();
+        const maxBackfillAttempts = 3;
         for (const signature of uniqueSignaturesToBackfill) {
-          try {
-            const response = await fetch(
-              `${statsServerUrl}/backfill?signature=${signature}`,
-            );
-            if (response.ok) {
-              const result = await response.json();
-              if (result.success) {
-                console.log(
-                  `✅ Backfilled ${signature}: ${result.backfilled} new, ${result.alreadyExisted} existed`,
-                );
-                backfilledSignatures.add(signature);
-              }
-            } else {
-              console.log(
-                `❌ Failed to backfill ${signature}: ${response.status}`,
+          for (let attempt = 1; attempt <= maxBackfillAttempts; attempt++) {
+            try {
+              const response = await fetch(
+                `${statsServerUrl}/backfill?signature=${signature}`,
               );
+              if (response.ok) {
+                const result = await response.json();
+                if (result.success) {
+                  console.log(
+                    `✅ Backfilled ${signature}: ${result.backfilled} new, ${result.alreadyExisted} existed`,
+                  );
+                  backfilledSignatures.add(signature);
+                }
+                break;
+              } else if (
+                response.status === 503 &&
+                attempt < maxBackfillAttempts
+              ) {
+                console.log(
+                  `⏳ Backfill ${signature} returned 503, retrying in 5s (attempt ${attempt}/${maxBackfillAttempts})...`,
+                );
+                await sleep(5000);
+                continue;
+              } else {
+                console.log(
+                  `❌ Failed to backfill ${signature}: ${response.status}`,
+                );
+                break;
+              }
+            } catch (error) {
+              console.log(`❌ Error backfilling ${signature}:`, error);
+              break;
             }
-          } catch (error) {
-            console.log(`❌ Error backfilling ${signature}:`, error);
           }
         }
 
