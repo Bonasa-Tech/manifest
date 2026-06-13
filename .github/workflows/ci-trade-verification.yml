@@ -19,12 +19,7 @@ jobs:
           cache: 'yarn'
 
       - name: Install dependencies
-        run: |
-          echo "Installing dependencies..."
-          yarn install --frozen-lockfile || {
-            echo "Warning: Dependency installation failed, continuing..."
-            exit 0
-          }
+        run: yarn install --frozen-lockfile
 
       - name: Run the trade verification
         run: npx tsx scripts/verify-trades.ts
