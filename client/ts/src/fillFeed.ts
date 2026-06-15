@@ -33,11 +33,14 @@ const fillLag = new promClient.Gauge({
 /**
  * FillFeed example implementation.
  */
+const TX_HISTORY_ERROR_THRESHOLD = 5;
+
 export class FillFeed {
   private wsManager: WebSocketManager;
   private shouldEnd: boolean = false;
   private ended: boolean = false;
   private lastUpdateUnix: number = Date.now();
+  private txHistoryErrorCount: number = 0;
 
   constructor(private connection: Connection) {
     this.wsManager = new WebSocketManager(1234, 30000);
@@ -157,9 +160,36 @@ export class FillFeed {
    */
   private async handleSignature(signature: ConfirmedSignatureInfo) {
     console.log('Handling', signature.signature, 'slot', signature.slot);
-    const tx = await this.connection.getTransaction(signature.signature, {
-      maxSupportedTransactionVersion: 0,
-    });
+    let tx: VersionedTransactionResponse | null;
+    try {
+      tx = await this.connection.getTransaction(signature.signature, {
+        maxSupportedTransactionVersion: 0,
+      });
+    } catch (e: unknown) {
+      // Skip transactions that are no longer available on this node (non-archival RPC)
+      // Error code -32011 = "Transaction history is not available from this node"
+      const error = e as { code?: number; message?: string };
+      if (
+        error.code === -32011 ||
+        error.message?.includes('Transaction history is not available')
+      ) {
+        this.txHistoryErrorCount++;
+        console.warn(
+          `Transaction history not available (${this.txHistoryErrorCount}/${TX_HISTORY_ERROR_THRESHOLD}), skipping:`,
+          signature.signature,
+        );
+        if (this.txHistoryErrorCount >= TX_HISTORY_ERROR_THRESHOLD) {
+          throw new Error(
+            `Too many transaction history errors (${this.txHistoryErrorCount}), RPC node may not support historical queries`,
+          );
+        }
+        return;
+      }
+      throw e;
+    }
+    // Reset error count on successful fetch
+    this.txHistoryErrorCount = 0;
+
     if (!tx?.meta?.logMessages) {
       console.log('No log messages');
       return;
