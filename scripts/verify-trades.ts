@@ -1054,17 +1054,23 @@ const run = async () => {
                 }
                 break;
               } else if (
-                response.status === 503 &&
+                response.status >= 500 &&
+                response.status < 600 &&
                 attempt < maxBackfillAttempts
               ) {
+                // Retry on any 5xx error
+                const errorBody = await response.text().catch(() => '');
+                const errorDetail = errorBody ? `: ${errorBody}` : '';
                 console.log(
-                  `⏳ Backfill ${signature} returned 503, retrying in 5s (attempt ${attempt}/${maxBackfillAttempts})...`,
+                  `⏳ Backfill ${signature} returned ${response.status}${errorDetail}, retrying in 5s (attempt ${attempt}/${maxBackfillAttempts})...`,
                 );
                 await sleep(5000);
                 continue;
               } else {
+                const errorBody = await response.text().catch(() => '');
+                const errorDetail = errorBody ? `: ${errorBody}` : '';
                 console.log(
-                  `❌ Failed to backfill ${signature}: ${response.status}`,
+                  `❌ Failed to backfill ${signature}: ${response.status}${errorDetail}`,
                 );
                 break;
               }
