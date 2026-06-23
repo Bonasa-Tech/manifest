@@ -174,6 +174,18 @@ export const CREATE_FILLS_COMPLETE_INDEXES = `
   CREATE INDEX IF NOT EXISTS idx_fills_complete_signature ON fills_complete (signature);
   CREATE INDEX IF NOT EXISTS idx_fills_complete_taker ON fills_complete (taker);
   CREATE INDEX IF NOT EXISTS idx_fills_complete_maker ON fills_complete (maker);
+  -- Composite indexes that back getCompleteFills' "WHERE <filter> = $1 ORDER BY <col> DESC
+  -- LIMIT/OFFSET": the leading column matches the filter and the next column matches the
+  -- sort, so the planner range-scans the index and stops at LIMIT+OFFSET with no sort.
+  -- getCompleteFillsFromDatabase picks the ORDER BY column to match these: maker/taker
+  -- queries sort by slot (these lead with slot); market queries sort by timestamp and use
+  -- idx_fills_complete_market_timestamp above.
+  -- These already exist in the mainnet DB; definitions mirror what is live there. IF NOT
+  -- EXISTS makes them no-ops in prod (matched by name) and only builds them on a fresh DB,
+  -- where fills_complete is small so the plain (non-CONCURRENTLY) build is instant.
+  CREATE INDEX IF NOT EXISTS idx_fills_complete_maker_slot ON fills_complete (maker, slot DESC, timestamp DESC);
+  CREATE INDEX IF NOT EXISTS idx_fills_complete_taker_slot ON fills_complete (taker, slot DESC, timestamp DESC);
+  CREATE INDEX IF NOT EXISTS idx_fills_complete_market_slot ON fills_complete (market, slot DESC);
 `;
 
 export const CREATE_ALT_MARKETS_TABLE = `

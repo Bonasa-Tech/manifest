@@ -1758,11 +1758,27 @@ export class ManifestStatsServer {
       // );
       // const total = parseInt(countResult.rows[0].total);
 
-      // Get data
+      // Always order by slot DESC. Every filter we query on has a composite index whose
+      // leading column is the filter and whose next column is slot DESC, so this is an
+      // index range scan that stops at LIMIT+OFFSET — no full fetch + sort:
+      //   maker  -> idx_fills_complete_maker_slot  (maker,  slot DESC, ...)
+      //   taker  -> idx_fills_complete_taker_slot  (taker,  slot DESC, ...)
+      //   market -> idx_fills_complete_market_slot (market, slot DESC)
+      // For very common filter values the planner instead walks idx_fills_complete_slot
+      // (slot) backward and filters — also cheap, since the first LIMIT rows match quickly.
+      // For wallet (taker OR maker), signature-only, or no filter there is no pre-sorted
+      // index, so a sort is unavoidable regardless of the column chosen.
+      //
+      // We deliberately do NOT order by timestamp: it is the row's insert time, not the
+      // on-chain time, so backfilled rows land out of chronological order. slot is
+      // monotonic with on-chain time, so it gives one consistent, correct recency order
+      // across all filter types. (A timestamp ordering would also only be index-backed for
+      // the market filter, via idx_fills_complete_market_timestamp, and force a sort for
+      // maker/taker.)
       const dataQuery = `
       ${queries.SELECT_FILLS_COMPLETE_DATA_BASE}
       ${whereClause}
-      ORDER BY timestamp DESC
+      ORDER BY slot DESC
       LIMIT $${paramIndex++} OFFSET $${paramIndex++}
     `;
 
