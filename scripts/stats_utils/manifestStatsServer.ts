@@ -42,6 +42,7 @@ import * as queries from './queries';
 import { lookupMintTicker } from './mint';
 import { fetchMarketProgramAccounts } from './marketFetcher';
 import { calculateTraderPnL } from './pnl';
+import { TraderVolumeIndex } from './traderVolumeIndex';
 import { CompleteFillsQueryOptions, CompleteFillsQueryResult } from './types';
 import { withRetry } from './utils';
 import { WebSocketManager } from './websocketManager';
@@ -80,6 +81,14 @@ export class ManifestStatsServer {
   // Market objects used for mints and decimals.
   private markets: Map<string, Market> = new Map();
 
+  // PnL lookup index: base mint -> market pubkeys whose quote mint is a
+  // stablecoin. Lets calculateTraderPnL find the stablecoin market for a
+  // position by direct lookup instead of scanning (and base58-encoding) every
+  // market on every request. Kept in sync via indexMarketForPnL whenever a
+  // market is added to `markets`. Insertion order within each list mirrors the
+  // `markets` map, preserving the original "first matching market" behavior.
+  private baseMintToStablecoinMarkets: Map<string, string[]> = new Map();
+
   // Tickers. Ticker from metaplex metadata with a fallback to spl token
   // registry for old stuff like wsol.
   private tickers: Map<string, [string, string]> = new Map();
@@ -98,6 +107,10 @@ export class ManifestStatsServer {
 
   private traderTakerNotionalVolume: Map<string, number> = new Map();
   private traderMakerNotionalVolume: Map<string, number> = new Map();
+  // Traders kept sorted by total notional volume so /traders can read the
+  // top-N without re-sorting every trader per request. Updated in lockstep
+  // with the two volume maps above via addTraderNotionalVolume / ensure.
+  private traderVolumeIndex: TraderVolumeIndex = new TraderVolumeIndex();
   private pool: Pool;
   private isReadOnly: boolean;
   private startTime: number;
@@ -452,6 +465,10 @@ export class ManifestStatsServer {
       if (!this.traderMakerNotionalVolume.has(maker)) {
         this.traderMakerNotionalVolume.set(maker, 0);
       }
+      // Track both traders in the sorted volume index (at volume 0 if new) so
+      // /traders sees the same trader set as the num-trades maps.
+      this.traderVolumeIndex.ensure(actualTaker);
+      this.traderVolumeIndex.ensure(maker);
 
       // Load market and look up tickers if missing (with backoff to avoid RPC spam).
       await this.attemptTickerLookup(market);
@@ -567,11 +584,46 @@ export class ManifestStatsServer {
       });
 
       this.markets.set(market, marketObject);
+      this.indexMarketForPnL(market, marketObject);
       return marketObject;
     } catch (error) {
       console.error('Error loading market:', market, error);
       return undefined; // Changed from null to undefined
     }
+  }
+
+  // Add a market to the base-mint -> stablecoin-market index used by
+  // calculateTraderPnL. Idempotent: safe to call when a market is reloaded.
+  private indexMarketForPnL(marketPk: string, market: Market): void {
+    if (!STABLECOIN_MINTS.has(market.quoteMint().toBase58())) {
+      return;
+    }
+    const baseMint = market.baseMint().toBase58();
+    let marketsForBase = this.baseMintToStablecoinMarkets.get(baseMint);
+    if (marketsForBase === undefined) {
+      marketsForBase = [];
+      this.baseMintToStablecoinMarkets.set(baseMint, marketsForBase);
+    }
+    if (!marketsForBase.includes(marketPk)) {
+      marketsForBase.push(marketPk);
+    }
+  }
+
+  // Single chokepoint for trader notional-volume changes. Updates the per-side
+  // map and the sorted volume index together so they can never drift. The index
+  // tracks the taker+maker sum, so a delta to either side shifts the sum by the
+  // same delta.
+  private addTraderNotionalVolume(
+    trader: string,
+    side: 'taker' | 'maker',
+    delta: number,
+  ): void {
+    const map: Map<string, number> =
+      side === 'taker'
+        ? this.traderTakerNotionalVolume
+        : this.traderMakerNotionalVolume;
+    map.set(trader, (map.get(trader) || 0) + delta);
+    this.traderVolumeIndex.add(trader, delta);
   }
 
   // Helper method for trading metrics
@@ -587,14 +639,8 @@ export class ManifestStatsServer {
       const notionalVolume =
         Number(quoteAtoms) / 10 ** marketObject.quoteDecimals();
 
-      this.traderTakerNotionalVolume.set(
-        actualTaker,
-        this.traderTakerNotionalVolume.get(actualTaker)! + notionalVolume,
-      );
-      this.traderMakerNotionalVolume.set(
-        maker,
-        this.traderMakerNotionalVolume.get(maker)! + notionalVolume,
-      );
+      this.addTraderNotionalVolume(actualTaker, 'taker', notionalVolume);
+      this.addTraderNotionalVolume(maker, 'maker', notionalVolume);
 
       const baseMint = marketObject.baseMint().toBase58();
       this.initTraderPositionTracking(actualTaker);
@@ -621,14 +667,8 @@ export class ManifestStatsServer {
         const notionalVolume =
           (Number(quoteAtoms) / 10 ** marketObject.quoteDecimals()) * solPrice;
 
-        this.traderTakerNotionalVolume.set(
-          actualTaker,
-          this.traderTakerNotionalVolume.get(actualTaker)! + notionalVolume,
-        );
-        this.traderMakerNotionalVolume.set(
-          maker,
-          this.traderMakerNotionalVolume.get(maker)! + notionalVolume,
-        );
+        this.addTraderNotionalVolume(actualTaker, 'taker', notionalVolume);
+        this.addTraderNotionalVolume(maker, 'maker', notionalVolume);
       }
     } else if (quoteMint === CBBTC_MINT || quoteMint === WBTC_MINT) {
       const { cbbtcPrice } = this.getSolAndBtcPrices();
@@ -637,14 +677,8 @@ export class ManifestStatsServer {
           (Number(quoteAtoms) / 10 ** marketObject.quoteDecimals()) *
           cbbtcPrice;
 
-        this.traderTakerNotionalVolume.set(
-          actualTaker,
-          this.traderTakerNotionalVolume.get(actualTaker)! + notionalVolume,
-        );
-        this.traderMakerNotionalVolume.set(
-          maker,
-          this.traderMakerNotionalVolume.get(maker)! + notionalVolume,
-        );
+        this.addTraderNotionalVolume(actualTaker, 'taker', notionalVolume);
+        this.addTraderNotionalVolume(maker, 'maker', notionalVolume);
       }
     }
   }
@@ -799,6 +833,7 @@ export class ManifestStatsServer {
           });
 
           this.markets.set(marketPk, market);
+          this.indexMarketForPnL(marketPk, market);
         } catch (err) {
           console.error(`Failed to load market ${marketPk}:`, err);
           // Continue with other markets
@@ -1601,21 +1636,9 @@ export class ManifestStatsServer {
       _debug?: any;
     };
   } {
-    const allTraders = new Set<string>([
-      ...Array.from(this.traderNumTakerTrades.keys()),
-      ...Array.from(this.traderNumMakerTrades.keys()),
-    ]);
-
-    // Sort traders by total volume to get the most active ones
-    const tradersByVolume = Array.from(allTraders)
-      .map((trader) => ({
-        trader,
-        totalVolume:
-          (this.traderTakerNotionalVolume.get(trader) || 0) +
-          (this.traderMakerNotionalVolume.get(trader) || 0),
-      }))
-      .sort((a, b) => b.totalVolume - a.totalVolume)
-      .slice(0, limit); // Only process top N traders
+    // Read the most active traders straight from the volume index, which is
+    // kept sorted as fills arrive, instead of re-sorting every trader here.
+    const topTraders: string[] = this.traderVolumeIndex.top(limit);
 
     const traderData: {
       [key: string]: {
@@ -1628,7 +1651,7 @@ export class ManifestStatsServer {
       };
     } = {};
 
-    tradersByVolume.forEach(({ trader }) => {
+    topTraders.forEach((trader: string) => {
       const takerNotionalVolume =
         this.traderTakerNotionalVolume.get(trader) || 0;
       const makerNotionalVolume =
@@ -1640,6 +1663,7 @@ export class ManifestStatsServer {
         this.traderAcquisitionValue,
         this.markets,
         this.lastPriceByMarket,
+        this.baseMintToStablecoinMarkets,
         includeDebug,
       );
 
@@ -2439,8 +2463,12 @@ export class ManifestStatsServer {
       .sort((a, b) => b.totalVolume - a.totalVolume);
 
     // Keep top MAX_TRADERS traders
-    const tradersToKeep = new Set(
-      tradersByVolume.slice(0, MAX_TRADERS).map((t) => t.trader),
+    const keptTraders: { trader: string; totalVolume: number }[] =
+      tradersByVolume.slice(0, MAX_TRADERS);
+    const tradersToKeep: Set<string> = new Set(
+      keptTraders.map(
+        (t: { trader: string; totalVolume: number }): string => t.trader,
+      ),
     );
 
     // Remove traders not in the keep set
@@ -2456,6 +2484,17 @@ export class ManifestStatsServer {
         removedCount++;
       }
     }
+
+    // Rebuild the sorted volume index from the survivors so it stays in sync
+    // with the pruned maps.
+    this.traderVolumeIndex.rebuild(
+      keptTraders.map(
+        (t: { trader: string; totalVolume: number }): [string, number] => [
+          t.trader,
+          t.totalVolume,
+        ],
+      ),
+    );
 
     console.log(`Pruned ${removedCount} inactive traders`);
   }

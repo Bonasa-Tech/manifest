@@ -1,5 +1,5 @@
 import { Market } from '../../client/ts/src';
-import { SOL_MINT, SOL_USDC_MARKET, STABLECOIN_MINTS } from './constants';
+import { SOL_MINT, SOL_USDC_MARKET } from './constants';
 
 export interface TraderPnLDetails {
   totalPnL: number;
@@ -26,6 +26,7 @@ export function calculateTraderPnL(
   traderAcquisitionValue: Map<string, Map<string, number>>,
   markets: Map<string, Market>,
   lastPriceByMarket: Map<string, number>,
+  baseMintToStablecoinMarkets: Map<string, string[]>,
   includeDetails: boolean = false,
 ): number | TraderPnLDetails {
   let totalPnL = 0;
@@ -70,19 +71,24 @@ export function calculateTraderPnL(
     }
 
     if (!usdcMarket || !marketKey || lastPriceAtoms === 0) {
-      for (const [marketPk, market] of markets.entries()) {
-        if (
-          market.baseMint().toBase58() === baseMint &&
-          STABLECOIN_MINTS.has(market.quoteMint().toBase58())
-        ) {
-          // Skip markets with zero price
-          const price = lastPriceByMarket.get(marketPk) || 0;
-          if (price > 0) {
-            usdcMarket = market;
-            marketKey = marketPk;
-            lastPriceAtoms = price;
-            break;
-          }
+      // Look up only the stablecoin markets for this base mint instead of
+      // scanning (and base58-encoding) every market. Candidates are pre-indexed
+      // in insertion order, so picking the first with a positive price matches
+      // the previous full-scan behavior.
+      const candidateMarkets =
+        baseMintToStablecoinMarkets.get(baseMint) || [];
+      for (const marketPk of candidateMarkets) {
+        const market = markets.get(marketPk);
+        if (market === undefined) {
+          continue;
+        }
+        // Skip markets with zero price
+        const price = lastPriceByMarket.get(marketPk) || 0;
+        if (price > 0) {
+          usdcMarket = market;
+          marketKey = marketPk;
+          lastPriceAtoms = price;
+          break;
         }
       }
     }
