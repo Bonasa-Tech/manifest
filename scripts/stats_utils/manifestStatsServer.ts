@@ -93,6 +93,27 @@ export class ManifestStatsServer {
   // registry for old stuff like wsol.
   private tickers: Map<string, [string, string]> = new Map();
 
+  // Cached, pre-serialized JSON for the /tickers endpoint. Rebuilt on each
+  // checkpoint advance (every VOLUME_CHECKPOINT_DURATION_SEC, ~5 min) so the
+  // endpoint serves a string verbatim instead of looping over every market,
+  // base58-encoding mints, and running JSON.stringify on every request.
+  //
+  // NOTE: the `last_price` in this snapshot is only as fresh as the last
+  // checkpoint advance, so it can be up to ~5 minutes stale. `lastPriceByMarket`
+  // updates on every fill, but this snapshot is only rebuilt on advance (the 24h
+  // volume figures it also contains only change on advance, which is why caching
+  // here is otherwise lossless).
+  //
+  // If up-to-the-fill `last_price` is required, switch to "Option B": instead of
+  // caching the fully-rendered string, cache only the price-independent parts
+  // per market (ticker_id, base/target currency, base/target volume, and the
+  // baseDecimals-quoteDecimals factor) on each advance, then in the /tickers
+  // handler map over that cached array applying the current
+  // `lastPriceByMarket.get(marketPk)` value and JSON.stringify per request. That
+  // keeps prices live at the cost of a light per-request loop + serialization,
+  // while still avoiding the 24h-volume summation and base58 work.
+  private cachedTickersJson: string | null = null;
+
   private lastFillSlot: number = 0;
 
   // Recent fill log results. This is not saved to database. So on a refresh,
@@ -1062,6 +1083,11 @@ export class ManifestStatsServer {
         );
       });
 
+      // Rebuild the cached /tickers payload now that 24h volumes have advanced.
+      // The endpoint serves this snapshot verbatim (last_price may be up to one
+      // checkpoint interval stale - see cachedTickersJson).
+      this.refreshTickersCache();
+
       // Track checkpoint advances to prevent premature database overwrites
       this.checkpointAdvancesSinceStartup++;
       console.log(
@@ -1213,6 +1239,29 @@ export class ManifestStatsServer {
       });
     });
     return tickers;
+  }
+
+  /**
+   * Pre-serialized JSON for the /tickers endpoint. Served verbatim so the
+   * endpoint does no per-request looping, base58 encoding, or JSON
+   * serialization. The cache is rebuilt on each checkpoint advance; see the
+   * `cachedTickersJson` field for the staleness note and the Option B
+   * alternative if live `last_price` is needed. Built lazily on first use so
+   * requests before the first advance still get a valid response.
+   */
+  getTickersJson(): string {
+    if (this.cachedTickersJson === null) {
+      this.refreshTickersCache();
+    }
+    return this.cachedTickersJson!;
+  }
+
+  /**
+   * Rebuild the cached /tickers payload from the current checkpoint state.
+   * Called after checkpoints advance (and lazily on first request).
+   */
+  private refreshTickersCache(): void {
+    this.cachedTickersJson = JSON.stringify(this.getTickers());
   }
 
   /**
