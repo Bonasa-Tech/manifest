@@ -196,7 +196,7 @@ export class VolumeMonitor {
 
     // Build links
     const solscanLink: string = `https://solscan.io/tx/${signature}`;
-    const marketLink: string = `https://app.manifest.trade/trade/${firstFill.market}`;
+    const marketLink: string = `https://manifest.trade/market/${firstFill.market}`;
 
     const message: string[] = [
       `**${side} across ${fillCount} fills**`,
