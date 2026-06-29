@@ -114,6 +114,20 @@ export class ManifestStatsServer {
   // while still avoiding the 24h-volume summation and base58 work.
   private cachedTickersJson: string | null = null;
 
+  // Cached lifetime (total) volume in USDC equivalent for the /volume endpoint.
+  // Computing this requires a getProgramAccounts RPC call (see
+  // ManifestClient.getMarketProgramAccounts - "expensive RPC load"), which is
+  // far too slow to run on the request path: it scans every account owned by
+  // the program, is heavily rate-limited by RPC providers, and previously fired
+  // once per /volume request (a thundering herd under concurrent load), causing
+  // multi-second latency spikes. Instead we refresh this value in the
+  // background on each checkpoint advance (~5 min) and serve it verbatim.
+  // null until the first refresh completes (lazily triggered on first request).
+  private cachedLifetimeVolume: number | null = null;
+  // Guards against overlapping background refreshes (the RPC call can take
+  // several seconds; advances/requests must not stack up concurrent calls).
+  private lifetimeVolumeRefreshInFlight: boolean = false;
+
   private lastFillSlot: number = 0;
 
   // Recent fill log results. This is not saved to database. So on a refresh,
@@ -1088,6 +1102,11 @@ export class ManifestStatsServer {
       // checkpoint interval stale - see cachedTickersJson).
       this.refreshTickersCache();
 
+      // Refresh the cached lifetime volume for /volume in the background. Not
+      // awaited: the underlying getProgramAccounts RPC can take several seconds
+      // and must not hold the fill mutex. The in-flight guard prevents stacking.
+      void this.refreshLifetimeVolume();
+
       // Track checkpoint advances to prevent premature database overwrites
       this.checkpointAdvancesSinceStartup++;
       console.log(
@@ -1561,19 +1580,24 @@ export class ManifestStatsServer {
    *
    * https://docs.llama.fi/list-your-project/other-dashboards/dimensions
    */
-  async getVolume() {
-    let marketProgramAccounts: GetProgramAccountsResponse;
-    let lifetimeVolume = 0;
-
-    // Get normalized SOL and BTC prices
-    const { solPrice, cbbtcPrice } = this.getSolAndBtcPrices();
-
+  /**
+   * Recompute the cached lifetime (total) volume via a getProgramAccounts RPC
+   * call. Runs in the background (off the /volume request path) - on each
+   * checkpoint advance and lazily on the first request. On RPC failure the
+   * previously cached value is retained rather than zeroed, so a transient RPC
+   * error doesn't make /volume report a sudden drop to 0.
+   */
+  async refreshLifetimeVolume(): Promise<void> {
+    // Never run two RPC fetches at once; a refresh can take several seconds.
+    if (this.lifetimeVolumeRefreshInFlight) {
+      return;
+    }
+    this.lifetimeVolumeRefreshInFlight = true;
     try {
-      marketProgramAccounts = await ManifestClient.getMarketProgramAccounts(
-        this.connection,
-      );
-
-      lifetimeVolume = getLifetimeVolumeForMarkets(
+      const { solPrice, cbbtcPrice } = this.getSolAndBtcPrices();
+      const marketProgramAccounts: GetProgramAccountsResponse =
+        await ManifestClient.getMarketProgramAccounts(this.connection);
+      this.cachedLifetimeVolume = getLifetimeVolumeForMarkets(
         marketProgramAccounts,
         solPrice,
         cbbtcPrice,
@@ -1583,9 +1607,23 @@ export class ManifestStatsServer {
         'Failed to get market program accounts for volume calculation:',
         error,
       );
-      // Return zero lifetime volume on error.
-      lifetimeVolume = 0;
+      // Retain the previously cached value (if any) on error.
+    } finally {
+      this.lifetimeVolumeRefreshInFlight = false;
     }
+  }
+
+  async getVolume() {
+    // Get normalized SOL and BTC prices
+    const { solPrice, cbbtcPrice } = this.getSolAndBtcPrices();
+
+    // Serve the cached lifetime volume. It's refreshed in the background on
+    // each checkpoint advance; kick off a one-time populate if no refresh has
+    // completed yet (e.g. shortly after startup) without blocking this request.
+    if (this.cachedLifetimeVolume === null) {
+      void this.refreshLifetimeVolume();
+    }
+    const lifetimeVolume = this.cachedLifetimeVolume ?? 0;
 
     const dailyVolumesByToken: Map<string, number> = new Map();
     let dailyUsdcEquivalentVolume = 0;
