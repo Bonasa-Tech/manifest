@@ -614,26 +614,40 @@ export class ManifestStatsServer {
   // Helper method for market loading. Does not look up tickers - callers must handle separately.
   private async loadNewMarket(market: string): Promise<Market | undefined> {
     try {
-      this.baseVolumeAtomsSinceLastCheckpoint.set(market, 0);
-      this.quoteVolumeAtomsSinceLastCheckpoint.set(market, 0);
-      this.baseVolumeAtomsCheckpoints.set(
-        market,
-        new Array<number>(ONE_DAY_SEC / VOLUME_CHECKPOINT_DURATION_SEC).fill(0),
-      );
-      this.quoteVolumeAtomsCheckpoints.set(
-        market,
-        new Array<number>(ONE_DAY_SEC / VOLUME_CHECKPOINT_DURATION_SEC).fill(0),
-      );
-      this.checkpointTimestamps.set(
-        market,
-        new Array<number>(ONE_DAY_SEC / VOLUME_CHECKPOINT_DURATION_SEC).fill(0),
-      );
-
+      // Validate and load the market BEFORE touching any state maps. A null,
+      // undefined, or otherwise invalid `market` (e.g. from a malformed fill)
+      // would throw in `new PublicKey(market)`; initializing the checkpoint maps
+      // first left a bogus key behind that later violated the NOT NULL
+      // constraint on market_checkpoints.market during saveVolumeAndMarketData.
       const marketPk = new PublicKey(market);
       const marketObject = await Market.loadFromAddress({
         connection: this.connection,
         address: marketPk,
       });
+
+      // Only initialize checkpoint state once we know the market is valid.
+      if (!this.baseVolumeAtomsCheckpoints.has(market)) {
+        this.baseVolumeAtomsSinceLastCheckpoint.set(market, 0);
+        this.quoteVolumeAtomsSinceLastCheckpoint.set(market, 0);
+        this.baseVolumeAtomsCheckpoints.set(
+          market,
+          new Array<number>(
+            ONE_DAY_SEC / VOLUME_CHECKPOINT_DURATION_SEC,
+          ).fill(0),
+        );
+        this.quoteVolumeAtomsCheckpoints.set(
+          market,
+          new Array<number>(
+            ONE_DAY_SEC / VOLUME_CHECKPOINT_DURATION_SEC,
+          ).fill(0),
+        );
+        this.checkpointTimestamps.set(
+          market,
+          new Array<number>(
+            ONE_DAY_SEC / VOLUME_CHECKPOINT_DURATION_SEC,
+          ).fill(0),
+        );
+      }
 
       this.markets.set(market, marketObject);
       this.indexMarketForPnL(market, marketObject);
@@ -2187,6 +2201,16 @@ export class ManifestStatsServer {
         market,
         baseCheckpoints,
       ] of this.baseVolumeAtomsCheckpoints.entries()) {
+        // Defensive: never attempt to persist a null/empty market key. The
+        // market column is NOT NULL; a bogus key would fail the whole
+        // transaction. See loadNewMarket for how such a key could appear.
+        if (market === null || market === undefined || market === '') {
+          console.error(
+            'Skipping checkpoint save for invalid market key:',
+            market,
+          );
+          continue;
+        }
         const quoteCheckpoints: number[] =
           this.quoteVolumeAtomsCheckpoints.get(market) || [];
         const checkpointTimestamps: number[] =
