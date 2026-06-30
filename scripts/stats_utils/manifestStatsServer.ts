@@ -128,6 +128,23 @@ export class ManifestStatsServer {
   // several seconds; advances/requests must not stack up concurrent calls).
   private lifetimeVolumeRefreshInFlight: boolean = false;
 
+  // Wall-clock ms of the last time each market's on-chain account (and thus its
+  // orderbook order state) was loaded from RPC for the /orderbook endpoint.
+  // Previously /orderbook did a fresh Market.loadFromAddress RPC call on every
+  // request (no caching, no dedup), which dominated its latency and amplified
+  // RPC load under concurrent requests for the same market. We now assume a
+  // market's order state is good for at least ORDERBOOK_MARKET_TTL_MS and serve
+  // the cached Market object within that window, reloading from RPC only when
+  // the cached copy is stale (or the market has never been loaded).
+  //
+  // The reload is lazy: it happens on the request path when a market is found
+  // to be stale, NOT on checkpoint advance. Idle markets are never refreshed,
+  // so this costs nothing for markets nobody is querying.
+  private orderbookMarketLastLoadMs: Map<string, number> = new Map();
+  // Markets are assumed fresh for at least this long. Matches the ~5 min
+  // checkpoint cadence (VOLUME_CHECKPOINT_DURATION_SEC) used elsewhere.
+  private readonly ORDERBOOK_MARKET_TTL_MS: number = 5 * 60 * 1000;
+
   private lastFillSlot: number = 0;
 
   // Recent fill log results. This is not saved to database. So on a refresh,
@@ -1297,16 +1314,54 @@ export class ManifestStatsServer {
   }
 
   /**
+   * Return a Market suitable for serving /orderbook, reloading its on-chain
+   * state from RPC only when the cached copy is older than
+   * ORDERBOOK_MARKET_TTL_MS (or the market has never been loaded). See
+   * orderbookMarketLastLoadMs for the rationale. Reloads happen here, on the
+   * request path - never on checkpoint advance.
+   */
+  private async getFreshOrderbookMarket(
+    marketPk: string,
+  ): Promise<Market | undefined> {
+    const now: number = Date.now();
+    const lastLoadMs: number = this.orderbookMarketLastLoadMs.get(marketPk) ?? 0;
+    let market: Market | undefined = this.markets.get(marketPk);
+
+    // Cached and still within the freshness window: serve it as-is.
+    if (market !== undefined && now - lastLoadMs < this.ORDERBOOK_MARKET_TTL_MS) {
+      return market;
+    }
+
+    if (market !== undefined) {
+      // Known market but stale: refresh its order state in place.
+      await market.reload(this.connection);
+    } else {
+      // Unknown market (e.g. created after startup): full load + indexing.
+      market = await this.loadNewMarket(marketPk);
+      if (market === undefined) {
+        return undefined;
+      }
+    }
+    this.orderbookMarketLastLoadMs.set(marketPk, now);
+    return market;
+  }
+
+  /**
    * Get Orderbook
    *
    * https://docs.google.com/document/d/1v27QFoQq1SKT3Priq3aqPgB70Xd_PnDzbOCiuoCyixw/edit?tab=t.0#heading=h.vgzsfbx8rvps
+   *
+   * Order state is served from the in-memory market cache and is good for at
+   * least ORDERBOOK_MARKET_TTL_MS (~5 min); a stale market is reloaded from RPC
+   * lazily on request. See orderbookMarketLastLoadMs.
    */
   async getOrderbook(tickerId: string, depth: number) {
     try {
-      const market: Market = await Market.loadFromAddress({
-        connection: this.connection,
-        address: new PublicKey(tickerId),
-      });
+      const market: Market | undefined =
+        await this.getFreshOrderbookMarket(tickerId);
+      if (!market) {
+        return {};
+      }
       const timestamp = Math.floor(Date.now() / 1000).toString();
 
       if (depth == 0) {
