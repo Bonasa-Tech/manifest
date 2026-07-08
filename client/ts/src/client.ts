@@ -118,8 +118,12 @@ export class ManifestClient {
         WRAPPER_SEED,
         WRAPPER_PROGRAM_ID,
       );
-      const derivedAccountInfo = await connection.getAccountInfo(derivedWrapper);
-      if (derivedAccountInfo && derivedAccountInfo.owner.equals(WRAPPER_PROGRAM_ID)) {
+      const derivedAccountInfo =
+        await connection.getAccountInfo(derivedWrapper);
+      if (
+        derivedAccountInfo &&
+        derivedAccountInfo.owner.equals(WRAPPER_PROGRAM_ID)
+      ) {
         return {
           pubkey: derivedWrapper,
           account: derivedAccountInfo,
