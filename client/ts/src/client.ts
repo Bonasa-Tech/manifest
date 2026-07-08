@@ -106,6 +106,29 @@ export class ManifestClient {
     connection: Connection,
     payerPub: PublicKey,
   ): Promise<WrapperResponse | null> {
+    // Prefer the deterministic seed-derived wrapper. A trader may have both a
+    // legacy wrapper (created with a random keypair before seed-based setup) and
+    // a seed-derived one; always resolving to the seed-derived account keeps
+    // setup detection and follow-on instructions consistent, and lets such
+    // wallets recover the canonical wrapper regardless of getProgramAccounts
+    // ordering or what the stats API returns.
+    try {
+      const derivedWrapper: PublicKey = await PublicKey.createWithSeed(
+        payerPub,
+        WRAPPER_SEED,
+        WRAPPER_PROGRAM_ID,
+      );
+      const derivedAccountInfo = await connection.getAccountInfo(derivedWrapper);
+      if (derivedAccountInfo && derivedAccountInfo.owner.equals(WRAPPER_PROGRAM_ID)) {
+        return {
+          pubkey: derivedWrapper,
+          account: derivedAccountInfo,
+        };
+      }
+    } catch {
+      // Derivation/lookup failed, fall back to discovery below.
+    }
+
     // First try the stats server API for faster lookup
     try {
       const response = await fetch(
