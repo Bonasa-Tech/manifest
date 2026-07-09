@@ -1,4 +1,7 @@
-use std::{cell::Ref, slice::Iter};
+use std::{
+    cell::{Cell, Ref},
+    slice::Iter,
+};
 
 use hypertree::{get_helper, trace};
 use solana_program::{
@@ -443,6 +446,7 @@ impl<'a, 'info> SwapContext<'a, 'info> {
                     },
                     market: *market.info.key,
                     system_program: None,
+                    num_deferred_gas_refunds: Cell::new(0),
                 });
             }
         }
@@ -484,6 +488,15 @@ pub struct GlobalTradeAccounts<'a, 'info> {
     pub gas_payer_opt: Option<Signer<'a, 'info>>,
     pub gas_receiver_opt: Option<Signer<'a, 'info>>,
     pub market: Pubkey,
+
+    // Number of gas prepayment refunds owed to the gas receiver for removed
+    // global orders. Refunds are accumulated here and the lamports are only
+    // moved at the end of the instruction (settle_global_gas_refunds) because
+    // moving them directly before a later CPI that includes only one of the
+    // two accounts makes the runtime lamport sum check fail with
+    // UnbalancedInstruction. Processors that pass a system_program must settle
+    // before returning or the refunds are stranded on the global account.
+    pub num_deferred_gas_refunds: Cell<u64>,
 }
 
 /// BatchUpdate account infos
@@ -599,6 +612,7 @@ impl<'a, 'info> BatchUpdateContext<'a, 'info> {
                         gas_payer_opt: Some(payer.clone()),
                         gas_receiver_opt: Some(payer.clone()),
                         market: *market.info.key,
+                        num_deferred_gas_refunds: Cell::new(0),
                     })
                 };
             }

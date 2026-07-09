@@ -73,47 +73,54 @@ pub(crate) fn remove_from_global(
         return Ok(());
     }
     let global_trade_accounts: &GlobalTradeAccounts = &global_trade_accounts_opt.as_ref().unwrap();
-    let GlobalTradeAccounts {
-        global,
-        gas_receiver_opt,
-        ..
-    } = global_trade_accounts;
 
-    // The simple implementation gets
-    //
-    //     **receiver.lamports.borrow_mut() += GAS_DEPOSIT_LAMPORTS;
-    //     **global.lamports.borrow_mut() -= GAS_DEPOSIT_LAMPORTS;
+    // The refund cannot be a CPI because the global account carries data
+    // (`from` must not carry data), so it has to be a direct lamport
+    // manipulation. Direct lamport manipulation is only synced back to the
+    // runtime for accounts included in a later CPI, so if we moved the
+    // lamports here and a later CPI in the same instruction included only one
+    // of the two accounts (e.g. the gas prepayment transfer for the other
+    // side's global, or a market expand), the runtime lamport sum check fails
+    // with
     //
     // failed: sum of account balances before and after instruction do not match
     //
-    // doesnt make sense, but thats the solana runtime.
-    //
-    // Done here instead of inside the object because the borrow checker needs
-    // to get the data on global which it cannot while there is a mut self
-    // reference. Note that if it isnt claimed here, then nobody does and it is
-    // lost to the global account.
-    //
-    // Then we tried to do a CPI, but that fails because
-    //
-    // `from` must not carry data
-    //
-    // if let Some(system_program) = &global_trade_accounts.system_program {
-    //     solana_program::program::invoke_signed(
-    //         &solana_program::system_instruction::transfer(
-    //             &global.key,
-    //             &trader.info.key,
-    //             GAS_DEPOSIT_LAMPORTS,
-    //         ),
-    //         &[global.info.clone(), trader.info.clone(), system_program.info.clone()],
-    //         global_seeds_with_bump!(mint, global_bump),
-    //     )?;
-    // }
-    //
-    // Somehow, a hybrid works. Dont know why, but it does.
-    //
+    // Instead, just count the refund here and move the lamports in
+    // settle_global_gas_refunds after the last CPI of the instruction.
     if global_trade_accounts.system_program.is_some() {
-        **global.lamports.borrow_mut() -= GAS_DEPOSIT_LAMPORTS;
-        **gas_receiver_opt.as_ref().unwrap().lamports.borrow_mut() += GAS_DEPOSIT_LAMPORTS;
+        let num_deferred_gas_refunds: &std::cell::Cell<u64> =
+            &global_trade_accounts.num_deferred_gas_refunds;
+        num_deferred_gas_refunds.set(num_deferred_gas_refunds.get().checked_add(1).unwrap());
+    }
+
+    Ok(())
+}
+
+/// Pays out the gas prepayment refunds accumulated by remove_from_global.
+/// Must be called after the last CPI in the instruction because the direct
+/// lamport manipulation is not synced into a later CPI unless that CPI
+/// includes both accounts, which would fail the runtime lamport sum check.
+pub(crate) fn settle_global_gas_refunds(
+    global_trade_accounts_opts: &[Option<GlobalTradeAccounts>; 2],
+) -> ProgramResult {
+    for global_trade_accounts_opt in global_trade_accounts_opts.iter() {
+        if global_trade_accounts_opt.is_none() {
+            continue;
+        }
+        let global_trade_accounts: &GlobalTradeAccounts =
+            global_trade_accounts_opt.as_ref().unwrap();
+        let num_refunds: u64 = global_trade_accounts.num_deferred_gas_refunds.take();
+        if num_refunds == 0 {
+            continue;
+        }
+        let GlobalTradeAccounts {
+            global,
+            gas_receiver_opt,
+            ..
+        } = global_trade_accounts;
+        let refund_lamports: u64 = GAS_DEPOSIT_LAMPORTS.checked_mul(num_refunds).unwrap();
+        **global.lamports.borrow_mut() -= refund_lamports;
+        **gas_receiver_opt.as_ref().unwrap().lamports.borrow_mut() += refund_lamports;
     }
 
     Ok(())

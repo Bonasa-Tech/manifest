@@ -8,7 +8,10 @@ use crate::{
     program::{batch_update::MarketDataTreeNodeType, get_mut_dynamic_account},
     quantities::{GlobalAtoms, WrapperU64},
     require,
-    state::{utils::get_now_slot, GlobalRefMut, MarketRefMut, RestingOrder, MARKET_BLOCK_SIZE},
+    state::{
+        utils::{get_now_slot, settle_global_gas_refunds},
+        GlobalRefMut, MarketRefMut, RestingOrder, MARKET_BLOCK_SIZE,
+    },
     validation::loaders::{GlobalCleanContext, GlobalTradeAccounts},
 };
 
@@ -48,6 +51,7 @@ pub(crate) fn process_global_clean(
         market: *market.key,
         gas_payer_opt: None,
         gas_receiver_opt: Some(payer),
+        num_deferred_gas_refunds: std::cell::Cell::new(0),
     };
 
     let GlobalCleanParams { order_index } = GlobalCleanParams::try_from_slice(data)?;
@@ -137,6 +141,9 @@ pub(crate) fn process_global_clean(
     // The global account itself only accounting on remove_order is that it
     // tracks unclaimed gas deposits for informational purposes and this is
     // claiming anyways.
+
+    // Pay the gas prepayment refund to the cleaner.
+    settle_global_gas_refunds(&global_trade_accounts)?;
 
     Ok(())
 }
