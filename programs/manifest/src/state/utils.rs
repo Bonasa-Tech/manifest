@@ -118,6 +118,40 @@ pub(crate) fn settle_global_gas_refunds(
             gas_receiver_opt,
             ..
         } = global_trade_accounts;
+
+        // The simple implementation gets
+        //
+        //     **receiver.lamports.borrow_mut() += GAS_DEPOSIT_LAMPORTS;
+        //     **global.lamports.borrow_mut() -= GAS_DEPOSIT_LAMPORTS;
+        //
+        // failed: sum of account balances before and after instruction do not match
+        //
+        // when a CPI that includes only one of the two accounts follows in the
+        // same instruction, because the runtime re-checks the lamport sum at
+        // every CPI boundary and only syncs direct lamport manipulation for
+        // accounts passed into the CPI. Thats why this is deferred until after
+        // the last CPI of the instruction.
+        //
+        // Done here instead of inside the object because the borrow checker
+        // needs to get the data on global which it cannot while there is a mut
+        // self reference. Note that if it isnt claimed here, then nobody does
+        // and it is lost to the global account.
+        //
+        // We also tried to do a CPI, but that fails because
+        //
+        // `from` must not carry data
+        //
+        // if let Some(system_program) = &global_trade_accounts.system_program {
+        //     solana_program::program::invoke_signed(
+        //         &solana_program::system_instruction::transfer(
+        //             &global.key,
+        //             &trader.info.key,
+        //             GAS_DEPOSIT_LAMPORTS,
+        //         ),
+        //         &[global.info.clone(), trader.info.clone(), system_program.info.clone()],
+        //         global_seeds_with_bump!(mint, global_bump),
+        //     )?;
+        // }
         let refund_lamports: u64 = GAS_DEPOSIT_LAMPORTS.checked_mul(num_refunds).unwrap();
         **global.lamports.borrow_mut() -= refund_lamports;
         **gas_receiver_opt.as_ref().unwrap().lamports.borrow_mut() += refund_lamports;
