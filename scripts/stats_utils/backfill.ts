@@ -17,7 +17,6 @@ const AGGREGATOR_PROGRAM_IDS = {
   JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4: 'Jupiter',
   SPURp82qAR9nvzy8j1gP31zmzGytrgDBKcpGzeGkka8: 'Spur',
   s7SunwrPG5SbViEKiViaDThPRJxkkTrNx2iRPN3exNC: 'Bitget',
-  F7p3dFrjRTbtRp8FRF6qHLomXbKRBzpvBLjtQcfcgmNe: 'Relay: Solver',
 } as const;
 
 const ORIGINATING_PROTOCOL_IDS = {
@@ -37,6 +36,7 @@ const ORIGINATING_PROTOCOL_IDS = {
   '8psNvWTrdNTiVRNzAgsou9kETXNJm2SXZyaKuJraVRtf': 'phantom',
   B3111yJCeHBcA1bizdJjUFPALfhAfSRnAbJzGUtnt56A: 'binance',
   '7JCe3GHwkEr3feHgtLXnmuJ1yB3A7coSeyynxTBgdG8k': 'coinbase',
+  F7p3dFrjRTbtRp8FRF6qHLomXbKRBzpvBLjtQcfcgmNe: 'relay',
 } as const;
 
 function detectAggregatorFromKeys(accountKeys: string[]): string | undefined {
