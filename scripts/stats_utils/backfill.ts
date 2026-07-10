@@ -18,6 +18,8 @@ const AGGREGATOR_PROGRAM_IDS = {
   JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4: 'Jupiter',
   SPURp82qAR9nvzy8j1gP31zmzGytrgDBKcpGzeGkka8: 'Spur',
   s7SunwrPG5SbViEKiViaDThPRJxkkTrNx2iRPN3exNC: 'Bitget',
+  '2UUgGySTVXmKFatH7pGQo84ZrzdSYF5zw9iqrGwBMuuj': 'Bitget',
+  HuTkmnrv4zPnArMqpbMbFhfwzTR7xfWQZHH1aQKzDKFZ: 'Liquid Mesh',
 } as const;
 
 const ORIGINATING_PROTOCOL_IDS = {

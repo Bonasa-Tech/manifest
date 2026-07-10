@@ -12,6 +12,8 @@ export const AGGREGATOR_PROGRAM_IDS = {
   JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4: 'Jupiter',
   SPURp82qAR9nvzy8j1gP31zmzGytrgDBKcpGzeGkka8: 'Spur',
   s7SunwrPG5SbViEKiViaDThPRJxkkTrNx2iRPN3exNC: 'Bitget',
+  '2UUgGySTVXmKFatH7pGQo84ZrzdSYF5zw9iqrGwBMuuj': 'Bitget',
+  HuTkmnrv4zPnArMqpbMbFhfwzTR7xfWQZHH1aQKzDKFZ: 'Liquid Mesh',
 } as const;
 
 /**
@@ -31,7 +33,7 @@ export const ORIGINATING_PROTOCOL_IDS = {
   '9nnLbotNTcUhvbrsA6Mdkx45Sm82G35zo28AqUvjExn8': 'jupiter', // JUP 8
   '6U91aKa8pmMxkJwBCfPTmUEfZi6dHe7DcFq2ALvB2tbB': 'jupiter', // JUP 12
   '4xDsmeTWPNjgSVSS1VTfzFq3iHZhp77ffPkAmkZkdu71': 'jupiter', // JUP 14
-  GP8StUXNYSZjPikyRsvkTbvRV1GBxMErb59cpeCJnDf1: 'jupier', // JUP 15
+  GP8StUXNYSZjPikyRsvkTbvRV1GBxMErb59cpeCJnDf1: 'jupiter', // JUP 15
   HFqp6ErWHY6Uzhj8rFyjYuDya2mXUpYEk8VW75K9PSiY: 'jupiter', // JUP 16
   '9yj3zvLS3fDMqi1F8zhkaWfq8TZpZWHe6cz1Sgt7djXf': 'phantom',
   '8psNvWTrdNTiVRNzAgsou9kETXNJm2SXZyaKuJraVRtf': 'phantom',
