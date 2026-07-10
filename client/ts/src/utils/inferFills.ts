@@ -244,12 +244,12 @@ function findSwapSites(tx: any, accountKeys: string[]): SwapSite[] {
 
 /**
  * Infer combined fills from a transaction whose logs were truncated, using
- * the Manifest Swap CPIs into the token programs. Token movements between the
- * trader token accounts and the vaults give exact taker amounts even when the
- * FillLog Program data entries were dropped from the logs.
+ * the Manifest Swap/SwapV2 CPIs into the token programs. Token movements
+ * between the trader token accounts and the vaults give exact taker amounts
+ * even when the FillLog Program data entries were dropped from the logs.
  *
  * The maker, sequence numbers, and isMakerGlobal cannot be recovered; the
- * result is one combined fill per Swap instruction with an empty maker.
+ * result is one combined fill per swap instruction with an empty maker.
  */
 export function inferFillsFromTransaction(
   tx: any,
