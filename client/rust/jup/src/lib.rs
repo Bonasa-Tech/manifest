@@ -191,6 +191,7 @@ impl Amm for ManifestMarket {
                     gas_payer_opt: None,
                     gas_receiver_opt: None,
                     market: self.key.clone(),
+                    num_deferred_gas_refunds: std::cell::Cell::new(0),
                 })
             } else {
                 None
@@ -216,6 +217,7 @@ impl Amm for ManifestMarket {
                     gas_payer_opt: None,
                     gas_receiver_opt: None,
                     market: self.key.clone(),
+                    num_deferred_gas_refunds: std::cell::Cell::new(0),
                 })
             } else {
                 None
@@ -468,6 +470,7 @@ mod test {
                 gas_payer_opt: Some(gas_payer_account_info),
                 gas_receiver_opt: None,
                 market: MARKET_KEY,
+                num_deferred_gas_refunds: std::cell::Cell::new(0),
             });
 
         dynamic_value_to_account!(
