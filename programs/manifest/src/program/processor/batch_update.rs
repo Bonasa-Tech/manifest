@@ -6,7 +6,7 @@ use crate::{
     quantities::{BaseAtoms, PriceConversionError, QuoteAtomsPerBaseAtom, WrapperU64},
     require,
     state::{
-        utils::{get_now_slot, try_to_pay_all_global_gas_prepayment},
+        utils::{get_now_slot, settle_global_gas_refunds, try_to_pay_all_global_gas_prepayment},
         AddOrderToMarketArgs, AddOrderToMarketResult, MarketRefMut, OrderType, RestingOrder,
         MARKET_BLOCK_SIZE,
     },
@@ -362,6 +362,14 @@ pub(crate) fn process_batch_update_core(
             result.push((order_sequence_number, order_index));
         }
         expand_market_if_needed(&payer, &market)?;
+    }
+
+    // Pay out gas prepayment refunds for cancelled global orders. This must
+    // happen after the last CPI of this instruction (gas prepayments and
+    // market expansions above) because it moves lamports directly.
+    #[cfg(not(feature = "certora"))]
+    {
+        settle_global_gas_refunds(&global_trade_accounts_opts)?;
     }
 
     // Formal verification does not cover return values.

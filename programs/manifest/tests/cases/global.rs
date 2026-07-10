@@ -2093,3 +2093,123 @@ async fn global_evict_fails_with_transfer_fee() -> anyhow::Result<()> {
 
     Ok(())
 }
+
+// Regression test: cancelling a global order on one side while placing a
+// global order on the other side in the same batch update used to fail with
+// "sum of account balances before and after instruction do not match". The
+// cancel refunded the gas prepayment with a direct lamport move from the base
+// global account, and the gas prepayment CPI for the new bid only included
+// the quote global account, so the runtime lamport sum check at the CPI
+// boundary saw the payer credit without the base global debit.
+#[tokio::test]
+async fn global_cancel_and_place_opposite_sides() -> anyhow::Result<()> {
+    let mut test_fixture: TestFixture = TestFixture::new().await;
+    test_fixture.claim_seat().await?;
+    let payer: Pubkey = test_fixture.payer();
+    let payer_keypair: Keypair = test_fixture.payer_keypair().insecure_clone();
+
+    // Quote (USDC) global to back the bid.
+    test_fixture.global_add_trader().await?;
+    test_fixture.global_deposit(1_000_000).await?;
+
+    // Base (SOL) global to back the ask.
+    send_tx_with_retry(
+        Rc::clone(&test_fixture.context),
+        &[global_add_trader_instruction(
+            &test_fixture.sol_global_fixture.key,
+            &payer,
+        )],
+        Some(&payer),
+        &[&payer_keypair],
+    )
+    .await?;
+    let token_account_keypair: Keypair = Keypair::new();
+    let token_account_fixture: TokenAccountFixture = TokenAccountFixture::new_with_keypair(
+        Rc::clone(&test_fixture.context),
+        &test_fixture.sol_global_fixture.mint_key,
+        &payer,
+        &token_account_keypair,
+    )
+    .await;
+    test_fixture
+        .sol_mint_fixture
+        .mint_to(&token_account_fixture.key, 1_000_000)
+        .await;
+    send_tx_with_retry(
+        Rc::clone(&test_fixture.context),
+        &[global_deposit_instruction(
+            &test_fixture.sol_global_fixture.mint_key,
+            &payer,
+            &token_account_fixture.key,
+            &spl_token::id(),
+            1_000_000,
+        )],
+        Some(&payer),
+        &[&payer_keypair],
+    )
+    .await?;
+
+    let base_mint: Pubkey = *test_fixture.market_fixture.market.get_base_mint();
+    let quote_mint: Pubkey = *test_fixture.market_fixture.market.get_quote_mint();
+
+    // Place a global ask.
+    send_tx_with_retry(
+        Rc::clone(&test_fixture.context),
+        &[batch_update_instruction(
+            &test_fixture.market_fixture.key,
+            &payer,
+            None,
+            vec![],
+            vec![PlaceOrderParams::new(
+                10,
+                2,
+                0,
+                false,
+                OrderType::Global,
+                NO_EXPIRATION_LAST_VALID_SLOT,
+            )],
+            Some(base_mint),
+            None,
+            Some(quote_mint),
+            None,
+        )],
+        Some(&payer),
+        &[&payer_keypair],
+    )
+    .await?;
+
+    // Cancel the global ask and place a global bid in the same instruction.
+    // The refund comes from the base global account while the gas prepayment
+    // CPI only includes the quote global account.
+    send_tx_with_retry(
+        Rc::clone(&test_fixture.context),
+        &[batch_update_instruction(
+            &test_fixture.market_fixture.key,
+            &payer,
+            None,
+            vec![CancelOrderParams::new(0)],
+            vec![PlaceOrderParams::new(
+                10,
+                1,
+                0,
+                true,
+                OrderType::Global,
+                NO_EXPIRATION_LAST_VALID_SLOT,
+            )],
+            Some(base_mint),
+            None,
+            Some(quote_mint),
+            None,
+        )],
+        Some(&payer),
+        &[&payer_keypair],
+    )
+    .await?;
+
+    test_fixture.market_fixture.reload().await;
+    let orders: Vec<RestingOrder> = test_fixture.market_fixture.get_resting_orders().await;
+    assert_eq!(orders.len(), 1, "Expected only the new bid to be resting");
+    assert!(orders.get(0).unwrap().get_is_bid(), "Expected a bid");
+
+    Ok(())
+}
