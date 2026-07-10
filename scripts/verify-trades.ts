@@ -5,6 +5,7 @@ import { FillLog } from '@/../../client/ts/src/manifest/accounts/FillLog';
 import { getVaultAddress } from '@/../../client/ts/src/utils/market';
 import { convertU128 } from '@/../../client/ts/src/utils/numbers';
 import { genAccDiscriminator } from '@/../../client/ts/src/utils/discriminator';
+import { hasTruncatedLogs as checkTruncatedLogs } from '@/../../client/ts/src/utils/solana';
 import {
   detectAggregatorFromKeys,
   detectOriginatingProtocolFromKeys,
@@ -277,9 +278,7 @@ const parseTransactionForFills = async (
     }
 
     // Check for truncated logs
-    hasTruncatedLogs = tx.meta.logMessages.some((log) =>
-      log.toLowerCase().includes('truncated'),
-    );
+    hasTruncatedLogs = checkTruncatedLogs(tx.meta.logMessages);
 
     // Extract signers
     let originalSigner: string | undefined;

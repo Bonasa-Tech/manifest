@@ -9,6 +9,7 @@ import { FillLog } from './manifest/accounts/FillLog';
 import { PROGRAM_ID } from './manifest';
 import { convertU128 } from './utils/numbers';
 import { genAccDiscriminator } from './utils/discriminator';
+import { hasTruncatedLogs } from './utils/solana';
 import * as promClient from 'prom-client';
 import { FillLogResult } from './types';
 import {
@@ -42,7 +43,10 @@ export class FillFeed {
   private lastUpdateUnix: number = Date.now();
   private txHistoryErrorCount: number = 0;
 
-  constructor(private connection: Connection) {
+  constructor(
+    private connection: Connection,
+    private onTruncatedLogs?: (signature: string, slot: number) => void,
+  ) {
     this.wsManager = new WebSocketManager(1234, 30000);
   }
 
@@ -231,6 +235,19 @@ export class FillFeed {
       detectOriginatingProtocol(tx);
 
     const messages: string[] = tx?.meta?.logMessages!;
+
+    // Truncated logs drop Program data entries, so fills can be silently
+    // missing from the feed.
+    if (hasTruncatedLogs(messages)) {
+      console.warn(
+        'Truncated logs detected for',
+        signature.signature,
+        'slot',
+        signature.slot,
+      );
+      this.onTruncatedLogs?.(signature.signature, signature.slot);
+    }
+
     const programDatas: string[] = messages.filter((message) => {
       return message.includes('Program data:');
     });

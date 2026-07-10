@@ -9,6 +9,7 @@ import {
   detectOriginatingProtocolFromKeys,
 } from './aggregators';
 import { WebSocketManager } from './utils/WebSocketManager';
+import { hasTruncatedLogs } from './utils/solana';
 
 // For live monitoring of the fill feed. For a more complete look at fill
 // history stats, need to index all trades.
@@ -32,6 +33,7 @@ export class FillFeedBlockSub {
   constructor(
     private connection: Connection,
     wsPort: number = 1234,
+    private onTruncatedLogs?: (signature: string, slot: number) => void,
   ) {
     this.wsManager = new WebSocketManager(wsPort, 30000);
   }
@@ -275,6 +277,14 @@ export class FillFeedBlockSub {
       detectOriginatingProtocolFromKeys(accountKeysStr);
 
     const messages: string[] = tx.meta.logMessages;
+
+    // Truncated logs drop Program data entries, so fills can be silently
+    // missing from the feed.
+    if (hasTruncatedLogs(messages)) {
+      console.warn('Truncated logs detected for', signature, 'slot', slot);
+      this.onTruncatedLogs?.(signature, slot);
+    }
+
     const programDatas: string[] = messages.filter((message) => {
       return message.includes('Program data:');
     });

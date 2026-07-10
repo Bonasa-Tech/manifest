@@ -1996,10 +1996,26 @@ export class ManifestStatsServer {
     }
 
     // Parse fills from the transaction
-    const fills: FillLogResult[] = await parseTransactionForFills(
+    const { fills, hasTruncatedLogs } = await parseTransactionForFills(
       this.connection,
       signature,
     );
+
+    if (hasTruncatedLogs) {
+      console.warn(`Truncated logs detected during backfill for ${signature}`);
+      if (this.discordWebhookUrl) {
+        const message: string = [
+          `**Truncated logs detected during backfill**`,
+          `Fills may be missing from the database for this transaction.`,
+          `Fills parsed: ${fills.length}`,
+          `[View on Solscan](https://solscan.io/tx/${signature})`,
+        ].join('\n');
+        await sendDiscordNotification(this.discordWebhookUrl, message, {
+          title: '⚠️ Truncated Logs in Trade Backfill',
+          timestamp: true,
+        });
+      }
+    }
 
     if (fills.length === 0) {
       return { backfilled: 0, alreadyExisted: 0 };

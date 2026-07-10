@@ -3,6 +3,7 @@ import { FillLogResult, FillLog } from '../../client/ts/src';
 import {
   genAccDiscriminator,
   convertU128,
+  hasTruncatedLogs,
 } from '../../client/ts/src/utils';
 
 const fillDiscriminant = genAccDiscriminator('manifest::logs::FillLog');
@@ -109,10 +110,15 @@ function toFillLogResult(
   return result;
 }
 
+export interface ParseTransactionForFillsResult {
+  fills: FillLogResult[];
+  hasTruncatedLogs: boolean;
+}
+
 export const parseTransactionForFills = async (
   connection: Connection,
   signature: string,
-): Promise<FillLogResult[]> => {
+): Promise<ParseTransactionForFillsResult> => {
   const fills: FillLogResult[] = [];
 
   const tx = await connection.getTransaction(signature, {
@@ -120,11 +126,14 @@ export const parseTransactionForFills = async (
   });
 
   if (!tx?.meta?.logMessages) {
-    return fills;
+    return { fills, hasTruncatedLogs: false };
   }
 
+  // Truncated logs drop Program data entries, so fills can be silently missing.
+  const logsTruncated: boolean = hasTruncatedLogs(tx.meta.logMessages);
+
   if (tx.meta.err != null) {
-    return fills;
+    return { fills, hasTruncatedLogs: logsTruncated };
   }
 
   const slot = tx.slot;
@@ -199,5 +208,5 @@ export const parseTransactionForFills = async (
     }
   }
 
-  return fills;
+  return { fills, hasTruncatedLogs: logsTruncated };
 };
