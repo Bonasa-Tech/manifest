@@ -223,6 +223,25 @@ export class ManifestStatsServer {
   // Market maker monitoring for alerts
   private marketMakerMonitor: MarketMakerMonitor;
 
+  // Backfill runs arrive as a burst of per-signature requests (e.g. from
+  // trade verification). Stats accumulate here and a single summary Discord
+  // alert is sent once the burst has been quiet for the debounce interval,
+  // instead of one alert per truncated transaction.
+  private backfillRunStats: {
+    transactions: number;
+    backfilled: number;
+    alreadyExisted: number;
+    truncatedSignatures: string[];
+  } = {
+    transactions: 0,
+    backfilled: 0,
+    alreadyExisted: 0,
+    truncatedSignatures: [],
+  };
+  private backfillSummaryTimer: NodeJS.Timeout | null = null;
+  private readonly BACKFILL_SUMMARY_DEBOUNCE_MS: number = 120_000;
+  private readonly BACKFILL_SUMMARY_MAX_SIGNATURES: number = 15;
+
   constructor(
     rpcUrl: string,
     isReadOnly: boolean,
@@ -631,21 +650,21 @@ export class ManifestStatsServer {
         this.quoteVolumeAtomsSinceLastCheckpoint.set(market, 0);
         this.baseVolumeAtomsCheckpoints.set(
           market,
-          new Array<number>(
-            ONE_DAY_SEC / VOLUME_CHECKPOINT_DURATION_SEC,
-          ).fill(0),
+          new Array<number>(ONE_DAY_SEC / VOLUME_CHECKPOINT_DURATION_SEC).fill(
+            0,
+          ),
         );
         this.quoteVolumeAtomsCheckpoints.set(
           market,
-          new Array<number>(
-            ONE_DAY_SEC / VOLUME_CHECKPOINT_DURATION_SEC,
-          ).fill(0),
+          new Array<number>(ONE_DAY_SEC / VOLUME_CHECKPOINT_DURATION_SEC).fill(
+            0,
+          ),
         );
         this.checkpointTimestamps.set(
           market,
-          new Array<number>(
-            ONE_DAY_SEC / VOLUME_CHECKPOINT_DURATION_SEC,
-          ).fill(0),
+          new Array<number>(ONE_DAY_SEC / VOLUME_CHECKPOINT_DURATION_SEC).fill(
+            0,
+          ),
         );
       }
 
@@ -1338,11 +1357,15 @@ export class ManifestStatsServer {
     marketPk: string,
   ): Promise<Market | undefined> {
     const now: number = Date.now();
-    const lastLoadMs: number = this.orderbookMarketLastLoadMs.get(marketPk) ?? 0;
+    const lastLoadMs: number =
+      this.orderbookMarketLastLoadMs.get(marketPk) ?? 0;
     let market: Market | undefined = this.markets.get(marketPk);
 
     // Cached and still within the freshness window: serve it as-is.
-    if (market !== undefined && now - lastLoadMs < this.ORDERBOOK_MARKET_TTL_MS) {
+    if (
+      market !== undefined &&
+      now - lastLoadMs < this.ORDERBOOK_MARKET_TTL_MS
+    ) {
       return market;
     }
 
@@ -2003,21 +2026,11 @@ export class ManifestStatsServer {
 
     if (hasTruncatedLogs) {
       console.warn(`Truncated logs detected during backfill for ${signature}`);
-      if (this.discordWebhookUrl) {
-        const message: string = [
-          `**Truncated logs detected during backfill**`,
-          `Fills may be missing from the database for this transaction.`,
-          `Fills parsed: ${fills.length}`,
-          `[View on Solscan](https://solscan.io/tx/${signature})`,
-        ].join('\n');
-        await sendDiscordNotification(this.discordWebhookUrl, message, {
-          title: '⚠️ Truncated Logs in Trade Backfill',
-          timestamp: true,
-        });
-      }
+      this.backfillRunStats.truncatedSignatures.push(signature);
     }
 
     if (fills.length === 0) {
+      this.recordBackfillResult(0, 0);
       return { backfilled: 0, alreadyExisted: 0 };
     }
 
@@ -2062,7 +2075,88 @@ export class ManifestStatsServer {
       await this.attemptTickerLookup(market);
     }
 
+    this.recordBackfillResult(backfilled, alreadyExisted);
     return { backfilled, alreadyExisted };
+  }
+
+  /**
+   * Accumulate stats for the current backfill run and (re)arm the debounced
+   * summary alert. The summary fires once no backfill request has arrived for
+   * BACKFILL_SUMMARY_DEBOUNCE_MS, i.e. once per backfill run.
+   */
+  private recordBackfillResult(
+    backfilled: number,
+    alreadyExisted: number,
+  ): void {
+    this.backfillRunStats.transactions++;
+    this.backfillRunStats.backfilled += backfilled;
+    this.backfillRunStats.alreadyExisted += alreadyExisted;
+
+    if (this.backfillSummaryTimer) {
+      clearTimeout(this.backfillSummaryTimer);
+    }
+    this.backfillSummaryTimer = setTimeout((): void => {
+      void this.sendBackfillSummary();
+    }, this.BACKFILL_SUMMARY_DEBOUNCE_MS);
+    this.backfillSummaryTimer.unref();
+  }
+
+  /**
+   * Send a single Discord alert summarizing the completed backfill run,
+   * including stats on transactions with truncated logs.
+   */
+  private async sendBackfillSummary(): Promise<void> {
+    const stats: {
+      transactions: number;
+      backfilled: number;
+      alreadyExisted: number;
+      truncatedSignatures: string[];
+    } = this.backfillRunStats;
+    this.backfillRunStats = {
+      transactions: 0,
+      backfilled: 0,
+      alreadyExisted: 0,
+      truncatedSignatures: [],
+    };
+    this.backfillSummaryTimer = null;
+
+    if (!this.discordWebhookUrl || stats.transactions === 0) {
+      return;
+    }
+
+    const lines: string[] = [
+      `**Backfill run complete**`,
+      `Transactions processed: ${stats.transactions}`,
+      `Fills backfilled: ${stats.backfilled}`,
+      `Fills already existed: ${stats.alreadyExisted}`,
+      `Transactions with truncated logs: ${stats.truncatedSignatures.length}`,
+    ];
+    if (stats.truncatedSignatures.length > 0) {
+      const shown: string[] = stats.truncatedSignatures.slice(
+        0,
+        this.BACKFILL_SUMMARY_MAX_SIGNATURES,
+      );
+      lines.push(
+        `Truncated (fills may be missing from the database):`,
+        ...shown.map(
+          (signature: string): string =>
+            `[${signature.slice(0, 8)}...](https://solscan.io/tx/${signature})`,
+        ),
+      );
+      const hidden: number = stats.truncatedSignatures.length - shown.length;
+      if (hidden > 0) {
+        lines.push(`...and ${hidden} more`);
+      }
+    }
+
+    try {
+      await sendDiscordNotification(this.discordWebhookUrl, lines.join('\n'), {
+        title: '📥 Trade Backfill Summary',
+        timestamp: true,
+      });
+    } catch (error) {
+      console.error('Error sending backfill summary alert:', error);
+    }
   }
 
   /**

@@ -4,7 +4,6 @@ import { FillFeed } from '../client/ts/src/fillFeed';
 import { FillFeedBlockSub } from '../client/ts/src/fillFeedBlockSub';
 import { Connection } from '@solana/web3.js';
 import * as promClient from 'prom-client';
-import { sendDiscordNotification } from './stats_utils/utils';
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -12,32 +11,11 @@ function sleep(ms: number): Promise<void> {
 import express from 'express';
 import promBundle from 'express-prom-bundle';
 
-const { RPC_URL, TVL_DISCORD_WEBHOOK_URL } = process.env;
+const { RPC_URL } = process.env;
 
 if (!RPC_URL) {
   throw new Error('RPC_URL missing from env');
 }
-
-// Alert manifest alerts when a transaction has truncated logs, since fills
-// may be silently missing from the feed.
-const onTruncatedLogs = (signature: string, slot: number): void => {
-  if (!TVL_DISCORD_WEBHOOK_URL) {
-    console.warn(
-      'TVL_DISCORD_WEBHOOK_URL missing from env, skipping truncated logs alert',
-    );
-    return;
-  }
-  const message: string = [
-    `**Truncated logs detected in fill feed**`,
-    `Fills may be missing from the fills feed for this transaction.`,
-    `Slot: ${slot}`,
-    `[View on Solscan](https://solscan.io/tx/${signature})`,
-  ].join('\n');
-  void sendDiscordNotification(TVL_DISCORD_WEBHOOK_URL, message, {
-    title: '⚠️ Truncated Logs in Fill Feed',
-    timestamp: true,
-  });
-};
 
 const rpcUrl = RPC_URL as string;
 // Default to no block feed
@@ -92,9 +70,7 @@ const run = async () => {
       console.log('setting up connection...');
       const conn = new Connection(rpcUrl, 'confirmed');
       console.log('setting up feed...');
-      feed = useBlockFeed
-        ? new FillFeedBlockSub(conn, 1234, onTruncatedLogs)
-        : new FillFeed(conn, onTruncatedLogs);
+      feed = useBlockFeed ? new FillFeedBlockSub(conn) : new FillFeed(conn);
 
       if (useBlockFeed) {
         await Promise.all([

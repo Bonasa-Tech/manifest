@@ -10,6 +10,10 @@ import { PROGRAM_ID } from './manifest';
 import { convertU128 } from './utils/numbers';
 import { genAccDiscriminator } from './utils/discriminator';
 import { hasTruncatedLogs } from './utils/solana';
+import {
+  inferFillsFromTransaction,
+  computeInferredRemainders,
+} from './utils/inferFills';
 import * as promClient from 'prom-client';
 import { FillLogResult } from './types';
 import {
@@ -29,6 +33,15 @@ const fills = new promClient.Counter({
 const fillLag = new promClient.Gauge({
   name: 'fill_lag_seconds',
   help: 'Lag in seconds between now and the block time of the most recent fill',
+});
+const truncatedTransactions = new promClient.Counter({
+  name: 'truncated_log_transactions',
+  help: 'Number of transactions with truncated logs',
+});
+const inferredFills = new promClient.Counter({
+  name: 'inferred_fills',
+  help: 'Number of fills inferred from token transfers due to truncated logs',
+  labelNames: ['market'] as const,
 });
 
 /**
@@ -237,14 +250,17 @@ export class FillFeed {
     const messages: string[] = tx?.meta?.logMessages!;
 
     // Truncated logs drop Program data entries, so fills can be silently
-    // missing from the feed.
-    if (hasTruncatedLogs(messages)) {
+    // missing from the feed. Fills that survived are parsed below as usual;
+    // the missing remainder is inferred from the Swap CPI token transfers.
+    const truncated: boolean = hasTruncatedLogs(messages);
+    if (truncated) {
       console.warn(
         'Truncated logs detected for',
         signature.signature,
         'slot',
         signature.slot,
       );
+      truncatedTransactions.inc();
       this.onTruncatedLogs?.(signature.signature, signature.slot);
     }
 
@@ -252,11 +268,12 @@ export class FillFeed {
       return message.includes('Program data:');
     });
 
-    if (programDatas.length == 0) {
+    if (programDatas.length == 0 && !truncated) {
       console.log('No program datas');
       return;
     }
 
+    const parsedFills: FillLogResult[] = [];
     for (const programDataEntry of programDatas) {
       const programData = programDataEntry.split(' ')[2];
       const byteArray: Uint8Array = Uint8Array.from(atob(programData), (c) =>
@@ -282,6 +299,7 @@ export class FillFeed {
       );
       const resultString: string = JSON.stringify(fillResult);
       console.log('Got a fill', resultString);
+      parsedFills.push(fillResult);
       fills.inc({
         market: deserializedFillLog.market.toString(),
         isGlobal: deserializedFillLog.isMakerGlobal.toString(),
@@ -290,6 +308,24 @@ export class FillFeed {
       this.wsManager.broadcast(JSON.stringify(fillResult));
       if (signature.blockTime) {
         fillLag.set(Date.now() / 1000 - signature.blockTime);
+      }
+    }
+
+    if (truncated) {
+      const inferred: FillLogResult[] = computeInferredRemainders(
+        inferFillsFromTransaction(tx, signature.signature, signature.slot, {
+          originalSigner,
+          aggregator,
+          originatingProtocol,
+          signers,
+          blockTime: signature.blockTime ?? undefined,
+        }),
+        parsedFills,
+      );
+      for (const inferredFill of inferred) {
+        console.log('Inferred a fill', JSON.stringify(inferredFill));
+        inferredFills.inc({ market: inferredFill.market });
+        this.wsManager.broadcast(JSON.stringify(inferredFill));
       }
     }
   }
