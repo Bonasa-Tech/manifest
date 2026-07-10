@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1778700492283,
+  "lastUpdate": 1783649263168,
   "repoUrl": "https://github.com/Bonasa-Tech/manifest",
   "entries": {
     "CU Benchmark": [
@@ -12173,6 +12173,72 @@ window.BENCHMARK_DATA = {
           {
             "name": "MFX_99",
             "value": 13180,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "107803907+DonDuala@users.noreply.github.com",
+            "name": "jkramer",
+            "username": "DonDuala"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "fac21354517251a12ee530a88ef32e7eeb4f9c40",
+          "message": "Defer global gas prepayment refunds to avoid UnbalancedInstruction (#643)\n\n* Defer global gas prepayment refunds to avoid UnbalancedInstruction\n\nCancelling a global order refunds the gas prepayment by moving lamports\ndirectly from the global account to the payer. Direct lamport moves are\nonly synced into the runtime's bookkeeping for accounts included in a\nlater CPI, so when a batch update cancelled a global order on one side\nand then placed a global order on the other side, the gas prepayment\ntransfer CPI synced the payer (credited by the refund) but not the\nrefunded global account, and the runtime failed the instruction with\n\"sum of account balances before and after instruction do not match\".\n\nFix by accumulating refunds in a counter on GlobalTradeAccounts during\ncancels and matching, and only moving the lamports at the end of the\ninstruction, after the last CPI (gas prepayments and market expansions).\nThis also covers the same failure mode where a global cancel was\nfollowed by a market expansion transfer in one batch update.\n\nAdds a regression test that cancels a global ask and places a global\nbid in the same batch update, which reproduces the failure without this\nchange.\n\nCo-Authored-By: Claude Fable 5 <noreply@anthropic.com>\n\n* Move historical gas refund comment to settle_global_gas_refunds\n\nCo-Authored-By: Claude Fable 5 <noreply@anthropic.com>\n\n---------\n\nCo-authored-by: DonDuala <john@dual.finance>\nCo-authored-by: Claude Fable 5 <noreply@anthropic.com>",
+          "timestamp": "2026-07-09T21:54:40-04:00",
+          "tree_id": "f01fb60a91ec3f56ae3891a9d6c182003cf5a1c8",
+          "url": "https://github.com/Bonasa-Tech/manifest/commit/fac21354517251a12ee530a88ef32e7eeb4f9c40"
+        },
+        "date": 1783649261318,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "PHX_50",
+            "value": 6897,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "PHX_95",
+            "value": 13208,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "PHX_99",
+            "value": 13902,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_50",
+            "value": 3279,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_95",
+            "value": 12276,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_99",
+            "value": 13182,
             "range": "",
             "unit": "CU",
             "extra": ""
