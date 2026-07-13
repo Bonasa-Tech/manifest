@@ -1312,13 +1312,13 @@ export class ManifestStatsServer {
       // RestingOrder.tokenPrice already bakes in the
       // 10 ** (baseDecimals - quoteDecimals) factor, so it is in the same token
       // units as last_price above and needs no further decimal correction.
-      const bids: RestingOrder[] = market.bids();
-      const asks: RestingOrder[] = market.asks();
-      if (bids.length > 0) {
-        ticker.bid = bids[bids.length - 1].tokenPrice;
+      const bestBid: number | undefined = market.bestBidPrice();
+      const bestAsk: number | undefined = market.bestAskPrice();
+      if (bestBid !== undefined) {
+        ticker.bid = bestBid;
       }
-      if (asks.length > 0) {
-        ticker.ask = asks[asks.length - 1].tokenPrice;
+      if (bestAsk !== undefined) {
+        ticker.ask = bestAsk;
       }
 
       tickers.push(ticker);
