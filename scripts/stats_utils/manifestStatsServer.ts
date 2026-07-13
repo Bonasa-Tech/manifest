@@ -1288,7 +1288,7 @@ export class ManifestStatsServer {
         }
       }
 
-      tickers.push({
+      const ticker: any = {
         ticker_id: marketPk,
         base_currency: market.baseMint().toBase58(),
         target_currency: market.quoteMint().toBase58(),
@@ -1303,9 +1303,25 @@ export class ManifestStatsServer {
         // Optional: not yet implemented
         // high: 0,
         // low: 0,
-        // bid: bestBid,
-        // ask: bestAsk,
-      });
+      };
+
+      // Emit best bid/ask only when the orderbook is already loaded on the
+      // cached market. Best bid is the highest bid (last element of the raw
+      // ascending bids()); best ask is the lowest ask (last element of the raw
+      // descending asks()) - matching the mid computation used elsewhere.
+      // RestingOrder.tokenPrice already bakes in the
+      // 10 ** (baseDecimals - quoteDecimals) factor, so it is in the same token
+      // units as last_price above and needs no further decimal correction.
+      const bids: RestingOrder[] = market.bids();
+      const asks: RestingOrder[] = market.asks();
+      if (bids.length > 0) {
+        ticker.bid = bids[bids.length - 1].tokenPrice;
+      }
+      if (asks.length > 0) {
+        ticker.ask = asks[asks.length - 1].tokenPrice;
+      }
+
+      tickers.push(ticker);
     });
     return tickers;
   }
