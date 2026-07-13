@@ -1085,13 +1085,19 @@ async fn reverse_order_tight_type_test() -> anyhow::Result<()> {
         first_bid.get_price(),
         QuoteAtomsPerBaseAtom::try_from_mantissa_and_exponent(29_985, -4).unwrap()
     );
-    // Balance is same.
+    // Balance is the same, plus one atom. The maker received 6_000_000_000
+    // quote for the fill and is debited the exact growth of the coalesced
+    // order's allocation: ceil(3_001_500_750 * 2.9985) -
+    // ceil(1_000_500_250 * 2.9985) = 8_999_999_999 - 3_000_000_000 =
+    // 5_999_999_999. The coalesced order can only ever refund
+    // 8_999_999_999, so debiting the full 6_000_000_000 would strand the
+    // extra atom in the vault; the maker keeps it instead.
     assert_eq!(
         test_fixture
             .market_fixture
             .get_quote_balance_atoms(&test_fixture.payer())
             .await,
-        10_000_000_000
+        10_000_000_001
     );
     assert_eq!(
         test_fixture
@@ -1132,13 +1138,14 @@ async fn reverse_order_tight_type_test() -> anyhow::Result<()> {
         QuoteAtomsPerBaseAtom::try_from_mantissa_and_exponent(3, 0).unwrap()
     );
 
-    // Maker's balances are unchanged.
+    // Maker's balances are unchanged, still carrying the rounding atom kept
+    // at the coalesce above.
     assert_eq!(
         test_fixture
             .market_fixture
             .get_quote_balance_atoms(&test_fixture.payer())
             .await,
-        10_000_000_000
+        10_000_000_001
     );
     assert_eq!(
         test_fixture

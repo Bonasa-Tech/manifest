@@ -9,6 +9,36 @@ macro_rules! create_empty_market {
 }
 
 #[macro_export]
+/// Write a `GlobalFixed` with nondeterministic contents into the account, so
+/// that it passes the manifest account checks.
+macro_rules! create_global {
+    ($global_acc_info:expr) => {{
+        let global_fixed: crate::state::GlobalFixed = crate::state::GlobalFixed::new_nondet();
+        let mut global_bytes: std::cell::RefMut<&mut [u8]> =
+            $global_acc_info.data.try_borrow_mut().unwrap();
+        *hypertree::get_mut_helper::<crate::state::GlobalFixed>(*global_bytes, 0_u32) =
+            global_fixed;
+    }};
+}
+
+#[macro_export]
+/// Ghost sum of every balance held on the global account.
+macro_rules! get_global_deposited_atoms {
+    ($global_acc_info:expr) => {{
+        let global_data: &mut std::cell::RefMut<&mut [u8]> =
+            &mut $global_acc_info.try_borrow_mut_data().unwrap();
+        let global_dynamic_account: crate::state::GlobalRefMut =
+            crate::program::get_mut_dynamic_account(global_data);
+        let res = global_dynamic_account
+            .fixed
+            .get_global_deposited_atoms()
+            .as_u64();
+        cvt_assume!(res <= nondet::<u64>());
+        res
+    }};
+}
+
+#[macro_export]
 macro_rules! claim_seat {
     ($market_acc_info:expr, $trader_key: expr) => {{
         let market_data: &mut std::cell::RefMut<&mut [u8]> =
@@ -197,17 +227,52 @@ macro_rules! cancel_order_by_index {
         $market_acc_info:expr,
         $order_index:expr
     ) => {{
+        $crate::cancel_order_by_index!($market_acc_info, $order_index, &[None, None])
+    }};
+    (
+        $market_acc_info:expr,
+        $order_index:expr,
+        $global_trade_accounts_opts:expr
+    ) => {{
         let market_data: &mut std::cell::RefMut<&mut [u8]> =
             &mut $market_acc_info.try_borrow_mut_data().unwrap();
         let mut dynamic_account: MarketRefMut = get_mut_dynamic_account(market_data);
         dynamic_account
-            .cancel_order_by_index($order_index, &[None, None])
+            .cancel_order_by_index($order_index, $global_trade_accounts_opts)
             .unwrap();
     }};
 }
 
 #[macro_export]
 macro_rules! place_single_order {
+    (
+        $market_acc_info:expr,
+        $args:expr,
+        $remaining_base_atoms: expr,
+        $now_slot: expr,
+        $current_order_index: expr
+    ) => {{
+        let (res, base, quote) = $crate::place_single_order_res!(
+            $market_acc_info,
+            $args,
+            $remaining_base_atoms,
+            $now_slot,
+            $current_order_index
+        );
+        (res.unwrap(), base, quote)
+    }};
+}
+
+#[macro_export]
+/// One matching step against a global maker, followed by the settlement that
+/// moves the tokens out of the global vault.
+///
+/// Matching only draws down the maker's balance on the global account.
+/// `place_order` batches the token transfer and does it once, after the loop,
+/// so a single step is only a faithful model of `place_order` when it is
+/// settled the same way. Returns the atoms that were moved on top of what
+/// `place_single_order!` returns.
+macro_rules! place_single_order_and_settle_global {
     (
         $market_acc_info:expr,
         $args:expr,
@@ -225,6 +290,49 @@ macro_rules! place_single_order {
 
         let res: AddOrderToMarketInnerResult =
             ctx.place_single_order($current_order_index).unwrap();
+
+        let global_atoms_to_transfer: crate::quantities::GlobalAtoms = ctx.global_atoms_to_transfer;
+        let global_trade_accounts_opt = if ctx.args.is_bid {
+            &ctx.args.global_trade_accounts_opts[0]
+        } else {
+            &ctx.args.global_trade_accounts_opts[1]
+        };
+        crate::state::utils::transfer_global_tokens(
+            global_trade_accounts_opt,
+            global_atoms_to_transfer,
+        )
+        .unwrap();
+
+        (
+            res,
+            ctx.total_base_atoms_traded,
+            ctx.total_quote_atoms_traded,
+            global_atoms_to_transfer,
+        )
+    }};
+}
+
+#[macro_export]
+/// Like `place_single_order!` but hands back the `Result` so a rule can say
+/// something about the orders that are rejected.
+macro_rules! place_single_order_res {
+    (
+        $market_acc_info:expr,
+        $args:expr,
+        $remaining_base_atoms: expr,
+        $now_slot: expr,
+        $current_order_index: expr
+    ) => {{
+        let market_data: &mut std::cell::RefMut<&mut [u8]> =
+            &mut $market_acc_info.try_borrow_mut_data().unwrap();
+        let dynamic_account: MarketRefMut = get_mut_dynamic_account(market_data);
+        let DynamicAccount { fixed, dynamic } = dynamic_account;
+
+        let mut ctx: AddSingleOrderCtx =
+            AddSingleOrderCtx::new($args, fixed, dynamic, $remaining_base_atoms, $now_slot);
+
+        let res: Result<AddOrderToMarketInnerResult, solana_program::program_error::ProgramError> =
+            ctx.place_single_order($current_order_index);
         (
             res,
             ctx.total_base_atoms_traded,

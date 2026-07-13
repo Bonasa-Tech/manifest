@@ -166,6 +166,9 @@ pub fn place_single_order_full_match_balances<const IS_BID: bool>() {
         maker_trader,
     );
 
+    // -- the exact deltas below only hold for a maker that does not reverse
+    cvt_assume_maker_not_reversible(maker_order_index);
+
     // -- record trader balances before place_single_order
     let (trader_base_old, trader_quote_old) = get_trader_balance!(market_info, trader.key);
     let (maker_trader_base_old, maker_trader_quote_old) =
@@ -245,6 +248,9 @@ pub fn place_single_order_partial_match_balances<const IS_BID: bool>() {
         vault_quote_token,
         maker_trader,
     );
+
+    // -- the exact deltas below only hold for a maker that does not reverse
+    cvt_assume_maker_not_reversible(maker_order_index);
 
     // -- record trader balances before place_single_order
     let (trader_base_old, trader_quote_old) = get_trader_balance!(market_info, trader.key);

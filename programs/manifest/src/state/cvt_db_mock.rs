@@ -40,6 +40,7 @@ const MAIN_ASK_ORDER_DATA_IDX: DataIndex = 0u32;
 pub fn init_mock() {
     init_mock_traders();
     init_mock_orders();
+    crate::state::init_global_mock();
 }
 
 fn init_mock_traders() {
@@ -139,7 +140,7 @@ pub fn take_second_seat() {
 
 pub fn release_second_seat() {
     cvt_assert!(is_second_seat_taken());
-    unsafe { IS_SECOND_SEAT_TAKEN = 1 };
+    unsafe { IS_SECOND_SEAT_TAKEN = 0 };
 }
 
 pub fn main_bid_order_index() -> DataIndex {
@@ -466,8 +467,34 @@ impl<'a> CvtBookside<'a> {
         self.max_index
     }
 
-    pub fn lookup_index(&self, _order: &RestingOrder) -> DataIndex {
-        todo!()
+    /// The mock holds at most one order per side, so a lookup can only ever
+    /// find that one. Used when a reverse order looks for an order at the same
+    /// price to coalesce into.
+    pub fn lookup_index(&self, order: &RestingOrder) -> DataIndex {
+        let dynamic: &mut [u8; 8] = &mut [0; 8];
+        if order.get_is_bid() {
+            if is_bid_order_free() {
+                return NIL;
+            }
+            let index: DataIndex = main_bid_order_index();
+            let resting_order: &RestingOrder = get_helper_bid_order(dynamic, index).get_value();
+            if resting_order == order {
+                index
+            } else {
+                NIL
+            }
+        } else {
+            if is_ask_order_free() {
+                return NIL;
+            }
+            let index: DataIndex = main_ask_order_index();
+            let resting_order: &RestingOrder = get_helper_ask_order(dynamic, index).get_value();
+            if resting_order == order {
+                index
+            } else {
+                NIL
+            }
+        }
     }
 
     pub fn remove_by_index(&mut self, index: DataIndex) {

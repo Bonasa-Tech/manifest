@@ -159,12 +159,6 @@ impl RestingOrder {
         self.order_type
     }
 
-    #[cfg(feature = "certora")]
-    pub fn is_global(&self) -> bool {
-        false
-    }
-
-    #[cfg(not(feature = "certora"))]
     pub fn is_global(&self) -> bool {
         self.order_type == OrderType::Global
     }

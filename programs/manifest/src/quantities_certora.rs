@@ -105,12 +105,31 @@ impl QuoteAtomsPerBaseAtom {
         Self { inner: [x, 0] }
     }
 
+    /// `self * numerator / denominator` on the single-limb certora price.
+    ///
+    /// This derives the price a reverse order comes back at. It has to be a
+    /// real function of its inputs, not a nondet summary, because the reverse
+    /// coalesce rule computes the reverse price twice (once in the rule and
+    /// once inside the matching code) and the two have to agree. The product
+    /// cannot overflow: the price fits u32 and the numerator is at most 10^8,
+    /// so the product is at most ~4*10^17 < u64::MAX.
     pub fn checked_multiply_rational(
         self,
-        _numerator: u32,
-        _denominator: u32,
-        _round_up: bool,
+        numerator: u32,
+        denominator: u32,
+        round_up: bool,
     ) -> Result<Self, PriceConversionError> {
-        todo!("")
+        if denominator == 0 {
+            return Err(PriceConversionError(0x9));
+        }
+        let product: u64 = self.inner[0]
+            .checked_mul(numerator as u64)
+            .ok_or(PriceConversionError(0xa))?;
+        let result: u64 = if round_up {
+            product.div_ceil(denominator as u64)
+        } else {
+            product.div(denominator as u64)
+        };
+        Ok(Self { inner: [result, 0] })
     }
 }

@@ -1,3 +1,110 @@
+# What is verified #
+
+## No loss of funds ##
+
+The market keeps two ghost aggregates on `MarketFixed`, only compiled under the
+`certora` feature: `withdrawable_*_atoms`, the sum of every seat balance, and
+`orderbook_*_atoms`, the sum of what every resting order has reserved. The
+property is that the vault covers both, for base and for quote:
+
+```
+market_vault == withdrawable + orderbook
+```
+
+## No loss of funds for global orders ##
+
+A global order is not backed by the market vault. The maker's tokens sit in the
+global vault, a token account shared by every market that trades the mint, and
+they are only pulled into the market vault at the moment the order is matched.
+The global vault is therefore a second, independent source of funds, and it gets
+its own aggregate, `global_deposited_atoms` on `GlobalFixed`, and its own
+property:
+
+```
+global_vault == sum of all global deposits
+```
+
+A resting global order reserves nothing on the market, so it contributes zero to
+`orderbook`. That is what keeps the two properties independent, and together they
+say that the tokens a global trade takes out of the global vault land in the
+market vault, and are credited to somebody, in the same instruction. The rules in
+`certora/spec/global_checks.rs` assert both, plus the exact amounts moved, for
+matching a global maker (full, partial, and unbacked), resting a global order,
+cancelling one, and global deposit and withdraw.
+
+The global account keeps two red-black trees. They are replaced with
+`state/cvt_global_mock.rs`, which models a global account with two seats owned by
+the same two traders the market mock knows about. Only the lookups and the tree
+rebalancing are mocked; everything that touches a balance is the real code.
+
+## Seat pubkey integrity ##
+
+The matching code identifies the maker by the pubkey stored in the claimed
+seat node, and for a global order that key decides whose global deposit pays
+for the fill. The rules assume the seat node carries the key of the trader
+sitting in it (`cvt_assume_seat_pubkeys`), and
+`certora/spec/seat_pubkey_checks.rs` discharges that assumption by induction:
+`claim_seat` writes the pubkey into the node
+(`rule_claim_seat_writes_trader_pubkey`), and every other verified operation --
+deposit, withdraw, matching, resting, cancel, releasing the other seat --
+leaves the stored pubkeys unchanged (`rule_seat_pubkey_preserved_by_*`). Once a
+seat is released its block returns to the free list and may be reused, so the
+invariant is stated only while the seat is held. Swap is covered by
+composition rather than a dedicated rule: in the verified model its only seat
+writes go through `claim_seat` and `update_balance`, both covered above; a
+dedicated rule hits a prover pointer-analysis limitation in the swap account
+loader.
+
+## Gas prepayments ##
+
+Every global order deposits `GAS_DEPOSIT_LAMPORTS` on the global account when it
+is placed, and whoever removes the order claims it. These are lamports, not
+tokens, so they get their own conservation rules: the prepayment moves exactly
+`GAS_DEPOSIT_LAMPORTS` per order from the gas payer to the global account
+(`rule_global_gas_prepayment`), and cancelling a global order with the system
+program present pays exactly one refund to the gas receiver
+(`rule_cancel_global_order_gas_refund_*`). The system-program transfer is
+summarized as a direct lamport move under the `certora` feature.
+
+## Order types ##
+
+`certora/spec/order_type_checks.rs` covers the types that are not plain limit
+orders. Post only and global takers never trade: in production a crossing one
+fails with `PostOnlyCrosses`; under the `certora` feature `require!` compiles to
+an assume, so the property is stated as "no reachable execution records a
+trade". Immediate-or-cancel and reverse takers keep the funds invariant. Reverse
+and reverse-tight makers, which come back onto the other side of the book when
+they are filled, keep the funds invariant on the way round — including the
+coalesce path (`rule_reverse_coalesce_*`), where the come-back order is folded
+into an existing resting order and the maker is debited the exact growth of that
+order's backing.
+
+## Token-2022 transfer fees and hooks ##
+
+Whether a mint carries a transfer fee or a transfer hook is mint state the
+prover does not model, so in `try_to_reduce_global_tokens` the decision "treat
+this global order as unbacked" is a nondeterministic choice under the `certora`
+feature, placed exactly where the production checks are: after the balance
+check, before the balance is reduced. This over-approximates the production
+branches and covers the property those checks exist for — a transfer that will
+be rejected must not eat the maker's global deposit.
+
+## Known gaps ##
+
+- `place_single_order` in `state/market_helpers.rs` is the model of one iteration
+  of the matching loop in `Market::place_order`. It has to be kept behaviourally
+  identical to the body of that loop by hand.
+- The mock book holds at most one resting order per side, so multi-level
+  matching is only covered one step at a time, and the mocked global account has
+  two seats.
+- The SPL transfer summaries move the requested amount exactly, so the
+  received-amount-differs-from-requested handling for fee-bearing token-2022
+  deposits (`process_deposit_core`, `process_global_deposit_core`) is verified
+  in the fee-less case only.
+- Global seat eviction is verified at the state level (`evict_and_take_seat`,
+  `rule_global_evict`); the `global_evict` processor around it (seat fee,
+  eviction fee, token transfers) is not.
+
 # Requirements for compilation from Rust to SBF ##
 
 1. Instal Certora CLI

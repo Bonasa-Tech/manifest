@@ -1279,6 +1279,43 @@ impl<
                     };
 
                     let mut coalesced: bool = false;
+                    // Quote atoms the maker pays for the reverse bid. For a
+                    // fresh order this is the usual rounded-up product,
+                    // ceil(num_base_atoms_reverse * price_reverse), the exact
+                    // amount the new order will refund when it is canceled.
+                    //
+                    // For the coalesce case that formula is wrong. The
+                    // coalesced order's allocation is rounded as a whole, at
+                    // its own price q, which may even sit one price increment
+                    // away from price_reverse (RestingOrder::eq tolerates
+                    // that). What the maker must pay is the growth of what the
+                    // order will later refund:
+                    //
+                    //   ceil((old + X) * q) - ceil(old * q)
+                    //
+                    // which is not ceil(X * price_reverse) in general. Debiting
+                    // the product either strands the difference in the vault
+                    // forever or leaves the order under-backed, breaking
+                    // vault == withdrawable + orderbook.
+                    //
+                    // Example (reverse_order_tight_type_test): ReverseTight ask
+                    // 3 SOL at 3.0, spread 0.05%, so it comes back as a bid at
+                    // 2.9985.
+                    // Fill 1: 1 SOL trades, maker receives 3_000_000_000 quote.
+                    //   Reverse bid rests fresh:
+                    //   X1 = floor(3_000_000_000 / 2.9985) = 1_000_500_250,
+                    //   debit ceil(1_000_500_250 * 2.9985)  = 3_000_000_000.
+                    // Fill 2: 2 SOL trade, maker receives 6_000_000_000 quote.
+                    //   X2 = floor(6_000_000_000 / 2.9985) = 2_001_000_500
+                    //   coalesces into the resting bid, which grows to
+                    //   3_001_500_750 atoms and will refund
+                    //   ceil(3_001_500_750 * 2.9985) = 8_999_999_999 when
+                    //   canceled -- a growth of 5_999_999_999.
+                    //   Debiting ceil(X2 * 2.9985) = 6_000_000_000 instead
+                    //   means the maker paid 9_000_000_000 in total for an
+                    //   order that can only ever give back 8_999_999_999: one
+                    //   atom stranded in the vault, owned by nobody.
+                    let mut reverse_quote_atoms_debited: QuoteAtoms = QuoteAtoms::ZERO;
                     {
                         let other_tree: Bookside = if is_bid {
                             Bookside::new(dynamic, fixed.bids_root_index, fixed.bids_best_index)
@@ -1301,12 +1338,36 @@ impl<
                         let lookup_index: DataIndex =
                             other_tree.lookup_index(&lookup_resting_order);
                         if lookup_index != NIL {
+                            #[cfg(feature = "certora")]
+                            remove_from_orderbook_balance(fixed, dynamic, lookup_index);
                             let order_to_coalesce_into: &mut RestingOrder =
                                 get_mut_helper::<RBNode<RestingOrder>>(dynamic, lookup_index)
                                     .get_mut_value();
-                            order_to_coalesce_into.increase(num_base_atoms_reverse)?;
+                            if is_bid {
+                                let previous_quote_allocated: QuoteAtoms =
+                                    order_to_coalesce_into.get_price().checked_quote_for_base(
+                                        order_to_coalesce_into.get_num_base_atoms(),
+                                        true,
+                                    )?;
+                                order_to_coalesce_into.increase(num_base_atoms_reverse)?;
+                                let new_quote_allocated: QuoteAtoms =
+                                    order_to_coalesce_into.get_price().checked_quote_for_base(
+                                        order_to_coalesce_into.get_num_base_atoms(),
+                                        true,
+                                    )?;
+                                reverse_quote_atoms_debited =
+                                    new_quote_allocated.checked_sub(previous_quote_allocated)?;
+                            } else {
+                                order_to_coalesce_into.increase(num_base_atoms_reverse)?;
+                            }
+                            #[cfg(feature = "certora")]
+                            add_to_orderbook_balance(fixed, dynamic, lookup_index);
                             coalesced = true;
                         }
+                    }
+                    if !coalesced && is_bid {
+                        reverse_quote_atoms_debited =
+                            num_base_atoms_reverse.checked_mul(price_reverse, true)?;
                     }
 
                     // If there was 1 atom and because taker rounding is in effect,
@@ -1359,9 +1420,7 @@ impl<
                         !is_bid,
                         false,
                         if is_bid {
-                            num_base_atoms_reverse
-                                .checked_mul(price_reverse, true)?
-                                .into()
+                            reverse_quote_atoms_debited.into()
                         } else {
                             num_base_atoms_reverse.into()
                         },
@@ -1606,19 +1665,13 @@ impl<
 
         // Update the accounting for the order that was just canceled.
         if resting_order.is_global() {
+            // Global order balances live on the global account, so there is
+            // nothing to give back on the market.
             if is_bid {
                 remove_from_global(&global_trade_accounts_opts[1])?;
             } else {
                 remove_from_global(&global_trade_accounts_opts[0])?;
             }
-
-            // Certora version was equivalent except it returned early here.
-            // Thats a bug, but keeping the certora code as close to what they
-            // wrote as possible. Formal verification does not cover global, so
-            // that would explain why introducing this bug for formal
-            // verification does not cause failures.
-            #[cfg(feature = "certora")]
-            return Ok(());
         } else {
             update_balance(
                 fixed,

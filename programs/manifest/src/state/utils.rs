@@ -1,19 +1,25 @@
 use std::cell::RefMut;
 
+#[cfg(not(feature = "certora"))]
 use crate::{
     global_vault_seeds_with_bump,
+    program::invoke,
+    validation::{MintAccountInfo, TokenProgram},
+};
+use crate::{
     logs::{emit_stack, GlobalCleanupLog},
-    program::{batch_update::PlaceOrderParams, get_mut_dynamic_account, invoke},
+    program::{batch_update::PlaceOrderParams, get_mut_dynamic_account},
     quantities::{GlobalAtoms, WrapperU64},
     require,
-    validation::{loaders::GlobalTradeAccounts, MintAccountInfo, TokenAccountInfo, TokenProgram},
+    validation::{loaders::GlobalTradeAccounts, TokenAccountInfo},
 };
 use hypertree::{DataIndex, NIL};
+#[cfg(not(feature = "certora"))]
+use solana_program::program::invoke_signed;
 #[cfg(not(feature = "no-clock"))]
 use solana_program::sysvar::Sysvar;
-use solana_program::{
-    entrypoint::ProgramResult, program::invoke_signed, program_error::ProgramError, pubkey::Pubkey,
-};
+use solana_program::{entrypoint::ProgramResult, program_error::ProgramError, pubkey::Pubkey};
+#[cfg(not(feature = "certora"))]
 use spl_token_2022::{
     extension::{
         transfer_fee::TransferFeeConfig, transfer_hook::TransferHook, BaseStateWithExtensions,
@@ -47,6 +53,7 @@ pub fn get_now_slot() -> u32 {
     now_slot as u32
 }
 
+#[cfg(not(feature = "certora"))]
 pub(crate) fn get_now_epoch() -> u64 {
     #[cfg(feature = "no-clock")]
     let now_epoch: u64 = 0;
@@ -175,8 +182,10 @@ pub(crate) fn try_to_add_to_global(
     global_dynamic_account.add_order(resting_order, gas_payer_opt.as_ref().unwrap().key)
 }
 
+// Takes a slice so both `Vec` (production) and `NoResizableVec` (certora, via
+// Deref) can be passed.
 pub(crate) fn try_to_pay_all_global_gas_prepayment(
-    orders: &Vec<PlaceOrderParams>,
+    orders: &[PlaceOrderParams],
     global_trade_accounts_opts: &[Option<GlobalTradeAccounts>; 2],
 ) -> ProgramResult {
     for (is_bid, account_idx) in [(true, 1), (false, 0)] {
@@ -194,7 +203,8 @@ pub(crate) fn try_to_pay_all_global_gas_prepayment(
     Ok(())
 }
 
-fn pay_global_gas_prepayment(
+#[cfg(not(feature = "certora"))]
+pub(crate) fn pay_global_gas_prepayment(
     global_trade_accounts: &GlobalTradeAccounts,
     num_gas_prepayments: u64,
 ) -> ProgramResult {
@@ -224,6 +234,33 @@ fn pay_global_gas_prepayment(
             global.info.clone(),
         ],
     )?;
+
+    Ok(())
+}
+
+/// (Summary) The system-program transfer of the gas prepayment, modeled as a
+/// direct lamport move so the prover can track it. The system program fails a
+/// transfer that the payer cannot cover, hence the assume.
+#[cfg(feature = "certora")]
+pub(crate) fn pay_global_gas_prepayment(
+    global_trade_accounts: &GlobalTradeAccounts,
+    num_gas_prepayments: u64,
+) -> ProgramResult {
+    let GlobalTradeAccounts {
+        global,
+        gas_payer_opt,
+        ..
+    } = global_trade_accounts;
+    let payer_info: &solana_program::account_info::AccountInfo =
+        gas_payer_opt.as_ref().unwrap().info;
+
+    let lamports: u64 = GAS_DEPOSIT_LAMPORTS
+        .checked_mul(num_gas_prepayments)
+        .unwrap();
+    cvt::cvt_assume!(**payer_info.lamports.borrow() >= lamports);
+    cvt::cvt_assume!(**global.lamports.borrow() <= u64::MAX - lamports);
+    **payer_info.lamports.borrow_mut() -= lamports;
+    **global.lamports.borrow_mut() += lamports;
 
     Ok(())
 }
@@ -295,8 +332,12 @@ pub(crate) fn try_to_reduce_global_tokens<'a, 'info>(
     let global_trade_accounts: &GlobalTradeAccounts = &global_trade_accounts_opt.as_ref().unwrap();
     let GlobalTradeAccounts {
         global,
-        mint_opt,
         gas_receiver_opt,
+        ..
+    } = global_trade_accounts;
+    #[cfg(not(feature = "certora"))]
+    let GlobalTradeAccounts {
+        mint_opt,
         token_program_opt,
         ..
     } = global_trade_accounts;
@@ -321,10 +362,23 @@ pub(crate) fn try_to_reduce_global_tokens<'a, 'info>(
         return Ok(false);
     }
 
+    // (Summary) Whether the mint carries a token-2022 transfer fee or transfer
+    // hook depends on mint state the prover does not model, so the decision
+    // "treat this global order as unbacked" is a nondeterministic choice. This
+    // over-approximates the production branches below: both return Ok(false)
+    // at exactly this point, before the balance is reduced, which is the
+    // property that matters (a rejected transfer must not eat the deposit).
+    #[cfg(feature = "certora")]
+    if ::nondet::nondet::<bool>() {
+        return Ok(false);
+    }
+
+    #[cfg(not(feature = "certora"))]
     let token_program: &TokenProgram<'a, 'info> = token_program_opt.as_ref().unwrap();
 
     // Check transfer fee/hook BEFORE reducing balance to avoid permanent
     // balance loss when the transfer is rejected.
+    #[cfg(not(feature = "certora"))]
     if *token_program.key == spl_token_2022::id() {
         require!(
             mint_opt.is_some(),
@@ -370,8 +424,46 @@ pub(crate) fn try_to_reduce_global_tokens<'a, 'info>(
     Ok(true)
 }
 
+/// (Summary) Transfers tokens from global vault to market vault.
+///
+/// The prover models SPL transfers as a direct move of the token account
+/// amounts, which is what makes the global vault visible to the funds
+/// invariants.
+#[cfg(feature = "certora")]
+pub(crate) fn transfer_global_tokens<'a, 'info>(
+    global_trade_accounts_opt: &'a Option<GlobalTradeAccounts<'a, 'info>>,
+    total_atoms: GlobalAtoms,
+) -> Result<(), ProgramError> {
+    if total_atoms.as_u64() == 0 {
+        return Ok(());
+    }
+
+    require!(
+        global_trade_accounts_opt.is_some(),
+        crate::program::ManifestError::MissingGlobal,
+        "Missing global accounts when transferring",
+    )?;
+    let global_trade_accounts: &GlobalTradeAccounts = &global_trade_accounts_opt.as_ref().unwrap();
+    let GlobalTradeAccounts {
+        global_vault_opt,
+        market_vault_opt,
+        ..
+    } = global_trade_accounts;
+
+    let global_vault: &TokenAccountInfo<'a, 'info> = global_vault_opt.as_ref().unwrap();
+    let market_vault: &TokenAccountInfo<'a, 'info> = market_vault_opt.as_ref().unwrap();
+
+    solana_cvt::token::spl_token_transfer(
+        global_vault.info,
+        market_vault.info,
+        global_vault.info,
+        total_atoms.as_u64(),
+    )
+}
+
 /// Transfers tokens from global vault to market vault.
 /// Should be called after matching is complete with the accumulated total.
+#[cfg(not(feature = "certora"))]
 pub(crate) fn transfer_global_tokens<'a, 'info>(
     global_trade_accounts_opt: &'a Option<GlobalTradeAccounts<'a, 'info>>,
     total_atoms: GlobalAtoms,

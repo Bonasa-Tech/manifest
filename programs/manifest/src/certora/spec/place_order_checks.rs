@@ -15,12 +15,27 @@ use crate::{
         market::market_helpers::{AddOrderStatus, AddOrderToMarketInnerResult, AddSingleOrderCtx},
         AddOrderToMarketArgs, DynamicAccount, MarketRefMut,
     },
+    validation::loaders::GlobalTradeAccounts,
 };
 use hypertree::DataIndex;
 
 pub fn place_single_order_nondet_inputs<const IS_BID: bool>(
     market_info: &AccountInfo,
 ) -> (AddOrderToMarketArgs<'static, 'static>, BaseAtoms, u32) {
+    place_single_order_nondet_inputs_with_type::<IS_BID>(
+        market_info,
+        state::OrderType::Limit,
+        &[None, None],
+    )
+}
+
+/// Nondeterministic inputs for a taker of the given order type, matching
+/// against whatever the global accounts allow.
+pub fn place_single_order_nondet_inputs_with_type<'a, const IS_BID: bool>(
+    market_info: &AccountInfo,
+    order_type: state::OrderType,
+    global_trade_accounts_opts: &'a [Option<GlobalTradeAccounts<'a, 'static>>; 2],
+) -> (AddOrderToMarketArgs<'a, 'static>, BaseAtoms, u32) {
     let args: AddOrderToMarketArgs = AddOrderToMarketArgs {
         market: *market_info.key,
         trader_index: main_trader_index(),
@@ -28,8 +43,8 @@ pub fn place_single_order_nondet_inputs<const IS_BID: bool>(
         price: QuoteAtomsPerBaseAtom::nondet_price_u32(),
         is_bid: IS_BID,
         last_valid_slot: nondet(),
-        order_type: state::OrderType::Limit,
-        global_trade_accounts_opts: &[None, None],
+        order_type,
+        global_trade_accounts_opts,
         current_slot: Some(nondet()),
     };
     let remaining_base_atoms: BaseAtoms = nondet();
@@ -204,6 +219,9 @@ pub fn place_single_order_full_match_check<const IS_BID: bool>() {
         maker_trader,
     );
 
+    // -- the exact deltas below only hold for a maker that does not reverse
+    cvt_assume_maker_not_reversible(maker_order_index);
+
     // -- record balances before place_single_order
 
     let balances_old: AllBalances = record_all_balances(
@@ -283,6 +301,9 @@ pub fn place_single_order_partial_match_check<const IS_BID: bool>() {
         vault_quote_token,
         maker_trader,
     );
+
+    // -- the exact deltas below only hold for a maker that does not reverse
+    cvt_assume_maker_not_reversible(maker_order_index);
 
     // -- record balances before place_single_order
     let balances_old: AllBalances = record_all_balances(

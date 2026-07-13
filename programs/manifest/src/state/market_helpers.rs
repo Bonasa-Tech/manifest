@@ -146,14 +146,19 @@ pub use free_addr_helpers::*;
 use super::*;
 use crate::state::utils::{transfer_global_tokens, try_to_reduce_global_tokens};
 
-#[derive(Default, PartialEq)]
+#[derive(Default, PartialEq, Clone, Copy)]
 pub enum AddOrderStatus {
     #[default]
     Canceled,
     Filled,
     PartialFill,
     Unmatched,
+    /// The maker was a global order that could not cover the trade, so it was
+    /// removed from the book without trading.
     GlobalSkip,
+    /// The maker was a global order but the global accounts were not passed in,
+    /// so matching stops here.
+    GlobalMissing,
 }
 
 #[derive(Default)]
@@ -192,7 +197,10 @@ impl<'a, 'b, 'info> AddSingleOrderCtx<'a, 'b, 'info> {
             global_atoms_to_transfer: GlobalAtoms::ZERO,
         }
     }
-    // TODO: Clean this up or prove that it is the same as market::place_order
+    /// One iteration of the matching loop in `Market::place_order`. Kept
+    /// separate so that formal verification can reason about a single step
+    /// instead of the whole loop. It must stay behaviourally identical to the
+    /// body of that loop.
     pub fn place_single_order(
         &mut self,
         current_order_index: DataIndex,
@@ -219,8 +227,8 @@ impl<'a, 'b, 'info> AddSingleOrderCtx<'a, 'b, 'info> {
 
         let other_order: &RestingOrder = get_helper_order(dynamic, current_order_index).get_value();
 
-        // Remove the resting order if expired.
-        if other_order.is_expired(now_slot) {
+        // Remove the resting order if expired or somehow a zero order got on the book.
+        if other_order.is_expired(now_slot) || other_order.get_num_base_atoms() == BaseAtoms::ZERO {
             remove_and_update_balances(
                 fixed,
                 dynamic,
@@ -230,7 +238,6 @@ impl<'a, 'b, 'info> AddSingleOrderCtx<'a, 'b, 'info> {
             return Ok(AddOrderToMarketInnerResult {
                 next_order_index,
                 status: AddOrderStatus::Canceled,
-                ..Default::default()
             });
         }
 
@@ -241,7 +248,6 @@ impl<'a, 'b, 'info> AddSingleOrderCtx<'a, 'b, 'info> {
             return Ok(AddOrderToMarketInnerResult {
                 next_order_index: NIL,
                 status: AddOrderStatus::Unmatched,
-                ..Default::default()
             });
         }
 
@@ -254,8 +260,8 @@ impl<'a, 'b, 'info> AddSingleOrderCtx<'a, 'b, 'info> {
         );
         assert_can_take(order_type)?;
 
-        let maker_sequence_number = other_order.get_sequence_number();
-        let other_trader_index: DataIndex = other_order.get_trader_index();
+        let maker_sequence_number: u64 = other_order.get_sequence_number();
+        let maker_trader_index: DataIndex = other_order.get_trader_index();
         let did_fully_match_resting_order: bool =
             remaining_base_atoms >= other_order.get_num_base_atoms();
         let base_atoms_traded: BaseAtoms = if did_fully_match_resting_order {
@@ -265,6 +271,11 @@ impl<'a, 'b, 'info> AddSingleOrderCtx<'a, 'b, 'info> {
         };
 
         let matched_price: QuoteAtomsPerBaseAtom = other_order.get_price();
+        let maker_order_type: OrderType = other_order.get_order_type();
+        let maker_price_reverse: Result<QuoteAtomsPerBaseAtom, _> = other_order.reverse_price();
+        let is_global: bool = other_order.is_global();
+        let is_maker_reverse: bool = other_order.is_reversible();
+        let maker_reverse_spread: u16 = other_order.get_reverse_spread();
 
         // on full fill: round in favor of the taker
         // on partial fill: round in favor of the maker
@@ -273,24 +284,41 @@ impl<'a, 'b, 'info> AddSingleOrderCtx<'a, 'b, 'info> {
 
         // If it is a global order, just in time bring the funds over, or
         // remove from the tree and continue on to the next order.
-        let maker: Pubkey = get_helper_seat(dynamic, other_order.get_trader_index())
+        let maker: Pubkey = get_helper_seat(dynamic, maker_trader_index)
             .get_value()
             .trader;
         let taker: Pubkey = get_helper_seat(dynamic, trader_index).get_value().trader;
 
-        if other_order.is_global() {
+        if is_global {
             let global_trade_accounts_opt: &Option<GlobalTradeAccounts> = if is_bid {
                 &global_trade_accounts_opts[0]
             } else {
                 &global_trade_accounts_opts[1]
             };
-            let desired_atoms: GlobalAtoms = GlobalAtoms::new(if is_bid {
-                quote_atoms_traded.as_u64()
-            } else {
+            // When the global account is not included, a taker order can halt
+            // here, but a possible maker order will need to crash since that
+            // would result in a crossed book.
+            if global_trade_accounts_opt.is_none() {
+                if order_type_can_rest(order_type) {
+                    return Err(ManifestError::MissingGlobal.into());
+                }
+                return Ok(AddOrderToMarketInnerResult {
+                    next_order_index: NIL,
+                    status: AddOrderStatus::GlobalMissing,
+                });
+            }
+            // When is_bid, the taker is supplying quote, so the global maker
+            // needs to supply base.
+            let global_atoms_needed: GlobalAtoms = GlobalAtoms::new(if is_bid {
                 base_atoms_traded.as_u64()
+            } else {
+                quote_atoms_traded.as_u64()
             });
-            let has_enough_tokens: bool =
-                try_to_reduce_global_tokens(global_trade_accounts_opt, &maker, desired_atoms)?;
+            let has_enough_tokens: bool = try_to_reduce_global_tokens(
+                global_trade_accounts_opt,
+                &maker,
+                global_atoms_needed,
+            )?;
             if !has_enough_tokens {
                 remove_and_update_balances(
                     fixed,
@@ -301,12 +329,12 @@ impl<'a, 'b, 'info> AddSingleOrderCtx<'a, 'b, 'info> {
                 return Ok(AddOrderToMarketInnerResult {
                     next_order_index,
                     status: AddOrderStatus::GlobalSkip,
-                    ..Default::default()
                 });
             }
             // Accumulate for batch transfer after matching completes
-            self.global_atoms_to_transfer =
-                self.global_atoms_to_transfer.checked_add(desired_atoms)?;
+            self.global_atoms_to_transfer = self
+                .global_atoms_to_transfer
+                .checked_add(global_atoms_needed)?;
         }
 
         self.total_base_atoms_traded = self
@@ -335,7 +363,11 @@ impl<'a, 'b, 'info> AddSingleOrderCtx<'a, 'b, 'info> {
         // Note that we do not have to do this on the other direction
         // because the amount of atoms that a maker needs to support an ask
         // is exact. The rounding is always on quote.
-        if !is_bid {
+        //
+        // Do not credit the bonus atom on global orders. Only the atoms
+        // required for the trade were brought over from the global account, so
+        // there is no spare atom on the market to credit.
+        if !is_bid && !is_global {
             // These are only used when is_bid, included up here for borrow checker reasons.
             let other_order: &RestingOrder =
                 get_helper_order(dynamic, current_order_index).get_value();
@@ -351,7 +383,7 @@ impl<'a, 'b, 'info> AddSingleOrderCtx<'a, 'b, 'info> {
             update_balance(
                 fixed,
                 dynamic,
-                other_trader_index,
+                maker_trader_index,
                 is_bid,
                 true,
                 (previous_maker_quote_atoms_allocated
@@ -382,7 +414,7 @@ impl<'a, 'b, 'info> AddSingleOrderCtx<'a, 'b, 'info> {
         update_balance(
             fixed,
             dynamic,
-            other_trader_index,
+            maker_trader_index,
             !is_bid,
             true,
             if is_bid {
@@ -406,7 +438,7 @@ impl<'a, 'b, 'info> AddSingleOrderCtx<'a, 'b, 'info> {
         )?;
 
         // record maker & taker volume
-        record_volume_by_trader_index(dynamic, other_trader_index, quote_atoms_traded);
+        record_volume_by_trader_index(dynamic, maker_trader_index, quote_atoms_traded);
         record_volume_by_trader_index(dynamic, trader_index, quote_atoms_traded);
 
         emit_stack(FillLog {
@@ -421,18 +453,13 @@ impl<'a, 'b, 'info> AddSingleOrderCtx<'a, 'b, 'info> {
             taker_is_buy: PodBool::from(is_bid),
             base_mint: *fixed.get_base_mint(),
             quote_mint: *fixed.get_quote_mint(),
-            // TODO: Fix this
-            is_maker_global: PodBool::from(false),
+            is_maker_global: PodBool::from(is_global),
             _padding: [0; 14],
         })?;
 
-        if did_fully_match_resting_order {
+        let status: AddOrderStatus = if did_fully_match_resting_order {
             // Get paid for removing a global order.
-            if get_helper_order(dynamic, current_order_index)
-                .get_value()
-                .get_order_type()
-                == OrderType::Global
-            {
+            if is_global {
                 if is_bid {
                     remove_from_global(&global_trade_accounts_opts[0])?;
                 } else {
@@ -442,11 +469,7 @@ impl<'a, 'b, 'info> AddSingleOrderCtx<'a, 'b, 'info> {
 
             remove_order_from_tree_and_free(fixed, dynamic, current_order_index, !is_bid)?;
             self.remaining_base_atoms = self.remaining_base_atoms.checked_sub(base_atoms_traded)?;
-            return Ok(AddOrderToMarketInnerResult {
-                next_order_index,
-                status: AddOrderStatus::Filled,
-                ..Default::default()
-            });
+            AddOrderStatus::Filled
         } else {
             #[cfg(feature = "certora")]
             remove_from_orderbook_balance(fixed, dynamic, current_order_index);
@@ -456,13 +479,159 @@ impl<'a, 'b, 'info> AddSingleOrderCtx<'a, 'b, 'info> {
             #[cfg(feature = "certora")]
             add_to_orderbook_balance(fixed, dynamic, current_order_index);
             self.remaining_base_atoms = BaseAtoms::ZERO;
-            return Ok(AddOrderToMarketInnerResult {
-                next_order_index: NIL,
-                status: AddOrderStatus::PartialFill,
-                ..Default::default()
-            });
+            AddOrderStatus::PartialFill
+        };
+
+        // Place the reverse order if the maker was a reverse order type. This
+        // is non-trivial because in order to prevent tons of orders filling the
+        // books on partial fills, we coalesce on top of book.
+        if is_maker_reverse {
+            if let Ok(price_reverse) = maker_price_reverse {
+                place_reverse_order(
+                    fixed,
+                    dynamic,
+                    maker_trader_index,
+                    maker_order_type,
+                    maker_reverse_spread,
+                    price_reverse,
+                    base_atoms_traded,
+                    quote_atoms_traded,
+                    is_bid,
+                )?;
+            }
+        }
+
+        Ok(AddOrderToMarketInnerResult {
+            next_order_index: if status == AddOrderStatus::Filled {
+                next_order_index
+            } else {
+                NIL
+            },
+            status,
+        })
+    }
+}
+
+/// Put the maker of a filled reverse order back on the other side of the book,
+/// coalescing into an existing order at the same price when there is one.
+/// Mirrors the reverse block of `Market::place_order`.
+#[allow(clippy::too_many_arguments)]
+fn place_reverse_order(
+    fixed: &mut MarketFixed,
+    dynamic: &mut [u8],
+    maker_trader_index: DataIndex,
+    maker_order_type: OrderType,
+    maker_reverse_spread: u16,
+    price_reverse: QuoteAtomsPerBaseAtom,
+    base_atoms_traded: BaseAtoms,
+    quote_atoms_traded: QuoteAtoms,
+    is_bid: bool,
+) -> ProgramResult {
+    let num_base_atoms_reverse: BaseAtoms = if is_bid {
+        // Maker is now buying with the exact number of quote atoms. Do not
+        // round_up because there might not be enough atoms for that.
+        price_reverse.checked_base_for_quote(quote_atoms_traded, false)?
+    } else {
+        base_atoms_traded
+    };
+
+    let mut coalesced: bool = false;
+    // Quote atoms the maker pays for the reverse bid. See the twin block in
+    // Market::place_order: on coalesce, this is the exact growth of the
+    // coalesced order's backing at that order's own price, not
+    // num_base_atoms_reverse * price_reverse.
+    let mut reverse_quote_atoms_debited: QuoteAtoms = QuoteAtoms::ZERO;
+    {
+        let other_tree: Bookside = if is_bid {
+            Bookside::new(dynamic, fixed.bids_root_index, fixed.bids_best_index)
+        } else {
+            Bookside::new(dynamic, fixed.asks_root_index, fixed.asks_best_index)
+        };
+        let lookup_resting_order: RestingOrder = RestingOrder::new(
+            maker_trader_index,
+            BaseAtoms::ZERO, // Size does not matter, just price.
+            price_reverse,
+            0, // Sequence number does not matter, just price
+            NO_EXPIRATION_LAST_VALID_SLOT,
+            is_bid,
+            maker_order_type,
+        )?;
+
+        let lookup_index: DataIndex = other_tree.lookup_index(&lookup_resting_order);
+        if lookup_index != NIL {
+            #[cfg(feature = "certora")]
+            remove_from_orderbook_balance(fixed, dynamic, lookup_index);
+            let order_to_coalesce_into: &mut RestingOrder =
+                get_mut_helper_order(dynamic, lookup_index).get_mut_value();
+            if is_bid {
+                let previous_quote_allocated: QuoteAtoms = order_to_coalesce_into
+                    .get_price()
+                    .checked_quote_for_base(order_to_coalesce_into.get_num_base_atoms(), true)?;
+                order_to_coalesce_into.increase(num_base_atoms_reverse)?;
+                let new_quote_allocated: QuoteAtoms = order_to_coalesce_into
+                    .get_price()
+                    .checked_quote_for_base(order_to_coalesce_into.get_num_base_atoms(), true)?;
+                reverse_quote_atoms_debited =
+                    new_quote_allocated.checked_sub(previous_quote_allocated)?;
+            } else {
+                order_to_coalesce_into.increase(num_base_atoms_reverse)?;
+            }
+            #[cfg(feature = "certora")]
+            add_to_orderbook_balance(fixed, dynamic, lookup_index);
+            coalesced = true;
         }
     }
+    if !coalesced && is_bid {
+        reverse_quote_atoms_debited = num_base_atoms_reverse.checked_mul(price_reverse, true)?;
+    }
+
+    // If there was 1 atom and because taker rounding is in effect, then this
+    // would result in an empty order.
+    if !coalesced && num_base_atoms_reverse > BaseAtoms::ZERO {
+        let reverse_order_sequence_number: u64 = fixed.order_sequence_number;
+        fixed.order_sequence_number = reverse_order_sequence_number.wrapping_add(1);
+
+        let free_address: DataIndex = if is_bid {
+            get_free_address_on_market_fixed_for_bid_order(fixed, dynamic)
+        } else {
+            get_free_address_on_market_fixed_for_ask_order(fixed, dynamic)
+        };
+
+        let mut new_reverse_resting_order: RestingOrder = RestingOrder::new(
+            maker_trader_index,
+            num_base_atoms_reverse,
+            price_reverse,
+            reverse_order_sequence_number,
+            // Does not expire.
+            NO_EXPIRATION_LAST_VALID_SLOT,
+            is_bid,
+            maker_order_type,
+        )?;
+        new_reverse_resting_order.set_reverse_spread(maker_reverse_spread);
+        insert_order_into_tree(
+            is_bid,
+            fixed,
+            dynamic,
+            free_address,
+            &new_reverse_resting_order,
+        );
+        set_payload_order(dynamic, free_address);
+    }
+
+    update_balance(
+        fixed,
+        dynamic,
+        maker_trader_index,
+        !is_bid,
+        false,
+        if is_bid {
+            reverse_quote_atoms_debited.into()
+        } else {
+            num_base_atoms_reverse.into()
+        },
+    )?;
+
+    Ok(())
 }
 
 pub fn place_order_helper<

@@ -7,10 +7,12 @@
 use std::{cmp::Ordering, mem::size_of};
 
 use bytemuck::{Pod, Zeroable};
+#[cfg(not(feature = "certora"))]
 use hypertree::{
-    get_helper, get_mut_helper, DataIndex, FreeList, Get, HyperTreeReadOperations,
-    HyperTreeWriteOperations, RBNode, RedBlackTree, RedBlackTreeReadOnly, NIL,
+    get_helper, get_mut_helper, FreeList, HyperTreeReadOperations, HyperTreeWriteOperations,
+    RBNode, RedBlackTree, RedBlackTreeReadOnly,
 };
+use hypertree::{DataIndex, Get, NIL};
 use shank::ShankType;
 use solana_program::{entrypoint::ProgramResult, pubkey::Pubkey};
 use static_assertions::const_assert_eq;
@@ -21,11 +23,73 @@ use crate::{
     validation::{get_global_address, get_global_vault_address, ManifestAccount},
 };
 
+#[cfg(feature = "certora")]
+use crate::quantities::WrapperU64;
+
 use super::{
-    DerefOrBorrow, DerefOrBorrowMut, DynamicAccount, RestingOrder, GLOBAL_BLOCK_SIZE,
-    GLOBAL_DEPOSIT_SIZE, GLOBAL_FIXED_DISCRIMINANT, GLOBAL_FIXED_SIZE, GLOBAL_FREE_LIST_BLOCK_SIZE,
-    GLOBAL_TRADER_SIZE, MAX_GLOBAL_SEATS,
+    DerefOrBorrow, DerefOrBorrowMut, DynamicAccount, RestingOrder, GLOBAL_DEPOSIT_SIZE,
+    GLOBAL_FIXED_DISCRIMINANT, GLOBAL_TRADER_SIZE, MAX_GLOBAL_SEATS,
 };
+#[cfg(not(feature = "certora"))]
+use super::{GLOBAL_BLOCK_SIZE, GLOBAL_FIXED_SIZE, GLOBAL_FREE_LIST_BLOCK_SIZE};
+
+#[path = "cvt_global_mock.rs"]
+#[cfg(feature = "certora")]
+mod cvt_global_mock;
+#[cfg(feature = "certora")]
+pub use cvt_global_mock::*;
+
+#[cfg(not(feature = "certora"))]
+mod global_helpers {
+    use super::*;
+
+    pub fn get_helper_global_trader(data: &[u8], index: DataIndex) -> &RBNode<GlobalTrader> {
+        get_helper::<RBNode<GlobalTrader>>(data, index)
+    }
+    pub fn get_helper_global_deposit(data: &[u8], index: DataIndex) -> &RBNode<GlobalDeposit> {
+        get_helper::<RBNode<GlobalDeposit>>(data, index)
+    }
+    pub fn get_mut_helper_global_deposit(
+        data: &mut [u8],
+        index: DataIndex,
+    ) -> &mut RBNode<GlobalDeposit> {
+        get_mut_helper::<RBNode<GlobalDeposit>>(data, index)
+    }
+
+    pub fn get_free_address_on_global_fixed(
+        fixed: &mut GlobalFixed,
+        dynamic: &mut [u8],
+    ) -> DataIndex {
+        let mut free_list: FreeList<GlobalUnusedFreeListPadding> =
+            FreeList::new(dynamic, fixed.free_list_head_index);
+        let free_address: DataIndex = free_list.remove();
+        fixed.free_list_head_index = free_list.get_head();
+        free_address
+    }
+}
+#[cfg(not(feature = "certora"))]
+pub use global_helpers::*;
+
+#[cfg(not(feature = "certora"))]
+mod global_tree_types {
+    use super::*;
+    pub type GlobalTraderTree<'a> = RedBlackTree<'a, GlobalTrader>;
+    pub type GlobalTraderTreeReadOnly<'a> = RedBlackTreeReadOnly<'a, GlobalTrader>;
+    pub type GlobalDepositTree<'a> = RedBlackTree<'a, GlobalDeposit>;
+    pub type GlobalDepositTreeReadOnly<'a> = RedBlackTreeReadOnly<'a, GlobalDeposit>;
+}
+
+// The real trees are out of reach for the prover, so swap in the mocks that
+// model a global account with two seats.
+#[cfg(feature = "certora")]
+mod global_tree_types {
+    use super::*;
+    pub type GlobalTraderTree<'a> = CvtGlobalTraderTree<'a>;
+    pub type GlobalTraderTreeReadOnly<'a> = CvtGlobalTraderTreeReadOnly<'a>;
+    pub type GlobalDepositTree<'a> = CvtGlobalDepositTree<'a>;
+    pub type GlobalDepositTreeReadOnly<'a> = CvtGlobalDepositTreeReadOnly<'a>;
+}
+pub use global_tree_types::*;
 
 #[repr(C)]
 #[derive(Default, Copy, Clone, Zeroable, Pod, ShankType)]
@@ -60,7 +124,14 @@ pub struct GlobalFixed {
     global_bump: u8,
 
     num_seats_claimed: u16,
+
+    /// Sum of the balances of every GlobalDeposit. Not worth the CU onchain, it
+    /// only exists so that formal verification can state that the global vault
+    /// fully backs what traders are owed.
+    #[cfg(feature = "certora")]
+    global_deposited_atoms: GlobalAtoms,
 }
+#[cfg(not(feature = "certora"))]
 const_assert_eq!(
     size_of::<GlobalFixed>(),
     8  +  // discriminant
@@ -68,17 +139,19 @@ const_assert_eq!(
     32 +  // vault
     4 +   // global_seats_root_index
     4 +   // global_amounts_root_index
-    4 +   // global_amounts_max_index 
+    4 +   // global_amounts_max_index
     4 +   // free_list_head_index
     4 +   // num_bytes_allocated
     1 +   // vault_bump
     1 +   // global_bump
     2 // num_seats_claimed
 );
+#[cfg(not(feature = "certora"))]
 const_assert_eq!(size_of::<GlobalFixed>(), GLOBAL_FIXED_SIZE);
 const_assert_eq!(size_of::<GlobalFixed>() % 8, 0);
 impl Get for GlobalFixed {}
 
+#[cfg(not(feature = "certora"))]
 #[repr(C, packed)]
 #[derive(Default, Copy, Clone, Pod, Zeroable)]
 struct GlobalUnusedFreeListPadding {
@@ -86,6 +159,7 @@ struct GlobalUnusedFreeListPadding {
     _padding2: [u8; 4],
 }
 // 4 bytes are for the free list, rest is payload.
+#[cfg(not(feature = "certora"))]
 const_assert_eq!(
     size_of::<GlobalUnusedFreeListPadding>(),
     GLOBAL_FREE_LIST_BLOCK_SIZE
@@ -179,8 +253,33 @@ impl GlobalFixed {
             vault_bump,
             global_bump,
             num_seats_claimed: 0,
+            #[cfg(feature = "certora")]
+            global_deposited_atoms: GlobalAtoms::ZERO,
         }
     }
+
+    /// Every field is nondeterministic except the discriminant and the tree
+    /// indices, which the mock owns. The mock must already be initialised
+    /// (rules do that via `cvt_static_initializer!`) because the deposits max
+    /// index is answered by the mock.
+    #[cfg(feature = "certora")]
+    pub fn new_nondet() -> Self {
+        GlobalFixed {
+            discriminant: GLOBAL_FIXED_DISCRIMINANT,
+            mint: ::nondet::nondet(),
+            vault: ::nondet::nondet(),
+            global_traders_root_index: NIL,
+            global_deposits_root_index: NIL,
+            global_deposits_max_index: min_balance_deposit_index(),
+            free_list_head_index: 0,
+            num_bytes_allocated: ::nondet::nondet(),
+            vault_bump: ::nondet::nondet(),
+            global_bump: ::nondet::nondet(),
+            num_seats_claimed: 0,
+            global_deposited_atoms: GlobalAtoms::new(::nondet::nondet()),
+        }
+    }
+
     pub fn get_mint(&self) -> &Pubkey {
         &self.mint
     }
@@ -192,6 +291,10 @@ impl GlobalFixed {
     }
     pub fn needs_eviction(&self) -> bool {
         self.num_seats_claimed >= MAX_GLOBAL_SEATS
+    }
+    #[cfg(feature = "certora")]
+    pub fn get_global_deposited_atoms(&self) -> GlobalAtoms {
+        self.global_deposited_atoms
     }
 }
 
@@ -218,6 +321,14 @@ impl GlobalTrader {
             _padding2: 0,
         }
     }
+
+    pub fn get_trader(&self) -> &Pubkey {
+        &self.trader
+    }
+
+    pub fn get_deposit_index(&self) -> DataIndex {
+        self.deposit_index
+    }
 }
 
 impl GlobalDeposit {
@@ -229,15 +340,24 @@ impl GlobalDeposit {
         }
     }
 
+    /// A deposit for `trader` holding an arbitrary balance.
+    #[cfg(feature = "certora")]
+    pub fn new_nondet(trader: &Pubkey) -> Self {
+        GlobalDeposit {
+            trader: *trader,
+            balance_atoms: GlobalAtoms::new(::nondet::nondet()),
+            _padding: 0,
+        }
+    }
+
+    pub fn get_trader(&self) -> &Pubkey {
+        &self.trader
+    }
+
     pub fn get_balance_atoms(&self) -> GlobalAtoms {
         self.balance_atoms
     }
 }
-
-pub type GlobalTraderTree<'a> = RedBlackTree<'a, GlobalTrader>;
-pub type GlobalTraderTreeReadOnly<'a> = RedBlackTreeReadOnly<'a, GlobalTrader>;
-pub type GlobalDepositTree<'a> = RedBlackTree<'a, GlobalDeposit>;
-pub type GlobalDepositTreeReadOnly<'a> = RedBlackTreeReadOnly<'a, GlobalDeposit>;
 
 /// Fully owned Global, used in clients that can copy.
 pub type GlobalValue = DynamicAccount<GlobalFixed, Vec<u8>>;
@@ -292,7 +412,7 @@ impl<Fixed: DerefOrBorrow<GlobalFixed>, Dynamic: DerefOrBorrow<[u8]>>
         let existing_trader_index: DataIndex =
             global_trader_tree.lookup_index(&existing_global_trader);
         let existing_global_trader: &GlobalTrader =
-            get_helper::<RBNode<GlobalTrader>>(dynamic, existing_trader_index).get_value();
+            get_helper_global_trader(dynamic, existing_trader_index).get_value();
         let existing_deposit_index: DataIndex = existing_global_trader.deposit_index;
 
         require!(
@@ -315,6 +435,7 @@ impl<Fixed: DerefOrBorrowMut<GlobalFixed>, Dynamic: DerefOrBorrowMut<[u8]>>
         }
     }
 
+    #[cfg(not(feature = "certora"))]
     pub fn global_expand(&mut self) -> ProgramResult {
         let DynamicAccount { fixed, dynamic } = self.borrow_mut_global();
 
@@ -332,6 +453,13 @@ impl<Fixed: DerefOrBorrowMut<GlobalFixed>, Dynamic: DerefOrBorrowMut<[u8]>>
         free_list.add(fixed.num_bytes_allocated + GLOBAL_BLOCK_SIZE as u32);
         fixed.num_bytes_allocated += 2 * GLOBAL_BLOCK_SIZE as u32;
         fixed.free_list_head_index = free_list.get_head();
+        Ok(())
+    }
+
+    // The mocked global account has a fixed number of blocks, so there is
+    // nothing to expand.
+    #[cfg(feature = "certora")]
+    pub fn global_expand(&mut self) -> ProgramResult {
         Ok(())
     }
 
@@ -353,9 +481,13 @@ impl<Fixed: DerefOrBorrowMut<GlobalFixed>, Dynamic: DerefOrBorrowMut<[u8]>>
         }
 
         let global_deposit: &mut GlobalDeposit =
-            get_mut_helper::<RBNode<GlobalDeposit>>(dynamic, deposit_index).get_mut_value();
+            get_mut_helper_global_deposit(dynamic, deposit_index).get_mut_value();
+        #[cfg(feature = "certora")]
+        let old_balance_atoms: GlobalAtoms = global_deposit.balance_atoms;
         global_deposit.balance_atoms = global_deposit.balance_atoms.checked_sub(num_atoms)?;
         let updated_deposit: GlobalDeposit = *global_deposit;
+        #[cfg(feature = "certora")]
+        update_deposited_atoms(fixed, old_balance_atoms, updated_deposit.balance_atoms);
 
         {
             let mut deposit_tree: GlobalDepositTree = GlobalDepositTree::new(
@@ -450,7 +582,7 @@ impl<Fixed: DerefOrBorrowMut<GlobalFixed>, Dynamic: DerefOrBorrowMut<[u8]>>
         let existing_trader_index: DataIndex =
             global_trader_tree.lookup_index(&existing_global_trader);
         let existing_global_trader: &GlobalTrader =
-            get_helper::<RBNode<GlobalTrader>>(dynamic, existing_trader_index).get_value();
+            get_helper_global_trader(dynamic, existing_trader_index).get_value();
         let existing_deposit_index: DataIndex = existing_global_trader.deposit_index;
 
         // Update global trader
@@ -530,9 +662,13 @@ impl<Fixed: DerefOrBorrowMut<GlobalFixed>, Dynamic: DerefOrBorrowMut<[u8]>>
         }
 
         let global_deposit: &mut GlobalDeposit =
-            get_mut_helper::<RBNode<GlobalDeposit>>(dynamic, deposit_index).get_mut_value();
+            get_mut_helper_global_deposit(dynamic, deposit_index).get_mut_value();
+        #[cfg(feature = "certora")]
+        let old_balance_atoms: GlobalAtoms = global_deposit.balance_atoms;
         global_deposit.balance_atoms = global_deposit.balance_atoms.checked_add(num_atoms)?;
         let updated_deposit: GlobalDeposit = *global_deposit;
+        #[cfg(feature = "certora")]
+        update_deposited_atoms(fixed, old_balance_atoms, updated_deposit.balance_atoms);
 
         {
             let mut deposit_tree: GlobalDepositTree = GlobalDepositTree::new(
@@ -565,9 +701,13 @@ impl<Fixed: DerefOrBorrowMut<GlobalFixed>, Dynamic: DerefOrBorrowMut<[u8]>>
         }
 
         let global_deposit: &mut GlobalDeposit =
-            get_mut_helper::<RBNode<GlobalDeposit>>(dynamic, deposit_index).get_mut_value();
+            get_mut_helper_global_deposit(dynamic, deposit_index).get_mut_value();
+        #[cfg(feature = "certora")]
+        let old_balance_atoms: GlobalAtoms = global_deposit.balance_atoms;
         global_deposit.balance_atoms = global_deposit.balance_atoms.checked_sub(num_atoms)?;
         let updated_deposit: GlobalDeposit = *global_deposit;
+        #[cfg(feature = "certora")]
+        update_deposited_atoms(fixed, old_balance_atoms, updated_deposit.balance_atoms);
 
         {
             let mut deposit_tree: GlobalDepositTree = GlobalDepositTree::new(
@@ -582,6 +722,16 @@ impl<Fixed: DerefOrBorrowMut<GlobalFixed>, Dynamic: DerefOrBorrowMut<[u8]>>
 
         Ok(())
     }
+}
+
+/// Keep the ghost sum of all global deposits in step with a single deposit
+/// changing from `old` to `new`.
+#[cfg(feature = "certora")]
+fn update_deposited_atoms(fixed: &mut GlobalFixed, old: GlobalAtoms, new: GlobalAtoms) {
+    fixed.global_deposited_atoms = fixed
+        .global_deposited_atoms
+        .saturating_sub(old)
+        .saturating_add(new);
 }
 
 fn get_deposit_index(
@@ -600,16 +750,8 @@ fn get_deposit_index(
         trader
     )?;
     let global_trader: &GlobalTrader =
-        get_helper::<RBNode<GlobalTrader>>(dynamic, global_trader_index).get_value();
+        get_helper_global_trader(dynamic, global_trader_index).get_value();
     Ok(global_trader.deposit_index)
-}
-
-fn get_free_address_on_global_fixed(fixed: &mut GlobalFixed, dynamic: &mut [u8]) -> DataIndex {
-    let mut free_list: FreeList<GlobalUnusedFreeListPadding> =
-        FreeList::new(dynamic, fixed.free_list_head_index);
-    let free_address: DataIndex = free_list.remove();
-    fixed.free_list_head_index = free_list.get_head();
-    free_address
 }
 
 fn get_global_trader<'a>(
@@ -625,7 +767,7 @@ fn get_global_trader<'a>(
         return None;
     }
     let global_trader: &GlobalTrader =
-        get_helper::<RBNode<GlobalTrader>>(dynamic, global_trader_index).get_value();
+        get_helper_global_trader(dynamic, global_trader_index).get_value();
     Some(global_trader)
 }
 
@@ -642,9 +784,9 @@ fn get_mut_global_deposit<'a>(
         return None;
     }
     let global_trader: &GlobalTrader =
-        get_helper::<RBNode<GlobalTrader>>(dynamic, global_trader_index).get_value();
+        get_helper_global_trader(dynamic, global_trader_index).get_value();
     let global_deposit_index: DataIndex = global_trader.deposit_index;
-    Some(get_mut_helper::<RBNode<GlobalDeposit>>(dynamic, global_deposit_index).get_mut_value())
+    Some(get_mut_helper_global_deposit(dynamic, global_deposit_index).get_mut_value())
 }
 
 fn get_global_deposit<'a>(
@@ -660,9 +802,9 @@ fn get_global_deposit<'a>(
         return None;
     }
     let global_trader: &GlobalTrader =
-        get_helper::<RBNode<GlobalTrader>>(dynamic, global_trader_index).get_value();
+        get_helper_global_trader(dynamic, global_trader_index).get_value();
     let global_deposit_index: DataIndex = global_trader.deposit_index;
-    Some(get_helper::<RBNode<GlobalDeposit>>(dynamic, global_deposit_index).get_value())
+    Some(get_helper_global_deposit(dynamic, global_deposit_index).get_value())
 }
 
 #[cfg(test)]
