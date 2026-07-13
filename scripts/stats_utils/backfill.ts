@@ -20,6 +20,7 @@ const AGGREGATOR_PROGRAM_IDS = {
   s7SunwrPG5SbViEKiViaDThPRJxkkTrNx2iRPN3exNC: 'Bitget',
   '2UUgGySTVXmKFatH7pGQo84ZrzdSYF5zw9iqrGwBMuuj': 'Bitget',
   HuTkmnrv4zPnArMqpbMbFhfwzTR7xfWQZHH1aQKzDKFZ: 'Liquid Mesh',
+  FqGg2Y1FNxMiGd51Q6UETixQWkF5fB92MysbYogRJb3P: 'HawkFi',
 } as const;
 
 const ORIGINATING_PROTOCOL_IDS = {
@@ -39,6 +40,7 @@ const ORIGINATING_PROTOCOL_IDS = {
   '8psNvWTrdNTiVRNzAgsou9kETXNJm2SXZyaKuJraVRtf': 'phantom',
   B3111yJCeHBcA1bizdJjUFPALfhAfSRnAbJzGUtnt56A: 'binance',
   BN111JnbLtbmQqqiCh7h2pDKhAhMx4wi77Mj7jJFbyp8: 'binance',
+  BN111AnCthcdPVNJ6jkir9TDaS7xqXT8EhetAmYpNqFt: 'binance',
   '7JCe3GHwkEr3feHgtLXnmuJ1yB3A7coSeyynxTBgdG8k': 'coinbase',
   F7p3dFrjRTbtRp8FRF6qHLomXbKRBzpvBLjtQcfcgmNe: 'relay',
 } as const;
