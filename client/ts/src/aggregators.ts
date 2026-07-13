@@ -43,6 +43,7 @@ export const ORIGINATING_PROTOCOL_IDS = {
   BN111AnCthcdPVNJ6jkir9TDaS7xqXT8EhetAmYpNqFt: 'binance',
   '7JCe3GHwkEr3feHgtLXnmuJ1yB3A7coSeyynxTBgdG8k': 'coinbase',
   F7p3dFrjRTbtRp8FRF6qHLomXbKRBzpvBLjtQcfcgmNe: 'relay',
+  AgmLJBMDCqWynYnQiPCuj9ewsNNsBJXyzoUhD9LJzN51: 'fomo',
 } as const;
 
 /**
