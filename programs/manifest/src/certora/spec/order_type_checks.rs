@@ -322,7 +322,7 @@ pub fn rule_reverse_tight_maker_no_funds_loss_ask() {
 /// be the difference of allocations or an atom strands in the vault (or the
 /// order ends up under-backed when the coalesce target sits one price
 /// increment away, which RestingOrder::eq tolerates).
-pub fn reverse_coalesce_check<const IS_BID: bool>() {
+pub fn reverse_coalesce_check<const IS_BID: bool, const IS_TIGHT: bool>() {
     cvt_static_initializer!();
 
     let acc_infos: [AccountInfo; 16] = acc_infos_with_mem_layout!();
@@ -333,7 +333,7 @@ pub fn reverse_coalesce_check<const IS_BID: bool>() {
     let vault_quote_token: &AccountInfo = &acc_infos[9];
 
     let (maker_order_index, coalesce_order_index) =
-        cvt_assume_reverse_coalesce_preconditions::<IS_BID>(
+        cvt_assume_reverse_coalesce_preconditions::<IS_BID, IS_TIGHT>(
             market_info,
             trader,
             vault_base_token,
@@ -419,10 +419,20 @@ pub fn reverse_coalesce_check<const IS_BID: bool>() {
 
 #[rule]
 pub fn rule_reverse_coalesce_bid() {
-    reverse_coalesce_check::<true /* IS_BID */>();
+    reverse_coalesce_check::<true /* IS_BID */, false /* IS_TIGHT */>();
 }
 
 #[rule]
 pub fn rule_reverse_coalesce_ask() {
-    reverse_coalesce_check::<false /* IS_BID */>();
+    reverse_coalesce_check::<false /* IS_BID */, false /* IS_TIGHT */>();
+}
+
+#[rule]
+pub fn rule_reverse_tight_coalesce_bid() {
+    reverse_coalesce_check::<true /* IS_BID */, true /* IS_TIGHT */>();
+}
+
+#[rule]
+pub fn rule_reverse_tight_coalesce_ask() {
+    reverse_coalesce_check::<false /* IS_BID */, true /* IS_TIGHT */>();
 }

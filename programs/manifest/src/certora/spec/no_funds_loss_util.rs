@@ -289,13 +289,15 @@ pub fn cvt_assume_maker_not_reversible(maker_order_index: DataIndex) {
 
 /// Preconditions for the reverse-coalesce rules.
 ///
-/// The maker order on the opposite book is a reverse order, and the taker-side
-/// slot already holds a resting order of the same maker at exactly the price
-/// the reverse order comes back at. That makes the reverse placement coalesce
-/// into the existing order instead of resting a fresh one.
+/// The maker order on the opposite book is a reverse order (`ReverseTight`
+/// when `IS_TIGHT`), and the taker-side slot already holds a resting order of
+/// the same maker within one price increment of the price the reverse order
+/// comes back at -- the window `RestingOrder::eq` tolerates. That makes the
+/// reverse placement coalesce into the existing order instead of resting a
+/// fresh one.
 ///
 /// Returns `(maker_order_index, coalesce_order_index)`.
-pub fn cvt_assume_reverse_coalesce_preconditions<const IS_BID: bool>(
+pub fn cvt_assume_reverse_coalesce_preconditions<const IS_BID: bool, const IS_TIGHT: bool>(
     market: &AccountInfo,
     trader: &AccountInfo,
     vault_base_token: &AccountInfo,
@@ -337,11 +339,17 @@ pub fn cvt_assume_reverse_coalesce_preconditions<const IS_BID: bool>(
 
     let maker_trader_index: DataIndex = second_trader_index();
 
+    let reverse_order_type: OrderType = if IS_TIGHT {
+        OrderType::ReverseTight
+    } else {
+        OrderType::Reverse
+    };
+
     // -- the maker order is a live reverse order
     let dynamic: &mut [u8; 8] = &mut [0; 8];
     let maker_order: &RestingOrder = get_helper_order(dynamic, maker_order_index).get_value();
     cvt_assume!(maker_order.get_is_bid() == !IS_BID);
-    cvt_assume!(maker_order.get_order_type() == OrderType::Reverse);
+    cvt_assume!(maker_order.get_order_type() == reverse_order_type);
     cvt_assume!(maker_order.get_trader_index() == maker_trader_index);
     cvt_assume!(maker_order.get_num_base_atoms() == BaseAtoms::new(nondet()));
     cvt_assume!(maker_order.get_num_base_atoms() > BaseAtoms::ZERO);
@@ -351,14 +359,20 @@ pub fn cvt_assume_reverse_coalesce_preconditions<const IS_BID: bool>(
     // -- is recomputed inside the matching code.
     let price_reverse: QuoteAtomsPerBaseAtom = maker_order.reverse_price().unwrap();
 
-    // -- the maker's resting order on the taker side sits exactly at that
-    // -- price, so RestingOrder::eq matches and the placement coalesces
+    // -- the maker's resting order on the taker side sits within one price
+    // -- increment of that price, so RestingOrder::eq matches and the
+    // -- placement coalesces. The maker's debit is computed at the coalesce
+    // -- target's own price, which is what keeps the funds invariant exact
+    // -- even when the two prices differ by an increment.
     let coalesce_order: &RestingOrder = get_helper_order(dynamic, coalesce_order_index).get_value();
     cvt_assume!(coalesce_order.get_is_bid() == IS_BID);
-    cvt_assume!(coalesce_order.get_order_type() == OrderType::Reverse);
+    cvt_assume!(coalesce_order.get_order_type() == reverse_order_type);
     cvt_assume!(coalesce_order.get_trader_index() == maker_trader_index);
     cvt_assume!(coalesce_order.get_num_base_atoms() == BaseAtoms::new(nondet()));
-    cvt_assume!(coalesce_order.get_price() == price_reverse);
+    cvt_assume!(
+        coalesce_order.get_price()
+            == QuoteAtomsPerBaseAtom::nondet_price_within_one_increment(price_reverse)
+    );
 
     (maker_order_index, coalesce_order_index)
 }

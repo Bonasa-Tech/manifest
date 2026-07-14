@@ -75,9 +75,11 @@ an assume, so the property is stated as "no reachable execution records a
 trade". Immediate-or-cancel and reverse takers keep the funds invariant. Reverse
 and reverse-tight makers, which come back onto the other side of the book when
 they are filled, keep the funds invariant on the way round — including the
-coalesce path (`rule_reverse_coalesce_*`), where the come-back order is folded
-into an existing resting order and the maker is debited the exact growth of that
-order's backing.
+coalesce path (`rule_reverse_coalesce_*`, `rule_reverse_tight_coalesce_*`),
+where the come-back order is folded into an existing resting order — possibly
+one sitting a single price increment away, the window `RestingOrder::eq`
+tolerates — and the maker is debited the exact growth of that order's backing
+at the coalesce target's own price.
 
 ## Token-2022 transfer fees and hooks ##
 
