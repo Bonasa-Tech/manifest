@@ -105,17 +105,6 @@ impl QuoteAtomsPerBaseAtom {
         Self { inner: [x, 0] }
     }
 
-    /// A price within one increment of `price`. This is the window that
-    /// `RestingOrder::eq` tolerates when looking up a reverse order to
-    /// coalesce into, so the coalesce rules use it to cover the case where the
-    /// coalesce target does not sit exactly at the come-back price.
-    pub fn nondet_price_within_one_increment(price: Self) -> Self {
-        let x: u64 = ::nondet::nondet();
-        cvt::cvt_assume!(x >= price.inner[0].saturating_sub(1));
-        cvt::cvt_assume!(x <= price.inner[0].saturating_add(1));
-        Self { inner: [x, 0] }
-    }
-
     /// `self * numerator / denominator` on the single-limb certora price.
     ///
     /// This derives the price a reverse order comes back at. It has to be a

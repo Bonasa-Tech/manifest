@@ -354,6 +354,11 @@ pub fn cvt_assume_reverse_coalesce_preconditions<const IS_BID: bool, const IS_TI
     cvt_assume!(maker_order.get_num_base_atoms() == BaseAtoms::new(nondet()));
     cvt_assume!(maker_order.get_num_base_atoms() > BaseAtoms::ZERO);
     cvt_assume!(maker_order.get_price() == QuoteAtomsPerBaseAtom::nondet_price_u32());
+    // -- The spread is a u16 field, but it is read out of havoced mock memory
+    // -- and the prover does not recover that width: without this bound it can
+    // -- pick a spread far larger than u16::MAX, and `base - spread` in
+    // -- reverse_price underflows. Bound it to what the type can actually hold.
+    cvt_assume!((maker_order.get_reverse_spread() as u32) <= u16::MAX as u32);
 
     // -- the price the maker comes back at. Deterministic, so the same value
     // -- is recomputed inside the matching code.
@@ -369,10 +374,18 @@ pub fn cvt_assume_reverse_coalesce_preconditions<const IS_BID: bool, const IS_TI
     cvt_assume!(coalesce_order.get_order_type() == reverse_order_type);
     cvt_assume!(coalesce_order.get_trader_index() == maker_trader_index);
     cvt_assume!(coalesce_order.get_num_base_atoms() == BaseAtoms::new(nondet()));
-    cvt_assume!(
-        coalesce_order.get_price()
-            == QuoteAtomsPerBaseAtom::nondet_price_within_one_increment(price_reverse)
-    );
+    cvt_assume!((coalesce_order.get_reverse_spread() as u32) <= u16::MAX as u32);
+    // Constrain the stored price fields directly rather than assuming the
+    // whole price equals a constructed value. The prover does not propagate a
+    // struct equality against a constructed value back into the mock's memory,
+    // so the matching code re-loads a price unrelated to the one assumed here,
+    // RestingOrder::eq then fails to match, and the come-back order takes the
+    // fresh-insert path into an occupied slot. Constraining the limbs keeps the
+    // relation on the memory the code actually reads.
+    let coalesce_price: QuoteAtomsPerBaseAtom = coalesce_order.get_price();
+    cvt_assume!(coalesce_price.inner[1] == 0);
+    cvt_assume!(coalesce_price.inner[0] >= price_reverse.inner[0].saturating_sub(1));
+    cvt_assume!(coalesce_price.inner[0] <= price_reverse.inner[0].saturating_add(1));
 
     (maker_order_index, coalesce_order_index)
 }

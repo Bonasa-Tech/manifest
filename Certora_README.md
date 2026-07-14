@@ -76,10 +76,10 @@ trade". Immediate-or-cancel and reverse takers keep the funds invariant. Reverse
 and reverse-tight makers, which come back onto the other side of the book when
 they are filled, keep the funds invariant on the way round — including the
 coalesce path (`rule_reverse_coalesce_*`, `rule_reverse_tight_coalesce_*`),
-where the come-back order is folded into an existing resting order — possibly
-one sitting a single price increment away, the window `RestingOrder::eq`
-tolerates — and the maker is debited the exact growth of that order's backing
-at the coalesce target's own price.
+where the come-back order is folded into an existing resting order — including
+one sitting up to a single price increment away, the window `RestingOrder::eq`
+tolerates — and the maker is debited the exact growth of that order's backing,
+computed at the coalesce target's own price.
 
 ## Token-2022 transfer fees and hooks ##
 
@@ -90,6 +90,22 @@ feature, placed exactly where the production checks are: after the balance
 check, before the balance is reduced. This over-approximates the production
 branches and covers the property those checks exist for — a transfer that will
 be rejected must not eat the maker's global deposit.
+
+## Writing rules against the mocked state ##
+
+Two traps, both found the hard way by chasing counter-examples that turned out
+to be artifacts rather than bugs:
+
+- An assumption that **relates** two pieces of mocked state must be written
+  against the **stored fields**, not by equating a whole value with a
+  constructed one. The prover does not carry the latter relation back into the
+  mock's memory, so the code re-reads a value unrelated to the one assumed.
+  (Assumptions that merely havoc a field, by equating it with a *fresh* nondet,
+  are fine — that is why the older rules never hit this.) See the coalesce price
+  window in `cvt_assume_reverse_coalesce_preconditions`.
+- Narrow integer fields read out of mocked memory do not keep their width: the
+  prover will happily pick a `u16` spread larger than `u16::MAX`, which makes
+  `base - spread` in `reverse_price` underflow. Bound them explicitly.
 
 ## Known gaps ##
 
