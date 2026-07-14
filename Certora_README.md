@@ -109,6 +109,15 @@ to be artifacts rather than bugs:
 
 ## Known gaps ##
 
+- No unexpected reverts is verified for withdraw and `cancel_order_by_index`
+  (`rule_withdraw_does_not_revert`, `rule_cancel_order_by_index_no_revert_*`)
+  but not for anything added here. The new rules `.unwrap()` the result, so a
+  failing execution is pruned rather than reported: they say "if it succeeds,
+  no funds are lost", not "it succeeds". Matching a global maker, cancelling a
+  global order and coalescing a reverse order could revert unexpectedly without
+  any rule noticing. Cheapest worthwhile addition: the shape already exists in
+  `cancel_order_checks.rs`.
+
 - `place_single_order` in `state/market_helpers.rs` is the model of one iteration
   of the matching loop in `Market::place_order`. It has to be kept behaviourally
   identical to the body of that loop by hand.
