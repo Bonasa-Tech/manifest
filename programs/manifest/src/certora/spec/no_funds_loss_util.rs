@@ -354,11 +354,16 @@ pub fn cvt_assume_reverse_coalesce_preconditions<const IS_BID: bool, const IS_TI
     cvt_assume!(maker_order.get_num_base_atoms() == BaseAtoms::new(nondet()));
     cvt_assume!(maker_order.get_num_base_atoms() > BaseAtoms::ZERO);
     cvt_assume!(maker_order.get_price() == QuoteAtomsPerBaseAtom::nondet_price_u32());
-    // -- The spread is a u16 field, but it is read out of havoced mock memory
-    // -- and the prover does not recover that width: without this bound it can
-    // -- pick a spread far larger than u16::MAX, and `base - spread` in
-    // -- reverse_price underflows. Bound it to what the type can actually hold.
-    cvt_assume!((maker_order.get_reverse_spread() as u32) <= u16::MAX as u32);
+    // -- Pin the spread field to a genuine u16, the same havoc idiom the other
+    // -- field assumptions above use (e.g. num_base_atoms == new(nondet())).
+    // -- The spread is read out of havoced mock memory and the prover does not
+    // -- recover its 2-byte width, so `base - spread` in reverse_price can
+    // -- underflow with a spread far larger than any u16. Equating the field
+    // -- with a fresh u16 nondet constrains the memory the matching code
+    // -- re-reads, not just a derived value. The funds rules do not need this
+    // -- because they unwrap reverse_price and prune the error path; the
+    // -- no-revert rules keep it alive.
+    cvt_assume!(maker_order.get_reverse_spread() == nondet::<u16>());
 
     // -- the price the maker comes back at. Deterministic, so the same value
     // -- is recomputed inside the matching code.
@@ -374,7 +379,7 @@ pub fn cvt_assume_reverse_coalesce_preconditions<const IS_BID: bool, const IS_TI
     cvt_assume!(coalesce_order.get_order_type() == reverse_order_type);
     cvt_assume!(coalesce_order.get_trader_index() == maker_trader_index);
     cvt_assume!(coalesce_order.get_num_base_atoms() == BaseAtoms::new(nondet()));
-    cvt_assume!((coalesce_order.get_reverse_spread() as u32) <= u16::MAX as u32);
+    cvt_assume!(coalesce_order.get_reverse_spread() == nondet::<u16>());
     // Constrain the stored price fields directly rather than assuming the
     // whole price equals a constructed value. The prover does not propagate a
     // struct equality against a constructed value back into the mock's memory,

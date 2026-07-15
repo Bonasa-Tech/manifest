@@ -109,14 +109,19 @@ to be artifacts rather than bugs:
 
 ## Known gaps ##
 
-- No unexpected reverts is verified for withdraw and `cancel_order_by_index`
-  (`rule_withdraw_does_not_revert`, `rule_cancel_order_by_index_no_revert_*`)
-  but not for anything added here. The new rules `.unwrap()` the result, so a
-  failing execution is pruned rather than reported: they say "if it succeeds,
-  no funds are lost", not "it succeeds". Matching a global maker, cancelling a
-  global order and coalescing a reverse order could revert unexpectedly without
-  any rule noticing. Cheapest worthwhile addition: the shape already exists in
-  `cancel_order_checks.rs`.
+- No unexpected reverts (no overflow, no panic, only deliberate `require!`
+  failures) is now verified for the new paths too, in `no_revert_checks.rs`:
+  matching a global maker, cancelling and resting a global order, global
+  deposit and withdraw, and the reverse coalesce on the ask side. Like the
+  pre-existing withdraw and cancel no-revert rules, these assume the trade's
+  arithmetic fits in a u64 -- an order too large to price is legitimately
+  rejected, which is not an unexpected revert. The reverse coalesce path needs a
+  little more: its come-back size is a division by the reverse price and the
+  grown order is a further multiply, so the rule bounds those through the
+  maker order's full value (an upper bound on what the trade computes
+  internally). The one path still not covered is the swap loader, where a
+  no-revert rule hits the same prover pointer-analysis limitation as the swap
+  seat rule.
 
 - `place_single_order` in `state/market_helpers.rs` is the model of one iteration
   of the matching loop in `Market::place_order`. It has to be kept behaviourally
