@@ -979,6 +979,16 @@ async fn reverse_order_type_test() -> anyhow::Result<()> {
         7 * SOL_UNIT_SIZE
     );
 
+    // Independent exact reconciliation of the real vaults against seats plus
+    // amounts locked in resting orders.
+    crate::verify_vault_balance(
+        std::rc::Rc::clone(&test_fixture.context),
+        &test_fixture.market_fixture.key,
+        &[test_fixture.payer(), second_keypair.pubkey()],
+        true,
+    )
+    .await;
+
     Ok(())
 }
 
@@ -1154,6 +1164,17 @@ async fn reverse_order_tight_type_test() -> anyhow::Result<()> {
             .await,
         7 * SOL_UNIT_SIZE
     );
+
+    // Independent exact reconciliation of the real vaults against seats plus
+    // amounts locked in resting orders. The extra quote atom the maker keeps
+    // from the coalesce rounding is a seat balance, so it must still balance.
+    crate::verify_vault_balance(
+        std::rc::Rc::clone(&test_fixture.context),
+        &test_fixture.market_fixture.key,
+        &[test_fixture.payer(), second_keypair.pubkey()],
+        true,
+    )
+    .await;
 
     Ok(())
 }
