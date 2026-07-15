@@ -110,18 +110,19 @@ to be artifacts rather than bugs:
 ## Known gaps ##
 
 - No unexpected reverts (no overflow, no panic, only deliberate `require!`
-  failures) is now verified for the new paths too, in `no_revert_checks.rs`:
+  failures) is verified for the new paths too, in `no_revert_checks.rs`:
   matching a global maker, cancelling and resting a global order, global
-  deposit and withdraw, and the reverse coalesce on the ask side. Like the
+  deposit and withdraw, and the reverse coalesce on both sides. Like the
   pre-existing withdraw and cancel no-revert rules, these assume the trade's
   arithmetic fits in a u64 -- an order too large to price is legitimately
-  rejected, which is not an unexpected revert. The reverse coalesce path needs a
-  little more: its come-back size is a division by the reverse price and the
+  rejected, which is not an unexpected revert. The reverse coalesce rules need a
+  little more: the bid come-back size is a division by the reverse price and the
   grown order is a further multiply, so the rule bounds those through the
   maker order's full value (an upper bound on what the trade computes
-  internally). The one path still not covered is the swap loader, where a
-  no-revert rule hits the same prover pointer-analysis limitation as the swap
-  seat rule.
+  internally). The one path still not covered is a dedicated no-revert rule for
+  swap, where it hits the same prover pointer-analysis limitation as the swap
+  seat rule; swap's component operations are each covered by the deposit,
+  matching and withdraw no-revert rules.
 
 - `place_single_order` in `state/market_helpers.rs` is the model of one iteration
   of the matching loop in `Market::place_order`. It has to be kept behaviourally
