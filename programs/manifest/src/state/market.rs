@@ -1344,19 +1344,15 @@ impl<
                                 get_mut_helper::<RBNode<RestingOrder>>(dynamic, lookup_index)
                                     .get_mut_value();
                             if is_bid {
-                                let previous_quote_allocated: QuoteAtoms =
-                                    order_to_coalesce_into.get_price().checked_quote_for_base(
+                                let (base_atoms_to_add, quote_atoms_to_debit) =
+                                    get_reverse_bid_coalesce_amounts(
+                                        order_to_coalesce_into.get_price(),
                                         order_to_coalesce_into.get_num_base_atoms(),
-                                        true,
+                                        num_base_atoms_reverse,
+                                        quote_atoms_traded,
                                     )?;
-                                order_to_coalesce_into.increase(num_base_atoms_reverse)?;
-                                let new_quote_allocated: QuoteAtoms =
-                                    order_to_coalesce_into.get_price().checked_quote_for_base(
-                                        order_to_coalesce_into.get_num_base_atoms(),
-                                        true,
-                                    )?;
-                                reverse_quote_atoms_debited =
-                                    new_quote_allocated.checked_sub(previous_quote_allocated)?;
+                                order_to_coalesce_into.increase(base_atoms_to_add)?;
+                                reverse_quote_atoms_debited = quote_atoms_to_debit;
                             } else {
                                 order_to_coalesce_into.increase(num_base_atoms_reverse)?;
                             }

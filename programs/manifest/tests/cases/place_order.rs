@@ -1157,3 +1157,102 @@ async fn reverse_order_tight_type_test() -> anyhow::Result<()> {
 
     Ok(())
 }
+
+#[tokio::test]
+async fn reverse_order_coalesce_at_higher_price_does_not_overdraw_proceeds_test(
+) -> anyhow::Result<()> {
+    let mut test_fixture: TestFixture = TestFixture::new().await;
+    test_fixture.claim_seat().await?;
+    test_fixture
+        .deposit(Token::SOL, 2_000_000_000_000_000_000)
+        .await?;
+
+    // The lower ask is filled first and reverses to a bid at 3e-18. The
+    // higher ask has the maximum Reverse spread and reverses to 2e-18. Those
+    // reverse prices differ by one internal increment, so the second reverse
+    // bid coalesces into the existing, higher-priced bid.
+    test_fixture
+        .place_order(
+            Side::Ask,
+            1_000_000_000_000_000_000,
+            3,
+            -18,
+            0,
+            OrderType::Reverse,
+        )
+        .await?;
+    test_fixture
+        .place_order(
+            Side::Ask,
+            1_000_000_000_000_000_000,
+            4,
+            -18,
+            u16::MAX as u32,
+            OrderType::Reverse,
+        )
+        .await?;
+
+    let second_keypair: Keypair = test_fixture.second_keypair.insecure_clone();
+    test_fixture.claim_seat_for_keypair(&second_keypair).await?;
+    test_fixture
+        .deposit_for_keypair(Token::USDC, 7, &second_keypair)
+        .await?;
+
+    test_fixture
+        .place_order_for_keypair(
+            Side::Bid,
+            1_000_000_000_000_000_000,
+            3,
+            -18,
+            NO_EXPIRATION_LAST_VALID_SLOT,
+            OrderType::ImmediateOrCancel,
+            &second_keypair,
+        )
+        .await?;
+
+    // The maker has no spare quote balance after the first reverse bid rests.
+    assert_eq!(
+        test_fixture
+            .market_fixture
+            .get_quote_balance_atoms(&test_fixture.payer())
+            .await,
+        0
+    );
+
+    // Before the fix this fill reverted: growing the existing bid by the full
+    // requested amount cost 6 quote atoms at its 3e-18 price, while this fill
+    // only credited 4. The coalesced size is now capped at what those proceeds
+    // can back.
+    test_fixture
+        .place_order_for_keypair(
+            Side::Bid,
+            1_000_000_000_000_000_000,
+            4,
+            -18,
+            NO_EXPIRATION_LAST_VALID_SLOT,
+            OrderType::ImmediateOrCancel,
+            &second_keypair,
+        )
+        .await?;
+
+    let resting_orders: Vec<RestingOrder> = test_fixture.market_fixture.get_resting_orders().await;
+    assert_eq!(resting_orders.len(), 1);
+    assert!(resting_orders[0].get_is_bid());
+    assert_eq!(
+        resting_orders[0].get_price(),
+        QuoteAtomsPerBaseAtom::try_from_mantissa_and_exponent(3, -18).unwrap()
+    );
+    assert_eq!(
+        resting_orders[0].get_num_base_atoms().as_u64(),
+        2_333_333_333_333_333_333
+    );
+    assert_eq!(
+        test_fixture
+            .market_fixture
+            .get_quote_balance_atoms(&test_fixture.payer())
+            .await,
+        0
+    );
+
+    Ok(())
+}

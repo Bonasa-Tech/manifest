@@ -146,6 +146,45 @@ pub use free_addr_helpers::*;
 use super::*;
 use crate::state::utils::{transfer_global_tokens, try_to_reduce_global_tokens};
 
+/// Size a reverse bid being coalesced into an existing order so that the
+/// existing order's allocation does not grow by more quote atoms than the
+/// maker received from the fill.
+pub(super) fn get_reverse_bid_coalesce_amounts(
+    price: QuoteAtomsPerBaseAtom,
+    old_base_atoms: BaseAtoms,
+    requested_base_atoms: BaseAtoms,
+    quote_atoms_received: QuoteAtoms,
+) -> Result<(BaseAtoms, QuoteAtoms), ProgramError> {
+    let previous_quote_allocated: QuoteAtoms =
+        price.checked_quote_for_base(old_base_atoms, true)?;
+    let requested_new_base_atoms: BaseAtoms = old_base_atoms.checked_add(requested_base_atoms)?;
+    let requested_new_quote_allocated: QuoteAtoms =
+        price.checked_quote_for_base(requested_new_base_atoms, true)?;
+    let requested_quote_debit: QuoteAtoms =
+        requested_new_quote_allocated.checked_sub(previous_quote_allocated)?;
+
+    if requested_quote_debit <= quote_atoms_received {
+        return Ok((requested_base_atoms, requested_quote_debit));
+    }
+
+    // This addition cannot overflow in this branch: requested allocation is a
+    // u64 and is greater than previous allocation + received quote.
+    let affordable_total_quote: QuoteAtoms =
+        previous_quote_allocated.checked_add(quote_atoms_received)?;
+    let affordable_total_base: BaseAtoms =
+        price.checked_base_for_quote(affordable_total_quote, false)?;
+    let base_atoms_to_add: BaseAtoms = affordable_total_base
+        .checked_sub(old_base_atoms)?
+        .min(requested_base_atoms);
+    let new_quote_allocated: QuoteAtoms =
+        price.checked_quote_for_base(old_base_atoms.checked_add(base_atoms_to_add)?, true)?;
+
+    Ok((
+        base_atoms_to_add,
+        new_quote_allocated.checked_sub(previous_quote_allocated)?,
+    ))
+}
+
 #[derive(Default, PartialEq, Clone, Copy)]
 pub enum AddOrderStatus {
     #[default]
@@ -564,15 +603,14 @@ fn place_reverse_order(
             let order_to_coalesce_into: &mut RestingOrder =
                 get_mut_helper_order(dynamic, lookup_index).get_mut_value();
             if is_bid {
-                let previous_quote_allocated: QuoteAtoms = order_to_coalesce_into
-                    .get_price()
-                    .checked_quote_for_base(order_to_coalesce_into.get_num_base_atoms(), true)?;
-                order_to_coalesce_into.increase(num_base_atoms_reverse)?;
-                let new_quote_allocated: QuoteAtoms = order_to_coalesce_into
-                    .get_price()
-                    .checked_quote_for_base(order_to_coalesce_into.get_num_base_atoms(), true)?;
-                reverse_quote_atoms_debited =
-                    new_quote_allocated.checked_sub(previous_quote_allocated)?;
+                let (base_atoms_to_add, quote_atoms_to_debit) = get_reverse_bid_coalesce_amounts(
+                    order_to_coalesce_into.get_price(),
+                    order_to_coalesce_into.get_num_base_atoms(),
+                    num_base_atoms_reverse,
+                    quote_atoms_traded,
+                )?;
+                order_to_coalesce_into.increase(base_atoms_to_add)?;
+                reverse_quote_atoms_debited = quote_atoms_to_debit;
             } else {
                 order_to_coalesce_into.increase(num_base_atoms_reverse)?;
             }
