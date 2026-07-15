@@ -1254,5 +1254,17 @@ async fn reverse_order_coalesce_at_higher_price_does_not_overdraw_proceeds_test(
         0
     );
 
+    // Independent of the hand-computed balances above: reconcile the real vault
+    // token balances against the sum of seat balances and amounts locked in
+    // resting orders, exactly. A single atom stranded in the vault or missing
+    // from it (over- or under-backing the coalesced order) fails this.
+    crate::verify_vault_balance(
+        std::rc::Rc::clone(&test_fixture.context),
+        &test_fixture.market_fixture.key,
+        &[test_fixture.payer(), second_keypair.pubkey()],
+        true,
+    )
+    .await;
+
     Ok(())
 }
