@@ -201,6 +201,39 @@ const printTxFetchSummary = (): void => {
   console.log(`Recovered on retry: ${notFoundOverall - notFoundAfterRetry}`);
 };
 
+// Number of example truncated signatures to print at the end of the run.
+const TRUNCATED_EXAMPLE_COUNT = 10;
+
+// Prints a summary of transactions whose onchain logs were truncated. These are
+// excluded from mismatch detection (their fills can't be reliably reconstructed),
+// so a high count means the report is silently skipping verification for that
+// many transactions.
+const printTruncatedSummary = (
+  truncatedSignatures: Map<string, string>,
+): void => {
+  console.log('');
+  console.log('✂️  TRUNCATED SIGNATURE SUMMARY:');
+  console.log(
+    `Transactions with truncated logs (excluded from mismatch detection): ${truncatedSignatures.size}`,
+  );
+
+  if (truncatedSignatures.size === 0) {
+    return;
+  }
+
+  const examples = Array.from(truncatedSignatures).slice(
+    0,
+    TRUNCATED_EXAMPLE_COUNT,
+  );
+  console.log(`Examples (up to ${TRUNCATED_EXAMPLE_COUNT}):`);
+  for (const [signature, market] of examples) {
+    console.log(`  ${signature} (market ${market})`);
+  }
+  if (truncatedSignatures.size > examples.length) {
+    console.log(`  ...and ${truncatedSignatures.size - examples.length} more`);
+  }
+};
+
 const parseTransactionForFills = async (
   connection: Connection,
   signature: string,
@@ -912,6 +945,7 @@ const run = async () => {
     ): Promise<{
       mismatches: TradeMismatch[];
       unparseableFills: UnparseableFill[];
+      truncatedSignatures: Set<string>;
     }> => {
       const logPrefix = `[${market.ticker_id}]`;
       console.log(logPrefix, 'Verifying market');
@@ -987,16 +1021,24 @@ const run = async () => {
           );
         }
 
-        return { mismatches, unparseableFills };
+        return { mismatches, unparseableFills, truncatedSignatures };
       } catch (error) {
         console.error(logPrefix, 'Error processing market:', error);
-        return { mismatches: [], unparseableFills: [] };
+        return {
+          mismatches: [],
+          unparseableFills: [],
+          truncatedSignatures: new Set<string>(),
+        };
       }
     };
 
     // Process markets with a concurrency pool
     const allMismatches: TradeMismatch[] = [];
     const allUnparseableFills: UnparseableFill[] = [];
+    // Truncated signatures across all markets, keyed by signature so a tx that
+    // touches multiple markets is only counted once. Value is the market it was
+    // first seen in, used for the example output at the end of the run.
+    const allTruncatedSignatures = new Map<string, string>();
     const pending = new Set<Promise<void>>();
     const marketQueue = [...validMarkets];
 
@@ -1007,9 +1049,14 @@ const run = async () => {
       ) {
         const market = marketQueue.shift()!;
         const p = verifyMarket(market).then(
-          ({ mismatches, unparseableFills }) => {
+          ({ mismatches, unparseableFills, truncatedSignatures }) => {
             allMismatches.push(...mismatches);
             allUnparseableFills.push(...unparseableFills);
+            for (const signature of truncatedSignatures) {
+              if (!allTruncatedSignatures.has(signature)) {
+                allTruncatedSignatures.set(signature, market.ticker_id);
+              }
+            }
             pending.delete(p);
           },
         );
@@ -1201,6 +1248,7 @@ const run = async () => {
       console.log(`\nTotal mismatches: ${allMismatches.length}`);
       console.log(`Unique transactions: ${allMismatchSignatures.size}`);
       printTxFetchSummary();
+      printTruncatedSummary(allTruncatedSignatures);
       process.exit(1);
     } else {
       if (allUnparseableFills.length > 0) {
@@ -1213,6 +1261,7 @@ const run = async () => {
         );
       }
       printTxFetchSummary();
+      printTruncatedSummary(allTruncatedSignatures);
     }
   } catch (error) {
     console.error('Fatal error:', error);
