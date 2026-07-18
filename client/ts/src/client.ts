@@ -43,7 +43,7 @@ import {
   createDepositInstruction,
   createWithdrawInstruction,
 } from './wrapper';
-import { FIXED_WRAPPER_HEADER_SIZE } from './constants';
+import { FIXED_WRAPPER_HEADER_SIZE, WRAPPER_SEED } from './constants';
 import { getVaultAddress } from './utils/market';
 import { genAccDiscriminator } from './utils/discriminator';
 import { getGlobalAddress, getGlobalVaultAddress } from './utils/global';
@@ -52,7 +52,15 @@ import { Global } from './global';
 export interface SetupData {
   setupNeeded: boolean;
   instructions: TransactionInstruction[];
+  // Retained for backwards compatibility. Now always null: the wrapper account
+  // is created with `createAccountWithSeed` (see `wrapperState`) so no ephemeral
+  // signer is required.
   wrapperKeypair: Keypair | null;
+  // Address of the trader's wrapper account. Populated whenever setup is needed
+  // (both when a new wrapper is created and when an existing wrapper only needs
+  // a seat claimed) so callers can build follow-on instructions without having
+  // to inspect the setup instructions themselves.
+  wrapperState: PublicKey | null;
 }
 
 type WrapperResponse = Readonly<{
@@ -98,6 +106,33 @@ export class ManifestClient {
     connection: Connection,
     payerPub: PublicKey,
   ): Promise<WrapperResponse | null> {
+    // Prefer the deterministic seed-derived wrapper. A trader may have both a
+    // legacy wrapper (created with a random keypair before seed-based setup) and
+    // a seed-derived one; always resolving to the seed-derived account keeps
+    // setup detection and follow-on instructions consistent, and lets such
+    // wallets recover the canonical wrapper regardless of getProgramAccounts
+    // ordering or what the stats API returns.
+    try {
+      const derivedWrapper: PublicKey = await PublicKey.createWithSeed(
+        payerPub,
+        WRAPPER_SEED,
+        WRAPPER_PROGRAM_ID,
+      );
+      const derivedAccountInfo =
+        await connection.getAccountInfo(derivedWrapper);
+      if (
+        derivedAccountInfo &&
+        derivedAccountInfo.owner.equals(WRAPPER_PROGRAM_ID)
+      ) {
+        return {
+          pubkey: derivedWrapper,
+          account: derivedAccountInfo,
+        };
+      }
+    } catch {
+      // Derivation/lookup failed, fall back to discovery below.
+    }
+
     // First try the stats server API for faster lookup
     try {
       const response = await fetch(
@@ -420,19 +455,30 @@ export class ManifestClient {
       setupNeeded: true,
       instructions: [],
       wrapperKeypair: null,
+      wrapperState: null,
     };
     const userWrapper = await ManifestClient.fetchFirstUserWrapper(
       connection,
       trader,
     );
     if (!userWrapper) {
-      const wrapperKeypair: Keypair = Keypair.generate();
-      setupData.wrapperKeypair = wrapperKeypair;
+      // Derive the wrapper account address from the trader so it can be created
+      // with `createAccountWithSeed`. This requires no signer other than the
+      // trader (who is both the funder and the seed base), unlike
+      // `createAccount`, which would require the new account's keypair to sign.
+      const wrapperState: PublicKey = await PublicKey.createWithSeed(
+        trader,
+        WRAPPER_SEED,
+        WRAPPER_PROGRAM_ID,
+      );
+      setupData.wrapperState = wrapperState;
 
       const createAccountIx: TransactionInstruction =
-        SystemProgram.createAccount({
+        SystemProgram.createAccountWithSeed({
           fromPubkey: trader,
-          newAccountPubkey: wrapperKeypair.publicKey,
+          basePubkey: trader,
+          seed: WRAPPER_SEED,
+          newAccountPubkey: wrapperState,
           space: FIXED_WRAPPER_HEADER_SIZE,
           lamports: await connection.getMinimumBalanceForRentExemption(
             FIXED_WRAPPER_HEADER_SIZE,
@@ -444,7 +490,7 @@ export class ManifestClient {
       const createWrapperIx: TransactionInstruction =
         createCreateWrapperInstruction({
           owner: trader,
-          wrapperState: wrapperKeypair.publicKey,
+          wrapperState,
         });
       setupData.instructions.push(createWrapperIx);
 
@@ -452,7 +498,7 @@ export class ManifestClient {
         manifestProgram: MANIFEST_PROGRAM_ID,
         owner: trader,
         market: marketPk,
-        wrapperState: wrapperKeypair.publicKey,
+        wrapperState,
       });
       setupData.instructions.push(claimSeatIx);
 
@@ -473,6 +519,7 @@ export class ManifestClient {
     }
 
     // There is a wrapper, but need to claim a seat.
+    setupData.wrapperState = userWrapper.pubkey;
     const claimSeatIx: TransactionInstruction = createClaimSeatInstruction({
       manifestProgram: MANIFEST_PROGRAM_ID,
       owner: trader,

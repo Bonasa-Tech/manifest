@@ -46,9 +46,9 @@ async function testGetSetupIxs(
   marketAddress: PublicKey,
   payerKeypair: Keypair,
   shouldBeNeeded: boolean,
-  shouldGiveWrapperKeypair: boolean,
+  shouldGiveWrapperState: boolean,
 ) {
-  const { setupNeeded, instructions, wrapperKeypair } =
+  const { setupNeeded, instructions, wrapperState } =
     await ManifestClient.getSetupIxs(
       connection,
       marketAddress,
@@ -65,19 +65,16 @@ async function testGetSetupIxs(
   }
 
   assert(
-    !!wrapperKeypair === shouldGiveWrapperKeypair,
-    `wrapperKeypair should be ${shouldGiveWrapperKeypair ? 'not-null' : 'null'}`,
+    !!wrapperState === shouldGiveWrapperState,
+    `wrapperState should be ${shouldGiveWrapperState ? 'not-null' : 'null'}`,
   );
 
-  const signers = [payerKeypair];
-  if (wrapperKeypair) {
-    signers.push(wrapperKeypair);
-  }
-
+  // The wrapper account is now created with createAccountWithSeed, so the payer
+  // is the only required signer (no ephemeral wrapper keypair).
   const signature = await sendAndConfirmTransaction(
     connection,
     new Transaction().add(...instructions),
-    signers,
+    [payerKeypair],
   );
 
   console.log(`executed setupIxs: ${signature}`);
