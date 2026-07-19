@@ -12,7 +12,7 @@ import { bignum } from '@metaplex-foundation/beet';
 import { publicKeyBeet } from './utils/beet';
 import { publicKey as beetPublicKey } from '@metaplex-foundation/beet-solana';
 import { deserializeRedBlackTree } from './utils/redBlackTree';
-import { convertU128, toNum } from './utils/numbers';
+import { convertU128, toBigInt, toNum } from './utils/numbers';
 import {
   FIXED_MANIFEST_HEADER_SIZE,
   NIL,
@@ -39,6 +39,10 @@ export type RestingOrder = {
   trader: PublicKey;
   /** Number of base tokens remaining in the order. */
   numBaseTokens: bignum;
+  /** Exact number of base atoms remaining in the order (integer, no float precision loss). */
+  numBaseAtoms: bignum;
+  /** Raw fixed-point price as quote atoms per base atom scaled by 10^18 (u128). */
+  price: bignum;
   /** Last slot before this order is invalid and will be removed. */
   lastValidSlot: bignum;
   /** Exchange defined sequenceNumber for this order, guaranteed to be unique. */
@@ -290,6 +294,67 @@ export class Market {
         return Number(claimedSeat.baseBalance);
       })
       .reduce((sum, current) => sum + current, 0);
+
+    return {
+      baseWithdrawableBalanceAtoms,
+      quoteWithdrawableBalanceAtoms,
+      baseOpenOrdersBalanceAtoms,
+      quoteOpenOrdersBalanceAtoms,
+    };
+  }
+
+  /**
+   * Exact (bigint) version of getMarketBalances. The float version above loses
+   * precision once atom totals exceed Number.MAX_SAFE_INTEGER (2^53), which
+   * happens on high-supply markets. Use this when comparing against on-chain
+   * vault balances. The quote reserved by a resting bid mirrors the on-chain
+   * accounting: ceil(price * numBaseAtoms / 10^18) (checked_quote_for_base with
+   * round_up = true).
+   *
+   * @returns {
+   *    baseWithdrawableBalanceAtoms: bigint,
+   *    quoteWithdrawableBalanceAtoms: bigint,
+   *    baseOpenOrdersBalanceAtoms: bigint,
+   *    quoteOpenOrdersBalanceAtoms: bigint
+   * }
+   */
+  public getMarketBalancesAtoms(): {
+    baseWithdrawableBalanceAtoms: bigint;
+    quoteWithdrawableBalanceAtoms: bigint;
+    baseOpenOrdersBalanceAtoms: bigint;
+    quoteOpenOrdersBalanceAtoms: bigint;
+  } {
+    // Price is a u128 fixed-point of quote atoms per base atom scaled by 10^18.
+    const PRICE_SCALE: bigint = 10n ** 18n;
+
+    // Global orders are backed by the global account vault, not this market's
+    // vault, so they are excluded, matching getMarketBalances above.
+    let baseOpenOrdersBalanceAtoms: bigint = 0n;
+    for (const ask of this.asks()) {
+      if (ask.orderType == OrderType.Global) {
+        continue;
+      }
+      baseOpenOrdersBalanceAtoms += toBigInt(ask.numBaseAtoms);
+    }
+
+    let quoteOpenOrdersBalanceAtoms: bigint = 0n;
+    for (const bid of this.bids()) {
+      if (bid.orderType == OrderType.Global) {
+        continue;
+      }
+      const numBaseAtoms: bigint = toBigInt(bid.numBaseAtoms);
+      const price: bigint = toBigInt(bid.price);
+      // ceil(price * numBaseAtoms / 10^18)
+      quoteOpenOrdersBalanceAtoms +=
+        (numBaseAtoms * price + PRICE_SCALE - 1n) / PRICE_SCALE;
+    }
+
+    let baseWithdrawableBalanceAtoms: bigint = 0n;
+    let quoteWithdrawableBalanceAtoms: bigint = 0n;
+    for (const claimedSeat of this.data.claimedSeats) {
+      baseWithdrawableBalanceAtoms += toBigInt(claimedSeat.baseBalance);
+      quoteWithdrawableBalanceAtoms += toBigInt(claimedSeat.quoteBalance);
+    }
 
     return {
       baseWithdrawableBalanceAtoms,

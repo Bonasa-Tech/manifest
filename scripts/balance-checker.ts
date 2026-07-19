@@ -1,6 +1,7 @@
 import { ManifestClient } from '../client/ts/src/client';
 import { Market } from '../client/ts/src/market';
 import { getVaultAddress } from '../client/ts/src/utils/market';
+import { toBigInt } from '../client/ts/src/utils/numbers';
 import { Global } from '../client/ts/src/global';
 import {
   AccountInfo,
@@ -66,65 +67,57 @@ const run = async () => {
       quoteWithdrawableBalanceAtoms,
       baseOpenOrdersBalanceAtoms,
       quoteOpenOrdersBalanceAtoms,
-    } = market.getMarketBalances();
+    } = market.getMarketBalancesAtoms();
 
-    const baseVaultBalanceAtoms: number = Number(
+    // Use BigInt end to end. These atom totals routinely exceed
+    // Number.MAX_SAFE_INTEGER (2^53) on high-supply markets, so Number() math
+    // loses precision and produces phantom mismatches.
+    const baseVaultBalanceAtoms: bigint = BigInt(
       (parsedAccounts.value[1]?.data as ParsedAccountData).parsed['info'][
         'tokenAmount'
       ]['amount'],
     );
-    const quoteVaultBalanceAtoms: number = Number(
+    const quoteVaultBalanceAtoms: bigint = BigInt(
       (parsedAccounts.value[2]?.data as ParsedAccountData).parsed['info'][
         'tokenAmount'
       ]['amount'],
     );
 
-    const baseExpectedAtoms: number =
+    const baseExpectedAtoms: bigint =
       baseWithdrawableBalanceAtoms + baseOpenOrdersBalanceAtoms;
-    const quoteExpectedAtoms: number =
+    const quoteExpectedAtoms: bigint =
       quoteWithdrawableBalanceAtoms + quoteOpenOrdersBalanceAtoms;
 
-    // Allow small difference because of javascript rounding.
     if (
-      Math.abs(baseExpectedAtoms - baseVaultBalanceAtoms) > 1 ||
-      Math.abs(quoteExpectedAtoms - quoteVaultBalanceAtoms) > 1
+      baseExpectedAtoms != baseVaultBalanceAtoms ||
+      quoteExpectedAtoms != quoteVaultBalanceAtoms
     ) {
       console.log('Market', marketPk.toBase58());
       console.log(
         'Base actual',
-        baseVaultBalanceAtoms,
+        baseVaultBalanceAtoms.toString(),
         'base expected',
-        baseExpectedAtoms,
+        baseExpectedAtoms.toString(),
         'difference',
-        baseVaultBalanceAtoms - baseExpectedAtoms,
+        (baseVaultBalanceAtoms - baseExpectedAtoms).toString(),
       );
       console.log(
         'Quote actual',
-        quoteVaultBalanceAtoms,
+        quoteVaultBalanceAtoms.toString(),
         'quote expected',
-        quoteExpectedAtoms,
+        quoteExpectedAtoms.toString(),
         'difference',
-        quoteVaultBalanceAtoms - quoteExpectedAtoms,
+        (quoteVaultBalanceAtoms - quoteExpectedAtoms).toString(),
         'withdrawable',
-        quoteWithdrawableBalanceAtoms,
+        quoteWithdrawableBalanceAtoms.toString(),
         'open orders',
-        quoteOpenOrdersBalanceAtoms,
+        quoteOpenOrdersBalanceAtoms.toString(),
       );
-      // Skip these markets because the numbers are so large that they run into js
-      // rounding issues. Verified that they are solvent manually.
-      if (
-        marketPk.toBase58() == 'GQHqLzX8swBiTyREF57PGs4vq59obuRPdtGrY4gChHfB' ||
-        marketPk.toBase58() == '8MHWBBr87Ta3JqFK4tt6r7tSR31oFKa8SWkF2YKTpWHa' ||
-        marketPk.toBase58() == 'BBh1v6nPcTKufDN1CHKzh3urYMTTH59U6uCu4u5CNjJ6'
-      ) {
-        continue;
-      }
-      // Only crash on a loss of funds. There has been unsolicited deposits into
+      // Only crash on a loss of funds. There have been unsolicited deposits into
       // vaults which makes them have more tokens than the program expects.
-      // Use > 1 tolerance to handle JavaScript floating point rounding errors.
       if (
-        baseExpectedAtoms - baseVaultBalanceAtoms > 1 ||
-        quoteExpectedAtoms - quoteVaultBalanceAtoms > 1
+        baseExpectedAtoms > baseVaultBalanceAtoms ||
+        quoteExpectedAtoms > quoteVaultBalanceAtoms
       ) {
         mismatchedMarkets.push(marketPk.toBase58());
       }
@@ -183,48 +176,48 @@ const run = async () => {
         buffer: parsedAccounts.value[0]?.data as Buffer,
       });
 
-      // Calculate total expected balance from all seats using refetched data
-      let totalExpectedAtoms = 0;
+      // Calculate total expected balance from all seats using refetched data.
+      // Use BigInt to avoid precision loss when the sum exceeds 2^53.
+      let totalExpectedAtoms: bigint = 0n;
       const deposits = (refetchedGlobal as any).data.globalDeposits;
       for (const deposit of deposits) {
-        totalExpectedAtoms += Number(deposit.balanceAtoms);
+        totalExpectedAtoms += toBigInt(deposit.balanceAtoms);
       }
 
       // Get actual vault balance from the same RPC call
-      const actualVaultAtoms = parsedAccounts.value[1]?.data
-        ? Number(
+      const actualVaultAtoms: bigint = parsedAccounts.value[1]?.data
+        ? BigInt(
             (parsedAccounts.value[1].data as ParsedAccountData).parsed.info
               .tokenAmount.amount,
           )
-        : 0;
+        : 0n;
 
-      const difference = actualVaultAtoms - totalExpectedAtoms;
+      const difference: bigint = actualVaultAtoms - totalExpectedAtoms;
 
       console.log(`Global ${mint.toBase58()}`);
       console.log(
-        `Vault actual ${actualVaultAtoms} expected ${totalExpectedAtoms} difference ${difference} seats ${deposits.length}`,
+        `Vault actual ${actualVaultAtoms.toString()} expected ${totalExpectedAtoms.toString()} difference ${difference.toString()} seats ${deposits.length}`,
       );
 
-      // Check if vault has less than expected (loss of funds)
-      // Use > 1 tolerance to handle JavaScript floating point rounding errors.
-      if (totalExpectedAtoms - actualVaultAtoms > 1) {
+      // Check if vault has less than expected (loss of funds).
+      if (totalExpectedAtoms > actualVaultAtoms) {
         console.log('MISMATCH DETECTED - Listing all seats:');
         console.log('=====================================');
 
         for (let i = 0; i < deposits.length; i++) {
           const deposit = deposits[i];
           const trader = deposit.trader;
-          const balanceAtoms = Number(deposit.balanceAtoms);
+          const balanceAtoms: bigint = toBigInt(deposit.balanceAtoms);
 
           console.log(
-            `Seat ${i}: trader=${trader.toBase58()} balance=${balanceAtoms} atoms`,
+            `Seat ${i}: trader=${trader.toBase58()} balance=${balanceAtoms.toString()} atoms`,
           );
         }
 
         console.log('=====================================');
-        console.log(`Total from seats: ${totalExpectedAtoms} atoms`);
-        console.log(`Actual in vault: ${actualVaultAtoms} atoms`);
-        console.log(`Difference: ${difference} atoms`);
+        console.log(`Total from seats: ${totalExpectedAtoms.toString()} atoms`);
+        console.log(`Actual in vault: ${actualVaultAtoms.toString()} atoms`);
+        console.log(`Difference: ${difference.toString()} atoms`);
         console.log('=====================================');
 
         mismatchedGlobals.push(mint.toBase58());
