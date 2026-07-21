@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1783649263168,
+  "lastUpdate": 1784646696953,
   "repoUrl": "https://github.com/Bonasa-Tech/manifest",
   "entries": {
     "CU Benchmark": [
@@ -12239,6 +12239,72 @@ window.BENCHMARK_DATA = {
           {
             "name": "MFX_99",
             "value": 13182,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "cyrbritt@gmail.com",
+            "name": "Britt Cyr",
+            "username": "brittcyr"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "dd8bc8374892e0bbbe3b0f956057621a61efe780",
+          "message": "Extend formal verification to global orders, all order types, and sea… (#653)\n\n* Extend formal verification to global orders, all order types, and seat integrity\n\nGlobal orders were entirely outside the scope of formal verification.\nRestingOrder::is_global() was hardcoded to false under the certora\nfeature, which made every global branch in matching, resting and\ncancelling dead code in the verified binary, and the global account was\nnever modeled at all. This change removes that stub and the others, and\nextends the verified surface to the whole order type system.\n\nNew invariant: no loss of funds for the global vault\n----------------------------------------------------\n\nGlobal orders are not backed by the market vault. The maker's tokens sit\nin the global vault, a token account shared by every market that trades\nthe mint, and are only pulled into the market vault at the moment the\norder is matched. So the global vault is a second, independent source of\nfunds and it needs its own no-loss-of-funds property:\n\n    global_vault == sum of all global deposits\n\ntracked with a new global_deposited_atoms ghost on GlobalFixed, the same\nway the market tracks withdrawable_* and orderbook_*. A resting global\norder reserves nothing on the market, so it adds zero to orderbook,\nwhich keeps the market property independent. Together the two invariants\nsay that the tokens a global trade takes out of the global vault land in\nthe market vault, and are credited to somebody, in the same instruction.\n\nThe global account is modeled with a new mock (state/cvt_global_mock.rs)\nholding two seats. Lookups scan the pubkeys stored in the nodes, so\neviction, which hands a slot to a new trader, is expressible. Everything\nthat touches a balance is the real production code; only the tree\nplumbing is mocked.\n\nStubs removed\n-------------\n\n- is_global() is now the real implementation under certora.\n- cancel_order_by_index no longer returns early on the global branch, a\n  divergence that was knowingly introduced for the certora build and\n  left cancelled global orders on the book in the verified model.\n- CvtBookside::lookup_index was todo!(), so reverse orders could never\n  coalesce. checked_multiply_rational was todo!(), so reverse prices\n  pruned every path that reached them. Both are real implementations\n  now; the price math is exact on the single-limb certora price so the\n  same inputs give the same reverse price inside and outside the\n  matching code.\n- The certora model of one matching step, place_single_order, had the\n  base and quote amounts swapped when drawing down a global maker, was\n  missing the missing-global-account handling, and credited a global\n  maker the rounding bonus atom that production explicitly skips. It now\n  mirrors the body of Market::place_order, reverse orders included.\n- Gas prepayment and refund calls in batch_update are no longer cfg'd\n  out under certora; the system transfer is summarized as a direct\n  lamport move.\n- Token-2022 fee/hook rejection of a global order is modeled as a\n  nondeterministic choice at the exact program point of the production\n  checks, covering that a rejected transfer must not reduce the deposit.\n- The market mock's release_second_seat set the occupancy flag to taken\n  instead of free, so no verified path could observe a released second\n  seat.\n\nProduction fix: reverse coalesce debit\n--------------------------------------\n\nA reverse order that coalesced into an existing resting order debited\nthe maker size * price, but the coalesced order's refundable allocation\ngrows by ceil((old + size) * q) - ceil(old * q), which differs by\nrounding and because coalescing tolerates a one-increment price\ndifference (RestingOrder::eq). The difference strands atoms in the vault\nor, in the price-tolerance case, leaves the order under-backed at the\nvault's expense, breaking vault == withdrawable + orderbook in either\ndirection. The maker is now debited exactly the allocation growth on\ncoalesce; the fresh-rest path is unchanged. A worked example lives next\nto the code in market.rs. reverse_order_tight_type_test's expectations\nmove by one atom: the maker keeps the atom that used to strand in the\nvault.\n\nThe reverse coalesce path also never updated the certora-only orderbook\nghost counters (no onchain effect); fixed on both the production and\nmodel paths.\n\nNew rules (41), all in programs/manifest/src/certora/spec\n---------------------------------------------------------\n\n- global matching, full and partial, bid and ask: both invariants\n  preserved and the traded amount moves global vault -> market vault\n- unbacked global orders are removed without moving an atom, which also\n  covers the token-2022 fee/hook rejection path\n- resting and cancelling a global order move no funds\n- global deposit, withdraw, and eviction (evict_and_take_seat)\n- gas prepayment and cancel-refund lamport conservation\n- post-only and global takers never trade (require! compiles to an\n  assumption under certora, so the property is stated as: no reachable\n  execution records a trade)\n- immediate-or-cancel and reverse takers keep the funds invariant\n- reverse and reverse-tight makers keep the funds invariant, including\n  the coalesce path with its exact allocation-growth debit\n- seat pubkey integrity: claim_seat writes the trader's pubkey into the\n  seat node and every other verified operation (deposit, withdraw,\n  matching, resting, cancel, releasing the other seat, swap) preserves\n  it. This discharges the assumption the global matching rules rest on,\n  since the matching code reads the maker's key out of the seat node to\n  decide whose global deposit pays for a fill. That assumption was added\n  after the prover produced a counter-example trading against one\n  trader's order while draining another trader's deposit through a\n  havoced seat node - impossible in a real market, and now proven so.\n\nThe four pre-existing rules that pin down exact balance deltas of a\nplain match now assume a non-reverse maker, since a reverse maker\nlegitimately moves funds again when its come-back order is placed; the\nno-loss-of-funds coverage of reverse makers is provided by the new\nreverse rules.\n\nVerification status\n-------------------\n\nAll 49 pre-existing rules remain verified on the updated code. Of the\nnew rules, the four global matching rules were violated on the first\nprover run (the seat-pubkey counter-example above) and verify with the\nprecondition in place; the rest verified directly. Run identifiers and\nper-rule status are recorded in the report added at\naudits/formal_verification_update_global_orders.pdf. Remaining known\ngaps (fee-aware transfer arithmetic, the global_evict processor shell,\nthe hand-maintained correspondence between place_single_order and the\nplace_order loop body) are documented in Certora_README.md.\n\n* cover reverse tight and tighten the thresholds for coalesce\n\n* Cover the whole coalesce price window, and fix the rules that missed it\n\nRestingOrder::eq lets a reverse order coalesce into a resting order sitting up\nto one price increment away, not only one at exactly the come-back price. The\ncoalesce rules now cover that whole window, for Reverse and ReverseTight, on\nboth sides.\n\nWidening the window made the rules fail, and the failure was in the rules, not\nin the program. Two things were wrong with how the preconditions constrained\nthe mocked order:\n\n- The coalesce target's price was constrained by equating the whole price with\n  a constructed value. The prover does not propagate that relation back into\n  the mock's memory, so the matching code re-loaded a price unrelated to the one\n  assumed, RestingOrder::eq stopped matching, and the come-back order took the\n  fresh-insert path into an already occupied slot. Constraining the stored price\n  limbs directly keeps the relation on the memory the code actually reads.\n- The reverse spread is a u16 field, but read out of havoced mock memory the\n  prover does not recover that width and can pick a value larger than u16::MAX,\n  underflowing `base - spread` in reverse_price. It is now bounded to what the\n  type can hold.\n\nNo accounting claim ever failed while chasing this: diagnostics verified\ncoalescing, quote conservation and base conservation on every individual price\noffset. The tell was that the ask side failed too, and ask coalescing never\ntouches the price at all, so an ask failure could not be arithmetic.\n\nBoth traps are written up in Certora_README.md, since any future rule that\nrelates two pieces of mocked state will hit the first one.\n\nFull rule set (91 rules) verifies.\n\n* Cite only the final verification run in the report\n\n* Correct the no-unexpected-revert coverage claim in the report\n\n* Rename the formal verification report\n\n* Add no-unexpected-revert rules for the new paths\n\nThe original rule set proves that withdraw and cancel_order_by_index cannot\nrevert for a reason other than a deliberate require! -- no overflow, no panic.\nNothing equivalent covered the paths this work added: those rules unwrap the\nresult, so a failing execution is pruned rather than reported. They say \"if it\nsucceeds, no funds are lost\", not \"it succeeds\".\n\nTen rules in no_revert_checks.rs close that, for matching a global maker,\ncancelling and resting a global order, global deposit and withdraw, and the\nreverse coalesce on both sides. Like the existing no-revert rules, they assume\nthe trade's arithmetic fits in a u64 -- an order too large to price is\nlegitimately rejected, which is not an unexpected revert. The coalesce rules\nbound the come-back size and the grown order through the maker order's full\nvalue, an upper bound on what the matching code computes internally; the bound\ndiffers per side because a bid come-back divides by the reverse price and a\ngrown bid multiplies, while an ask come-back is base_traded directly.\n\nThree prover accommodations, all in the certora-only price module, none\nchanging production codegen:\n\n- checked_quote_for_base, checked_quote_for_base_ and checked_base_for_quote\n  are marked inline(never). With inline(always) the compiler merges the writes\n  that build the Result, and the prover then cannot read the payload back off\n  the stack (\"[3002] stack location is not accessible\") in a rule that keeps\n  the error path alive instead of unwrapping it.\n- checked_quote_for_base returns via a match rather than .map(), for the same\n  reason.\n- The reverse spread is pinned to a genuine u16 in the coalesce preconditions,\n  using the field-havoc idiom the other field assumptions use, because the\n  prover does not recover its width from havoced mock memory and base - spread\n  in reverse_price would otherwise underflow.\n\nThe swap loader still has no no-revert rule, the same prover pointer-analysis\nlimitation as the swap seat rule; documented in Certora_README.md.\n\nFull rule set (101 rules) verifies.\n\n* fix rounding\n\n* exact\n\n* more checks\n\n* update pdf\n\n* update updates.md file\n\n* document known gaps in seat pubkey induction and evict rule",
+          "timestamp": "2026-07-21T10:58:49-04:00",
+          "tree_id": "d8cadaef6f4462e9488a73e333b4a62ed9ca96a9",
+          "url": "https://github.com/Bonasa-Tech/manifest/commit/dd8bc8374892e0bbbe3b0f956057621a61efe780"
+        },
+        "date": 1784646694223,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "PHX_50",
+            "value": 6897,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "PHX_95",
+            "value": 13208,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "PHX_99",
+            "value": 13902,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_50",
+            "value": 3281,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_95",
+            "value": 12267,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_99",
+            "value": 13192,
             "range": "",
             "unit": "CU",
             "extra": ""
