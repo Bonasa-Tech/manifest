@@ -12,6 +12,17 @@
 //! to the free list and may be legitimately reused, so preservation is only
 //! stated while the seat is held; releasing one seat must still not touch the
 //! other.
+//!
+//! KNOWN GAP: the matching, cancel, and rest-remaining rules below are built
+//! with the non-global preconditions (`cvt_assume_market_preconditions` forces
+//! a non-global maker) and pass no global accounts, so the global-specific
+//! code paths (`try_to_reduce_global_tokens`, `remove_from_global`,
+//! `transfer_global_tokens`) are never exercised by any preservation rule. If
+//! one of those paths corrupted a market seat pubkey, no rule here would fail,
+//! yet the global funds rules would still assume the pubkeys intact at entry —
+//! the induction has a hole exactly on the global surface. Closing it means
+//! adding MAKER_IS_GLOBAL variants of the matching/cancel/rest rules via
+//! `cvt_assume_market_preconditions_gen`.
 use super::verification_utils::init_static;
 use crate::*;
 use cvt::{cvt_assert, cvt_assume};

@@ -642,6 +642,19 @@ pub fn rule_global_gas_prepayment() {
 /// seat to the new trader without moving any tokens: the vault, the deposit
 /// aggregate, and everyone else's balances are exactly what they were, and the
 /// new trader starts from zero.
+///
+/// KNOWN GAP: the deposit-aggregate assertion below reads the
+/// `global_deposited_atoms` ghost, which is only updated where a balance field
+/// is mutated — destroying a `GlobalDeposit` node leaves it untouched. The
+/// only guard against evicting a trader with a nonzero deposit is the
+/// production `require!(existing_global_atoms_deposited == ZERO)` in
+/// `evict_and_take_seat`, which compiles to an *assume* under certora. If that
+/// check were removed from production, the assume would vanish with it,
+/// eviction would confiscate the deposit while the vault keeps the tokens, and
+/// this rule would still pass (ghost unchanged, vault unchanged). To make the
+/// rule detect that bug, assert the delta of the real mock state
+/// (`modeled_global_deposits()`) across the call instead of relying on the
+/// ghost alone.
 #[rule]
 pub fn rule_global_evict() {
     cvt_static_initializer!();
