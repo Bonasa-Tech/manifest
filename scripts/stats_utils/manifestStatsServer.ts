@@ -180,6 +180,18 @@ export class ManifestStatsServer {
   private discordWebhookUrl: string | undefined;
   private lastErrorAlertSentTimeMs: number = Date.now();
 
+  // Some database errors (e.g. DNS resolution failures like ENOTFOUND) are
+  // transient and self-resolve. We only alert on them if they persist, i.e.
+  // keep occurring for at least TRANSIENT_ERROR_PERSIST_MS with no successful
+  // query in between. firstTransientErrorTimeMs tracks when the current run of
+  // transient errors began, and is cleared on any successful query.
+  private static readonly TRANSIENT_ERROR_CODES: ReadonlySet<string> = new Set([
+    'ENOTFOUND',
+    'EAI_AGAIN',
+  ]);
+  private static readonly TRANSIENT_ERROR_PERSIST_MS: number = 5 * 60 * 1_000;
+  private firstTransientErrorTimeMs: number | null = null;
+
   // Allquiet alerting
   private allquietWebhookUrl: string | undefined;
 
@@ -406,8 +418,29 @@ export class ManifestStatsServer {
    * Rate limited to at most once per hour to avoid spam.
    */
   private async sendDatabaseErrorAlert(error: any): Promise<void> {
-    // Only send alerts once an hour to avoid spam.
     const now_ms: number = Date.now();
+
+    // Transient errors (e.g. DNS resolution failures) are not alertable unless
+    // they persist. Suppress the alert until such an error has been occurring
+    // continuously (no successful query in between) for at least
+    // TRANSIENT_ERROR_PERSIST_MS.
+    if (ManifestStatsServer.TRANSIENT_ERROR_CODES.has(error?.code)) {
+      if (this.firstTransientErrorTimeMs === null) {
+        this.firstTransientErrorTimeMs = now_ms;
+      }
+      if (
+        now_ms - this.firstTransientErrorTimeMs <
+        ManifestStatsServer.TRANSIENT_ERROR_PERSIST_MS
+      ) {
+        console.warn(
+          `Suppressing transient database error alert (${error.code}); ` +
+            `will alert if it persists.`,
+        );
+        return;
+      }
+    }
+
+    // Only send alerts once an hour to avoid spam.
     if (now_ms - this.lastErrorAlertSentTimeMs < 60 * 60 * 1_000) {
       return;
     }
@@ -449,6 +482,9 @@ export class ManifestStatsServer {
     try {
       const result: T = await queryFn();
       this.dbQueryCount.inc({ query_type: queryType, status: 'success' });
+      // A successful query means any prior transient error has resolved, so
+      // reset the persistence tracker.
+      this.firstTransientErrorTimeMs = null;
       return result;
     } catch (error: any) {
       this.dbQueryCount.inc({ query_type: queryType, status: 'error' });
@@ -1312,13 +1348,13 @@ export class ManifestStatsServer {
       // RestingOrder.tokenPrice already bakes in the
       // 10 ** (baseDecimals - quoteDecimals) factor, so it is in the same token
       // units as last_price above and needs no further decimal correction.
-      const bids: RestingOrder[] = market.bids();
-      const asks: RestingOrder[] = market.asks();
-      if (bids.length > 0) {
-        ticker.bid = bids[bids.length - 1].tokenPrice;
+      const bestBid: number | undefined = market.bestBidPrice();
+      const bestAsk: number | undefined = market.bestAskPrice();
+      if (bestBid !== undefined) {
+        ticker.bid = bestBid;
       }
-      if (asks.length > 0) {
-        ticker.ask = asks[asks.length - 1].tokenPrice;
+      if (bestAsk !== undefined) {
+        ticker.ask = bestAsk;
       }
 
       tickers.push(ticker);

@@ -16,6 +16,20 @@ export function toNum(n: bignum): number {
   return target;
 }
 
+/**
+ * Converts a beet.bignum to a bigint without precision loss. Use this instead
+ * of toNum when summing atom quantities that can exceed Number.MAX_SAFE_INTEGER
+ * (2^53), e.g. vault balances on high-supply markets.
+ *
+ * @param n The number to convert
+ */
+export function toBigInt(n: bignum): bigint {
+  if (typeof n === 'number') {
+    return BigInt(n);
+  }
+  return BigInt(n.toString());
+}
+
 const BN_NUMBER_MAX = new BN(2 ** 48 - 1);
 const BN_10 = new BN(10);
 
