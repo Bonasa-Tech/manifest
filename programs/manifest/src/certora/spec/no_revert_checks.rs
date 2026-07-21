@@ -491,3 +491,95 @@ pub fn rule_global_deposit_no_revert() {
 pub fn rule_global_withdraw_no_revert() {
     global_deposit_withdraw_no_revert_check::<false /* IS_DEPOSIT */>();
 }
+
+/// Swap does not revert unexpectedly.
+///
+/// Deliberately the exact shape of `rule_swap_check` in `swap_checks.rs` --
+/// same accounts, same preconditions, same single overflow assumption -- with
+/// the only difference that the result is kept and asserted `Ok` instead of
+/// unwrapped. An earlier attempt at a dedicated swap no-revert rule hit a
+/// prover pointer-analysis limitation (error 3003) when extra state was read
+/// around `process_swap_core`; this shape reads nothing the verified
+/// `rule_swap_*` funds rules do not already read.
+fn swap_no_revert_check<const IS_BASE: bool, const IS_EXACT: bool>() {
+    use crate::program::{process_swap_core, SwapParams};
+
+    cvt_static_initializer!();
+
+    let acc_infos: [AccountInfo; 16] = acc_infos_with_mem_layout!();
+    let used_acc_infos: &[AccountInfo] = &acc_infos[..8];
+    let trader: &AccountInfo = &used_acc_infos[0];
+    let market: &AccountInfo = &used_acc_infos[1];
+    let trader_base_token: &AccountInfo = &used_acc_infos[2];
+    let trader_quote_token: &AccountInfo = &used_acc_infos[3];
+    let vault_base_token: &AccountInfo = &used_acc_infos[4];
+    let vault_quote_token: &AccountInfo = &used_acc_infos[5];
+    // we only care about having a pubkey for the maker
+    let maker_trader: &AccountInfo = &acc_infos[9];
+
+    cvt_assume!(trader.key != vault_base_token.key);
+    cvt_assume!(trader.key != vault_quote_token.key);
+    cvt_assume!(trader_base_token.key != vault_base_token.key);
+    cvt_assume!(trader_quote_token.key != vault_quote_token.key);
+
+    // -- basic market assumptions
+    cvt_assume_basic_market_preconditions(
+        market,
+        trader,
+        vault_base_token,
+        vault_quote_token,
+        maker_trader,
+    );
+
+    // -- record balances before swap
+    let old_balances: AllBalances = record_all_balances_without_order(
+        market,
+        vault_base_token,
+        vault_quote_token,
+        trader,
+        maker_trader,
+    );
+
+    // -- assume no loss of funds invariant
+    cvt_assume_funds_invariants(old_balances);
+
+    let in_atoms: u64 = nondet();
+    let out_atoms: u64 = nondet();
+    // -- in_atoms does not overflow ghost aggregate
+    if IS_BASE {
+        cvt_assume!(in_atoms
+            .checked_add(old_balances.withdrawable_base)
+            .is_some());
+    } else {
+        cvt_assume!(in_atoms
+            .checked_add(old_balances.withdrawable_quote)
+            .is_some());
+    }
+
+    let params: SwapParams = SwapParams::new(in_atoms, out_atoms, IS_BASE, IS_EXACT);
+    let result: ProgramResult = process_swap_core(&crate::id(), &used_acc_infos, params);
+
+    cvt_assert!(result.is_ok());
+
+    cvt_vacuity_check!();
+}
+
+#[rule]
+pub fn rule_swap_no_revert_base_exact() {
+    swap_no_revert_check::<true /* IS_BASE */, true /* IS_EXACT */>();
+}
+
+#[rule]
+pub fn rule_swap_no_revert_base_not_exact() {
+    swap_no_revert_check::<true /* IS_BASE */, false /* IS_EXACT */>();
+}
+
+#[rule]
+pub fn rule_swap_no_revert_quote_exact() {
+    swap_no_revert_check::<false /* IS_BASE */, true /* IS_EXACT */>();
+}
+
+#[rule]
+pub fn rule_swap_no_revert_quote_not_exact() {
+    swap_no_revert_check::<false /* IS_BASE */, false /* IS_EXACT */>();
+}

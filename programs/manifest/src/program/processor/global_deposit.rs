@@ -19,8 +19,8 @@ use super::invoke;
 
 #[cfg(feature = "certora")]
 use {
-    early_panic::early_panic,
-    solana_cvt::token::{spl_token_2022_transfer, spl_token_transfer},
+    crate::certora::summaries::token::spl_token_2022_transfer_with_fee, early_panic::early_panic,
+    solana_cvt::token::spl_token_transfer,
 };
 
 #[derive(BorshDeserialize, BorshSerialize)]
@@ -184,7 +184,9 @@ fn spl_token_2022_transfer_from_trader_to_global_vault<'a, 'info>(
 }
 
 #[cfg(feature = "certora")]
-/** (Summary) Transfer from trader to global vault using SPL Token 2022 **/
+/** (Summary) Transfer from trader to global vault using SPL Token 2022.
+The mint may carry a transfer fee, so the vault can receive less than the
+requested amount; the processor credits the vault balance delta. **/
 fn spl_token_2022_transfer_from_trader_to_global_vault<'a, 'info>(
     _token_program: &crate::validation::TokenProgram<'a, 'info>,
     trader_token_account: &TokenAccountInfo<'a, 'info>,
@@ -193,7 +195,7 @@ fn spl_token_2022_transfer_from_trader_to_global_vault<'a, 'info>(
     payer: &Signer<'a, 'info>,
     amount_atoms: u64,
 ) -> ProgramResult {
-    spl_token_2022_transfer(
+    spl_token_2022_transfer_with_fee(
         trader_token_account.info,
         global_vault.info,
         payer.info,

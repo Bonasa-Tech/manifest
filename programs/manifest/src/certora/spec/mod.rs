@@ -24,6 +24,7 @@ pub(crate) mod verification_utils {
     pub(crate) fn init_static() {
         crate::state::init_mock();
         crate::certora::hooks::initialize_hooks();
+        crate::certora::summaries::token::init_transfer_fee();
     }
 }
 

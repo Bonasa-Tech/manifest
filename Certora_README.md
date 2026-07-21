@@ -49,11 +49,16 @@ sitting in it (`cvt_assume_seat_pubkeys`), and
 deposit, withdraw, matching, resting, cancel, releasing the other seat --
 leaves the stored pubkeys unchanged (`rule_seat_pubkey_preserved_by_*`). Once a
 seat is released its block returns to the free list and may be reused, so the
-invariant is stated only while the seat is held. Swap is covered by
-composition rather than a dedicated rule: in the verified model its only seat
-writes go through `claim_seat` and `update_balance`, both covered above; a
-dedicated rule hits a prover pointer-analysis limitation in the swap account
-loader.
+invariant is stated only while the seat is held. The preservation rules come
+in global variants too (`rule_seat_pubkey_preserved_by_*_global_*`), which
+force a global maker (or a global order being rested) with the global
+accounts present, so the global-specific code paths
+(`try_to_reduce_global_tokens`, `remove_from_global`, `try_to_add_to_global`,
+`transfer_global_tokens`) are inside the induction rather than a hole in it.
+Swap is covered by composition rather than a dedicated rule: in the verified
+model its only seat writes go through `claim_seat` and `update_balance`, both
+covered above; a dedicated rule hits a prover pointer-analysis limitation in
+the swap account loader.
 
 ## Gas prepayments ##
 
@@ -91,6 +96,39 @@ check, before the balance is reduced. This over-approximates the production
 branches and covers the property those checks exist for — a transfer that will
 be rejected must not eat the maker's global deposit.
 
+On the deposit side the fee itself is modeled.
+`certora/summaries/token.rs` carries a fee-aware summary of the token-2022
+`transfer_checked`: the source is debited the requested amount, the
+destination is credited the requested amount minus a nondeterministic fee.
+The fee is behind a ghost switch (`cvt_enable_transfer_fee`) that
+`init_static` turns off, so every exact-amount rule keeps verifying
+unchanged, and the `*_with_fee` rules opt in:
+`rule_deposit_deposits_with_fee`, `rule_global_deposit_with_fee`, and
+`rule_global_evict_processor_with_fee` verify that the vault balance-delta
+crediting in `process_deposit_core`, `process_global_deposit_core`, and the
+`global_evict` deposit leg credits exactly what the vault received, never the
+requested amount.
+
+## Global eviction ##
+
+`global_evict` is verified at the processor level.
+`process_global_evict_core` follows the deposit/withdraw pattern: the token
+transfers and the seat-fee system transfer have summaries under the `certora`
+feature (the fee amount depends on rent, sysvar state the prover does not
+model, so it is a nondeterministic lamport move). `rule_global_evict_processor`
+states the whole flow: the fee lamports move from the payer to the global
+account and nowhere else, the evictee is paid out their entire balance from
+the global vault, the evictor's deposit lands in the vault and is credited to
+them exactly, the seat changes hands, the eviction only goes through when the
+deposit exceeds the evictee's balance, and the vault covers every deposit
+throughout. `rule_global_evict_processor_with_fee` repeats it with a
+token-2022 transfer fee on both transfer legs. The state-level
+`rule_global_evict` additionally asserts the delta of the real mock state
+(`modeled_global_deposits()`) across `evict_and_take_seat`, so an eviction
+that confiscated a nonzero deposit would fail the rule even though the ghost
+aggregate, which is only updated by balance writes, cannot see the destroyed
+node.
+
 ## Writing rules against the mocked state ##
 
 Two traps, both found the hard way by chasing counter-examples that turned out
@@ -119,24 +157,42 @@ to be artifacts rather than bugs:
   little more: the bid come-back size is a division by the reverse price and the
   grown order is a further multiply, so the rule bounds those through the
   maker order's full value (an upper bound on what the trade computes
-  internally). The one path still not covered is a dedicated no-revert rule for
-  swap, where it hits the same prover pointer-analysis limitation as the swap
-  seat rule; swap's component operations are each covered by the deposit,
-  matching and withdraw no-revert rules.
+  internally). Swap has dedicated no-revert rules
+  (`rule_swap_no_revert_*`), stated in exactly the shape of the verified
+  `rule_swap_*` funds rules -- same accounts, same preconditions, same single
+  overflow assumption, with the result kept and asserted `Ok` instead of
+  unwrapped -- because an earlier attempt that read extra state around
+  `process_swap_core` hit a prover pointer-analysis limitation (error 3003).
 
-- `place_single_order` in `state/market_helpers.rs` is the model of one iteration
-  of the matching loop in `Market::place_order`. It has to be kept behaviourally
-  identical to the body of that loop by hand.
-- The mock book holds at most one resting order per side, so multi-level
-  matching is only covered one step at a time, and the mocked global account has
-  two seats.
-- The SPL transfer summaries move the requested amount exactly, so the
-  received-amount-differs-from-requested handling for fee-bearing token-2022
-  deposits (`process_deposit_core`, `process_global_deposit_core`) is verified
-  in the fee-less case only.
-- Global seat eviction is verified at the state level (`evict_and_take_seat`,
-  `rule_global_evict`); the `global_evict` processor around it (seat fee,
-  eviction fee, token transfers) is not.
+- `place_single_order` in `state/market_helpers.rs` is the model of one
+  iteration of the matching loop in `Market::place_order`. It has to be kept
+  behaviourally identical to the body of that loop by hand. That link is now
+  enforced by a differential test
+  (`place_order_equivalence_tests` in `state/market_helpers.rs`), which runs
+  the same taker order through `Market::place_order` and through the model's
+  loop (`place_order_helper`) on identical markets and compares the result and
+  every byte of market state -- across multi-level sweeps, partial fills,
+  expired makers, post-only rejections, reverse come-backs and the zero-price
+  early return. Syncing the model to write this test surfaced and fixed three
+  real drifts: the model claimed the taker's sequence number after matching
+  (production claims it before, so reverse orders placed during matching do
+  not steal it), it applied the expiration check to reversible order types
+  (production exempts them), and it lacked the zero-price early return.
+- The mock book holds at most one resting order per side, so the *prover*
+  covers multi-level matching one step at a time: each `place_single_order`
+  step preserves the funds invariants for every status, and the loop is a
+  sequence of such steps. The cross-iteration glue (index/remaining threading,
+  loop exits, sequence numbers) is what the differential test above pins to
+  production, with multiple resting orders per side. A mock book with two
+  orders per side would move that glue under the prover; it means reworking
+  the mock's slot layout, iterator and free-address allocator that every
+  existing rule builds on, and has not been done.
+- The mocked global account has two seats.
+- The withdraw direction of the fee-aware transfer summary debits the vault
+  the full amount and shorts only the receiver, matching token-2022 fee
+  semantics; production `process_withdraw_core` and
+  `process_global_withdraw_core` do not measure the received amount (there is
+  nothing to credit differently), so no fee rule exists for them.
 
 # Requirements for compilation from Rust to SBF ##
 

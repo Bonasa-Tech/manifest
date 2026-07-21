@@ -215,6 +215,10 @@ pub struct AddSingleOrderCtx<'a, 'b, 'info> {
     pub total_base_atoms_traded: BaseAtoms,
     pub total_quote_atoms_traded: QuoteAtoms,
     pub global_atoms_to_transfer: GlobalAtoms,
+    /// The taker's sequence number, claimed before matching so that the fill
+    /// logs are correct even if sequence numbers are consumed by reverse
+    /// orders during matching. Mirrors `Market::place_order`.
+    pub this_order_sequence_number: u64,
 }
 
 impl<'a, 'b, 'info> AddSingleOrderCtx<'a, 'b, 'info> {
@@ -225,6 +229,10 @@ impl<'a, 'b, 'info> AddSingleOrderCtx<'a, 'b, 'info> {
         remaining_base_atoms: BaseAtoms,
         now_slot: u32,
     ) -> Self {
+        // Claim this_order_sequence_number for the current order before any
+        // matching happens, exactly as Market::place_order does.
+        let this_order_sequence_number: u64 = fixed.order_sequence_number;
+        fixed.order_sequence_number = this_order_sequence_number.wrapping_add(1);
         Self {
             args,
             fixed,
@@ -234,6 +242,7 @@ impl<'a, 'b, 'info> AddSingleOrderCtx<'a, 'b, 'info> {
             total_base_atoms_traded: BaseAtoms::ZERO,
             total_quote_atoms_traded: QuoteAtoms::ZERO,
             global_atoms_to_transfer: GlobalAtoms::ZERO,
+            this_order_sequence_number,
         }
     }
     /// One iteration of the matching loop in `Market::place_order`. Kept
@@ -244,6 +253,7 @@ impl<'a, 'b, 'info> AddSingleOrderCtx<'a, 'b, 'info> {
         &mut self,
         current_order_index: DataIndex,
     ) -> Result<AddOrderToMarketInnerResult, ProgramError> {
+        let this_order_sequence_number: u64 = self.this_order_sequence_number;
         let fixed: &mut _ = self.fixed;
         let dynamic: &mut _ = self.dynamic;
         let now_slot = self.now_slot;
@@ -488,7 +498,7 @@ impl<'a, 'b, 'info> AddSingleOrderCtx<'a, 'b, 'info> {
             quote_atoms: quote_atoms_traded,
             price: matched_price,
             maker_sequence_number,
-            taker_sequence_number: fixed.order_sequence_number,
+            taker_sequence_number: this_order_sequence_number,
             taker_is_buy: PodBool::from(is_bid),
             base_mint: *fixed.get_base_mint(),
             quote_mint: *fixed.get_quote_mint(),
@@ -683,7 +693,7 @@ pub fn place_order_helper<
         market: _,
         trader_index,
         num_base_atoms,
-        price: _,
+        price,
         is_bid,
         last_valid_slot,
         order_type,
@@ -693,7 +703,10 @@ pub fn place_order_helper<
     assert_already_has_seat(trader_index)?;
     let now_slot: u32 = current_slot.unwrap_or_else(|| get_now_slot());
 
-    assert_not_already_expired(last_valid_slot, now_slot)?;
+    // Reverse orders will have their last valid slot overriden to no expiration.
+    if !order_type.is_reversible() {
+        assert_not_already_expired(last_valid_slot, now_slot)?;
+    }
 
     let DynamicAccount { fixed, dynamic } = self_.borrow_mut();
 
@@ -744,22 +757,22 @@ pub fn place_order_helper<
         transfer_global_tokens(global_trade_accounts_opt, global_atoms_to_transfer)?;
     }
 
-    // move out args so that they can be used later
+    // move out args so that they can be used later. The taker's sequence
+    // number was claimed by AddSingleOrderCtx::new before matching started.
+    let this_order_sequence_number: u64 = ctx.this_order_sequence_number;
     let args: AddOrderToMarketArgs = ctx.args;
     // ctx is dead from this point onward
 
     // Record volume on market
     fixed.quote_volume = fixed.quote_volume.wrapping_add(total_quote_atoms_traded);
 
-    // Bump the order sequence number even for orders which do not end up
-    // resting.
-    let order_sequence_number: u64 = fixed.order_sequence_number;
-    fixed.order_sequence_number = order_sequence_number.wrapping_add(1);
-
     // If there is nothing left to rest, then return before resting.
-    if !order_type_can_rest(order_type) || remaining_base_atoms == BaseAtoms::ZERO {
+    if !order_type_can_rest(order_type)
+        || remaining_base_atoms == BaseAtoms::ZERO
+        || price == QuoteAtomsPerBaseAtom::ZERO
+    {
         return Ok(AddOrderToMarketResult {
-            order_sequence_number,
+            order_sequence_number: this_order_sequence_number,
             order_index: NIL,
             base_atoms_traded: total_base_atoms_traded,
             quote_atoms_traded: total_quote_atoms_traded,
@@ -769,8 +782,433 @@ pub fn place_order_helper<
     self_.rest_remaining(
         args,
         remaining_base_atoms,
-        order_sequence_number,
+        this_order_sequence_number,
         total_base_atoms_traded,
         total_quote_atoms_traded,
     )
+}
+
+/// Differential check that `place_order_helper` -- the formal-verification
+/// model whose loop body, `place_single_order`, has to be kept behaviourally
+/// identical to the loop in `Market::place_order` by hand -- actually agrees
+/// with `Market::place_order`. Every scenario runs the same taker order
+/// through both implementations on identical markets and compares the result
+/// and every byte of market state, including multi-level matching, which the
+/// prover's one-order-per-side mock book cannot represent.
+#[cfg(all(test, not(feature = "certora")))]
+mod place_order_equivalence_tests {
+    use super::*;
+    use crate::state::market::{create_empty_market, MarketValue};
+    use crate::state::{OrderType, MARKET_BLOCK_SIZE, NO_EXPIRATION_LAST_VALID_SLOT};
+    use solana_program::pubkey::Pubkey;
+
+    const NOW_SLOT: u32 = 100;
+
+    fn new_market_with_seats() -> (MarketValue, DataIndex, DataIndex, Pubkey, Pubkey) {
+        let market_key: Pubkey = Pubkey::new_unique();
+        let mint_authority: Pubkey = Pubkey::new_unique();
+        let fixed: MarketFixed = create_empty_market(
+            "So11111111111111111111111111111111111111112",
+            "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+            9,
+            6,
+            &mint_authority,
+            &market_key,
+        );
+        let mut market: MarketValue = MarketValue {
+            fixed,
+            dynamic: vec![0; MARKET_BLOCK_SIZE * 32],
+        };
+        for _ in 0..32 {
+            market.market_expand().unwrap();
+        }
+
+        let maker_pk: Pubkey = Pubkey::new_unique();
+        let taker_pk: Pubkey = Pubkey::new_unique();
+        market.claim_seat(&maker_pk).unwrap();
+        market.claim_seat(&taker_pk).unwrap();
+        let maker_index: DataIndex = market.get_trader_index(&maker_pk);
+        let taker_index: DataIndex = market.get_trader_index(&taker_pk);
+        for (index, is_base) in [
+            (maker_index, true),
+            (maker_index, false),
+            (taker_index, true),
+            (taker_index, false),
+        ] {
+            market.deposit(index, 1_000_000_000_000, is_base).unwrap();
+        }
+        (market, maker_index, taker_index, maker_pk, taker_pk)
+    }
+
+    fn place(
+        market: &mut MarketValue,
+        trader_index: DataIndex,
+        num_base_atoms: u64,
+        price: f64,
+        is_bid: bool,
+        order_type: OrderType,
+        last_valid_slot: u32,
+        current_slot: u32,
+    ) -> Result<AddOrderToMarketResult, ProgramError> {
+        market.place_order(AddOrderToMarketArgs {
+            market: Pubkey::new_unique(),
+            trader_index,
+            num_base_atoms: BaseAtoms::new(num_base_atoms),
+            price: price.try_into().unwrap(),
+            is_bid,
+            last_valid_slot,
+            order_type,
+            global_trade_accounts_opts: &[None, None],
+            current_slot: Some(current_slot),
+        })
+    }
+
+    /// Runs the taker order through `place_order` on one copy of the market
+    /// and through `place_order_` (the model) on another, and asserts they
+    /// agree on the result and on every byte of market state.
+    fn assert_equivalent_taker(
+        market: &MarketValue,
+        trader_index: DataIndex,
+        num_base_atoms: u64,
+        price: f64,
+        is_bid: bool,
+        order_type: OrderType,
+        last_valid_slot: u32,
+    ) {
+        let market_key: Pubkey = Pubkey::new_unique();
+        let mut production: MarketValue = MarketValue {
+            fixed: market.fixed,
+            dynamic: market.dynamic.clone(),
+        };
+        let mut model: MarketValue = MarketValue {
+            fixed: market.fixed,
+            dynamic: market.dynamic.clone(),
+        };
+
+        let production_result: Result<AddOrderToMarketResult, ProgramError> = production
+            .place_order(AddOrderToMarketArgs {
+                market: market_key,
+                trader_index,
+                num_base_atoms: BaseAtoms::new(num_base_atoms),
+                price: price.try_into().unwrap(),
+                is_bid,
+                last_valid_slot,
+                order_type,
+                global_trade_accounts_opts: &[None, None],
+                current_slot: Some(NOW_SLOT),
+            });
+        let model_result: Result<AddOrderToMarketResult, ProgramError> =
+            model.place_order_(AddOrderToMarketArgs {
+                market: market_key,
+                trader_index,
+                num_base_atoms: BaseAtoms::new(num_base_atoms),
+                price: price.try_into().unwrap(),
+                is_bid,
+                last_valid_slot,
+                order_type,
+                global_trade_accounts_opts: &[None, None],
+                current_slot: Some(NOW_SLOT),
+            });
+
+        match (production_result, model_result) {
+            (Ok(production_result), Ok(model_result)) => {
+                assert_eq!(
+                    production_result.order_sequence_number, model_result.order_sequence_number,
+                    "order_sequence_number diverged"
+                );
+                assert_eq!(
+                    production_result.order_index, model_result.order_index,
+                    "order_index diverged"
+                );
+                assert_eq!(
+                    production_result.base_atoms_traded, model_result.base_atoms_traded,
+                    "base_atoms_traded diverged"
+                );
+                assert_eq!(
+                    production_result.quote_atoms_traded, model_result.quote_atoms_traded,
+                    "quote_atoms_traded diverged"
+                );
+            }
+            (Err(production_err), Err(model_err)) => {
+                assert_eq!(production_err, model_err, "errors diverged");
+            }
+            (production_result, model_result) => {
+                panic!(
+                    "one implementation failed and the other did not: production ok={} model ok={}",
+                    production_result.is_ok(),
+                    model_result.is_ok()
+                );
+            }
+        }
+
+        assert_eq!(
+            bytemuck::bytes_of(&production.fixed),
+            bytemuck::bytes_of(&model.fixed),
+            "market fixed state diverged"
+        );
+        assert_eq!(
+            production.dynamic, model.dynamic,
+            "market dynamic state diverged"
+        );
+    }
+
+    /// Two ask levels, both consumed, the remainder rests.
+    #[test]
+    fn test_equivalence_multi_level_full_sweep_and_rest() {
+        let (mut market, maker_index, taker_index, _, _) = new_market_with_seats();
+        place(
+            &mut market,
+            maker_index,
+            100,
+            0.150,
+            false,
+            OrderType::Limit,
+            NO_EXPIRATION_LAST_VALID_SLOT,
+            NOW_SLOT,
+        )
+        .unwrap();
+        place(
+            &mut market,
+            maker_index,
+            100,
+            0.180,
+            false,
+            OrderType::Limit,
+            NO_EXPIRATION_LAST_VALID_SLOT,
+            NOW_SLOT,
+        )
+        .unwrap();
+
+        assert_equivalent_taker(
+            &market,
+            taker_index,
+            250,
+            0.200,
+            true,
+            OrderType::Limit,
+            NO_EXPIRATION_LAST_VALID_SLOT,
+        );
+    }
+
+    /// First level consumed, second level partially filled.
+    #[test]
+    fn test_equivalence_partial_fill_second_level() {
+        let (mut market, maker_index, taker_index, _, _) = new_market_with_seats();
+        place(
+            &mut market,
+            maker_index,
+            100,
+            0.150,
+            false,
+            OrderType::Limit,
+            NO_EXPIRATION_LAST_VALID_SLOT,
+            NOW_SLOT,
+        )
+        .unwrap();
+        place(
+            &mut market,
+            maker_index,
+            100,
+            0.180,
+            false,
+            OrderType::Limit,
+            NO_EXPIRATION_LAST_VALID_SLOT,
+            NOW_SLOT,
+        )
+        .unwrap();
+
+        assert_equivalent_taker(
+            &market,
+            taker_index,
+            150,
+            0.200,
+            true,
+            OrderType::Limit,
+            NO_EXPIRATION_LAST_VALID_SLOT,
+        );
+    }
+
+    /// The taker's bid does not cross the book, so it rests.
+    #[test]
+    fn test_equivalence_unmatched_rests() {
+        let (mut market, maker_index, taker_index, _, _) = new_market_with_seats();
+        place(
+            &mut market,
+            maker_index,
+            100,
+            0.150,
+            false,
+            OrderType::Limit,
+            NO_EXPIRATION_LAST_VALID_SLOT,
+            NOW_SLOT,
+        )
+        .unwrap();
+
+        assert_equivalent_taker(
+            &market,
+            taker_index,
+            100,
+            0.100,
+            true,
+            OrderType::Limit,
+            NO_EXPIRATION_LAST_VALID_SLOT,
+        );
+    }
+
+    /// Immediate-or-cancel matches what it can and rests nothing.
+    #[test]
+    fn test_equivalence_ioc_partial() {
+        let (mut market, maker_index, taker_index, _, _) = new_market_with_seats();
+        place(
+            &mut market,
+            maker_index,
+            100,
+            0.150,
+            false,
+            OrderType::Limit,
+            NO_EXPIRATION_LAST_VALID_SLOT,
+            NOW_SLOT,
+        )
+        .unwrap();
+
+        assert_equivalent_taker(
+            &market,
+            taker_index,
+            150,
+            0.150,
+            true,
+            OrderType::ImmediateOrCancel,
+            NO_EXPIRATION_LAST_VALID_SLOT,
+        );
+    }
+
+    /// A crossing post-only order fails identically in both implementations.
+    #[test]
+    fn test_equivalence_post_only_crossing() {
+        let (mut market, maker_index, taker_index, _, _) = new_market_with_seats();
+        place(
+            &mut market,
+            maker_index,
+            100,
+            0.150,
+            false,
+            OrderType::Limit,
+            NO_EXPIRATION_LAST_VALID_SLOT,
+            NOW_SLOT,
+        )
+        .unwrap();
+
+        assert_equivalent_taker(
+            &market,
+            taker_index,
+            100,
+            0.200,
+            true,
+            OrderType::PostOnly,
+            NO_EXPIRATION_LAST_VALID_SLOT,
+        );
+    }
+
+    /// An expired maker on the first level is removed, the second level trades.
+    #[test]
+    fn test_equivalence_expired_maker_skipped() {
+        let (mut market, maker_index, taker_index, _, _) = new_market_with_seats();
+        // Expires at slot 10, taker arrives at NOW_SLOT = 100.
+        place(
+            &mut market,
+            maker_index,
+            100,
+            0.150,
+            false,
+            OrderType::Limit,
+            10,
+            5,
+        )
+        .unwrap();
+        place(
+            &mut market,
+            maker_index,
+            100,
+            0.180,
+            false,
+            OrderType::Limit,
+            NO_EXPIRATION_LAST_VALID_SLOT,
+            5,
+        )
+        .unwrap();
+
+        assert_equivalent_taker(
+            &market,
+            taker_index,
+            150,
+            0.200,
+            true,
+            OrderType::Limit,
+            NO_EXPIRATION_LAST_VALID_SLOT,
+        );
+    }
+
+    /// Matching a reverse maker places its come-back order on the other side,
+    /// which consumes a sequence number during matching. The taker's own
+    /// sequence number and the resting state must still agree.
+    #[test]
+    fn test_equivalence_reverse_maker_come_back() {
+        let (mut market, maker_index, taker_index, _, _) = new_market_with_seats();
+        place(
+            &mut market,
+            maker_index,
+            100,
+            0.150,
+            false,
+            OrderType::Reverse,
+            NO_EXPIRATION_LAST_VALID_SLOT,
+            NOW_SLOT,
+        )
+        .unwrap();
+
+        // Full match plus a remainder that rests, after the reverse come-back
+        // consumed a sequence number.
+        assert_equivalent_taker(
+            &market,
+            taker_index,
+            150,
+            0.150,
+            true,
+            OrderType::Limit,
+            NO_EXPIRATION_LAST_VALID_SLOT,
+        );
+    }
+
+    /// A zero-price order matches nothing and does not rest.
+    #[test]
+    fn test_equivalence_zero_price_returns_early() {
+        let (market, _, taker_index, _, _) = new_market_with_seats();
+
+        assert_equivalent_taker(
+            &market,
+            taker_index,
+            100,
+            0.0,
+            true,
+            OrderType::Limit,
+            NO_EXPIRATION_LAST_VALID_SLOT,
+        );
+    }
+
+    /// Reversible order types are exempt from the expiration check.
+    #[test]
+    fn test_equivalence_reverse_taker_expiration_exempt() {
+        let (market, _, taker_index, _, _) = new_market_with_seats();
+
+        // Expired for a limit order, but reverse orders skip the check.
+        assert_equivalent_taker(
+            &market,
+            taker_index,
+            100,
+            0.150,
+            true,
+            OrderType::Reverse,
+            10,
+        );
+    }
 }

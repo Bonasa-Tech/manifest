@@ -14,9 +14,11 @@ use solana_program::{account_info::AccountInfo, entrypoint::ProgramResult, pubke
 use super::{get_trader_index_with_hint, shared::get_mut_dynamic_account};
 
 #[cfg(feature = "certora")]
+use crate::certora::summaries::token::spl_token_2022_transfer_with_fee;
+#[cfg(feature = "certora")]
 use early_panic::early_panic;
 #[cfg(feature = "certora")]
-use solana_cvt::token::{spl_token_2022_transfer, spl_token_transfer};
+use solana_cvt::token::spl_token_transfer;
 
 #[derive(BorshDeserialize, BorshSerialize)]
 pub struct DepositParams {
@@ -197,7 +199,9 @@ fn spl_token_2022_transfer_from_trader_to_vault<'a, 'info>(
 }
 
 #[cfg(feature = "certora")]
-/** (Summary) Transfer from base (quote) trader to base (quote) vault using SPL Token 2022 **/
+/** (Summary) Transfer from base (quote) trader to base (quote) vault using SPL Token 2022.
+The mint may carry a transfer fee, so the vault can receive less than the
+requested amount; the processor credits the vault balance delta. **/
 fn spl_token_2022_transfer_from_trader_to_vault<'a, 'info>(
     _token_program: &TokenProgram<'a, 'info>,
     trader_account: &TokenAccountInfo<'a, 'info>,
@@ -208,5 +212,5 @@ fn spl_token_2022_transfer_from_trader_to_vault<'a, 'info>(
     amount: u64,
     _decimals: u8,
 ) -> ProgramResult {
-    spl_token_2022_transfer(trader_account.info, vault.info, payer.info, amount)
+    spl_token_2022_transfer_with_fee(trader_account.info, vault.info, payer.info, amount)
 }
