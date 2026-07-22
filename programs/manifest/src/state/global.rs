@@ -296,6 +296,13 @@ impl GlobalFixed {
     pub fn get_global_deposited_atoms(&self) -> GlobalAtoms {
         self.global_deposited_atoms
     }
+    /// `new_nondet` writes a fresh account with zero seats, but eviction is
+    /// only allowed at capacity, so rules for it model an account with an
+    /// arbitrary seat count.
+    #[cfg(feature = "certora")]
+    pub fn set_num_seats_claimed(&mut self, num_seats_claimed: u16) {
+        self.num_seats_claimed = num_seats_claimed;
+    }
 }
 
 impl ManifestAccount for GlobalFixed {

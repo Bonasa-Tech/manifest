@@ -491,3 +491,16 @@ pub fn rule_global_deposit_no_revert() {
 pub fn rule_global_withdraw_no_revert() {
     global_deposit_withdraw_no_revert_check::<false /* IS_DEPOSIT */>();
 }
+
+// There is deliberately no dedicated swap no-revert rule. One was attempted
+// in the exact shape of the verified rule_swap_* funds rules -- same
+// accounts, same preconditions, same single overflow assumption, with the
+// result kept and asserted Ok instead of unwrapped -- and still hit the
+// prover pointer-analysis limitation in the swap account loader (error 3003,
+// "dereference of a register with unknown provenance", via
+// SwapContext::load; re-tested July 2026 with certora-cli 8.13 on prover
+// master, with and without -solanaOptimisticJoinWithStackPtr). Keeping the
+// Result alive keeps the loader's error paths, and their joined provenance,
+// alive; unwrapping prunes them, which is why the funds rules pass. Swap's
+// component operations are each covered by the deposit, matching and
+// withdraw no-revert rules.

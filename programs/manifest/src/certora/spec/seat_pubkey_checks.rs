@@ -13,16 +13,14 @@
 //! stated while the seat is held; releasing one seat must still not touch the
 //! other.
 //!
-//! KNOWN GAP: the matching, cancel, and rest-remaining rules below are built
-//! with the non-global preconditions (`cvt_assume_market_preconditions` forces
-//! a non-global maker) and pass no global accounts, so the global-specific
-//! code paths (`try_to_reduce_global_tokens`, `remove_from_global`,
-//! `transfer_global_tokens`) are never exercised by any preservation rule. If
-//! one of those paths corrupted a market seat pubkey, no rule here would fail,
-//! yet the global funds rules would still assume the pubkeys intact at entry —
-//! the induction has a hole exactly on the global surface. Closing it means
-//! adding MAKER_IS_GLOBAL variants of the matching/cancel/rest rules via
-//! `cvt_assume_market_preconditions_gen`.
+//! The matching, cancel, and rest-remaining rules come in two flavors: the
+//! plain ones are built with the non-global preconditions
+//! (`cvt_assume_market_preconditions` forces a non-global maker) and pass no
+//! global accounts, and the `_global` variants force a global maker (or a
+//! global order being rested) with the global accounts present, so the
+//! global-specific code paths (`try_to_reduce_global_tokens`,
+//! `remove_from_global`, `try_to_add_to_global`, `transfer_global_tokens`)
+//! are exercised by the preservation induction too.
 use super::verification_utils::init_static;
 use crate::*;
 use cvt::{cvt_assert, cvt_assume};
@@ -347,6 +345,227 @@ pub fn rule_seat_pubkey_preserved_by_cancel_bid() {
 #[rule]
 pub fn rule_seat_pubkey_preserved_by_cancel_ask() {
     seat_pubkey_preserved_by_cancel_check::<false /* IS_BID */>();
+}
+
+/// Matching against a global maker draws down their global deposit and pulls
+/// the tokens from the global vault; the stored market seat pubkeys never
+/// change. Exercises `try_to_reduce_global_tokens` and
+/// `transfer_global_tokens` under the preservation induction.
+fn seat_pubkey_preserved_by_matching_global_check<const IS_BID: bool>() {
+    use crate::{
+        certora::spec::place_order_checks::place_single_order_nondet_inputs_with_type,
+        validation::loaders::GlobalTradeAccounts,
+    };
+
+    cvt_static_initializer!();
+
+    let acc_infos: [AccountInfo; 16] = acc_infos_with_mem_layout!();
+    let trader: &AccountInfo = &acc_infos[0];
+    let market_info: &AccountInfo = &acc_infos[1];
+    let maker_trader: &AccountInfo = &acc_infos[7];
+    let vault_base_token: &AccountInfo = &acc_infos[8];
+    let vault_quote_token: &AccountInfo = &acc_infos[9];
+    let global_info: &AccountInfo = &acc_infos[10];
+    let global_vault_token: &AccountInfo = &acc_infos[11];
+
+    // -- the maker order on the book is a global order
+    let maker_order_index: DataIndex = cvt_assume_global_market_preconditions::<IS_BID>(
+        market_info,
+        trader,
+        vault_base_token,
+        vault_quote_token,
+        maker_trader,
+    );
+
+    // a global maker facing a taker bid is an ask, backed by base
+    let market_vault_token: &AccountInfo = if IS_BID {
+        vault_base_token
+    } else {
+        vault_quote_token
+    };
+
+    let global_trade_accounts_opts: [Option<GlobalTradeAccounts>; 2] =
+        cvt_assume_global_trade_accounts(
+            market_info,
+            trader,
+            maker_trader,
+            global_info,
+            global_vault_token,
+            market_vault_token,
+            IS_BID,
+        );
+
+    let old: (Pubkey, Pubkey) = record_seat_pubkeys();
+
+    let (args, remaining_base_atoms, now_slot) = place_single_order_nondet_inputs_with_type::<IS_BID>(
+        market_info,
+        state::OrderType::Limit,
+        &global_trade_accounts_opts,
+    );
+
+    let (_res, _total_base, _total_quote, _global_atoms) = place_single_order_and_settle_global!(
+        market_info,
+        args,
+        remaining_base_atoms,
+        now_slot,
+        maker_order_index
+    );
+
+    cvt_assert_seat_pubkeys_unchanged(old);
+
+    cvt_vacuity_check!();
+}
+
+#[rule]
+pub fn rule_seat_pubkey_preserved_by_matching_global_bid() {
+    seat_pubkey_preserved_by_matching_global_check::<true /* IS_BID */>();
+}
+
+#[rule]
+pub fn rule_seat_pubkey_preserved_by_matching_global_ask() {
+    seat_pubkey_preserved_by_matching_global_check::<false /* IS_BID */>();
+}
+
+/// Cancelling a global order removes it from the global account
+/// (`remove_from_global`); the stored market seat pubkeys never change.
+fn seat_pubkey_preserved_by_cancel_global_check<const IS_BID: bool>() {
+    use crate::validation::loaders::GlobalTradeAccounts;
+
+    cvt_static_initializer!();
+
+    let acc_infos: [AccountInfo; 16] = acc_infos_with_mem_layout!();
+    let trader: &AccountInfo = &acc_infos[0];
+    let market_info: &AccountInfo = &acc_infos[1];
+    let maker_trader: &AccountInfo = &acc_infos[7];
+    let vault_base_token: &AccountInfo = &acc_infos[8];
+    let vault_quote_token: &AccountInfo = &acc_infos[9];
+    let global_info: &AccountInfo = &acc_infos[10];
+    let global_vault_token: &AccountInfo = &acc_infos[11];
+
+    // -- the order to cancel is a global order
+    let order_index: DataIndex = cvt_assume_global_market_preconditions::<IS_BID>(
+        market_info,
+        trader,
+        vault_base_token,
+        vault_quote_token,
+        maker_trader,
+    );
+
+    let market_vault_token: &AccountInfo = if IS_BID {
+        vault_base_token
+    } else {
+        vault_quote_token
+    };
+
+    let global_trade_accounts_opts: [Option<GlobalTradeAccounts>; 2] =
+        cvt_assume_global_trade_accounts(
+            market_info,
+            trader,
+            maker_trader,
+            global_info,
+            global_vault_token,
+            market_vault_token,
+            IS_BID,
+        );
+
+    let old: (Pubkey, Pubkey) = record_seat_pubkeys();
+
+    cancel_order_by_index!(market_info, order_index, &global_trade_accounts_opts);
+
+    cvt_assert_seat_pubkeys_unchanged(old);
+
+    cvt_vacuity_check!();
+}
+
+#[rule]
+pub fn rule_seat_pubkey_preserved_by_cancel_global_bid() {
+    seat_pubkey_preserved_by_cancel_global_check::<true /* IS_BID */>();
+}
+
+#[rule]
+pub fn rule_seat_pubkey_preserved_by_cancel_global_ask() {
+    seat_pubkey_preserved_by_cancel_global_check::<false /* IS_BID */>();
+}
+
+/// Resting a global order registers it on the global account
+/// (`try_to_add_to_global`); the stored market seat pubkeys never change.
+fn seat_pubkey_preserved_by_rest_remaining_global_check<const IS_BID: bool>() {
+    use crate::validation::loaders::GlobalTradeAccounts;
+
+    cvt_static_initializer!();
+
+    let acc_infos: [AccountInfo; 16] = acc_infos_with_mem_layout!();
+    let trader: &AccountInfo = &acc_infos[0];
+    let market_info: &AccountInfo = &acc_infos[1];
+    let maker_trader: &AccountInfo = &acc_infos[7];
+    let vault_base_token: &AccountInfo = &acc_infos[8];
+    let vault_quote_token: &AccountInfo = &acc_infos[9];
+    let global_info: &AccountInfo = &acc_infos[10];
+    let global_vault_token: &AccountInfo = &acc_infos[11];
+
+    let _maker_order_index: DataIndex = cvt_assume_market_preconditions::<IS_BID>(
+        market_info,
+        trader,
+        vault_base_token,
+        vault_quote_token,
+        maker_trader,
+    );
+
+    // The order being rested is the trader's own global order, backed with
+    // base when it is an ask and quote when it is a bid.
+    let market_vault_token: &AccountInfo = if !IS_BID {
+        vault_base_token
+    } else {
+        vault_quote_token
+    };
+
+    let global_trade_accounts_opts: [Option<GlobalTradeAccounts>; 2] =
+        cvt_assume_global_trade_accounts(
+            market_info,
+            trader,
+            trader,
+            global_info,
+            global_vault_token,
+            market_vault_token,
+            !IS_BID,
+        );
+
+    let old: (Pubkey, Pubkey) = record_seat_pubkeys();
+
+    let args: AddOrderToMarketArgs = AddOrderToMarketArgs {
+        market: *market_info.key,
+        trader_index: main_trader_index(),
+        num_base_atoms: nondet(),
+        price: crate::quantities::QuoteAtomsPerBaseAtom::nondet_price_u32(),
+        is_bid: IS_BID,
+        last_valid_slot: nondet(),
+        order_type: state::OrderType::Global,
+        global_trade_accounts_opts: &global_trade_accounts_opts,
+        current_slot: Some(nondet()),
+    };
+
+    rest_remaining!(
+        market_info,
+        args,
+        nondet::<BaseAtoms>(),
+        nondet::<u64>(),
+        nondet::<BaseAtoms>(),
+        nondet::<QuoteAtoms>()
+    );
+
+    cvt_assert_seat_pubkeys_unchanged(old);
+
+    cvt_vacuity_check!();
+}
+
+#[rule]
+pub fn rule_seat_pubkey_preserved_by_rest_remaining_global_bid() {
+    seat_pubkey_preserved_by_rest_remaining_global_check::<true /* IS_BID */>();
+}
+
+#[rule]
+pub fn rule_seat_pubkey_preserved_by_rest_remaining_global_ask() {
+    seat_pubkey_preserved_by_rest_remaining_global_check::<false /* IS_BID */>();
 }
 
 // There is deliberately no swap rule in this family. A swap is, in the
