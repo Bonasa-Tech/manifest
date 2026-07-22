@@ -46,6 +46,12 @@ pub fn rule_update_balance() {
 pub fn rule_deposit_deposits() {
     use state::{cvt_assume_main_trader_has_seat, is_second_seat_taken, second_trader_pk};
 
+    // Without this the ghost switch of the fee-aware transfer summary is
+    // havoced, and the prover explores fee-bearing executions that break the
+    // exact-amount assertions below. `init_static` disables the fee; the
+    // fee-bearing executions are covered by `rule_deposit_deposits_with_fee`.
+    crate::certora::spec::verification_utils::init_static();
+
     let acc_infos: [AccountInfo; 16] = acc_infos_with_mem_layout!();
     let used_acc_infos: &[AccountInfo] = &acc_infos[..6];
     let trader: &AccountInfo = &used_acc_infos[0];
