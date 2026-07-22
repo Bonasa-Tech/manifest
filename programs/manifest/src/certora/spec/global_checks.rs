@@ -714,6 +714,14 @@ pub fn rule_global_evict() {
     cvt_vacuity_check!();
 }
 
+/// Give the mocked global account an arbitrary number of claimed seats.
+fn set_nondet_num_seats_claimed(global_info: &AccountInfo) {
+    let global_data: &mut std::cell::RefMut<&mut [u8]> =
+        &mut global_info.try_borrow_mut_data().unwrap();
+    let global_dynamic_account: crate::state::GlobalRefMut = get_mut_dynamic_account(global_data);
+    global_dynamic_account.fixed.set_num_seats_claimed(nondet());
+}
+
 /// The `global_evict` processor around `evict_and_take_seat`: the evictor
 /// pays the seat + eviction fee in lamports (received in full by the global
 /// account), the evictee is paid out their whole balance from the global
@@ -735,6 +743,10 @@ pub fn rule_global_evict_processor() {
 
     cvt_assume!(global_info.owner == &crate::id());
     create_global!(global_info);
+    // create_global! writes an account with zero seats, but eviction is only
+    // allowed at capacity: give it an arbitrary seat count so the capacity
+    // check does not make the rule vacuous.
+    set_nondet_num_seats_claimed(global_info);
 
     // -- the evictee holds the only modeled seat, the evictor holds none
     cvt_assume!(payer.key == crate::state::main_trader_pk());
@@ -834,6 +846,10 @@ pub fn rule_global_evict_processor_with_fee() {
 
     cvt_assume!(global_info.owner == &crate::id());
     create_global!(global_info);
+    // create_global! writes an account with zero seats, but eviction is only
+    // allowed at capacity: give it an arbitrary seat count so the capacity
+    // check does not make the rule vacuous.
+    set_nondet_num_seats_claimed(global_info);
 
     // -- the vault is a token-2022 account, the only path where a transfer
     // fee exists, and the mint may charge one

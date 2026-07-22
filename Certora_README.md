@@ -157,12 +157,17 @@ to be artifacts rather than bugs:
   little more: the bid come-back size is a division by the reverse price and the
   grown order is a further multiply, so the rule bounds those through the
   maker order's full value (an upper bound on what the trade computes
-  internally). Swap has dedicated no-revert rules
-  (`rule_swap_no_revert_*`), stated in exactly the shape of the verified
+  internally). The one path still not covered is a dedicated no-revert rule
+  for swap. It was re-attempted in the exact shape of the verified
   `rule_swap_*` funds rules -- same accounts, same preconditions, same single
   overflow assumption, with the result kept and asserted `Ok` instead of
-  unwrapped -- because an earlier attempt that read extra state around
-  `process_swap_core` hit a prover pointer-analysis limitation (error 3003).
+  unwrapped -- and still hits the prover pointer-analysis limitation in the
+  swap account loader (error 3003, via `SwapContext::load`; re-tested July
+  2026 with certora-cli 8.13 on prover master, with and without
+  `-solanaOptimisticJoinWithStackPtr`). Keeping the `Result` alive keeps the
+  loader's error paths, and their joined provenance, alive; unwrapping prunes
+  them, which is why the funds rules pass. Swap's component operations are
+  each covered by the deposit, matching and withdraw no-revert rules.
 
 - `place_single_order` in `state/market_helpers.rs` is the model of one
   iteration of the matching loop in `Market::place_order`. It has to be kept
