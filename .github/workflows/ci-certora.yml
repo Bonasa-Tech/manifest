@@ -21,11 +21,11 @@ jobs:
         uses: Certora/certora-run-action@v1
         with:
           configurations: |-
-            rules.conf --commit_sha1 7a4ffb7d0a9fb99d9367ea77975885c1dea85d0f
-            rules-global.conf --commit_sha1 7a4ffb7d0a9fb99d9367ea77975885c1dea85d0f
-            rules-reverse.conf --commit_sha1 7a4ffb7d0a9fb99d9367ea77975885c1dea85d0f
-            rules-seat-integrity.conf --commit_sha1 7a4ffb7d0a9fb99d9367ea77975885c1dea85d0f
-            hypertree.conf --commit_sha1 7a4ffb7d0a9fb99d9367ea77975885c1dea85d0f
+            rules.conf
+            rules-global.conf
+            rules-reverse.conf
+            rules-seat-integrity.conf
+            hypertree.conf
           job-name:  "manifest rules"
           ecosystem: solana
           working-directory: programs/manifest/src/certora/confs
