@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1784646696953,
+  "lastUpdate": 1784746295547,
   "repoUrl": "https://github.com/Bonasa-Tech/manifest",
   "entries": {
     "CU Benchmark": [
@@ -12305,6 +12305,72 @@ window.BENCHMARK_DATA = {
           {
             "name": "MFX_99",
             "value": 13192,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "cyrbritt@gmail.com",
+            "name": "Britt Cyr",
+            "username": "brittcyr"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "d9d5b258f7ca7f994aa134fa83913df49c68eedc",
+          "message": "Close formal verification gaps: token22 fees, global evict processor,… (#658)\n\n* Close formal verification gaps: token22 fees, global evict processor, swap no-revert, model sync\n\n- Fee-aware token-2022 transfer summary (certora/summaries/token.rs) behind a\n  ghost switch; rule_deposit_deposits_with_fee, rule_global_deposit_with_fee\n  verify the vault balance-delta crediting for fee-bearing deposits.\n- Verify the global_evict processor: process_global_evict_core with certora\n  summaries for the seat-fee system transfer and both token transfer legs;\n  rule_global_evict_processor and _with_fee cover lamport conservation,\n  evictee payout, evictor crediting, seat handover and the funds invariant.\n- Close the seat-pubkey induction hole on the global surface with six\n  rule_seat_pubkey_preserved_by_*_global_* rules.\n- Strengthen rule_global_evict with a modeled_global_deposits() delta assert\n  so a confiscated nonzero deposit would fail the rule.\n- Dedicated swap no-revert rules in the exact shape of the verified\n  rule_swap_* funds rules to avoid the prover pointer-analysis limitation.\n- Sync place_order_helper with Market::place_order (taker sequence number\n  claimed before matching, reversible orders exempt from expiration check,\n  zero-price early return) and add a differential test suite comparing both\n  implementations byte-for-byte across multi-level matching scenarios.\n- Register the 14 new rules in rules.conf and certora/CI_tests; update\n  Certora_README.md known gaps.\n\n* Apply nightly rustfmt\n\n* Fix prover findings on the new formal verification rules\n\n- rule_global_evict_processor and _with_fee were vacuous: GlobalFixed::\n  new_nondet writes zero claimed seats while eviction requires the account at\n  capacity, so the capacity check compiled to assume(false). Give the mocked\n  global account a nondeterministic seat count in those rules. Both now\n  verify with sanity passing.\n- Drop the dedicated swap no-revert rules: re-tested on prover master with\n  certora-cli 8.13, they still hit the pointer-analysis limitation in the\n  swap account loader (error 3003 via SwapContext::load), with and without\n  -solanaOptimisticJoinWithStackPtr. Keeping the Result alive keeps the\n  loader's error paths and their joined provenance alive; unwrapping prunes\n  them, which is why the rule_swap_* funds rules pass. Documented in\n  no_revert_checks.rs and Certora_README.md; swap's component operations\n  remain covered by the deposit, matching and withdraw no-revert rules.\n\nAll 12 registered new rules verified on the remote prover:\nrule_deposit_deposits_with_fee, rule_global_deposit_with_fee,\nrule_global_evict_processor, rule_global_evict_processor_with_fee, and the\nsix rule_seat_pubkey_preserved_by_*_global_* rules.\n\n* Initialize statics in rule_deposit_deposits\n\nThe rule was the only deposit-path rule that never called init_static, so\nthe ghost switch of the new fee-aware transfer summary was havoced and the\nprover found fee-bearing executions that break the rule's exact-amount\nassertions. init_static disables the fee; the fee-bearing executions are\ncovered by rule_deposit_deposits_with_fee.\n\n* Split certora CI into per-area confs\n\nOne shared job carrying all 111 rules made the vacuity sanity sub-checks\nof a few heavy rest_remaining rules flaky (SANITY_FAILED in the batch,\nVERIFIED when run individually, on main and on this branch alike). Split\nthe suite into rules.conf (64 core market rules), rules-global.conf (35\nglobal order rules), and rules-reverse.conf (12 reverse order rules),\nalongside the existing hypertree.conf, and submit all four from the\nworkflow. The three confs are an exact partition of the previous rule\nlist.\n\n* Split seat pubkey integrity rules into their own certora conf\n\nMoves the 16 seat-pubkey preservation rules (core and global-path\nvariants) out of rules.conf and rules-global.conf into\nrules-seat-integrity.conf, further shrinking each prover job. The four\nmanifest confs remain an exact partition of the 111 rules:\n54 core + 29 global + 12 reverse + 16 seat integrity.\n\n* Bump certora-cli to 8.13.0 in CI\n\nThe SANITY_FAILED verdicts in CI were an artifact of certora-cli 8.11.3\nin multi-rule jobs: when a job runs out of solver budget, the 8.11.3-era\nbackend reports starved rule_not_vacuous sub-rules as SANITY_FAILED,\nwhere the 8.13-era backend reports starved work as TIMEOUT. Every\naffected rule verifies individually under both CLI versions, and all four\nsplit confs verify completely under 8.13 (29/29 global, 16/16 seat\nintegrity, 12/12 reverse, core in flight), so no rule is actually\nvacuous.\n\n* Drop stale commit_sha1 pin from certora CI submissions\n\nUnder certora-cli 8.13 the --commit_sha1 argument corrupts the cloud jar\ninvocation (\"Only one argument is expected, got 2: manifest.so,false\")\nand every job fails before running a single rule; reproduced with two\ndirect submissions carrying the flag, while identical submissions without\nit verify completely. The pin pointed at a year-old commit anyway. All\nfour manifest confs verify fully without it under 8.13:\n54 core + 29 global + 12 reverse + 16 seat integrity = 111/111.",
+          "timestamp": "2026-07-22T14:38:53-04:00",
+          "tree_id": "153612fe2564d37cb4d60cb44c2fd0d2243be170",
+          "url": "https://github.com/Bonasa-Tech/manifest/commit/d9d5b258f7ca7f994aa134fa83913df49c68eedc"
+        },
+        "date": 1784746293482,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "PHX_50",
+            "value": 6897,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "PHX_95",
+            "value": 13208,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "PHX_99",
+            "value": 13902,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_50",
+            "value": 3281,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_95",
+            "value": 12272,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_99",
+            "value": 13184,
             "range": "",
             "unit": "CU",
             "extra": ""
