@@ -24,6 +24,7 @@ jobs:
             rules.conf --commit_sha1 7a4ffb7d0a9fb99d9367ea77975885c1dea85d0f
             rules-global.conf --commit_sha1 7a4ffb7d0a9fb99d9367ea77975885c1dea85d0f
             rules-reverse.conf --commit_sha1 7a4ffb7d0a9fb99d9367ea77975885c1dea85d0f
+            rules-seat-integrity.conf --commit_sha1 7a4ffb7d0a9fb99d9367ea77975885c1dea85d0f
             hypertree.conf --commit_sha1 7a4ffb7d0a9fb99d9367ea77975885c1dea85d0f
           job-name:  "manifest rules"
           ecosystem: solana

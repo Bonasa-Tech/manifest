@@ -249,6 +249,7 @@ flaky in one big batch while passing individually):
 - `rules.conf` -- the core market rules
 - `rules-global.conf` -- the global order rules
 - `rules-reverse.conf` -- the reverse order rules
+- `rules-seat-integrity.conf` -- the seat pubkey integrity induction
 - `hypertree.conf` -- the red-black tree library rules
 
 
