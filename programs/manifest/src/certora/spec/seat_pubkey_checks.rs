@@ -352,8 +352,10 @@ pub fn rule_seat_pubkey_preserved_by_cancel_ask() {
 /// change. Exercises `try_to_reduce_global_tokens` and
 /// `transfer_global_tokens` under the preservation induction.
 fn seat_pubkey_preserved_by_matching_global_check<const IS_BID: bool>() {
-    use crate::certora::spec::place_order_checks::place_single_order_nondet_inputs_with_type;
-    use crate::validation::loaders::GlobalTradeAccounts;
+    use crate::{
+        certora::spec::place_order_checks::place_single_order_nondet_inputs_with_type,
+        validation::loaders::GlobalTradeAccounts,
+    };
 
     cvt_static_initializer!();
 

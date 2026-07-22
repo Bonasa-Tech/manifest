@@ -798,8 +798,10 @@ pub fn place_order_helper<
 #[cfg(all(test, not(feature = "certora")))]
 mod place_order_equivalence_tests {
     use super::*;
-    use crate::state::market::{create_empty_market, MarketValue};
-    use crate::state::{OrderType, MARKET_BLOCK_SIZE, NO_EXPIRATION_LAST_VALID_SLOT};
+    use crate::state::{
+        market::{create_empty_market, MarketValue},
+        OrderType, MARKET_BLOCK_SIZE, NO_EXPIRATION_LAST_VALID_SLOT,
+    };
     use solana_program::pubkey::Pubkey;
 
     const NOW_SLOT: u32 = 100;

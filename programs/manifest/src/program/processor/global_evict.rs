@@ -7,7 +7,6 @@ use solana_program::{program::invoke_signed, program_pack::Pack, rent::Rent, sys
 #[cfg(not(feature = "certora"))]
 use spl_token::state::Account;
 
-use crate::state::GlobalFixed;
 #[cfg(not(feature = "certora"))]
 use crate::{
     global_vault_seeds_with_bump, state::GAS_DEPOSIT_LAMPORTS, validation::get_global_vault_address,
@@ -17,7 +16,7 @@ use crate::{
     program::get_mut_dynamic_account,
     quantities::{GlobalAtoms, WrapperU64},
     require,
-    state::GlobalRefMut,
+    state::{GlobalFixed, GlobalRefMut},
     validation::{
         loaders::GlobalEvictContext, ManifestAccountInfo, MintAccountInfo, Signer,
         TokenAccountInfo, TokenProgram,
