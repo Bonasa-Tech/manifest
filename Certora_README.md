@@ -239,6 +239,19 @@ cargo install rustfilt
 
 # How to run the prover #
 
+## CI configurations ##
+
+CI (`.github/workflows/ci-certora.yml`) submits the rules in four jobs from
+`programs/manifest/src/certora/confs`, split so that no single job carries
+the whole suite (the vacuity sanity sub-checks of a few heavy rules were
+flaky in one big batch while passing individually):
+
+- `rules.conf` -- the core market rules
+- `rules-global.conf` -- the global order rules
+- `rules-reverse.conf` -- the reverse order rules
+- `hypertree.conf` -- the red-black tree library rules
+
+
 ## Configuration Parameters for Just ##
 
 Just is controlled by environment variables. These are used to provide location for `certoraRun`, the key for the prover, etc. The easiest way to maintain them is to place them in a file called `.env` somewhere in the ancestor of the `justfile`. This can be at the root of the project, or even in the parent directory shared accross multiple projects. 
