@@ -105,12 +105,12 @@ export function createGlobalEvictInstruction(
     },
     {
       pubkey: accounts.traderToken,
-      isWritable: false,
+      isWritable: true,
       isSigner: false,
     },
     {
       pubkey: accounts.evicteeToken,
-      isWritable: false,
+      isWritable: true,
       isSigner: false,
     },
     {
