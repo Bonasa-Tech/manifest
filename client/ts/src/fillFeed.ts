@@ -394,7 +394,10 @@ export function toFillLogResult(
 ): FillLogResult {
   // When a delegating signer (e.g. jupui) signed on behalf of the real taker,
   // attribute the fill to the other signer instead of the on-chain taker.
-  const takerFromSigner: string | undefined = resolveTakerFromSigners(signers);
+  const takerFromSigner: string | undefined = resolveTakerFromSigners(
+    signers,
+    originalSigner,
+  );
 
   const result: FillLogResult = {
     market: fillLog.market.toBase58(),

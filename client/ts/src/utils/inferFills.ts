@@ -265,6 +265,7 @@ export function inferFillsFromTransaction(
   // attribute the fill to the other signer instead of the on-chain taker.
   const takerFromSigner: string | undefined = resolveTakerFromSigners(
     extras.signers,
+    extras.originalSigner,
   );
 
   for (const site of findSwapSites(tx, accountKeys)) {

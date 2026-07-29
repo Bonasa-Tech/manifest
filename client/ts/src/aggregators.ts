@@ -59,22 +59,30 @@ export const DELEGATING_SIGNERS: Set<string> = new Set<string>([
 ]);
 
 /**
- * If one of the transaction signers is a known delegating signer, return the
- * other signer to use as the taker.
+ * If a known delegating signer signed the transaction, return the real taker:
+ * the fee payer (original signer) when it isn't itself the delegating signer,
+ * otherwise the other signer.
  * @param signers - Array of base58-encoded signer public key strings
- * @returns The other signer to use as the taker, or undefined if there is no
- *   delegating signer or no distinct other signer.
+ * @param originalSigner - The fee payer / first signer, if known
+ * @returns The address to use as the taker, or undefined if there is no
+ *   delegating signer or no distinct other signer to substitute.
  */
 export function resolveTakerFromSigners(
   signers: string[] | undefined,
+  originalSigner?: string,
 ): string | undefined {
-  if (!signers || signers.length === 0) {
+  const hasDelegatingSigner: boolean =
+    (signers?.some((signer) => DELEGATING_SIGNERS.has(signer)) ?? false) ||
+    (originalSigner !== undefined && DELEGATING_SIGNERS.has(originalSigner));
+  if (!hasDelegatingSigner) {
     return undefined;
   }
-  if (!signers.some((signer) => DELEGATING_SIGNERS.has(signer))) {
-    return undefined;
+  // Prefer the fee payer (original signer) when it is the real taker, then fall
+  // back to any other non-delegating signer.
+  if (originalSigner && !DELEGATING_SIGNERS.has(originalSigner)) {
+    return originalSigner;
   }
-  return signers.find((signer) => !DELEGATING_SIGNERS.has(signer));
+  return signers?.find((signer) => !DELEGATING_SIGNERS.has(signer));
 }
 
 /**
