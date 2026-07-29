@@ -1,6 +1,7 @@
 import bs58 from 'bs58';
 import { PROGRAM_ID } from '../manifest';
 import { FillLogResult } from '../types';
+import { resolveTakerFromSigners } from '../aggregators';
 
 // The maker cannot be recovered from a transaction with truncated logs.
 // Inferred fills carry an empty maker, which is how subscribers can tell a
@@ -260,9 +261,16 @@ export function inferFillsFromTransaction(
   const accountKeys: string[] = resolveAccountKeys(tx);
   const results: FillLogResult[] = [];
 
+  // When a delegating signer (e.g. jupui) signed on behalf of the real taker,
+  // attribute the fill to the other signer instead of the on-chain taker.
+  const takerFromSigner: string | undefined = resolveTakerFromSigners(
+    extras.signers,
+    extras.originalSigner,
+  );
+
   for (const site of findSwapSites(tx, accountKeys)) {
     const swapAccounts: string[] = site.instruction.accountKeys;
-    const taker: string = swapAccounts[site.layout.taker];
+    const taker: string = takerFromSigner ?? swapAccounts[site.layout.taker];
     const market: string = swapAccounts[site.layout.market];
     const traderBase: string = swapAccounts[site.layout.traderBase];
     const traderQuote: string = swapAccounts[site.layout.traderQuote];

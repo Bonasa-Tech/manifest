@@ -46,7 +46,44 @@ export const ORIGINATING_PROTOCOL_IDS = {
   F7p3dFrjRTbtRp8FRF6qHLomXbKRBzpvBLjtQcfcgmNe: 'relay',
   AgmLJBMDCqWynYnQiPCuj9ewsNNsBJXyzoUhD9LJzN51: 'fomo',
   JTXJTXfr1wVRMEzqiPhXUr69zJtfGuLh5qEiXG772Zj: 'jtx',
+  sighWH8KaiT7QhtV4w29ReVF8kG6D5yG3EQP1KYyGVF: 'jupui',
 } as const;
+
+/**
+ * Signer addresses that act on behalf of the real taker. When one of these
+ * appears as a transaction signer, the other signer is the actual taker and
+ * should be substituted in place of it.
+ */
+export const DELEGATING_SIGNERS: Set<string> = new Set<string>([
+  'sighWH8KaiT7QhtV4w29ReVF8kG6D5yG3EQP1KYyGVF',
+]);
+
+/**
+ * If a known delegating signer signed the transaction, return the real taker:
+ * the fee payer (original signer) when it isn't itself the delegating signer,
+ * otherwise the other signer.
+ * @param signers - Array of base58-encoded signer public key strings
+ * @param originalSigner - The fee payer / first signer, if known
+ * @returns The address to use as the taker, or undefined if there is no
+ *   delegating signer or no distinct other signer to substitute.
+ */
+export function resolveTakerFromSigners(
+  signers: string[] | undefined,
+  originalSigner?: string,
+): string | undefined {
+  const hasDelegatingSigner: boolean =
+    (signers?.some((signer) => DELEGATING_SIGNERS.has(signer)) ?? false) ||
+    (originalSigner !== undefined && DELEGATING_SIGNERS.has(originalSigner));
+  if (!hasDelegatingSigner) {
+    return undefined;
+  }
+  // Prefer the fee payer (original signer) when it is the real taker, then fall
+  // back to any other non-delegating signer.
+  if (originalSigner && !DELEGATING_SIGNERS.has(originalSigner)) {
+    return originalSigner;
+  }
+  return signers?.find((signer) => !DELEGATING_SIGNERS.has(signer));
+}
 
 /**
  * Detect aggregator from a list of account key strings.
