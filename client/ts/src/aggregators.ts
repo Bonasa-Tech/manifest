@@ -46,7 +46,36 @@ export const ORIGINATING_PROTOCOL_IDS = {
   F7p3dFrjRTbtRp8FRF6qHLomXbKRBzpvBLjtQcfcgmNe: 'relay',
   AgmLJBMDCqWynYnQiPCuj9ewsNNsBJXyzoUhD9LJzN51: 'fomo',
   JTXJTXfr1wVRMEzqiPhXUr69zJtfGuLh5qEiXG772Zj: 'jtx',
+  sighWH8KaiT7QhtV4w29ReVF8kG6D5yG3EQP1KYyGVF: 'jupui',
 } as const;
+
+/**
+ * Signer addresses that act on behalf of the real taker. When one of these
+ * appears as a transaction signer, the other signer is the actual taker and
+ * should be substituted in place of it.
+ */
+export const DELEGATING_SIGNERS: Set<string> = new Set<string>([
+  'sighWH8KaiT7QhtV4w29ReVF8kG6D5yG3EQP1KYyGVF',
+]);
+
+/**
+ * If one of the transaction signers is a known delegating signer, return the
+ * other signer to use as the taker.
+ * @param signers - Array of base58-encoded signer public key strings
+ * @returns The other signer to use as the taker, or undefined if there is no
+ *   delegating signer or no distinct other signer.
+ */
+export function resolveTakerFromSigners(
+  signers: string[] | undefined,
+): string | undefined {
+  if (!signers || signers.length === 0) {
+    return undefined;
+  }
+  if (!signers.some((signer) => DELEGATING_SIGNERS.has(signer))) {
+    return undefined;
+  }
+  return signers.find((signer) => !DELEGATING_SIGNERS.has(signer));
+}
 
 /**
  * Detect aggregator from a list of account key strings.

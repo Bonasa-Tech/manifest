@@ -19,6 +19,7 @@ import { FillLogResult } from './types';
 import {
   detectAggregatorFromKeys,
   detectOriginatingProtocolFromKeys,
+  resolveTakerFromSigners,
 } from './aggregators';
 
 const SIGNATURE_BATCH_SIZE = 10;
@@ -391,10 +392,14 @@ export function toFillLogResult(
   signers?: string[],
   blockTime?: number,
 ): FillLogResult {
+  // When a delegating signer (e.g. jupui) signed on behalf of the real taker,
+  // attribute the fill to the other signer instead of the on-chain taker.
+  const takerFromSigner: string | undefined = resolveTakerFromSigners(signers);
+
   const result: FillLogResult = {
     market: fillLog.market.toBase58(),
     maker: fillLog.maker.toBase58(),
-    taker: fillLog.taker.toBase58(),
+    taker: takerFromSigner ?? fillLog.taker.toBase58(),
     baseAtoms: fillLog.baseAtoms.inner.toString(),
     quoteAtoms: fillLog.quoteAtoms.inner.toString(),
     priceAtoms: convertU128(fillLog.price.inner),
