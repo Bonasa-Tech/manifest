@@ -123,7 +123,8 @@ impl Dex for Manifest {
         let market_data = client
             .get_account_data(&Pubkey::from_str(pool_address).ok()?)
             .ok()?;
-        let market: MarketValue = manifest::program::get_dynamic_value(market_data.as_slice());
+        let market: MarketValue =
+            manifest::program::get_dynamic_value_or(market_data.as_slice()).ok()?;
         let base_vault: &Pubkey = market.fixed.get_base_vault();
         let quote_vault: &Pubkey = market.fixed.get_quote_vault();
 

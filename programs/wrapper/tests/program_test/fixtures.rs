@@ -4,7 +4,7 @@ use std::{
 };
 
 use manifest::{
-    program::{create_market_instructions, get_dynamic_value},
+    program::{create_market_instructions, get_dynamic_value_or},
     quantities::WrapperU64,
     state::{MarketFixed, MarketValue},
     validation::MintAccountInfo,
@@ -438,7 +438,7 @@ impl MarketFixture {
             .unwrap()
             .unwrap();
 
-        let market: MarketValue = get_dynamic_value(market_account.data.as_slice());
+        let market: MarketValue = get_dynamic_value_or(market_account.data.as_slice()).unwrap();
         self.market = market;
     }
 

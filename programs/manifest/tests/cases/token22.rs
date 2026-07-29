@@ -212,7 +212,7 @@ async fn token22_base() -> anyhow::Result<()> {
             .unwrap();
 
         let market: manifest::state::MarketValue =
-            manifest::program::get_dynamic_value(market_account.data.as_slice());
+            manifest::program::get_dynamic_value_or(market_account.data.as_slice()).unwrap();
         let balance = market.get_trader_balance(&payer);
         assert_eq!(balance.0.as_u64(), 999999000);
     }
@@ -724,7 +724,7 @@ async fn token22_deposit_transfer_fee() -> anyhow::Result<()> {
         .unwrap();
 
     let market: manifest::state::MarketValue =
-        manifest::program::get_dynamic_value(market_account.data.as_slice());
+        manifest::program::get_dynamic_value_or(market_account.data.as_slice()).unwrap();
     let balance = market.get_trader_balance(&payer);
     assert_eq!(balance.0.as_u64(), 900_000_000);
 
@@ -936,7 +936,7 @@ async fn token22_transfer_fee_epoch_switching() -> anyhow::Result<()> {
             .unwrap();
 
         let market: manifest::state::MarketValue =
-            manifest::program::get_dynamic_value(market_account.data.as_slice());
+            manifest::program::get_dynamic_value_or(market_account.data.as_slice()).unwrap();
         let balance = market.get_trader_balance(&payer);
         assert_eq!(
             balance.0.as_u64(),
@@ -1011,7 +1011,7 @@ async fn token22_transfer_fee_epoch_switching() -> anyhow::Result<()> {
             .unwrap();
 
         let market: manifest::state::MarketValue =
-            manifest::program::get_dynamic_value(market_account.data.as_slice());
+            manifest::program::get_dynamic_value_or(market_account.data.as_slice()).unwrap();
         let balance = market.get_trader_balance(&payer);
         assert_eq!(
             balance.0.as_u64(),
@@ -1216,7 +1216,7 @@ async fn token22_transfer_fee_older_epoch() -> anyhow::Result<()> {
             .unwrap();
 
         let market: manifest::state::MarketValue =
-            manifest::program::get_dynamic_value(market_account.data.as_slice());
+            manifest::program::get_dynamic_value_or(market_account.data.as_slice()).unwrap();
         let balance = market.get_trader_balance(&payer);
         assert_eq!(
             balance.0.as_u64(),
@@ -1401,7 +1401,7 @@ async fn token22_transfer_fee_zero_to_nonzero() -> anyhow::Result<()> {
             .unwrap();
 
         let market: manifest::state::MarketValue =
-            manifest::program::get_dynamic_value(market_account.data.as_slice());
+            manifest::program::get_dynamic_value_or(market_account.data.as_slice()).unwrap();
         let balance = market.get_trader_balance(&payer);
         assert_eq!(
             balance.0.as_u64(),
@@ -1472,7 +1472,7 @@ async fn token22_transfer_fee_zero_to_nonzero() -> anyhow::Result<()> {
             .unwrap();
 
         let market: manifest::state::MarketValue =
-            manifest::program::get_dynamic_value(market_account.data.as_slice());
+            manifest::program::get_dynamic_value_or(market_account.data.as_slice()).unwrap();
         let balance = market.get_trader_balance(&payer);
         assert_eq!(
             balance.0.as_u64(),

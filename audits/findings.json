@@ -1,0 +1,867 @@
+{
+  "documentType": "codex-security.findings",
+  "schemaVersion": "1.0",
+  "scanId": "60e29fe0-80d1-4e27-b1ea-129bc719105a",
+  "findings": [
+    {
+      "ruleId": "manifest.global-clean.notional-overflow",
+      "identity": {
+        "anchor": "programs/manifest/src/program/processor/global_clean.rs/required-global-atoms",
+        "instance": "oversized-global-bid"
+      },
+      "title": "Oversized global bids abort the dedicated cleanup path",
+      "summary": "Global orders can be stored without proving that their complete quote notional fits in the protocol's u64 quantity type. GlobalClean later recomputes that notional and unwraps the fallible conversion, so a cleaner targeting an oversized global bid deterministically loses its transaction. A small crossing order can remove a zero-backed instance, which limits this to recoverable cleanup grief.",
+      "severity": {
+        "level": "low",
+        "rationale": "Persisted attacker-created state can make the dedicated cleanup transaction abort, but recovery is permissionless, cheap, and preserves funds and ordinary cancellation or withdrawal. Low impact with medium likelihood maps mechanically to low.",
+        "changeConditions": "Ignore if keeper workflows already fall back to a bounded one-atom crossing removal or attacker gas costs fully internalize the nuisance; raise severity only if evidence shows small crossing removal cannot execute in real account layouts or repeated low-cost placement blocks routine trading or recovery beyond isolated transactions."
+      },
+      "confidence": {
+        "level": "high",
+        "rationale": "Global placement omits the regular bid notional-conversion guard, while cleanup unwraps the same fallible conversion before checking backing or expiry."
+      },
+      "taxonomy": {
+        "category": "Arithmetic error and recoverable denial of service",
+        "cwe": [
+          "CWE-190",
+          "CWE-248"
+        ]
+      },
+      "locations": [
+        {
+          "end_line": 1559,
+          "path": "programs/manifest/src/state/market.rs",
+          "role": "source",
+          "start_line": 1517
+        },
+        {
+          "end_line": 127,
+          "path": "programs/manifest/src/program/processor/global_clean.rs",
+          "role": "sink",
+          "start_line": 107
+        },
+        {
+          "end_line": 652,
+          "path": "programs/manifest/src/state/global.rs",
+          "role": "evidence",
+          "start_line": 637
+        }
+      ],
+      "codeEvidence": [
+        {
+          "id": "global-order-skips-notional-check",
+          "label": "Global placement skips the regular notional conversion",
+          "path": "programs/manifest/src/state/market.rs",
+          "startLine": 1535,
+          "endLine": 1558,
+          "language": "rust",
+          "role": "root_control",
+          "code": "if resting_order.is_global() {\n    let global_trade_account_opt = &global_trade_accounts_opts[if is_bid { 1 } else { 0 }];\n    require!(global_trade_account_opt.is_some(), ManifestError::MissingGlobal, \"Missing global accounts when adding a global\")?;\n    try_to_add_to_global(&global_trade_account_opt.as_ref().unwrap(), &resting_order)?;\n} else {\n    update_balance(\n        fixed,\n        dynamic,\n        trader_index,\n        !is_bid,\n        false,\n        if is_bid {\n            remaining_base_atoms.checked_mul(price, true)?.into()\n        } else {\n            remaining_base_atoms.into()\n        },\n    )?;\n}",
+          "explanation": "The checked quote conversion is performed for regular bids but not for Global bids, allowing an unrepresentable full notional to persist."
+        },
+        {
+          "id": "global-clean-unwraps-notional",
+          "label": "Cleanup unwraps the fallible conversion",
+          "path": "programs/manifest/src/program/processor/global_clean.rs",
+          "startLine": 107,
+          "endLine": 119,
+          "language": "rust",
+          "role": "sink",
+          "code": "let required_global_atoms: u64 = if resting_order.get_is_bid() {\n    resting_order\n        .get_num_base_atoms()\n        .checked_mul(resting_order.get_price(), true)\n        .unwrap()\n        .as_u64()\n} else {\n    resting_order.get_num_base_atoms().as_u64()\n};",
+          "explanation": "The same conversion can fail for accepted state, and unwrap turns that failure into a program panic."
+        }
+      ],
+      "rootCause": {
+        "summary": "Global bid insertion and cleanup enforce different arithmetic domains: insertion accepts a quantity/price pair that cleanup assumes is representable.",
+        "evidenceRefs": [
+          "global-order-skips-notional-check",
+          "global-clean-unwraps-notional"
+        ]
+      },
+      "remediation": "Validate the full Global bid notional with checked_mul before inserting it. Replace the cleanup unwrap with a recoverable branch that removes or rejects an unrepresentable order while preserving the cleaner reward semantics.",
+      "validation": {
+        "disposition": "reportable",
+        "method": "Static persisted-state trace from valid Global bid insertion to GlobalClean arithmetic.",
+        "confidence": "high",
+        "confidence_rationale": "Global placement omits the regular bid notional-conversion guard, while cleanup unwraps the same fallible conversion before checking backing or expiry.",
+        "rubric": "State accepted by a public mutation path must remain consumable by its permissionless cleanup path.",
+        "evidence": "A global-seat holder can rest a non-crossing oversized bid; cleanup later evaluates checked_mul(...).unwrap() for that stored order and panics.",
+        "counterevidence_or_proof_gap": "A crossing taker or the order owner may be able to remove the order through another path, and ordinary transactions remain atomic.",
+        "remaining_uncertainty": "The cost and persistence of blocking automated cleanup require attack-path calibration.",
+        "artifact_paths": [
+          "artifacts/02_discovery/candidate_ledger.jsonl",
+          "artifacts/03_coverage/review_batch_1.md"
+        ]
+      },
+      "attackPath": {
+        "decision": "reportable",
+        "dataflow": "A global-seat holder places a non-crossing Global bid whose full base quantity times price exceeds the quote representation; placement stores it without the regular bid notional guard. GlobalClean later evaluates that full notional with checked_mul(...).unwrap() and aborts, so a cleaner targeting the persisted order loses that transaction. A deliberately small crossing taker computes only its traded slice, reaches the insufficient-global-balance branch, and removes the order.",
+        "reachability": "Global placement and cleanup are permissionless product paths. The attacker needs a global seat and gas prepayment and can induce failures in cleaners that select the oversized order, but any participant with the required global accounts can cheaply cross one atom and permissionlessly remove a zero-backed order.",
+        "counterevidence": "The validation concern does not establish persistent market denial: checked_quote_for_base is applied to the takers small base_atoms_traded before backing is checked, so a one-atom crossing order stays below u64 overflow even at the maximum price and reaches normal unbacked-order removal. Owner cancellation is also available.",
+        "impact": "low",
+        "likelihood": "medium",
+        "severity": "low",
+        "severity_rationale": "Persisted attacker-created state can make the dedicated cleanup transaction abort, but recovery is permissionless, cheap, and preserves funds and ordinary cancellation or withdrawal. Low impact with medium likelihood maps mechanically to low.",
+        "change_conditions": "Ignore if keeper workflows already fall back to a bounded one-atom crossing removal or attacker gas costs fully internalize the nuisance; raise severity only if evidence shows small crossing removal cannot execute in real account layouts or repeated low-cost placement blocks routine trading or recovery beyond isolated transactions."
+      },
+      "remediationTests": [
+        "Reject a Global bid whose full base quantity and price cannot produce QuoteAtoms.",
+        "Seed an oversized historical Global bid and verify GlobalClean returns safely or removes it without panicking.",
+        "Verify ordinary zero-backed Global bids remain permissionlessly removable."
+      ],
+      "preventiveControls": [
+        "Use one shared checked notional helper in placement, matching, cancellation, and cleanup.",
+        "Forbid unwrap on arithmetic derived from persisted or caller-controlled order fields."
+      ],
+      "provenance": {
+        "source": "codex-security-plugin"
+      },
+      "extensions": {
+        "candidateId": "candidate-f3aa8f51edb3b019",
+        "ledgerRowId": "candidate-f3aa8f51edb3b019"
+      }
+    },
+    {
+      "ruleId": "manifest.client.unchecked-dynamic-account-length",
+      "identity": {
+        "anchor": "programs/manifest/src/program/processor/shared.rs/get-dynamic-value",
+        "instance": "okx-market-rpc"
+      },
+      "title": "Truncated RPC account data panics the OKX integration",
+      "summary": "The public dynamic-account decoder splits its input at the fixed-header size without checking the buffer length or returning an error. The OKX integration passes configured RPC account bytes directly to this function, so a hostile or faulty RPC provider can crash the local client process with a truncated response.",
+      "severity": {
+        "level": "low",
+        "rationale": "A remote-but-trusted-upstream parser crash is a real boundary crossing with local availability impact only. Low impact and low likelihood map mechanically to low.",
+        "changeConditions": "Ignore if the parser is unreachable in released integrations or the RPC client proves account length before this call; raise likelihood if this code is deployed broadly against untrusted proxy RPCs or the crash drives unsafe signing or sustained fleet outage."
+      },
+      "confidence": {
+        "level": "high",
+        "rationale": "A short byte buffer deterministically panics at split_at, and the in-repository client passes untrusted RPC bytes directly."
+      },
+      "taxonomy": {
+        "category": "Improper input validation and client denial of service",
+        "cwe": [
+          "CWE-20",
+          "CWE-129",
+          "CWE-248"
+        ]
+      },
+      "locations": [
+        {
+          "end_line": 126,
+          "path": "client/okx/src/mfx.rs",
+          "role": "entrypoint",
+          "start_line": 122
+        },
+        {
+          "end_line": 194,
+          "path": "programs/manifest/src/program/processor/shared.rs",
+          "role": "sink",
+          "start_line": 187
+        }
+      ],
+      "codeEvidence": [
+        {
+          "id": "unchecked-dynamic-account-split",
+          "label": "Decoder assumes the fixed header is present",
+          "path": "programs/manifest/src/program/processor/shared.rs",
+          "startLine": 186,
+          "endLine": 195,
+          "language": "rust",
+          "role": "sink",
+          "code": "pub fn get_dynamic_value<T: Get>(data: &[u8]) -> DynamicAccount<T, Vec<u8>> {\n    let (fixed_data, dynamic_data) = data.split_at(size_of::<T>());\n    let market_fixed: &T = get_helper::<T>(fixed_data, 0_u32);\n\n    DynamicAccount {\n        fixed: *market_fixed,\n        dynamic: dynamic_data.to_vec(),\n    }\n}",
+          "explanation": "slice::split_at panics when data is shorter than size_of::<T>()."
+        },
+        {
+          "id": "rpc-bytes-reach-decoder",
+          "label": "RPC bytes reach the decoder without a length check",
+          "path": "client/okx/src/mfx.rs",
+          "startLine": 122,
+          "endLine": 127,
+          "language": "rust",
+          "role": "entrypoint",
+          "code": "let market_data = client\n    .get_account_data(&Pubkey::from_str(pool_address).ok()?)\n    .ok()?;\nlet market: MarketValue = manifest::program::get_dynamic_value(market_data.as_slice());",
+          "explanation": "A configured RPC provider controls the byte vector consumed by the panicking parser."
+        }
+      ],
+      "rootCause": {
+        "summary": "A parser intended for off-chain, fallible data returns a value directly and relies on panic-based slice bounds checks.",
+        "evidenceRefs": [
+          "unchecked-dynamic-account-split",
+          "rpc-bytes-reach-decoder"
+        ]
+      },
+      "remediation": "Change get_dynamic_value to return Result, verify data.len() is at least size_of::<T>(), validate the fixed header and dynamic region, and propagate a decode error from RPC consumers.",
+      "validation": {
+        "disposition": "reportable",
+        "method": "Static trace from RPC account bytes in the OKX client to the public dynamic-account decoder.",
+        "confidence": "high",
+        "confidence_rationale": "A short byte buffer deterministically panics at split_at, and the in-repository client passes untrusted RPC bytes directly.",
+        "rubric": "An off-chain parser exposed to RPC data must return a decode error for truncated input.",
+        "evidence": "get_dynamic_value calls split_at(size_of::<T>()) without a length check; client/okx uses its result on RpcClient account data.",
+        "counterevidence_or_proof_gap": "A canonical Solana RPC normally returns complete account data, and the impact is limited to the local client process.",
+        "remaining_uncertainty": "Actual deployment of the OKX integration is not established in the scoped source.",
+        "artifact_paths": [
+          "artifacts/02_discovery/candidate_ledger.jsonl",
+          "artifacts/03_coverage/review_batch_4.md"
+        ]
+      },
+      "attackPath": {
+        "decision": "reportable",
+        "dataflow": "The OKX integration obtains market account bytes from a configured Solana RPC and passes them to get_dynamic_value; a truncated response reaches split_at(size_of::<T>()) and panics the client process.",
+        "reachability": "A hostile or compromised RPC provider is an explicit threat-model actor and can return the short buffer to a configured client. The sink is off-chain and affects only that local integration process; deployment of the integration is not shown.",
+        "counterevidence": "Canonical RPC nodes normally return complete account data, no unsafe transaction is signed, and process supervision can recover; those controls constrain but do not eliminate the hostile-upstream boundary.",
+        "impact": "low",
+        "likelihood": "low",
+        "severity": "low",
+        "severity_rationale": "A remote-but-trusted-upstream parser crash is a real boundary crossing with local availability impact only. Low impact and low likelihood map mechanically to low.",
+        "change_conditions": "Ignore if the parser is unreachable in released integrations or the RPC client proves account length before this call; raise likelihood if this code is deployed broadly against untrusted proxy RPCs or the crash drives unsafe signing or sustained fleet outage."
+      },
+      "remediationTests": [
+        "Pass buffers from length zero through one byte shorter than MarketFixed and assert an error without panic.",
+        "Fuzz the public decoder with arbitrary byte slices.",
+        "Verify the OKX metadata path converts decoder failures into None or an explicit client error."
+      ],
+      "preventiveControls": [
+        "Keep unchecked fixed-layout access private to already-validated on-chain account wrappers.",
+        "Require fallible decoders at RPC and file/network trust boundaries."
+      ],
+      "provenance": {
+        "source": "codex-security-plugin"
+      },
+      "extensions": {
+        "candidateId": "candidate-6d8e578c9242efd4",
+        "ledgerRowId": "candidate-6d8e578c9242efd4"
+      }
+    },
+    {
+      "ruleId": "manifest.market.reverse-equal-price-search",
+      "identity": {
+        "anchor": "programs/manifest/src/state/market.rs/reverse-order-coalescing",
+        "instance": "equal-price-bucket"
+      },
+      "title": "Equal-price order buckets amplify reverse-order compute",
+      "summary": "Reverse-order coalescing constructs a lookup value whose ordering is price-based but whose equality also depends on trader and order type. The generic tree lookup recursively searches both subtrees for equal ordering keys, allowing an attacker-funded bucket of same-price orders to make an honest reverse-order transaction exhaust its compute budget.",
+      "severity": {
+        "level": "low",
+        "rationale": "The path creates recoverable transaction failures and bounded market nuisance at attacker cost. Low impact with medium likelihood maps mechanically to low.",
+        "changeConditions": "Ignore if a measured upper bound stays below transaction compute limits at maximum account size or attacker cost is comparable to every victim failure; raise impact if one bucket blocks cancellation, withdrawal, or routine matching market-wide at low cost."
+      },
+      "confidence": {
+        "level": "medium",
+        "rationale": "The search walks same-price nodes to find trader/type equality, and the public order surface permits an adversary to inflate that bucket."
+      },
+      "taxonomy": {
+        "category": "Algorithmic complexity and resource exhaustion",
+        "cwe": [
+          "CWE-400"
+        ]
+      },
+      "locations": [
+        {
+          "end_line": 966,
+          "path": "programs/manifest/src/state/market.rs",
+          "role": "entrypoint/wrapper",
+          "start_line": 952
+        },
+        {
+          "end_line": 1339,
+          "path": "programs/manifest/src/state/market.rs",
+          "role": "root_control",
+          "start_line": 1320
+        },
+        {
+          "end_line": 269,
+          "path": "programs/manifest/src/state/resting_order.rs",
+          "role": "root_control",
+          "start_line": 236
+        },
+        {
+          "end_line": 607,
+          "path": "lib/src/red_black_tree.rs",
+          "role": "sink",
+          "start_line": 567
+        }
+      ],
+      "codeEvidence": [
+        {
+          "id": "reverse-order-price-only-lookup",
+          "label": "Reverse coalescing looks up a synthetic same-price order",
+          "path": "programs/manifest/src/state/market.rs",
+          "startLine": 1320,
+          "endLine": 1339,
+          "language": "rust",
+          "role": "root_control",
+          "code": "let other_tree: Bookside = if is_bid {\n    Bookside::new(dynamic, fixed.bids_root_index, fixed.bids_best_index)\n} else {\n    Bookside::new(dynamic, fixed.asks_root_index, fixed.asks_best_index)\n};\nlet lookup_resting_order: RestingOrder = RestingOrder::new(\n    maker_trader_index,\n    BaseAtoms::ZERO,\n    price_reverse,\n    0,\n    NO_EXPIRATION_LAST_VALID_SLOT,\n    is_bid,\n    maker_order_type,\n)?;\nlet lookup_index: DataIndex = other_tree.lookup_index(&lookup_resting_order);",
+          "explanation": "The lookup occurs in a permissionless matching path after attacker-created equal-price orders are already resident."
+        },
+        {
+          "id": "equal-key-dual-subtree-search",
+          "label": "Equal ordering keys trigger recursive searches of both subtrees",
+          "path": "lib/src/red_black_tree.rs",
+          "startLine": 587,
+          "endLine": 607,
+          "language": "rust",
+          "role": "sink",
+          "code": "} else {\n    let left_lookup = RedBlackTreeReadOnly::<V>::new(\n        self.data(), self.get_left_index::<V>(current_index), NIL,\n    ).lookup_index(value);\n    if left_lookup != NIL {\n        return left_lookup;\n    }\n    let right_lookup = RedBlackTreeReadOnly::<V>::new(\n        self.data(), self.get_right_index::<V>(current_index), NIL,\n    ).lookup_index(value);\n    if right_lookup != NIL {\n        return right_lookup;\n    }\n    return NIL;\n}",
+          "explanation": "A large equivalence class can be traversed rather than following a logarithmic single branch."
+        }
+      ],
+      "rootCause": {
+        "summary": "The tree's ordering key is not sufficiently discriminating for the equality predicate required by reverse-order coalescing.",
+        "evidenceRefs": [
+          "reverse-order-price-only-lookup",
+          "equal-key-dual-subtree-search"
+        ]
+      },
+      "remediation": "Index coalescible reverse orders by a total key that includes price, trader, side, and relevant order type, or maintain a bounded secondary index. Do not recursively scan an unbounded same-price equivalence class inside one transaction.",
+      "validation": {
+        "disposition": "reportable",
+        "method": "Static complexity and reachability analysis of reverse-order coalescing against attacker-created equal-price resting orders.",
+        "confidence": "medium",
+        "confidence_rationale": "The search walks same-price nodes to find trader/type equality, and the public order surface permits an adversary to inflate that bucket.",
+        "rubric": "Permissionless state must not induce unbounded per-transaction work in routine matching or order maintenance.",
+        "evidence": "market reverse coalescing delegates to a price-only tree search that can traverse a large same-price bucket before locating or rejecting the exact order.",
+        "counterevidence_or_proof_gap": "The attacker must fund many resting orders and market growth, and Solana compute limits terminate rather than loop indefinitely.",
+        "remaining_uncertainty": "The exact order count and economic cost needed to block an honest operation were not benchmarked.",
+        "artifact_paths": [
+          "artifacts/02_discovery/candidate_ledger.jsonl",
+          "artifacts/03_coverage/review_batch_2.md"
+        ]
+      },
+      "attackPath": {
+        "decision": "reportable",
+        "dataflow": "An attacker creates many funded resting orders at one price. Reverse-order coalescing constructs a price-only lookup key and the red-black-tree lookup walks equal-price nodes searching for the matching trader and order type until transaction compute is exhausted.",
+        "reachability": "Order placement and reverse matching are permissionless. The attacker must fund seats, resting collateral, and account growth, after which an honest reverse-order operation against the inflated bucket bears the compute cost and can fail.",
+        "counterevidence": "Solana compute limits bound each failure, the attacker pays meaningful rent and collateral, funds remain recoverable through other operations, and the exact order threshold was not benchmarked; these constraints limit severity but do not remove the cross-user state-amplification path.",
+        "impact": "low",
+        "likelihood": "medium",
+        "severity": "low",
+        "severity_rationale": "The path creates recoverable transaction failures and bounded market nuisance at attacker cost. Low impact with medium likelihood maps mechanically to low.",
+        "change_conditions": "Ignore if a measured upper bound stays below transaction compute limits at maximum account size or attacker cost is comparable to every victim failure; raise impact if one bucket blocks cancellation, withdrawal, or routine matching market-wide at low cost."
+      },
+      "remediationTests": [
+        "Benchmark reverse coalescing at the maximum supported number of same-price orders under the production compute limit.",
+        "Assert lookup complexity remains logarithmic as unrelated same-price orders grow.",
+        "Exercise missing and last-in-bucket lookup targets."
+      ],
+      "preventiveControls": [
+        "Document and test compute-complexity bounds for every on-chain tree lookup.",
+        "Use total ordering keys whenever equality carries identity fields beyond the sort key."
+      ],
+      "provenance": {
+        "source": "codex-security-plugin"
+      },
+      "extensions": {
+        "candidateId": "candidate-a4ab2f6be8e7d7a9",
+        "ledgerRowId": "candidate-a4ab2f6be8e7d7a9"
+      }
+    },
+    {
+      "ruleId": "manifest.swap.exact-in-min-output-before-fee",
+      "identity": {
+        "anchor": "programs/manifest/src/program/processor/swap.rs/exact-in-output-limit",
+        "instance": "base-output"
+      },
+      "title": "Base output fees bypass exact-in minimum output",
+      "summary": "A quote-input exact-in swap compares the signed minimum to gross base removed from the orderbook. The subsequent Token-2022 transfer deducts the base mint fee before crediting the trader, so adverse liquidity can satisfy the gross check while the wallet receives less than the declared minimum.",
+      "severity": {
+        "level": "medium",
+        "rationale": "The signed swap bound can be bypassed and cause economically meaningful per-swap loss, but it is constrained to fee-bearing output mints and adverse fills. High impact with medium likelihood maps mechanically to medium.",
+        "changeConditions": "Severity falls if all released callers define and display exact-in out_atoms as gross and reliably net-adjust the value; it rises with evidence of common high-fee mints or integrations that expose large unadjusted trades."
+      },
+      "confidence": {
+        "level": "high",
+        "rationale": "The minimum check uses gross base_atoms_traded and the subsequent Token-2022 transfer deducts a fee before the trader is credited."
+      },
+      "taxonomy": {
+        "category": "Incorrect financial limit enforcement",
+        "cwe": [
+          "CWE-682",
+          "CWE-1284"
+        ]
+      },
+      "locations": [
+        {
+          "end_line": 53,
+          "path": "programs/manifest/src/program/processor/swap.rs",
+          "role": "source",
+          "start_line": 47
+        },
+        {
+          "end_line": 292,
+          "path": "programs/manifest/src/program/processor/swap.rs",
+          "role": "root_control",
+          "start_line": 277
+        },
+        {
+          "end_line": 416,
+          "path": "programs/manifest/src/program/processor/swap.rs",
+          "role": "sink",
+          "start_line": 406
+        },
+        {
+          "end_line": 126,
+          "path": "programs/manifest/src/certora/spec/swap_checks.rs",
+          "role": "evidence",
+          "start_line": 115
+        }
+      ],
+      "codeEvidence": [
+        {
+          "id": "gross-output-minimum-check-base",
+          "label": "Exact-in checks gross matched output",
+          "path": "programs/manifest/src/program/processor/swap.rs",
+          "startLine": 277,
+          "endLine": 292,
+          "language": "rust",
+          "role": "root_control",
+          "code": "if is_exact_in {\n    let out_atoms_traded: u64 = if is_base_in {\n        quote_atoms_traded.as_u64()\n    } else {\n        base_atoms_traded.as_u64()\n    };\n    // ... amount taken from the market, not the amount actually received.\n    require!(\n        out_atoms <= out_atoms_traded,\n        ManifestError::InsufficientOut,\n        \"Insufficient out atoms returned. Minimum: {} Actual: {}\",\n        out_atoms,\n        out_atoms_traded\n    )?;\n}",
+          "explanation": "For quote input, out_atoms_traded is the gross base quantity, not the post-fee receipt."
+        },
+        {
+          "id": "base-output-token2022-transfer",
+          "label": "The base transfer deducts the output fee afterward",
+          "path": "programs/manifest/src/program/processor/swap.rs",
+          "startLine": 403,
+          "endLine": 416,
+          "language": "rust",
+          "role": "sink",
+          "code": "if *token_program_base.key == spl_token_2022::id() {\n    spl_token_2022_transfer_from_vault_to_trader(\n        &token_program_base,\n        base_mint,\n        dynamic_account.get_base_mint(),\n        &base_vault,\n        &trader_base_account,\n        extra_base_atoms.as_u64(),\n        dynamic_account.fixed.get_base_mint_decimals(),\n        market.key,\n        base_vault_bump,\n    )?;\n}",
+          "explanation": "Token-2022 credits the recipient only after applying the active output-mint fee."
+        }
+      ],
+      "rootCause": {
+        "summary": "Exact-in limit enforcement uses gross orderbook output while the public transfer path settles net wallet output.",
+        "evidenceRefs": [
+          "gross-output-minimum-check-base",
+          "base-output-token2022-transfer"
+        ]
+      },
+      "remediation": "For exact-in swaps, calculate the post-fee amount the trader will receive for the selected output mint and compare out_atoms against that net value. Keep exact-in and exact-out out_atoms semantics consistently defined as wallet receipts.",
+      "validation": {
+        "disposition": "reportable",
+        "method": "Static gross-versus-net accounting trace for exact-in quote-input swaps with a fee-bearing base output mint.",
+        "confidence": "high",
+        "confidence_rationale": "The minimum check uses gross base_atoms_traded and the subsequent Token-2022 transfer deducts a fee before the trader is credited.",
+        "rubric": "A signed minimum-output bound must be enforced against the amount the recipient actually receives.",
+        "evidence": "out_atoms is compared to extra/gross base traded at lines 277-292, then transfer_checked sends that gross amount and Token-2022 credits only the post-fee amount.",
+        "counterevidence_or_proof_gap": "The source comment deliberately defines the check against market output rather than wallet receipts, so informed callers can pre-adjust their limit.",
+        "remaining_uncertainty": "Client conventions for whether out_atoms is documented as gross or net are inconsistent; the Rust client calls it minimum output.",
+        "artifact_paths": [
+          "artifacts/02_discovery/candidate_ledger.jsonl",
+          "artifacts/03_coverage/review_batch_3.md"
+        ]
+      },
+      "attackPath": {
+        "decision": "reportable",
+        "dataflow": "A trader signs an exact-in quote-input swap with out_atoms as the minimum base output. Matching compares that limit to gross base removed from the market, then Token-2022 transfer_checked deducts the base mint output fee before crediting the trader. A counterparty can fill at the gross threshold while the wallet receives less than the signed minimum.",
+        "reachability": "The public swap path supports Token-2022 output mints. Exploitation requires a fee-bearing base mint, a victim limit expressed as documented by clients, and adverse liquidity near that limit; a permissionless maker can supply that liquidity.",
+        "counterevidence": "An internal source comment defines out_atoms against gross market output and an informed caller can pre-adjust for fees. That is not dispositive because public clients and the program error describe a minimum output, while the exact-out branch already treats out_atoms as the desired post-fee wallet receipt.",
+        "impact": "high",
+        "likelihood": "medium",
+        "severity": "medium",
+        "severity_rationale": "The signed swap bound can be bypassed and cause economically meaningful per-swap loss, but it is constrained to fee-bearing output mints and adverse fills. High impact with medium likelihood maps mechanically to medium.",
+        "change_conditions": "Severity falls if all released callers define and display exact-in out_atoms as gross and reliably net-adjust the value; it rises with evidence of common high-fee mints or integrations that expose large unadjusted trades."
+      },
+      "remediationTests": [
+        "Use a fee-bearing Token-2022 base mint and reject a quote-input fill whose gross output meets out_atoms but net output does not.",
+        "Accept the same fill when the post-fee receipt meets the minimum exactly.",
+        "Cover epoch fee changes and maximum-fee caps."
+      ],
+      "preventiveControls": [
+        "Centralize signed swap-limit checks on observed or calculated post-fee deltas.",
+        "Add fee-bearing exact-in properties to the main Certora configuration."
+      ],
+      "provenance": {
+        "source": "codex-security-plugin"
+      },
+      "extensions": {
+        "candidateId": "candidate-e7c35e06b41db92a",
+        "ledgerRowId": "candidate-e7c35e06b41db92a"
+      }
+    },
+    {
+      "ruleId": "manifest.swap.exact-in-min-output-before-fee",
+      "identity": {
+        "anchor": "programs/manifest/src/program/processor/swap.rs/exact-in-output-limit",
+        "instance": "quote-output"
+      },
+      "title": "Quote output fees bypass exact-in minimum output",
+      "summary": "A base-input exact-in swap compares the signed minimum to gross quote removed from the orderbook. The later Token-2022 quote transfer deducts its fee, allowing the transaction to succeed even though the trader's wallet receives less than the minimum.",
+      "severity": {
+        "level": "medium",
+        "rationale": "This direction preserves the same signed-limit bypass and possible user loss, constrained to Token-2022 fee mints and boundary fills. High impact plus medium likelihood maps to medium.",
+        "changeConditions": "Lower or ignore if the API contract is changed and enforced ecosystem-wide to gross output with fee-aware builders; raise likelihood if common routers pass user net limits without adjustment."
+      },
+      "confidence": {
+        "level": "high",
+        "rationale": "The minimum check uses gross quote_atoms_traded and the later Token-2022 output transfer reduces the trader's actual receipt."
+      },
+      "taxonomy": {
+        "category": "Incorrect financial limit enforcement",
+        "cwe": [
+          "CWE-682",
+          "CWE-1284"
+        ]
+      },
+      "locations": [
+        {
+          "end_line": 53,
+          "path": "programs/manifest/src/program/processor/swap.rs",
+          "role": "source",
+          "start_line": 47
+        },
+        {
+          "end_line": 292,
+          "path": "programs/manifest/src/program/processor/swap.rs",
+          "role": "root_control",
+          "start_line": 277
+        },
+        {
+          "end_line": 363,
+          "path": "programs/manifest/src/program/processor/swap.rs",
+          "role": "sink",
+          "start_line": 353
+        },
+        {
+          "end_line": 126,
+          "path": "programs/manifest/src/certora/spec/swap_checks.rs",
+          "role": "evidence",
+          "start_line": 115
+        }
+      ],
+      "codeEvidence": [
+        {
+          "id": "gross-output-minimum-check-quote",
+          "label": "Exact-in checks gross quote output",
+          "path": "programs/manifest/src/program/processor/swap.rs",
+          "startLine": 277,
+          "endLine": 292,
+          "language": "rust",
+          "role": "root_control",
+          "code": "let out_atoms_traded: u64 = if is_base_in {\n    quote_atoms_traded.as_u64()\n} else {\n    base_atoms_traded.as_u64()\n};\nrequire!(\n    out_atoms <= out_atoms_traded,\n    ManifestError::InsufficientOut,\n    \"Insufficient out atoms returned. Minimum: {} Actual: {}\",\n    out_atoms,\n    out_atoms_traded\n)?;",
+          "explanation": "For base input, the minimum is checked against gross quote matched."
+        },
+        {
+          "id": "quote-output-token2022-transfer",
+          "label": "The quote transfer applies the output fee afterward",
+          "path": "programs/manifest/src/program/processor/swap.rs",
+          "startLine": 350,
+          "endLine": 363,
+          "language": "rust",
+          "role": "sink",
+          "code": "if *token_program_quote.key == spl_token_2022::id() {\n    spl_token_2022_transfer_from_vault_to_trader(\n        &token_program_quote,\n        quote_mint,\n        dynamic_account.fixed.get_quote_mint(),\n        &quote_vault,\n        &trader_quote_account,\n        extra_quote_atoms.as_u64(),\n        dynamic_account.fixed.get_quote_mint_decimals(),\n        market.key,\n        quote_vault_bump,\n    )?;\n}",
+          "explanation": "The trader receives the gross amount minus the active Token-2022 quote-mint fee."
+        }
+      ],
+      "rootCause": {
+        "summary": "The exact-in output bound is checked in the orderbook's gross accounting domain instead of the trader wallet's net settlement domain.",
+        "evidenceRefs": [
+          "gross-output-minimum-check-quote",
+          "quote-output-token2022-transfer"
+        ]
+      },
+      "remediation": "Calculate the Token-2022 output fee before enforcing an exact-in minimum and compare out_atoms with the net quote receipt. Align client documentation and both exact modes on post-fee wallet amounts.",
+      "validation": {
+        "disposition": "reportable",
+        "method": "Static gross-versus-net accounting trace for exact-in base-input swaps with a fee-bearing quote output mint.",
+        "confidence": "high",
+        "confidence_rationale": "The minimum check uses gross quote_atoms_traded and the later Token-2022 output transfer reduces the trader's actual receipt.",
+        "rubric": "A signed minimum-output bound must cover post-fee proceeds when fee-bearing output mints are supported.",
+        "evidence": "out_atoms is compared to gross quote traded, followed by transfer_checked of that gross value from the quote vault to the trader.",
+        "counterevidence_or_proof_gap": "The implementation explicitly documents gross-market-output semantics, allowing specialized callers to compensate for the fee.",
+        "remaining_uncertainty": "The scan did not dynamically execute a fee-bearing exact-in swap, but the pinned token fee arithmetic and transfer path are direct.",
+        "artifact_paths": [
+          "artifacts/02_discovery/candidate_ledger.jsonl",
+          "artifacts/03_coverage/review_batch_3.md"
+        ]
+      },
+      "attackPath": {
+        "decision": "reportable",
+        "dataflow": "A trader signs an exact-in base-input swap with out_atoms as the minimum quote output. The program compares it to gross quote matched, then the Token-2022 quote transfer deducts its output fee before the trader receives funds, permitting a maker fill at the gross threshold below the wallets intended minimum.",
+        "reachability": "The public swap path accepts Token-2022 quote mints. A fee-bearing quote output, a client using minimum-output semantics, and liquidity near the limit are sufficient; a permissionless market maker controls the adverse fill.",
+        "counterevidence": "The processor comment deliberately specifies gross-market-output semantics and specialized callers can compensate. The public minimum-output naming and the exact-out post-fee handling provide stronger evidence that ordinary signing intent is a net receipt bound.",
+        "impact": "high",
+        "likelihood": "medium",
+        "severity": "medium",
+        "severity_rationale": "This direction preserves the same signed-limit bypass and possible user loss, constrained to Token-2022 fee mints and boundary fills. High impact plus medium likelihood maps to medium.",
+        "change_conditions": "Lower or ignore if the API contract is changed and enforced ecosystem-wide to gross output with fee-aware builders; raise likelihood if common routers pass user net limits without adjustment."
+      },
+      "remediationTests": [
+        "Reject a base-input swap when gross quote output meets the minimum but the post-fee quote receipt does not.",
+        "Test the exact boundary where net quote receipt equals out_atoms.",
+        "Cover zero fees, capped fees, and scheduled epoch fee changes."
+      ],
+      "preventiveControls": [
+        "Express all user-signed output constraints in one net-settlement unit.",
+        "Verify fee-aware signed limits in the production Certora rule set."
+      ],
+      "provenance": {
+        "source": "codex-security-plugin"
+      },
+      "extensions": {
+        "candidateId": "candidate-13423e08518f0c84",
+        "ledgerRowId": "candidate-13423e08518f0c84"
+      }
+    },
+    {
+      "ruleId": "manifest.swap.partial-fill-input-fee-overdebit",
+      "identity": {
+        "anchor": "programs/manifest/src/program/processor/swap.rs/input-settlement",
+        "instance": "base-input"
+      },
+      "title": "Partial base-input swaps debit an uncredited fee surplus",
+      "summary": "For fee-bearing Token-2022 base input, matching receives a virtual post-fee credit but settlement subtracts the unused net credit from the original gross limit. On a partial or empty fill this transfers more than is needed to fund the consumed amount and leaves the excess outside the trader's internal balance.",
+      "severity": {
+        "level": "medium",
+        "rationale": "The defect causes deterministic bounded loss for a rare mint extension and partial-fill condition. Medium impact with high likelihood once those realistic conditions hold maps mechanically to medium.",
+        "changeConditions": "Severity falls if inverse-fee settlement proves the surplus is at most one atom or all partial/empty fee-bearing swaps fail; it rises if high maximum fees make large repeated losses practical across common integrations."
+      },
+      "confidence": {
+        "level": "high",
+        "rationale": "For gross input G, post-fee credit N, and consumed amount C<N, the code transfers G-(N-C)=C+(G-N), so even C=0 debits a fee-sized amount and leaves value outside the trader ledger."
+      },
+      "taxonomy": {
+        "category": "Incorrect financial accounting",
+        "cwe": [
+          "CWE-682"
+        ]
+      },
+      "locations": [
+        {
+          "end_line": 146,
+          "path": "programs/manifest/src/program/processor/swap.rs",
+          "role": "root_control",
+          "start_line": 139
+        },
+        {
+          "end_line": 194,
+          "path": "programs/manifest/src/program/processor/swap.rs",
+          "role": "root_control",
+          "start_line": 191
+        },
+        {
+          "end_line": 327,
+          "path": "programs/manifest/src/program/processor/swap.rs",
+          "role": "root_control",
+          "start_line": 310
+        },
+        {
+          "end_line": 339,
+          "path": "programs/manifest/src/program/processor/swap.rs",
+          "role": "sink",
+          "start_line": 330
+        },
+        {
+          "end_line": 711,
+          "path": "programs/manifest/src/program/processor/swap.rs",
+          "role": "evidence",
+          "start_line": 701
+        }
+      ],
+      "codeEvidence": [
+        {
+          "id": "base-input-net-virtual-credit",
+          "label": "Matching is funded with post-fee input",
+          "path": "programs/manifest/src/program/processor/swap.rs",
+          "startLine": 137,
+          "endLine": 194,
+          "language": "rust",
+          "role": "root_control",
+          "code": "let in_atoms_after_transfer_fees: u64 = calculate_post_fee_amount(\n    in_atoms,\n    is_base_in,\n    &token_program_base,\n    &token_program_quote,\n    &base_mint,\n    &quote_mint,\n)?;\n// ...\ndynamic_account.deposit(trader_index, in_atoms_after_transfer_fees, is_base_in)?;",
+          "explanation": "The temporary market credit N is net of the transfer fee."
+        },
+        {
+          "id": "base-input-gross-minus-net-remainder",
+          "label": "Settlement subtracts a net remainder from gross input",
+          "path": "programs/manifest/src/program/processor/swap.rs",
+          "startLine": 310,
+          "endLine": 339,
+          "language": "rust",
+          "role": "sink",
+          "code": "let extra_base_atoms: BaseAtoms = end_base_atoms.checked_sub(initial_base_atoms)?;\n// ...\nlet base_atoms_to_transfer: u64 = in_atoms.saturating_sub(extra_base_atoms.as_u64());\n\nif *token_program_base.key == spl_token_2022::id() {\n    spl_token_2022_transfer_from_trader_to_vault(\n        &token_program_base,\n        &trader_base_account,\n        base_mint,\n        dynamic_account.fixed.get_base_mint(),\n        &base_vault,\n        &owner,\n        base_atoms_to_transfer,\n        dynamic_account.fixed.get_base_mint_decimals(),\n    )?;\n}",
+          "explanation": "For gross G, net credit N, and consumption C, extra is N-C and the debit becomes G-(N-C), including a fee-sized surplus."
+        }
+      ],
+      "rootCause": {
+        "summary": "Settlement mixes a gross caller limit with a net unused balance rather than inverse-calculating the gross transfer required for the actual net consumption.",
+        "evidenceRefs": [
+          "base-input-net-virtual-credit",
+          "base-input-gross-minus-net-remainder"
+        ]
+      },
+      "remediation": "After matching, derive the gross base transfer from the actual net base amount consumed using the active fee schedule, with explicit rounding and overflow handling. Never subtract a post-fee remainder directly from a pre-fee maximum.",
+      "validation": {
+        "disposition": "reportable",
+        "method": "Static algebraic validation of the virtual net deposit, partial fill, gross refund subtraction, and real Token-2022 transfer.",
+        "confidence": "high",
+        "confidence_rationale": "For gross input G, post-fee credit N, and consumed amount C<N, the code transfers G-(N-C)=C+(G-N), so even C=0 debits a fee-sized amount and leaves value outside the trader ledger.",
+        "rubric": "The real vault delta and internal credit consumed by a swap must reconcile for every partial or empty fill.",
+        "evidence": "Base input is virtually credited post-fee at line 194, while line 327 subtracts the unused net balance from gross in_atoms; the source comment acknowledges extra tokens are lost to the vault.",
+        "counterevidence_or_proof_gap": "The issue requires a fee-bearing Token-2022 input and a partial/empty fill; the source describes the exact-out variant as a rounding tradeoff.",
+        "remaining_uncertainty": "A program-test fixture for fee-bearing partial/no-fill swaps is absent; exact-in applicability follows the same arithmetic when min_out permits underfill.",
+        "artifact_paths": [
+          "artifacts/02_discovery/candidate_ledger.jsonl",
+          "artifacts/03_coverage/review_batch_3.md"
+        ]
+      },
+      "attackPath": {
+        "decision": "reportable",
+        "dataflow": "For fee-bearing base input, the program virtually credits post-fee amount N, matching consumes C, and the remainder is N-C. Settlement transfers gross limit G minus that net remainder, or C plus the fee on the unused gross portion, so a partial or empty fill debits the trader while leaving an uncredited vault surplus.",
+        "reachability": "The public swap path deterministically reaches the mismatch for a Token-2022 base input with a nonzero transfer fee and C less than N. Permissionless liquidity can cause partial book exhaustion, and exact-out semantics permit that underfill to succeed.",
+        "counterevidence": "The source acknowledges extra collection for transfer-fee exact-out swaps and frames it as rounding protection, but the algebra applies to the entire unused gross portion and can debit value even at zero fill; atomicity does not restore funds after a successful swap.",
+        "impact": "medium",
+        "likelihood": "high",
+        "severity": "medium",
+        "severity_rationale": "The defect causes deterministic bounded loss for a rare mint extension and partial-fill condition. Medium impact with high likelihood once those realistic conditions hold maps mechanically to medium.",
+        "change_conditions": "Severity falls if inverse-fee settlement proves the surplus is at most one atom or all partial/empty fee-bearing swaps fail; it rises if high maximum fees make large repeated losses practical across common integrations."
+      },
+      "remediationTests": [
+        "For zero-fill and partial-fill base-input swaps, assert wallet debit, token fee, vault delta, and internal claim reconcile exactly.",
+        "Exercise exact-in and exact-out modes with nonzero, capped, and 100-percent fees.",
+        "Assert no successful zero-fill swap debits input."
+      ],
+      "preventiveControls": [
+        "Reconcile transfers from observed pre/post vault deltas against internal accounting.",
+        "Add fee-aware partial/empty-fill conservation properties to Certora and the default verification configs."
+      ],
+      "provenance": {
+        "source": "codex-security-plugin"
+      },
+      "extensions": {
+        "candidateId": "candidate-9dde4939e935b5ee",
+        "ledgerRowId": "candidate-9dde4939e935b5ee"
+      }
+    },
+    {
+      "ruleId": "manifest.swap.partial-fill-input-fee-overdebit",
+      "identity": {
+        "anchor": "programs/manifest/src/program/processor/swap.rs/input-settlement",
+        "instance": "quote-input"
+      },
+      "title": "Partial quote-input swaps debit an uncredited fee surplus",
+      "summary": "The quote-input settlement path makes the same gross/net accounting error: it credits post-fee quote for matching, then subtracts the unused net quote from gross in_atoms. Partial or empty fills can therefore debit value that neither funds the trade nor becomes a withdrawable internal balance.",
+      "severity": {
+        "level": "medium",
+        "rationale": "The symmetric quote-input path creates bounded but real user loss under realistic fee-bearing partial fills. Medium impact and high likelihood map mechanically to medium.",
+        "changeConditions": "Severity falls if tests establish a one-atom maximum or prevent successful partial/no-fill settlement; it rises if widely used fee mints and routers expose large maximum inputs to adversarial liquidity."
+      },
+      "confidence": {
+        "level": "high",
+        "rationale": "The quote branch computes the real debit by subtracting unused net credit from gross maximum input, producing the same uncredited fee-sized surplus on partial or empty fills."
+      },
+      "taxonomy": {
+        "category": "Incorrect financial accounting",
+        "cwe": [
+          "CWE-682"
+        ]
+      },
+      "locations": [
+        {
+          "end_line": 146,
+          "path": "programs/manifest/src/program/processor/swap.rs",
+          "role": "root_control",
+          "start_line": 139
+        },
+        {
+          "end_line": 194,
+          "path": "programs/manifest/src/program/processor/swap.rs",
+          "role": "root_control",
+          "start_line": 191
+        },
+        {
+          "end_line": 392,
+          "path": "programs/manifest/src/program/processor/swap.rs",
+          "role": "root_control",
+          "start_line": 378
+        },
+        {
+          "end_line": 392,
+          "path": "programs/manifest/src/program/processor/swap.rs",
+          "role": "sink",
+          "start_line": 383
+        },
+        {
+          "end_line": 711,
+          "path": "programs/manifest/src/program/processor/swap.rs",
+          "role": "evidence",
+          "start_line": 701
+        }
+      ],
+      "codeEvidence": [
+        {
+          "id": "quote-input-net-virtual-credit",
+          "label": "Quote matching is funded with post-fee input",
+          "path": "programs/manifest/src/program/processor/swap.rs",
+          "startLine": 137,
+          "endLine": 194,
+          "language": "rust",
+          "role": "root_control",
+          "code": "let in_atoms_after_transfer_fees: u64 = calculate_post_fee_amount(\n    in_atoms,\n    is_base_in,\n    &token_program_base,\n    &token_program_quote,\n    &base_mint,\n    &quote_mint,\n)?;\n// ...\ndynamic_account.deposit(trader_index, in_atoms_after_transfer_fees, is_base_in)?;",
+          "explanation": "The quote side uses the same post-fee virtual credit."
+        },
+        {
+          "id": "quote-input-gross-minus-net-remainder",
+          "label": "Quote settlement subtracts net remainder from gross input",
+          "path": "programs/manifest/src/program/processor/swap.rs",
+          "startLine": 378,
+          "endLine": 392,
+          "language": "rust",
+          "role": "sink",
+          "code": "let quote_atoms_to_transfer: u64 = in_atoms.saturating_sub(extra_quote_atoms.as_u64());\n\nif *token_program_quote.key == spl_token_2022::id() {\n    spl_token_2022_transfer_from_trader_to_vault(\n        &token_program_quote,\n        &trader_quote_account,\n        quote_mint,\n        dynamic_account.fixed.get_quote_mint(),\n        &quote_vault,\n        &owner,\n        quote_atoms_to_transfer,\n        dynamic_account.fixed.get_quote_mint_decimals(),\n    )?;\n}",
+          "explanation": "The gross transfer is overstated whenever part of the net virtual quote credit remains unused."
+        }
+      ],
+      "rootCause": {
+        "summary": "The quote branch combines gross and net quantities when refunding unused virtual input.",
+        "evidenceRefs": [
+          "quote-input-net-virtual-credit",
+          "quote-input-gross-minus-net-remainder"
+        ]
+      },
+      "remediation": "Compute the gross quote transfer required for the actual post-fee quote consumed, using the current Token-2022 fee configuration and checked rounding. Reconcile any remainder to the trader instead of leaving a vault surplus.",
+      "validation": {
+        "disposition": "reportable",
+        "method": "Static algebraic validation of the symmetric quote-input Token-2022 settlement path.",
+        "confidence": "high",
+        "confidence_rationale": "The quote branch computes the real debit by subtracting unused net credit from gross maximum input, producing the same uncredited fee-sized surplus on partial or empty fills.",
+        "rubric": "Swap settlement must debit only the gross amount required to fund the net amount consumed by matching.",
+        "evidence": "Quote input is deposited using calculate_post_fee_amount and line 380 later transfers in_atoms minus extra_quote_atoms without inverse-fee reconciliation.",
+        "counterevidence_or_proof_gap": "The input mint must carry a nonzero transfer fee and the orderbook must not consume the complete virtual credit.",
+        "remaining_uncertainty": "Dynamic reproduction was not necessary for the direct arithmetic trace but would quantify rounding at specific fee schedules.",
+        "artifact_paths": [
+          "artifacts/02_discovery/candidate_ledger.jsonl",
+          "artifacts/03_coverage/review_batch_3.md"
+        ]
+      },
+      "attackPath": {
+        "decision": "reportable",
+        "dataflow": "For fee-bearing quote input, the program virtually credits post-fee quote N, matching consumes C, and then transfers gross maximum G minus unused net credit N-C. The resulting debit C plus the fee on unused gross input exceeds what backs the trade and leaves a surplus outside the trader ledger.",
+        "reachability": "A Token-2022 quote mint with a nonzero transfer fee and a partial or empty fill reaches the public quote-input settlement path. A permissionless maker or sparse book can produce the partial fill while the instruction still succeeds under documented underfill behavior.",
+        "counterevidence": "The precondition excludes ordinary SPL mints and full fills, and comments call the exact-out excess an accepted rounding tradeoff. The direct arithmetic and successful token transfer nevertheless show value leaves the trader without corresponding trade credit.",
+        "impact": "medium",
+        "likelihood": "high",
+        "severity": "medium",
+        "severity_rationale": "The symmetric quote-input path creates bounded but real user loss under realistic fee-bearing partial fills. Medium impact and high likelihood map mechanically to medium.",
+        "change_conditions": "Severity falls if tests establish a one-atom maximum or prevent successful partial/no-fill settlement; it rises if widely used fee mints and routers expose large maximum inputs to adversarial liquidity."
+      },
+      "remediationTests": [
+        "Assert zero-fill and partial-fill quote-input swaps never debit more than the gross amount required for actual consumption.",
+        "Cover exact-in and exact-out quote input with fee caps and epoch transitions.",
+        "Check wallet debit, withheld fee, vault delta, and internal balances as one invariant."
+      ],
+      "preventiveControls": [
+        "Keep pre-fee and post-fee quantities in distinct types or named wrappers.",
+        "Include Token-2022 partial-fill settlement in the default formal verification suite."
+      ],
+      "provenance": {
+        "source": "codex-security-plugin"
+      },
+      "extensions": {
+        "candidateId": "candidate-d86985e965b97c12",
+        "ledgerRowId": "candidate-d86985e965b97c12"
+      }
+    }
+  ]
+}

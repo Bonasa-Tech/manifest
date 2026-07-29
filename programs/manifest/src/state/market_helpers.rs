@@ -606,7 +606,14 @@ fn place_reverse_order(
             maker_order_type,
         )?;
 
-        let lookup_index: DataIndex = other_tree.lookup_index(&lookup_resting_order);
+        // Keep the reverse-price relaxation bounded to three logarithmic
+        // total-key lookups; never scan an attacker-controlled price bucket.
+        let lookup_index: DataIndex = [0, -1, 1]
+            .into_iter()
+            .filter_map(|offset| lookup_resting_order.with_price_offset(offset))
+            .map(|candidate| other_tree.lookup_index(&candidate))
+            .find(|index| *index != NIL)
+            .unwrap_or(NIL);
         if lookup_index != NIL {
             #[cfg(feature = "certora")]
             remove_from_orderbook_balance(fixed, dynamic, lookup_index);
@@ -1211,6 +1218,31 @@ mod place_order_equivalence_tests {
             true,
             OrderType::Reverse,
             10,
+        );
+    }
+
+    #[test]
+    fn oversized_global_bid_is_rejected_before_it_can_rest() {
+        let (mut market, _, taker_index, _, _) = new_market_with_seats();
+        let orders_before = market.get_bids().iter::<RestingOrder>().count();
+
+        let result = market.place_order(AddOrderToMarketArgs {
+            market: Pubkey::new_unique(),
+            trader_index: taker_index,
+            num_base_atoms: BaseAtoms::new(u64::MAX),
+            price: QuoteAtomsPerBaseAtom::MAX,
+            is_bid: true,
+            last_valid_slot: NO_EXPIRATION_LAST_VALID_SLOT,
+            order_type: OrderType::Global,
+            global_trade_accounts_opts: &[None, None],
+            current_slot: Some(NOW_SLOT),
+        });
+
+        assert!(result.is_err(), "overflowing global bid must be rejected");
+        assert_eq!(
+            market.get_bids().iter::<RestingOrder>().count(),
+            orders_before,
+            "rejected global bid must not persist and grief cleanup"
         );
     }
 }

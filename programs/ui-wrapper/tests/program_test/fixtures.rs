@@ -5,7 +5,7 @@ use std::{
 
 use hypertree::trace;
 use manifest::{
-    program::{create_global_instruction, create_market_instructions, get_dynamic_value},
+    program::{create_global_instruction, create_market_instructions, get_dynamic_value_or},
     quantities::WrapperU64,
     state::{GlobalFixed, GlobalValue, MarketFixed, MarketValue},
     validation::{get_global_address, MintAccountInfo},
@@ -467,7 +467,7 @@ impl MarketFixture {
             .unwrap()
             .unwrap();
 
-        let market: MarketValue = get_dynamic_value(market_account.data.as_slice());
+        let market: MarketValue = get_dynamic_value_or(market_account.data.as_slice()).unwrap();
         self.market = market;
     }
 
@@ -512,7 +512,8 @@ impl WrapperFixture {
             .unwrap()
             .unwrap();
 
-        let wrapper: WrapperUserValue = get_dynamic_value(wrapper_account.data.as_slice());
+        let wrapper: WrapperUserValue =
+            get_dynamic_value_or(wrapper_account.data.as_slice()).unwrap();
         self.wrapper = wrapper;
     }
 }
@@ -575,7 +576,7 @@ impl GlobalFixture {
             .unwrap()
             .unwrap();
 
-        let global: GlobalValue = get_dynamic_value(global_account.data.as_slice());
+        let global: GlobalValue = get_dynamic_value_or(global_account.data.as_slice()).unwrap();
         self.global = global;
     }
 }
