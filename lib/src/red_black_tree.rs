@@ -1,6 +1,5 @@
 use bytemuck::{Pod, Zeroable};
-use std::cmp::Ordering;
-use std::collections::HashSet;
+use std::{cmp::Ordering, collections::HashSet};
 
 use crate::{
     get_helper, get_mut_helper, trace, DataIndex, Get, HyperTreeReadOperations,
