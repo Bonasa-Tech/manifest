@@ -1,5 +1,6 @@
 use bytemuck::{Pod, Zeroable};
 use std::cmp::Ordering;
+use std::collections::HashSet;
 
 use crate::{
     get_helper, get_mut_helper, trace, DataIndex, Get, HyperTreeReadOperations,
@@ -131,6 +132,53 @@ impl<'a, V: Payload> RedBlackTreeReadOnly<'a, V> {
             phantom: std::marker::PhantomData,
         }
     }
+}
+
+/// Validates all offsets and links reachable from an account-backed tree before
+/// callers use the zero-copy traversal API on untrusted RPC bytes.
+pub fn validate_red_black_tree<V: Payload>(
+    data: &[u8],
+    root_index: DataIndex,
+    max_index: DataIndex,
+) -> Result<(), &'static str> {
+    if root_index == NIL {
+        return if max_index == NIL {
+            Ok(())
+        } else {
+            Err("empty tree has a max node")
+        };
+    }
+
+    let mut stack = vec![(root_index, NIL)];
+    let mut seen = HashSet::new();
+    while let Some((index, expected_parent)) = stack.pop() {
+        if index == NIL {
+            continue;
+        }
+        let offset = index as usize;
+        let end = offset
+            .checked_add(core::mem::size_of::<RBNode<V>>())
+            .ok_or("tree node offset overflow")?;
+        if offset % 8 != 0 || end > data.len() {
+            return Err("tree node offset is out of bounds or misaligned");
+        }
+        if !seen.insert(index) {
+            return Err("tree contains a cycle or duplicate child");
+        }
+        let node = bytemuck::pod_read_unaligned::<RBNode<V>>(&data[offset..end]);
+        if node.color != Color::Black && node.color != Color::Red {
+            return Err("tree node has invalid color");
+        }
+        if node.parent != expected_parent {
+            return Err("tree node has inconsistent parent");
+        }
+        stack.push((node.left, index));
+        stack.push((node.right, index));
+    }
+    if max_index != NIL && !seen.contains(&max_index) {
+        return Err("tree max node is not reachable");
+    }
+    Ok(())
 }
 
 // Specific to red black trees and not all data structures. Implementing this
@@ -917,26 +965,18 @@ impl<'a, T: HyperTreeReadOperations<'a> + GetRedBlackTreeReadOnlyData<'a>, V: Pa
     }
 }
 
-#[cfg(feature = "certora")]
-#[repr(u8)]
-#[derive(Debug, Copy, Clone, PartialEq, Default)]
-pub enum Color {
-    #[default]
-    Black = 0,
-    Red = 1,
-}
-#[cfg(not(feature = "certora"))]
-#[repr(u8)]
-#[derive(Debug, Copy, Clone, PartialEq, Default)]
-pub(crate) enum Color {
-    #[default]
-    Black = 0,
-    Red = 1,
-}
-unsafe impl Zeroable for Color {
-    fn zeroed() -> Self {
-        unsafe { core::mem::zeroed() }
-    }
+// Keep the on-chain byte representation while allowing every possible byte
+// pattern. A Rust enum is not Pod because discriminants other than 0 and 1 are
+// invalid and constructing one from untrusted account bytes is undefined
+// behavior.
+#[repr(transparent)]
+#[derive(Debug, Copy, Clone, PartialEq, Default, Pod, Zeroable)]
+pub struct Color(u8);
+
+#[allow(non_upper_case_globals)]
+impl Color {
+    pub const Black: Self = Self(0);
+    pub const Red: Self = Self(1);
 }
 
 #[cfg(feature = "certora")]
@@ -1586,6 +1626,25 @@ pub(crate) mod test {
             tree.insert(TEST_BLOCK_WIDTH * i, TestOrderBid::new((i * 1_000).into()));
         }
         tree
+    }
+
+    #[test]
+    fn test_validate_rejects_cycles_and_invalid_colors() {
+        let mut data = [0_u8; 4096];
+        let (root, max) = {
+            let tree = init_simple_tree(&mut data);
+            (tree.get_root_index(), tree.get_max_index())
+        };
+        assert!(validate_red_black_tree::<TestOrderBid>(&data, root, max).is_ok());
+
+        let original = get_helper::<RBNode<TestOrderBid>>(&data, root).left;
+        get_mut_helper::<RBNode<TestOrderBid>>(&mut data, root).left = root;
+        assert!(validate_red_black_tree::<TestOrderBid>(&data, root, max).is_err());
+
+        let root_node = get_mut_helper::<RBNode<TestOrderBid>>(&mut data, root);
+        root_node.left = original;
+        root_node.color = Color(2);
+        assert!(validate_red_black_tree::<TestOrderBid>(&data, root, max).is_err());
     }
 
     #[test]

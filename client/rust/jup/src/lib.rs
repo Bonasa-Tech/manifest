@@ -98,6 +98,11 @@ impl Amm for ManifestMarket {
     }
 
     fn from_keyed_account(keyed_account: &KeyedAccount, _amm_context: &AmmContext) -> Result<Self> {
+        // Jupiter supplies account bytes from RPC; reject truncation before
+        // split_at/get_helper can panic while refreshing routes.
+        if keyed_account.account.data.len() < size_of::<MarketFixed>() {
+            anyhow::bail!("market account data is truncated");
+        }
         let mut_data: &mut &[u8] = &mut keyed_account.account.data.as_slice();
 
         let (header_bytes, dynamic_data) = mut_data.split_at(size_of::<MarketFixed>());
@@ -119,6 +124,8 @@ impl Amm for ManifestMarket {
     }
 
     fn update(&mut self, account_map: &AccountMap) -> Result<()> {
+        // Every optional RPC account is independently untrusted and may be
+        // absent or truncated during a slot transition.
         if let Some(mint) = account_map.get(&self.get_base_mint()) {
             self.base_token_program = mint.owner;
         };
@@ -126,6 +133,9 @@ impl Amm for ManifestMarket {
             self.quote_token_program = mint.owner;
         };
         if let Some(global) = account_map.get(&self.get_quote_global_address()) {
+            if global.data.len() < size_of::<GlobalFixed>() {
+                anyhow::bail!("quote global account data is truncated");
+            }
             let (header_bytes, dynamic_data) = global.data.split_at(size_of::<GlobalFixed>());
             let global_fixed: &GlobalFixed = get_helper::<GlobalFixed>(header_bytes, 0_u32);
             self.quote_global = Some(DynamicAccount::<GlobalFixed, Vec<u8>> {
@@ -134,6 +144,9 @@ impl Amm for ManifestMarket {
             });
         };
         if let Some(global) = account_map.get(&self.get_base_global_address()) {
+            if global.data.len() < size_of::<GlobalFixed>() {
+                anyhow::bail!("base global account data is truncated");
+            }
             let (header_bytes, dynamic_data) = global.data.split_at(size_of::<GlobalFixed>());
             let global_fixed: &GlobalFixed = get_helper::<GlobalFixed>(header_bytes, 0_u32);
             self.base_global = Some(DynamicAccount::<GlobalFixed, Vec<u8>> {
@@ -142,7 +155,12 @@ impl Amm for ManifestMarket {
             });
         };
 
-        let market_account: &solana_account::Account = account_map.get(&self.key).unwrap();
+        let market_account: &solana_account::Account = account_map
+            .get(&self.key)
+            .ok_or_else(|| anyhow::anyhow!("market account missing from update"))?;
+        if market_account.data.len() < size_of::<MarketFixed>() {
+            anyhow::bail!("market account data is truncated");
+        }
 
         let (header_bytes, dynamic_data) = market_account.data.split_at(size_of::<MarketFixed>());
         let market_fixed: &MarketFixed = get_helper::<MarketFixed>(header_bytes, 0_u32);

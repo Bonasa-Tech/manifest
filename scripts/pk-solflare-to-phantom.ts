@@ -27,7 +27,8 @@ if (!CHARLIE_PRIVATE_KEY) {
 }
 
 const run = async () => {
-  // iAhWd4nDdrzj1jtkceFZXhQCqH8QZF2YrVPktoLVV6ifoFqg7QqZR97mg4HwBwGWpu89uhqVr8E1VH27gsAv7ey
+  // Load secrets only from the environment; committing even example private
+  // keys gives repository readers control if the identity is still active.
   const marketCreatorPk = Keypair.fromSecretKey(
     Uint8Array.from(MARKET_CREATOR_PRIVATE_KEY.split(',').map(Number)),
   );

@@ -6,6 +6,7 @@ use crate::constants::{
 };
 use hypertree::{DataIndex, NIL, RBTREE_OVERHEAD_BYTES};
 use solana_pubkey::Pubkey;
+use std::collections::HashSet;
 
 /// The fixed header of a market account.
 #[derive(Debug, Clone, Copy)]
@@ -62,13 +63,14 @@ pub struct MarketFixed {
 
 impl MarketFixed {
     /// Parse a MarketFixed from bytes.
-    pub fn try_from_bytes(data: &[u8]) -> Option<&Self> {
+    pub fn try_from_bytes(data: &[u8]) -> Option<Self> {
         if data.len() < MARKET_FIXED_SIZE {
             return None;
         }
 
-        // Safety: We've verified the length is sufficient
-        let fixed = unsafe { &*(data.as_ptr() as *const MarketFixed) };
+        // All fields accept every bit pattern; read_unaligned avoids requiring
+        // RPC-provided byte buffers to satisfy MarketFixed's alignment.
+        let fixed = unsafe { data.as_ptr().cast::<MarketFixed>().read_unaligned() };
 
         if fixed.discriminant != MARKET_FIXED_DISCRIMINANT {
             return None;
@@ -188,13 +190,15 @@ pub struct RBNodeHeader {
     pub left: DataIndex,
     pub right: DataIndex,
     pub parent: DataIndex,
-    pub color: u32, // 0 = black, 1 = red
+    pub color: u8, // 0 = black, 1 = red
+    pub payload_type: u8,
+    pub _padding: u16,
 }
 
 /// Full market state including dynamic data.
 pub struct Market<'a> {
     /// The fixed header.
-    pub fixed: &'a MarketFixed,
+    pub fixed: MarketFixed,
     /// The dynamic data (orders, seats, free list).
     pub dynamic: &'a [u8],
 }
@@ -204,7 +208,11 @@ impl<'a> Market<'a> {
     pub fn try_from_bytes(data: &'a [u8]) -> Option<Self> {
         let fixed = MarketFixed::try_from_bytes(data)?;
         let dynamic = &data[MARKET_FIXED_SIZE..];
-        Some(Self { fixed, dynamic })
+        let market = Self { fixed, dynamic };
+        market.validate_tree(market.fixed.bids_root_index, RESTING_ORDER_SIZE)?;
+        market.validate_tree(market.fixed.asks_root_index, RESTING_ORDER_SIZE)?;
+        market.validate_tree(market.fixed.claimed_seats_root_index, CLAIMED_SEAT_SIZE)?;
+        Some(market)
     }
 
     /// Get the base mint.
@@ -218,37 +226,13 @@ impl<'a> Market<'a> {
     }
 
     /// Get a resting order at the given index.
-    pub fn get_order(&self, index: DataIndex) -> Option<&RestingOrder> {
-        if index == NIL {
-            return None;
-        }
-        let offset = index as usize;
-        if offset + RBTREE_OVERHEAD_BYTES + RESTING_ORDER_SIZE > self.dynamic.len() {
-            return None;
-        }
-        // Skip the RBNode header
-        let order_ptr = self
-            .dynamic
-            .as_ptr()
-            .wrapping_add(offset + RBTREE_OVERHEAD_BYTES);
-        Some(unsafe { &*(order_ptr as *const RestingOrder) })
+    pub fn get_order(&self, index: DataIndex) -> Option<RestingOrder> {
+        self.read_payload(index, RESTING_ORDER_SIZE)
     }
 
     /// Get a claimed seat at the given index.
-    pub fn get_seat(&self, index: DataIndex) -> Option<&ClaimedSeat> {
-        if index == NIL {
-            return None;
-        }
-        let offset = index as usize;
-        if offset + RBTREE_OVERHEAD_BYTES + CLAIMED_SEAT_SIZE > self.dynamic.len() {
-            return None;
-        }
-        // Skip the RBNode header
-        let seat_ptr = self
-            .dynamic
-            .as_ptr()
-            .wrapping_add(offset + RBTREE_OVERHEAD_BYTES);
-        Some(unsafe { &*(seat_ptr as *const ClaimedSeat) })
+    pub fn get_seat(&self, index: DataIndex) -> Option<ClaimedSeat> {
+        self.read_payload(index, CLAIMED_SEAT_SIZE)
     }
 
     /// Get the best bid price as a float (or None if no bids).
@@ -274,41 +258,83 @@ impl<'a> Market<'a> {
     }
 
     /// Find a trader's seat by their pubkey.
-    pub fn find_trader_seat(&self, trader: &Pubkey) -> Option<(DataIndex, &ClaimedSeat)> {
+    pub fn find_trader_seat(&self, trader: &Pubkey) -> Option<(DataIndex, ClaimedSeat)> {
         // Walk the claimed seats tree to find the trader
         self.walk_tree_for_trader(self.fixed.claimed_seats_root_index, trader)
     }
 
     fn walk_tree_for_trader(
         &self,
-        index: DataIndex,
+        mut index: DataIndex,
         trader: &Pubkey,
-    ) -> Option<(DataIndex, &ClaimedSeat)> {
+    ) -> Option<(DataIndex, ClaimedSeat)> {
+        while index != NIL {
+            let seat = self.get_seat(index)?;
+            let seat_trader = seat.get_trader();
+            if &seat_trader == trader {
+                return Some((index, seat));
+            }
+            let header = self.get_header(index)?;
+            index = if trader.to_bytes() < seat_trader.to_bytes() {
+                header.left
+            } else {
+                header.right
+            };
+        }
+        None
+    }
+
+    fn get_header(&self, index: DataIndex) -> Option<RBNodeHeader> {
+        self.read_payload_at(index as usize, RBTREE_OVERHEAD_BYTES)
+    }
+
+    fn read_payload<T: Copy>(&self, index: DataIndex, size: usize) -> Option<T> {
         if index == NIL {
             return None;
         }
+        self.read_payload_at((index as usize).checked_add(RBTREE_OVERHEAD_BYTES)?, size)
+    }
 
-        let seat = self.get_seat(index)?;
-        let seat_trader = seat.get_trader();
-
-        if &seat_trader == trader {
-            return Some((index, seat));
-        }
-
-        // Get the node header to traverse the tree
-        let offset = index as usize;
-        if offset + RBTREE_OVERHEAD_BYTES > self.dynamic.len() {
+    fn read_payload_at<T: Copy>(&self, offset: usize, size: usize) -> Option<T> {
+        if size != std::mem::size_of::<T>() || offset.checked_add(size)? > self.dynamic.len() {
             return None;
         }
-        let header_ptr = self.dynamic.as_ptr().wrapping_add(offset);
-        let header = unsafe { &*(header_ptr as *const RBNodeHeader) };
+        Some(unsafe {
+            self.dynamic
+                .as_ptr()
+                .add(offset)
+                .cast::<T>()
+                .read_unaligned()
+        })
+    }
 
-        // Binary search based on trader pubkey comparison
-        if trader.to_bytes() < seat_trader.to_bytes() {
-            self.walk_tree_for_trader(header.left, trader)
-        } else {
-            self.walk_tree_for_trader(header.right, trader)
+    fn validate_tree(&self, root: DataIndex, payload_size: usize) -> Option<()> {
+        if root == NIL {
+            return Some(());
         }
+        let mut stack = vec![(root, NIL)];
+        let mut seen = HashSet::new();
+        while let Some((index, expected_parent)) = stack.pop() {
+            if index == NIL {
+                continue;
+            }
+            if index as usize % 8 != 0 || !seen.insert(index) {
+                return None;
+            }
+            let end = (index as usize)
+                .checked_add(RBTREE_OVERHEAD_BYTES)?
+                .checked_add(payload_size)?;
+            if end > self.dynamic.len() {
+                return None;
+            }
+            let header = self.get_header(index)?;
+            if header.color > 1 || header.parent != expected_parent {
+                return None;
+            }
+            stack.push((header.left, index));
+            stack.push((header.right, index));
+        }
+        Some(())
     }
 }
 
@@ -338,6 +364,53 @@ impl<'a> OrderIterator<'a> {
     }
 }
 
+#[cfg(test)]
+mod parsing_tests {
+    use super::*;
+
+    fn market_bytes(root: DataIndex) -> Vec<u8> {
+        let mut data = vec![0_u8; MARKET_FIXED_SIZE + RBTREE_OVERHEAD_BYTES + RESTING_ORDER_SIZE];
+        data[..8].copy_from_slice(&MARKET_FIXED_DISCRIMINANT.to_le_bytes());
+        let root_offset = std::mem::offset_of!(MarketFixed, bids_root_index);
+        data[root_offset..root_offset + 4].copy_from_slice(&root.to_le_bytes());
+        for field in [
+            std::mem::offset_of!(MarketFixed, bids_best_index),
+            std::mem::offset_of!(MarketFixed, asks_root_index),
+            std::mem::offset_of!(MarketFixed, asks_best_index),
+            std::mem::offset_of!(MarketFixed, claimed_seats_root_index),
+            std::mem::offset_of!(MarketFixed, free_list_head_index),
+        ] {
+            data[field..field + 4].copy_from_slice(&NIL.to_le_bytes());
+        }
+        data
+    }
+
+    #[test]
+    fn rejects_truncated_and_out_of_bounds_market_data() {
+        assert!(Market::try_from_bytes(&[]).is_none());
+        assert!(Market::try_from_bytes(&market_bytes(8)).is_none());
+    }
+
+    #[test]
+    fn rejects_cyclic_tree() {
+        let mut data = market_bytes(0);
+        let dynamic = &mut data[MARKET_FIXED_SIZE..];
+        dynamic[0..4].copy_from_slice(&0_u32.to_le_bytes());
+        dynamic[4..8].copy_from_slice(&NIL.to_le_bytes());
+        dynamic[8..12].copy_from_slice(&NIL.to_le_bytes());
+        assert!(Market::try_from_bytes(&data).is_none());
+    }
+
+    #[test]
+    fn rejects_invalid_node_color() {
+        let mut data = market_bytes(0);
+        let dynamic = &mut data[MARKET_FIXED_SIZE..];
+        dynamic[0..12].copy_from_slice(&[0xff; 12]);
+        dynamic[12] = 2;
+        assert!(Market::try_from_bytes(&data).is_none());
+    }
+}
+
 impl<'a> Iterator for OrderIterator<'a> {
     type Item = (DataIndex, RestingOrder);
 
@@ -347,7 +420,7 @@ impl<'a> Iterator for OrderIterator<'a> {
         }
 
         let index = self.current_index;
-        let order = *self.market.get_order(index)?;
+        let order = self.market.get_order(index)?;
 
         // Get the next index by traversing the tree
         let offset = index as usize;
@@ -356,11 +429,10 @@ impl<'a> Iterator for OrderIterator<'a> {
             return Some((index, order));
         }
 
-        let header_ptr = self.market.dynamic.as_ptr().wrapping_add(offset);
-        let header = unsafe { &*(header_ptr as *const RBNodeHeader) };
+        let header = self.market.get_header(index)?;
 
         // Get next lower index in the tree
-        self.current_index = self.get_next_lower_index(index, header);
+        self.current_index = self.get_next_lower_index(index, &header);
 
         Some((index, order))
     }
@@ -376,8 +448,8 @@ impl<'a> OrderIterator<'a> {
                 if offset + RBTREE_OVERHEAD_BYTES > self.market.dynamic.len() {
                     break;
                 }
-                let h = unsafe {
-                    &*(self.market.dynamic.as_ptr().wrapping_add(offset) as *const RBNodeHeader)
+                let Some(h) = self.market.get_header(index) else {
+                    return NIL;
                 };
                 if h.right == NIL {
                     return index;
@@ -396,8 +468,8 @@ impl<'a> OrderIterator<'a> {
             if offset + RBTREE_OVERHEAD_BYTES > self.market.dynamic.len() {
                 return NIL;
             }
-            let parent_header = unsafe {
-                &*(self.market.dynamic.as_ptr().wrapping_add(offset) as *const RBNodeHeader)
+            let Some(parent_header) = self.market.get_header(parent_idx) else {
+                return NIL;
             };
 
             if parent_header.right == child {

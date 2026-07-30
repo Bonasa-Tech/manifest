@@ -1,5 +1,8 @@
 use async_trait::async_trait;
-use hypertree::hypertree::HyperTreeValueIteratorTrait;
+use hypertree::{
+    hypertree::{HyperTreeReadOperations, HyperTreeValueIteratorTrait},
+    validate_red_black_tree,
+};
 use log::error;
 use manifest::{
     quantities::WrapperU64,
@@ -43,10 +46,28 @@ impl Dex for Manifest {
             get_extra!(metadata, "base_decimals", PoolMetadataValue::Number).unwrap_or(6.0_f64);
         let quote_decimals =
             get_extra!(metadata, "quote_decimals", PoolMetadataValue::Number).unwrap_or(6.0_f64);
+        // Metadata is untrusted: bound exponents before integer pow and reject
+        // NaN/fractional values that would otherwise truncate during casting.
+        let decimal_scale = |decimals: f64| -> Option<f64> {
+            if !decimals.is_finite() || decimals.fract() != 0.0 || !(0.0..=19.0).contains(&decimals)
+            {
+                return None;
+            }
+            Some(10_u64.checked_pow(decimals as u32)? as f64)
+        };
+        let Some(base_scale) = decimal_scale(base_decimals) else {
+            return 0.0;
+        };
+        let Some(quote_scale) = decimal_scale(quote_decimals) else {
+            return 0.0;
+        };
 
         for ask in asks {
             match ask {
                 PoolMetadataValue::Array(ask) => {
+                    if ask.len() < 2 {
+                        continue;
+                    }
                     let base_atoms = match ask[0] {
                         PoolMetadataValue::Number(base_atoms) => base_atoms,
                         _ => 0.0_f64,
@@ -55,10 +76,15 @@ impl Dex for Manifest {
                         PoolMetadataValue::Number(base_atoms) => base_atoms,
                         _ => 0.0_f64,
                     };
-                    let base_tokens: f64 =
-                        (base_atoms as f64) / (10_u64.pow(base_decimals as u32) as f64);
-                    let quote_tokens: f64 =
-                        (quote_atoms as f64) / (10_u64.pow(quote_decimals as u32) as f64);
+                    let base_tokens = base_atoms / base_scale;
+                    let quote_tokens = quote_atoms / quote_scale;
+                    if !base_tokens.is_finite()
+                        || !quote_tokens.is_finite()
+                        || base_tokens <= 0.0
+                        || quote_tokens < 0.0
+                    {
+                        continue;
+                    }
 
                     if base_tokens < remaining_in {
                         total_out += remaining_in / base_tokens * quote_tokens;
@@ -125,6 +151,21 @@ impl Dex for Manifest {
             .ok()?;
         let market: MarketValue =
             manifest::program::get_dynamic_value_or(market_data.as_slice()).ok()?;
+        let bids = market.get_bids();
+        let asks = market.get_asks();
+        // Validate RPC-sourced links before the zero-copy iterator follows them.
+        validate_red_black_tree::<RestingOrder>(
+            &market.dynamic,
+            bids.get_root_index(),
+            bids.get_max_index(),
+        )
+        .ok()?;
+        validate_red_black_tree::<RestingOrder>(
+            &market.dynamic,
+            asks.get_root_index(),
+            asks.get_max_index(),
+        )
+        .ok()?;
         let base_vault: &Pubkey = market.fixed.get_base_vault();
         let quote_vault: &Pubkey = market.fixed.get_quote_vault();
 
@@ -150,8 +191,7 @@ impl Dex for Manifest {
 
         // Bids is an array of arrays. Top of book is first. Similar for asks.
         // [ [baseAtoms1, quoteAtoms1], [baseAtoms2, quoteAtoms2], [baseAtoms3, quoteAtoms3], ...]
-        let bids_vec: Vec<PoolMetadataValue> = market
-            .get_bids()
+        let bids_vec: Vec<PoolMetadataValue> = bids
             .iter::<RestingOrder>()
             .map(|(_ind, resting_order)| {
                 let bid = resting_order;
@@ -160,7 +200,7 @@ impl Dex for Manifest {
                     PoolMetadataValue::Number(
                         bid.get_price()
                             .checked_quote_for_base(bid.get_num_base_atoms(), true)
-                            .unwrap()
+                            .unwrap_or_default()
                             .as_u64() as f64,
                     ),
                 ])
@@ -168,8 +208,7 @@ impl Dex for Manifest {
             .collect::<Vec<PoolMetadataValue>>();
         extra.insert("bids".to_string(), PoolMetadataValue::Array(bids_vec));
 
-        let asks_vec: Vec<PoolMetadataValue> = market
-            .get_asks()
+        let asks_vec: Vec<PoolMetadataValue> = asks
             .iter::<RestingOrder>()
             .map(|(_ind, resting_order)| {
                 let ask = resting_order;
@@ -178,7 +217,7 @@ impl Dex for Manifest {
                     PoolMetadataValue::Number(
                         ask.get_price()
                             .checked_quote_for_base(ask.get_num_base_atoms(), true)
-                            .unwrap()
+                            .unwrap_or_default()
                             .as_u64() as f64,
                     ),
                 ])

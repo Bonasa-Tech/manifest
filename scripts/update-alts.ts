@@ -194,7 +194,8 @@ async function main() {
   const connection = new Connection(RPC_URL!, 'confirmed');
   const pool = new Pool({
     connectionString: DATABASE_URL!,
-    ssl: { rejectUnauthorized: false }, // May be needed depending on Fly Postgres configuration
+    ssl: { rejectUnauthorized: true }, // Reject database MITM certificates.
+    statement_timeout: 15_000,
   });
   const keypair = Keypair.fromSecretKey(
     Uint8Array.from(PRIVATE_KEY!.split(',').map(Number)),

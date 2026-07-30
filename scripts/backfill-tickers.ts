@@ -1,11 +1,24 @@
 import { Connection, PublicKey } from '@solana/web3.js';
-import { MANIFEST_PROGRAM_ID, MARKET_DISCRIMINATOR } from './stats_utils/constants';
+import {
+  MANIFEST_PROGRAM_ID,
+  MARKET_DISCRIMINATOR,
+} from './stats_utils/constants';
 import { Market } from '../client/ts/src';
 import { getVaultAddress } from '../client/ts/src/utils';
 
-const STATS_SERVER_URL = 'https://mfx-stats-mainnet.fly.dev';
-const PRIMARY_RPC_URL = 'https://rpc.shyft.to?api_key=hji2tMNbrRzaTuyn';
-const FALLBACK_RPC_URL = 'https://rpc.shyft.to?api_key=PyFQrhOnpzF4wRAk';
+const {
+  STATS_SERVER_URL = 'https://mfx-stats-mainnet.fly.dev',
+  PRIMARY_RPC_URL,
+  FALLBACK_RPC_URL,
+  STATS_BACKFILL_API_KEY,
+} = process.env;
+
+// RPC credentials and the backfill bearer secret must never be committed.
+if (!PRIMARY_RPC_URL || !FALLBACK_RPC_URL || !STATS_BACKFILL_API_KEY) {
+  throw new Error(
+    'PRIMARY_RPC_URL, FALLBACK_RPC_URL, and STATS_BACKFILL_API_KEY are required',
+  );
+}
 
 // Rate limiting - be conservative to avoid RPC spam
 const DELAY_BETWEEN_MARKETS_MS = 500;
@@ -15,9 +28,9 @@ async function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function fetchAllMarkets(connection: Connection): Promise<
-  { pubkey: PublicKey; baseVault: PublicKey }[]
-> {
+async function fetchAllMarkets(
+  connection: Connection,
+): Promise<{ pubkey: PublicKey; baseVault: PublicKey }[]> {
   console.log('Fetching all Manifest markets...');
 
   const accounts = await connection.getProgramAccounts(MANIFEST_PROGRAM_ID, {
@@ -49,7 +62,10 @@ async function fetchAllMarkets(connection: Connection): Promise<
         baseVault,
       });
     } catch (error) {
-      console.error(`Failed to deserialize market ${account.pubkey.toBase58()}:`, error);
+      console.error(
+        `Failed to deserialize market ${account.pubkey.toBase58()}:`,
+        error,
+      );
     }
   }
 
@@ -73,7 +89,10 @@ async function findFirstFillSignature(
     // Return the first signature (most recent)
     return signatures[0].signature;
   } catch (error) {
-    console.error(`Failed to get signatures for vault ${baseVault.toBase58()}:`, error);
+    console.error(
+      `Failed to get signatures for vault ${baseVault.toBase58()}:`,
+      error,
+    );
     return null;
   }
 }
@@ -83,16 +102,27 @@ async function backfillSignature(signature: string): Promise<boolean> {
 
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
-      const url = `${STATS_SERVER_URL}/backfill?signature=${signature}`;
-      const response = await fetch(url);
+      const url = `${STATS_SERVER_URL}/backfill`;
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${STATS_BACKFILL_API_KEY}`,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({ signature }),
+      });
 
       if (!response.ok) {
         if (attempt === 0) {
-          console.error(`Backfill failed for ${signature}: ${response.status}, retrying in ${RETRY_DELAY_MS}ms...`);
+          console.error(
+            `Backfill failed for ${signature}: ${response.status}, retrying in ${RETRY_DELAY_MS}ms...`,
+          );
           await sleep(RETRY_DELAY_MS);
           continue;
         }
-        console.error(`Backfill failed for ${signature}: ${response.status} ${response.statusText}`);
+        console.error(
+          `Backfill failed for ${signature}: ${response.status} ${response.statusText}`,
+        );
         return false;
       }
 
@@ -100,7 +130,9 @@ async function backfillSignature(signature: string): Promise<boolean> {
       return result.success === true;
     } catch (error) {
       if (attempt === 0) {
-        console.error(`Failed to backfill ${signature}, retrying in ${RETRY_DELAY_MS}ms...`);
+        console.error(
+          `Failed to backfill ${signature}, retrying in ${RETRY_DELAY_MS}ms...`,
+        );
         await sleep(RETRY_DELAY_MS);
         continue;
       }
@@ -139,7 +171,10 @@ async function run() {
 
     await sleep(DELAY_BETWEEN_SIGNATURE_CHECKS_MS);
 
-    const signature = await findFirstFillSignature(connection, market.baseVault);
+    const signature = await findFirstFillSignature(
+      connection,
+      market.baseVault,
+    );
 
     if (!signature) {
       console.log('no signatures found');
