@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1784746295547,
+  "lastUpdate": 1785373167075,
   "repoUrl": "https://github.com/Bonasa-Tech/manifest",
   "entries": {
     "CU Benchmark": [
@@ -12371,6 +12371,72 @@ window.BENCHMARK_DATA = {
           {
             "name": "MFX_99",
             "value": 13184,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "cyrbritt@gmail.com",
+            "name": "Britt Cyr",
+            "username": "brittcyr"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "86a83278e7eff94c9fd176f429e17c363612db01",
+          "message": "Address security audit findings (#661)\n\n* Address security audit findings\n\n- Reject oversized global bid notionals before persistence and make legacy oversized orders safely cleanable without arithmetic panics.\n- Make dynamic account decoding fallible so truncated RPC responses cannot crash client integrations.\n- Give resting orders total identity keys and use bounded reverse-order probes to prevent same-price buckets from amplifying lookup compute.\n- Enforce exact-in minimum output against post-transfer-fee wallet receipts for both base and quote outputs.\n- Derive gross input settlement from the net amount actually consumed so partial and empty fee-bearing swaps cannot overdebit base or quote input.\n- Add focused regressions covering each reported attack path.\n\n* alignment\n\n* Fix writable SDK account metadata\n\n* Rename Codex CLI audit findings",
+          "timestamp": "2026-07-29T20:45:50-04:00",
+          "tree_id": "c7b203121dd386763b279c43a7fa0e2486a61211",
+          "url": "https://github.com/Bonasa-Tech/manifest/commit/86a83278e7eff94c9fd176f429e17c363612db01"
+        },
+        "date": 1785373165066,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "PHX_50",
+            "value": 6897,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "PHX_95",
+            "value": 13208,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "PHX_99",
+            "value": 13902,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_50",
+            "value": 3158,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_95",
+            "value": 12062,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_99",
+            "value": 12941,
             "range": "",
             "unit": "CU",
             "extra": ""
