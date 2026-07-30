@@ -11,7 +11,7 @@ use manifest::{
         batch_update::{CancelOrderParams, PlaceOrderParams},
         batch_update_instruction,
         claim_seat_instruction::claim_seat_instruction,
-        create_market_instructions, deposit_instruction, get_dynamic_value,
+        create_market_instructions, deposit_instruction, get_dynamic_value_or,
         global_add_trader_instruction,
         global_create_instruction::create_global_instruction,
         global_deposit_instruction, global_withdraw_instruction, swap_instruction,
@@ -881,7 +881,7 @@ impl MarketFixture {
             .unwrap()
             .unwrap();
 
-        let market: MarketValue = get_dynamic_value(market_account.data.as_slice());
+        let market: MarketValue = get_dynamic_value_or(market_account.data.as_slice()).unwrap();
         self.market = market;
     }
 
@@ -1093,7 +1093,7 @@ impl GlobalFixture {
             .unwrap()
             .unwrap();
 
-        let global: GlobalValue = get_dynamic_value(global_account.data.as_slice());
+        let global: GlobalValue = get_dynamic_value_or(global_account.data.as_slice()).unwrap();
         self.global = global;
     }
 }
@@ -1665,7 +1665,7 @@ pub async fn verify_vault_balance(
     traders: &[Pubkey],
     exact: bool,
 ) {
-    use manifest::{program::get_dynamic_value, state::RestingOrder};
+    use manifest::{program::get_dynamic_value_or, state::RestingOrder};
 
     // Get market data
     let market_account: Account = context
@@ -1675,7 +1675,8 @@ pub async fn verify_vault_balance(
         .await
         .unwrap()
         .unwrap();
-    let market: manifest::state::MarketValue = get_dynamic_value(market_account.data.as_slice());
+    let market: manifest::state::MarketValue =
+        get_dynamic_value_or(market_account.data.as_slice()).unwrap();
 
     // Sum seat balances for all traders
     let mut seats_base: u64 = 0;

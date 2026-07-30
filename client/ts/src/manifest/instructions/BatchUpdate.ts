@@ -142,7 +142,7 @@ export function createBatchUpdateInstruction(
     }
     keys.push({
       pubkey: accounts.baseGlobalVault,
-      isWritable: false,
+      isWritable: true,
       isSigner: false,
     });
   }
@@ -158,7 +158,7 @@ export function createBatchUpdateInstruction(
     }
     keys.push({
       pubkey: accounts.baseMarketVault,
-      isWritable: false,
+      isWritable: true,
       isSigner: false,
     });
   }
@@ -232,7 +232,7 @@ export function createBatchUpdateInstruction(
     }
     keys.push({
       pubkey: accounts.quoteGlobalVault,
-      isWritable: false,
+      isWritable: true,
       isSigner: false,
     });
   }
@@ -253,7 +253,7 @@ export function createBatchUpdateInstruction(
     }
     keys.push({
       pubkey: accounts.quoteMarketVault,
-      isWritable: false,
+      isWritable: true,
       isSigner: false,
     });
   }

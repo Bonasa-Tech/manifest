@@ -64,6 +64,31 @@ impl SwapParams {
     }
 }
 
+#[inline(always)]
+fn exact_in_minimum_satisfied<F>(
+    minimum_output: u64,
+    gross_output: u64,
+    calculate_post_fee: F,
+) -> Result<bool, ProgramError>
+where
+    F: FnOnce(u64) -> Result<u64, ProgramError>,
+{
+    Ok(minimum_output <= calculate_post_fee(gross_output)?)
+}
+
+#[inline(always)]
+fn calculate_consumed_input_transfer<F>(
+    net_input_credit: u64,
+    unused_net_input: u64,
+    calculate_pre_fee: F,
+) -> Result<u64, ProgramError>
+where
+    F: FnOnce(u64) -> Result<u64, ProgramError>,
+{
+    let consumed_net_input = net_input_credit.saturating_sub(unused_net_input);
+    calculate_pre_fee(consumed_net_input)
+}
+
 pub(crate) fn process_swap(
     program_id: &Pubkey,
     accounts: &[AccountInfo],
@@ -171,19 +196,19 @@ pub(crate) fn process_swap_core(
     if is_exact_in {
         if is_base_in {
             require!(
-                in_atoms_after_transfer_fees <= trader_base_account.get_balance_atoms(),
+                in_atoms <= trader_base_account.get_balance_atoms(),
                 ManifestError::Overflow,
                 "Insufficient base in atoms for swap has: {} requires: {}",
                 trader_base_account.get_balance_atoms(),
-                in_atoms_after_transfer_fees,
+                in_atoms,
             )?;
         } else {
             require!(
-                in_atoms_after_transfer_fees <= trader_quote_account.get_balance_atoms(),
+                in_atoms <= trader_quote_account.get_balance_atoms(),
                 ManifestError::Overflow,
                 "Insufficient quote in atoms for swap has: {} requires: {}",
                 trader_quote_account.get_balance_atoms(),
-                in_atoms_after_transfer_fees,
+                in_atoms,
             )?;
         }
     }
@@ -275,20 +300,28 @@ pub(crate) fn process_swap_core(
     )?;
 
     if is_exact_in {
-        let out_atoms_traded: u64 = if is_base_in {
+        let gross_out_atoms_traded: u64 = if is_base_in {
             quote_atoms_traded.as_u64()
         } else {
             base_atoms_traded.as_u64()
         };
-        // Note that we define the spec as the out amount verified against is
-        // the amount taken from the market, not the amount actually received.
-        // These are the same except when there are transfer fees.
+        let minimum_satisfied =
+            exact_in_minimum_satisfied(out_atoms, gross_out_atoms_traded, |gross_output| {
+                calculate_post_fee_amount(
+                    gross_output,
+                    !is_base_in,
+                    &token_program_base,
+                    &token_program_quote,
+                    &base_mint,
+                    &quote_mint,
+                )
+            })?;
         require!(
-            out_atoms <= out_atoms_traded,
+            minimum_satisfied,
             ManifestError::InsufficientOut,
-            "Insufficient out atoms returned. Minimum: {} Actual: {}",
+            "Insufficient post-fee out atoms returned. Minimum: {} Gross actual: {}",
             out_atoms,
-            out_atoms_traded
+            gross_out_atoms_traded
         )?;
     } else {
         let in_atoms_traded = if is_base_in {
@@ -314,17 +347,20 @@ pub(crate) fn process_swap_core(
     if is_base_in {
         // Trader is depositing base.
 
-        // Summary: This takes extra on edge case of is_exact_in=false and
-        // transfer fee != 0.
-        // Because of rounding, it is difficult to calculate efficiently the
-        // amount that should be taken when is_exact_in = false and transfer
-        // fees. In that case, we calculated the matching with all of the input
-        // after fees. The result here is that we will take extra from the user
-        // and be lost to the vault in the amount of the fees on
-        // extra_base_atoms. This cannot be simply subtracted due to rounding
-        // issues possibly going against the vault and resulting in loss of
-        // funds.
-        let base_atoms_to_transfer: u64 = in_atoms.saturating_sub(extra_base_atoms.as_u64());
+        let base_atoms_to_transfer = calculate_consumed_input_transfer(
+            in_atoms_after_transfer_fees,
+            extra_base_atoms.as_u64(),
+            |net_consumed| {
+                calculate_pre_fee_input_amount(
+                    net_consumed,
+                    is_base_in,
+                    &token_program_base,
+                    &token_program_quote,
+                    &base_mint,
+                    &quote_mint,
+                )
+            },
+        )?;
 
         if *token_program_base.key == spl_token_2022::id() {
             spl_token_2022_transfer_from_trader_to_vault(
@@ -375,9 +411,20 @@ pub(crate) fn process_swap_core(
     } else {
         // Trader is depositing quote.
 
-        // Same comment as above for why this takes extra on edge case of
-        // is_exact_in=false and transfer fee != 0.
-        let quote_atoms_to_transfer: u64 = in_atoms.saturating_sub(extra_quote_atoms.as_u64());
+        let quote_atoms_to_transfer = calculate_consumed_input_transfer(
+            in_atoms_after_transfer_fees,
+            extra_quote_atoms.as_u64(),
+            |net_consumed| {
+                calculate_pre_fee_input_amount(
+                    net_consumed,
+                    is_base_in,
+                    &token_program_base,
+                    &token_program_quote,
+                    &base_mint,
+                    &quote_mint,
+                )
+            },
+        )?;
 
         if *token_program_quote.key == spl_token_2022::id() {
             spl_token_2022_transfer_from_trader_to_vault(
@@ -757,6 +804,29 @@ fn calculate_pre_fee_amount<'a, 'info>(
     Ok(desired_amount)
 }
 
+/// Calculate the gross input transfer needed to deliver `desired_amount` to
+/// the vault. Unlike `calculate_pre_fee_amount`, this selects the input mint.
+#[cfg(not(feature = "certora"))]
+fn calculate_pre_fee_input_amount<'a, 'info>(
+    desired_amount: u64,
+    is_base_in: bool,
+    token_program_base: &TokenProgram<'a, 'info>,
+    token_program_quote: &TokenProgram<'a, 'info>,
+    base_mint: &Option<MintAccountInfo<'a, 'info>>,
+    quote_mint: &Option<MintAccountInfo<'a, 'info>>,
+) -> Result<u64, ProgramError> {
+    // `calculate_pre_fee_amount` selects the token opposite its direction
+    // argument, so invert the direction to select the input token.
+    calculate_pre_fee_amount(
+        desired_amount,
+        !is_base_in,
+        token_program_base,
+        token_program_quote,
+        base_mint,
+        quote_mint,
+    )
+}
+
 #[cfg(feature = "certora")]
 fn calculate_pre_fee_amount<'a, 'info>(
     desired_amount: u64,
@@ -767,5 +837,70 @@ fn calculate_pre_fee_amount<'a, 'info>(
     _quote_mint: &Option<MintAccountInfo<'a, 'info>>,
 ) -> Result<u64, ProgramError> {
     // For certora verification, assume no transfer fees
+    Ok(desired_amount)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn ten_percent_post_fee(gross: u64) -> Result<u64, ProgramError> {
+        Ok(gross - gross / 10)
+    }
+
+    fn ten_percent_pre_fee(net: u64) -> Result<u64, ProgramError> {
+        Ok(net.div_ceil(9) * 10)
+    }
+
+    #[test]
+    fn base_output_fee_cannot_bypass_exact_in_minimum() {
+        assert!(!exact_in_minimum_satisfied(100, 100, ten_percent_post_fee).unwrap());
+        assert!(exact_in_minimum_satisfied(90, 100, ten_percent_post_fee).unwrap());
+    }
+
+    #[test]
+    fn quote_output_fee_cannot_bypass_exact_in_minimum() {
+        assert!(!exact_in_minimum_satisfied(1_000, 1_000, ten_percent_post_fee).unwrap());
+        assert!(exact_in_minimum_satisfied(900, 1_000, ten_percent_post_fee).unwrap());
+    }
+
+    #[test]
+    fn partial_base_input_only_charges_for_consumed_net_amount() {
+        // A gross credit of 100 produces 90 net. Consuming half the net must
+        // debit 50 gross, not the vulnerable G - unused_net = 55.
+        assert_eq!(
+            calculate_consumed_input_transfer(90, 45, ten_percent_pre_fee).unwrap(),
+            50
+        );
+        assert_eq!(
+            calculate_consumed_input_transfer(90, 90, ten_percent_pre_fee).unwrap(),
+            0,
+            "a zero-fill swap must not debit a fee-sized surplus"
+        );
+    }
+
+    #[test]
+    fn partial_quote_input_only_charges_for_consumed_net_amount() {
+        assert_eq!(
+            calculate_consumed_input_transfer(900, 450, ten_percent_pre_fee).unwrap(),
+            500
+        );
+        assert_eq!(
+            calculate_consumed_input_transfer(900, 900, ten_percent_pre_fee).unwrap(),
+            0,
+            "a zero-fill swap must not debit a fee-sized surplus"
+        );
+    }
+}
+
+#[cfg(feature = "certora")]
+fn calculate_pre_fee_input_amount<'a, 'info>(
+    desired_amount: u64,
+    _is_base_in: bool,
+    _token_program_base: &TokenProgram<'a, 'info>,
+    _token_program_quote: &TokenProgram<'a, 'info>,
+    _base_mint: &Option<MintAccountInfo<'a, 'info>>,
+    _quote_mint: &Option<MintAccountInfo<'a, 'info>>,
+) -> Result<u64, ProgramError> {
     Ok(desired_amount)
 }

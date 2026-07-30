@@ -242,9 +242,13 @@ const fn u128_to_u64_slice(a: u128) -> [u64; 2] {
     }
 }
 pub(crate) fn u64_slice_to_u128(a: [u64; 2]) -> u128 {
+    // `[u64; 2]` guarantees only 8-byte alignment, while Rust may require
+    // 16-byte alignment for `u128` even on SBF. The runtime supports the
+    // underlying 8-byte loads, but the Rust pointer dereference must still be
+    // explicitly unaligned to avoid undefined behavior.
     unsafe {
         let ptr: *const [u64; 2] = &a;
-        *ptr.cast::<u128>()
+        ptr.cast::<u128>().read_unaligned()
     }
 }
 

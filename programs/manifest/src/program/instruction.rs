@@ -75,13 +75,13 @@ pub enum ManifestInstruction {
     #[account(2, name = "system_program", desc = "System program")]
     #[account(3, optional, name = "base_mint", desc = "Mint for the base global account")]
     #[account(4, optional, writable, name = "base_global", desc = "Base global account")]
-    #[account(5, optional, name = "base_global_vault", desc = "Base global vault")]
-    #[account(6, optional, name = "base_market_vault", desc = "Base market vault")]
+    #[account(5, optional, writable, name = "base_global_vault", desc = "Base global vault")]
+    #[account(6, optional, writable, name = "base_market_vault", desc = "Base market vault")]
     #[account(7, optional, name = "base_token_program", desc = "Token program(22)")]
     #[account(8, optional, name = "quote_mint", desc = "Mint for this global account")]
     #[account(9, optional, writable, name = "quote_global", desc = "Quote global account")]
-    #[account(10, optional, name = "quote_global_vault", desc = "Quote global vault")]
-    #[account(11, optional, name = "quote_market_vault", desc = "Quote market vault")]
+    #[account(10, optional, writable, name = "quote_global_vault", desc = "Quote global vault")]
+    #[account(11, optional, writable, name = "quote_market_vault", desc = "Quote market vault")]
     #[account(12, optional, name = "quote_token_program", desc = "Token program(22)")]
     BatchUpdate = 6,
 
@@ -123,8 +123,8 @@ pub enum ManifestInstruction {
     #[account(1, writable, name = "global", desc = "Global account")]
     #[account(2, name = "mint", desc = "Mint for this global account")]
     #[account(3, writable, name = "global_vault", desc = "Global vault")]
-    #[account(4, name = "trader_token", desc = "Trader token account")]
-    #[account(5, name = "evictee_token", desc = "Evictee token account")]
+    #[account(4, writable, name = "trader_token", desc = "Trader token account")]
+    #[account(5, writable, name = "evictee_token", desc = "Evictee token account")]
     #[account(6, name = "token_program", desc = "Token program(22)")]
     GlobalEvict = 11,
 

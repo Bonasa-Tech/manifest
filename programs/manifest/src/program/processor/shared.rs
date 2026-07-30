@@ -184,15 +184,34 @@ pub fn get_dynamic_ref<T: Get>(data: &[u8]) -> DynamicAccount<&'_ T, &'_ [u8]> {
 }
 
 /// Generic get owned dynamic account from the data bytes of the account.
-pub fn get_dynamic_value<T: Get>(data: &[u8]) -> DynamicAccount<T, Vec<u8>> {
+pub fn get_dynamic_value_or<T: Get>(
+    data: &[u8],
+) -> Result<DynamicAccount<T, Vec<u8>>, ProgramError> {
+    if data.len() < size_of::<T>() {
+        return Err(ProgramError::InvalidAccountData);
+    }
     let (fixed_data, dynamic_data) = data.split_at(size_of::<T>());
     let market_fixed: &T = get_helper::<T>(fixed_data, 0_u32);
 
-    let dynamic_account: DynamicAccount<T, Vec<u8>> = DynamicAccount {
+    Ok(DynamicAccount {
         fixed: *market_fixed,
         dynamic: (dynamic_data).to_vec(),
-    };
-    dynamic_account
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dynamic_value_rejects_truncated_fixed_data() {
+        for len in 0..size_of::<MarketFixed>() {
+            assert!(matches!(
+                get_dynamic_value_or::<MarketFixed>(&vec![0; len]),
+                Err(ProgramError::InvalidAccountData)
+            ));
+        }
+    }
 }
 
 // Uses a MarketRefMut instead of a MarketRef because callers will have mutable data.

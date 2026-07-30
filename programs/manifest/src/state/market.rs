@@ -1335,8 +1335,15 @@ impl<
                         // Because there is a slight relaxation in matching reverse
                         // orders, do not need to worry about off by one errors
                         // causing fragmented liqudity.
-                        let lookup_index: DataIndex =
-                            other_tree.lookup_index(&lookup_resting_order);
+                        // Probe the three accepted reverse prices as distinct
+                        // total keys. Each probe remains logarithmic even when
+                        // an attacker fills the price level with other traders.
+                        let lookup_index: DataIndex = [0, -1, 1]
+                            .into_iter()
+                            .filter_map(|offset| lookup_resting_order.with_price_offset(offset))
+                            .map(|candidate| other_tree.lookup_index(&candidate))
+                            .find(|index| *index != NIL)
+                            .unwrap_or(NIL);
                         if lookup_index != NIL {
                             #[cfg(feature = "certora")]
                             remove_from_orderbook_balance(fixed, dynamic, lookup_index);
@@ -1533,6 +1540,12 @@ impl<
         }
 
         if resting_order.is_global() {
+            // Global cleanup and settlement represent quote quantities as u64.
+            // Reject bids whose complete notional cannot be represented before
+            // persisting them.
+            if is_bid {
+                remaining_base_atoms.checked_mul(price, true)?;
+            }
             let global_trade_account_opt = &global_trade_accounts_opts[if is_bid { 1 } else { 0 }];
             require!(
                 global_trade_account_opt.is_some(),

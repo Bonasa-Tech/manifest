@@ -108,19 +108,13 @@ pub(crate) fn process_global_clean(
     let is_expired: bool = resting_order.is_expired(get_now_slot());
     // Balance is zero when evicted.
     let maker_global_balance: GlobalAtoms = global_dynamic_account.get_balance_atoms(maker);
-    let required_global_atoms: u64 = if resting_order.get_is_bid() {
-        resting_order
-            .get_num_base_atoms()
-            .checked_mul(resting_order.get_price(), true)
-            .unwrap()
-            .as_u64()
-    } else {
-        resting_order.get_num_base_atoms().as_u64()
-    };
+    let required_global_atoms: Option<u64> = required_global_atoms(&resting_order);
 
     require!(
         is_expired
-            || (resting_order.is_global() && maker_global_balance.as_u64() < required_global_atoms),
+            || (resting_order.is_global()
+                && required_global_atoms
+                    .map_or(true, |required| maker_global_balance.as_u64() < required)),
         crate::program::ManifestError::InvalidClean,
         "Ineligible clean order index {}",
         order_index,
@@ -146,4 +140,41 @@ pub(crate) fn process_global_clean(
     settle_global_gas_refunds(&global_trade_accounts)?;
 
     Ok(())
+}
+
+fn required_global_atoms(resting_order: &RestingOrder) -> Option<u64> {
+    if resting_order.get_is_bid() {
+        resting_order
+            .get_num_base_atoms()
+            .checked_mul(resting_order.get_price(), true)
+            .ok()
+            .map(|atoms| atoms.as_u64())
+    } else {
+        Some(resting_order.get_num_base_atoms().as_u64())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        quantities::{BaseAtoms, QuoteAtomsPerBaseAtom},
+        state::{OrderType, NO_EXPIRATION_LAST_VALID_SLOT},
+    };
+
+    #[test]
+    fn historical_oversized_global_bid_is_clean_eligible_without_panicking() {
+        let order = RestingOrder::new(
+            0,
+            BaseAtoms::new(u64::MAX),
+            QuoteAtomsPerBaseAtom::MAX,
+            0,
+            NO_EXPIRATION_LAST_VALID_SLOT,
+            true,
+            OrderType::Global,
+        )
+        .unwrap();
+
+        assert_eq!(required_global_atoms(&order), None);
+    }
 }
