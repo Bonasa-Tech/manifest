@@ -16,6 +16,8 @@ export const AGGREGATOR_PROGRAM_IDS = {
   HuTkmnrv4zPnArMqpbMbFhfwzTR7xfWQZHH1aQKzDKFZ: 'Liquid Mesh',
   FqGg2Y1FNxMiGd51Q6UETixQWkF5fB92MysbYogRJb3P: 'HawkFi',
   Sett1erwx2eqT5A8uvu8GBxDFT2W5TNnhirL7hLmb8m: '0x',
+  bung5E8oYryGA7d2ivgoe1spoZRS88cvcwoK23TtExg: 'Bungee',
+  '2DAtv2URAcb9ZHVMHEB8E3TFBTk9PoNSYknjq8DVr69c': 'Magpie',
 } as const;
 
 /**
