@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1785506636144,
+  "lastUpdate": 1785508493065,
   "repoUrl": "https://github.com/Bonasa-Tech/manifest",
   "entries": {
     "CU Benchmark": [
@@ -12503,6 +12503,72 @@ window.BENCHMARK_DATA = {
           {
             "name": "MFX_99",
             "value": 12942,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "cyrbritt@gmail.com",
+            "name": "Britt Cyr",
+            "username": "brittcyr"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "8402c1658179bc3956cb0f7ba40af8ebc861485e",
+          "message": "Harden off-chain services and clients against audit findings (#663)\n\n* Harden off-chain services and clients against audit findings\n\nBind fill parsing and reconciliation to Manifest invocation frames, cap block and WebSocket resource use, and authenticate and bound stats endpoints.\n\nValidate untrusted Rust and TypeScript account trees, remove unsafe enum and alignment assumptions, handle malformed Jupiter and OKX inputs, enforce database TLS, and remove committed credentials.\n\nAdd regression coverage for log attribution, reconciliation, HTTP validation, and hostile tree data, and archive the full Codex CLI findings.\n\n* Apply nightly rustfmt to audit tree validation\n\n* Apply nightly rustfmt to swap CU regression test\n\nThe CU regression test added in #664 was not formatted with nightly\nrustfmt, causing the Format job in ci-code-review-rust.yml (cargo\n+nightly fmt -- --check) to fail on main. Format the file so the\ncheck passes.",
+          "timestamp": "2026-07-31T10:21:59-04:00",
+          "tree_id": "164b41a6bbf0eeded92fd4e4ebc7814951345224",
+          "url": "https://github.com/Bonasa-Tech/manifest/commit/8402c1658179bc3956cb0f7ba40af8ebc861485e"
+        },
+        "date": 1785508490650,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "PHX_50",
+            "value": 6897,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "PHX_95",
+            "value": 13208,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "PHX_99",
+            "value": 13902,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_50",
+            "value": 3157,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_95",
+            "value": 12058,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_99",
+            "value": 12932,
             "range": "",
             "unit": "CU",
             "extra": ""
