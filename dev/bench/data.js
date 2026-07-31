@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1785373167075,
+  "lastUpdate": 1785506636144,
   "repoUrl": "https://github.com/Bonasa-Tech/manifest",
   "entries": {
     "CU Benchmark": [
@@ -12437,6 +12437,72 @@ window.BENCHMARK_DATA = {
           {
             "name": "MFX_99",
             "value": 12941,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "cyrbritt@gmail.com",
+            "name": "Britt Cyr",
+            "username": "brittcyr"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "78e9a540722b380bf985421cb55b0c5d9fb20248",
+          "message": "Add CU regression test for filling across many reverse orders (#664)\n\nA single taker swap sweeps 32 distinct-price reverse asks (worst case:\nall three re-rest probes miss on every fill) and must land under a tight\n250k CU ceiling, both by measurement and by executing under\nset_compute_unit_limit.\n\nMeasured under --features test-sbf (real BPF metering): the sweep is\n222,407 CU (~6,950/fill), comfortably under the ceiling and the 1.4M\nper-transaction maximum.",
+          "timestamp": "2026-07-31T09:53:06-04:00",
+          "tree_id": "b0f5fd3db634f8405139abf715d3e6161905023b",
+          "url": "https://github.com/Bonasa-Tech/manifest/commit/78e9a540722b380bf985421cb55b0c5d9fb20248"
+        },
+        "date": 1785506633440,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "PHX_50",
+            "value": 6897,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "PHX_95",
+            "value": 13208,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "PHX_99",
+            "value": 13902,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_50",
+            "value": 3159,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_95",
+            "value": 12044,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_99",
+            "value": 12942,
             "range": "",
             "unit": "CU",
             "extra": ""
