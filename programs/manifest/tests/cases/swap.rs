@@ -4317,3 +4317,192 @@ async fn ljitsps_test() -> anyhow::Result<()> {
     Ok(())
 }
 */
+
+/// Compute-budget guard for filling a taker across many reverse orders.
+///
+/// A reverse maker re-rests on the opposite side after being filled, and that
+/// re-rest coalesces into the book via up to three bounded, logarithmic lookups
+/// (the exact reverse price plus the two adjacent prices; see
+/// `RestingOrder::with_price_offset`). A taker crossing many reverse orders pays
+/// that per fill, so this test checks a large sweep still fits a tight CU bound.
+///
+/// It builds the worst case: a single taker swap that crosses
+/// `NUM_REVERSE_ORDERS` reverse asks sitting at distinct prices, so every fill
+/// re-rests at a fresh reverse price with nothing to coalesce into -- all three
+/// probes run and miss on every single fill -- then asserts the whole swap lands
+/// under `CU_CEILING`, both by measuring it and by executing it under a matching
+/// `set_compute_unit_limit`.
+///
+/// Measured cost (`--features test-sbf`, real BPF metering): crossing 32 reverse
+/// orders is 222,407 CU (~6,950 CU/fill), comfortably under the ceiling and the
+/// 1,400,000 per-transaction maximum. Note the sweep does exceed the *default*
+/// 200,000 CU budget (~28 reverse fills), so a large reverse sweep must raise the
+/// compute budget, as swap aggregators already do (see the 1_400_000 limit in
+/// `reverse.rs`).
+///
+/// NOTE: real CU is only metered when the compiled BPF program is loaded, i.e.
+/// under `--features test-sbf`. The default native-processor `cargo test` run
+/// does not meter compute accurately, so the ceiling check is only meaningful
+/// under test-sbf; it still exercises the code path either way.
+#[tokio::test]
+async fn swap_across_many_reverse_orders_cu_test() -> anyhow::Result<()> {
+    use hypertree::HyperTreeValueIteratorTrait;
+    use solana_compute_budget_interface::ComputeBudgetInstruction;
+    use solana_program::pubkey::Pubkey;
+
+    // Number of distinct-price reverse asks the single taker swap will cross.
+    // 32 is far more reverse levels than a realistic book carries at one price
+    // point, so it is a comfortable upper bound on real fills.
+    const NUM_REVERSE_ORDERS: u32 = 32;
+    // Tight ceiling. Crossing all 32 reverse orders in the full three-probe
+    // worst case measured 222,407 CU; this leaves ~12% headroom for cross-version
+    // drift while staying far under the 1_400_000 per-transaction maximum. If a
+    // future change regresses reverse-fill CU, this fails loudly instead of
+    // silently eating into headroom.
+    const CU_CEILING: u32 = 250_000;
+
+    let mut test_fixture: TestFixture = TestFixture::new().await;
+    test_fixture.claim_seat().await?;
+
+    // Maker inventory: enough SOL to back every reverse ask and plenty of quote
+    // headroom for the re-rested reverse bids.
+    test_fixture
+        .deposit(Token::SOL, 1_000 * SOL_UNIT_SIZE)
+        .await?;
+    test_fixture
+        .deposit(Token::USDC, 1_000_000 * USDC_UNIT_SIZE)
+        .await?;
+
+    // Each reverse ask needs a block, and each fill re-rests into a fresh bid
+    // price that needs another. Expand generously so block scarcity is never
+    // what limits the fill.
+    crate::expand_market(
+        Rc::clone(&test_fixture.context),
+        &test_fixture.market_fixture.key,
+        4 * NUM_REVERSE_ORDERS,
+    )
+    .await?;
+
+    // Reverse asks at distinct ascending prices (price = 1, 2, ... quote atoms per
+    // base atom). Ascending so a single taker buy sweeps every level; distinct so
+    // each re-rested reverse bid lands at its own price with nothing to coalesce
+    // into -> all three probes execute and miss on every fill (the worst case for
+    // the added lookups).
+    for i in 0..NUM_REVERSE_ORDERS {
+        test_fixture
+            .place_order(
+                Side::Ask,
+                1 * SOL_UNIT_SIZE,
+                1 + i,
+                0,
+                10_000, // 10% reverse spread
+                OrderType::Reverse,
+            )
+            .await?;
+    }
+
+    let orders_before: usize = test_fixture.market_fixture.get_resting_orders().await.len();
+    assert_eq!(orders_before, NUM_REVERSE_ORDERS as usize);
+
+    // Fund the taker's external wallet with more quote than the whole ask side is
+    // worth (each 1-SOL ask at price p costs p * 1e9 quote atoms; the whole book is
+    // sum_{p=1}^{32} p * 1e9 = 528e9 quote atoms = 528k "USDC"), so an exact-in buy
+    // consumes every reverse ask in one instruction.
+    let taker_quote_in: u64 = 700_000 * USDC_UNIT_SIZE;
+    test_fixture
+        .usdc_mint_fixture
+        .mint_to(&test_fixture.payer_usdc_fixture.key, taker_quote_in)
+        .await;
+
+    let payer: Pubkey = test_fixture.payer();
+    let payer_keypair: Keypair = test_fixture.payer_keypair();
+
+    // Buy SOL with USDC, exact-in, no minimum out (out_atoms = 0) so leftover
+    // quote after the book is exhausted does not revert.
+    let swap_ix: Instruction = swap_instruction(
+        &test_fixture.market_fixture.key,
+        &payer,
+        &test_fixture.sol_mint_fixture.key,
+        &test_fixture.usdc_mint_fixture.key,
+        &test_fixture.payer_sol_fixture.key,
+        &test_fixture.payer_usdc_fixture.key,
+        taker_quote_in,
+        0,
+        false, // is_base_in: quote (USDC) in
+        true,  // is_exact_in
+        spl_token::id(),
+        spl_token::id(),
+        false,
+    );
+
+    // Measure the actual compute consumed by simulating the fill first. Give the
+    // simulation the full per-transaction budget so it runs to completion and we
+    // can read the true cost (the default 200k budget is smaller than this whole
+    // sweep).
+    let measure_limit_ix: Instruction =
+        ComputeBudgetInstruction::set_compute_unit_limit(1_400_000);
+    let units_consumed: u64 = {
+        let mut context: RefMut<ProgramTestContext> = test_fixture.context.borrow_mut();
+        let blockhash: solana_program::hash::Hash =
+            context.get_new_latest_blockhash().await.unwrap();
+        let sim_tx: Transaction = Transaction::new_signed_with_payer(
+            &[measure_limit_ix, swap_ix.clone()],
+            Some(&payer),
+            &[&payer_keypair],
+            blockhash,
+        );
+        let sim = context
+            .banks_client
+            .simulate_transaction(sim_tx)
+            .await
+            .unwrap();
+        // Surface any simulation failure as a test failure with its logs.
+        if let Some(Err(e)) = &sim.result {
+            panic!("swap simulation failed: {:?}\nlogs: {:?}", e, sim.simulation_details);
+        }
+        sim.simulation_details
+            .expect("simulation details present")
+            .units_consumed
+    };
+
+    println!(
+        "swap across {} reverse orders consumed {} CU ({} CU/order)",
+        NUM_REVERSE_ORDERS,
+        units_consumed,
+        units_consumed / u64::from(NUM_REVERSE_ORDERS),
+    );
+
+    assert!(
+        units_consumed < u64::from(CU_CEILING),
+        "crossing {} reverse orders consumed {} CU, over the {} CU ceiling; the bounded \
+         reverse-order probe may have regressed",
+        NUM_REVERSE_ORDERS,
+        units_consumed,
+        CU_CEILING,
+    );
+
+    // Now prove it actually lands on-chain under a tight compute-unit limit: the
+    // transaction is rejected if it exceeds CU_CEILING, so success is a hard
+    // guarantee the fill fits the budget.
+    let limit_ix: Instruction = ComputeBudgetInstruction::set_compute_unit_limit(CU_CEILING);
+    send_tx_with_retry(
+        Rc::clone(&test_fixture.context),
+        &[limit_ix, swap_ix],
+        Some(&payer),
+        &[&payer_keypair],
+    )
+    .await?;
+
+    // Sanity: the taker really did sweep the whole ask side, so every fill paid
+    // the full three-probe worst case (otherwise the CU number is meaningless).
+    test_fixture.market_fixture.reload().await;
+    let asks_left: usize = test_fixture
+        .market_fixture
+        .market
+        .get_asks()
+        .iter::<RestingOrder>()
+        .count();
+    assert_eq!(asks_left, 0, "taker should have consumed every reverse ask");
+
+    Ok(())
+}
