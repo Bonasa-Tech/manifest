@@ -84,7 +84,8 @@ export class LiquidityMonitor {
     this.connection = new Connection(RPC_URL!);
     this.pool = new Pool({
       connectionString: DATABASE_URL!,
-      ssl: { rejectUnauthorized: false },
+      ssl: { rejectUnauthorized: true }, // Reject database MITM certificates.
+      statement_timeout: 15_000,
       max: 3,
       min: 1,
       idleTimeoutMillis: 20000,

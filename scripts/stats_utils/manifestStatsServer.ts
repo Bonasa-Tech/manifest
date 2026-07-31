@@ -283,7 +283,9 @@ export class ManifestStatsServer {
 
     this.pool = new Pool({
       connectionString: databaseUrl,
-      ssl: { rejectUnauthorized: false }, // May be needed depending on Fly Postgres configuration
+      // Never silently accept a forged database certificate.
+      ssl: { rejectUnauthorized: true },
+      statement_timeout: 15_000,
     });
 
     this.pool.on('error', (err) => {
@@ -1945,6 +1947,13 @@ export class ManifestStatsServer {
       offset = 0,
       toSlot,
     } = options;
+    // Bound pagination before building the query to prevent oversized scans.
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 500) {
+      throw new RangeError('limit must be an integer between 1 and 500');
+    }
+    if (!Number.isSafeInteger(offset) || offset < 0 || offset > 10_000) {
+      throw new RangeError('offset must be an integer between 0 and 10000');
+    }
 
     // Apply default slot filter only if no efficient index filter is present
     const hasEfficientFilter = market || signature || taker || maker;

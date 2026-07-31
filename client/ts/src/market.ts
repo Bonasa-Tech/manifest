@@ -902,15 +902,19 @@ export class Market {
       filters,
     });
 
-    return accounts
-      .map(({ account, pubkey }) =>
-        Market.loadFromBuffer({ address: pubkey, buffer: account.data }),
-      )
-      .sort((a, b) =>
-        new BN(b.quoteVolume().toString())
-          .sub(new BN(a.quoteVolume().toString()))
-          .toNumber(),
-      );
+    return (
+      accounts
+        .map(({ account, pubkey }) =>
+          Market.loadFromBuffer({ address: pubkey, buffer: account.data }),
+        )
+        // BN subtraction converted to Number can lose precision and misorder
+        // attacker-controlled on-chain volumes; cmp stays in arbitrary precision.
+        .sort((a, b) =>
+          new BN(b.quoteVolume().toString()).cmp(
+            new BN(a.quoteVolume().toString()),
+          ),
+        )
+    );
   }
 
   static async setupIxs(

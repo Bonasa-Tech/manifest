@@ -15,6 +15,7 @@ import {
   computeInferredRemainders,
 } from './utils/inferFills';
 import { FillLogResult } from './types';
+import { extractProgramDataLogs } from './utils/programLogs';
 
 // For live monitoring of the fill feed. For a more complete look at fill
 // history stats, need to index all trades.
@@ -32,6 +33,8 @@ const inferredFills = new promClient.Counter({
   help: 'Number of fills inferred from token transfers due to truncated logs',
   labelNames: ['market'] as const,
 });
+const SLOT_PAGE_SIZE = 32;
+const MAX_SLOT_LAG = 10_000;
 
 /**
  * FillFeedBlockSub - Processes blocks sequentially using getBlock to find Manifest program transactions
@@ -93,9 +96,22 @@ export class FillFeedBlockSub {
           // Get the latest finalized slot
           const latestSlot = await this.connection.getSlot('finalized');
 
-          // Determine which slots need to be processed
+          if (latestSlot - this.currentSlot > MAX_SLOT_LAG) {
+            const clampedSlot = latestSlot - MAX_SLOT_LAG;
+            console.warn(
+              `Clamping block-feed lag from ${this.currentSlot} to ${clampedSlot}`,
+            );
+            this.currentSlot = clampedSlot;
+          }
+
+          // Process a bounded page so an RPC-reported jump cannot allocate or
+          // fetch an unbounded slot range in one Promise.all.
+          const pageEnd = Math.min(
+            latestSlot,
+            this.currentSlot + SLOT_PAGE_SIZE - 1,
+          );
           const slotsToProcess: number[] = [];
-          for (let slot = this.currentSlot; slot <= latestSlot; slot++) {
+          for (let slot = this.currentSlot; slot <= pageEnd; slot++) {
             slotsToProcess.push(slot);
           }
 
@@ -105,7 +121,7 @@ export class FillFeedBlockSub {
           }
 
           console.log(
-            `Fetching ${slotsToProcess.length} blocks in parallel (${this.currentSlot} to ${latestSlot})`,
+            `Fetching ${slotsToProcess.length} blocks in parallel (${this.currentSlot} to ${pageEnd})`,
           );
 
           // Fetch all blocks in parallel
@@ -153,7 +169,7 @@ export class FillFeedBlockSub {
           }
 
           // Update current slot to continue from the next unprocessed slot
-          this.currentSlot = latestSlot + 1;
+          this.currentSlot = pageEnd + 1;
         } catch (error) {
           console.error(
             `Error processing blocks from ${this.currentSlot}:`,
@@ -302,9 +318,11 @@ export class FillFeedBlockSub {
       this.onTruncatedLogs?.(signature, slot);
     }
 
-    const programDatas: string[] = messages.filter((message) => {
-      return message.includes('Program data:');
-    });
+    // Do not deserialize spoofable data emitted by unrelated CPI programs.
+    const programDatas = extractProgramDataLogs(
+      messages,
+      PROGRAM_ID.toBase58(),
+    );
 
     if (programDatas.length === 0 && !truncated) {
       console.log('No program datas');
@@ -313,17 +331,21 @@ export class FillFeedBlockSub {
 
     const parsedFills: FillLogResult[] = [];
     for (const programDataEntry of programDatas) {
-      const programData = programDataEntry.split(' ')[2];
-      const byteArray: Uint8Array = Uint8Array.from(atob(programData), (c) =>
-        c.charCodeAt(0),
-      );
-      const buffer = Buffer.from(byteArray);
-      if (!buffer.subarray(0, 8).equals(fillDiscriminant)) {
+      let buffer: Buffer;
+      let deserializedFillLog: FillLog;
+      try {
+        buffer = Buffer.from(programDataEntry.data, 'base64');
+        if (
+          buffer.length < 8 ||
+          !buffer.subarray(0, 8).equals(fillDiscriminant)
+        ) {
+          continue;
+        }
+        deserializedFillLog = FillLog.deserialize(buffer.subarray(8))[0];
+      } catch (error) {
+        console.warn('Skipping malformed Manifest program data:', error);
         continue;
       }
-      const deserializedFillLog: FillLog = FillLog.deserialize(
-        buffer.subarray(8),
-      )[0];
       const fillResult = toFillLogResult(
         deserializedFillLog,
         slot,
@@ -334,6 +356,7 @@ export class FillFeedBlockSub {
         signers,
         blockTime ?? undefined,
       );
+      fillResult.invocationIndex = programDataEntry.invocationIndex;
       const resultString: string = JSON.stringify(fillResult);
       console.log('Got a fill', resultString);
       parsedFills.push(fillResult);

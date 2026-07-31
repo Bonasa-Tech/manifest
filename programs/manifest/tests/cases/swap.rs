@@ -4439,8 +4439,7 @@ async fn swap_across_many_reverse_orders_cu_test() -> anyhow::Result<()> {
     // simulation the full per-transaction budget so it runs to completion and we
     // can read the true cost (the default 200k budget is smaller than this whole
     // sweep).
-    let measure_limit_ix: Instruction =
-        ComputeBudgetInstruction::set_compute_unit_limit(1_400_000);
+    let measure_limit_ix: Instruction = ComputeBudgetInstruction::set_compute_unit_limit(1_400_000);
     let units_consumed: u64 = {
         let mut context: RefMut<ProgramTestContext> = test_fixture.context.borrow_mut();
         let blockhash: solana_program::hash::Hash =
@@ -4458,7 +4457,10 @@ async fn swap_across_many_reverse_orders_cu_test() -> anyhow::Result<()> {
             .unwrap();
         // Surface any simulation failure as a test failure with its logs.
         if let Some(Err(e)) = &sim.result {
-            panic!("swap simulation failed: {:?}\nlogs: {:?}", e, sim.simulation_details);
+            panic!(
+                "swap simulation failed: {:?}\nlogs: {:?}",
+                e, sim.simulation_details
+            );
         }
         sim.simulation_details
             .expect("simulation details present")

@@ -50,7 +50,8 @@ export class MarketMakerLeaderboard {
     this.connection = new Connection(RPC_URL!);
     this.pool = new Pool({
       connectionString: DATABASE_URL!,
-      ssl: { rejectUnauthorized: false },
+      ssl: { rejectUnauthorized: true }, // Reject database MITM certificates.
+      statement_timeout: 15_000,
       max: 10,
       min: 2,
       idleTimeoutMillis: 30000,

@@ -17,6 +17,11 @@ import {
 import { CompleteFillsQueryOptions } from './stats_utils/types';
 import { ManifestStatsServer } from './stats_utils/manifestStatsServer';
 import { TvlMonitor } from './stats_utils/tvlMonitor';
+import {
+  isAuthorizedBearer,
+  isValidSolanaSignature,
+  parseBoundedQueryInteger,
+} from './stats_utils/httpValidation';
 
 // Global error handlers to catch unhandled errors and log them before exit
 process.on('unhandledRejection', (reason, promise) => {
@@ -34,6 +39,10 @@ process.on('uncaughtException', (error) => {
 const { READ_ONLY } = process.env;
 
 const IS_READ_ONLY = READ_ONLY === 'true';
+const BACKFILL_API_KEY = process.env.STATS_BACKFILL_API_KEY;
+if (!BACKFILL_API_KEY) {
+  throw new Error('STATS_BACKFILL_API_KEY missing from env');
+}
 if (IS_READ_ONLY) {
   console.log('⚠️  Running in READ-ONLY mode - database writes are disabled');
 }
@@ -220,8 +229,14 @@ const run = async () => {
         maker: req.query.maker as string,
         wallet: req.query.wallet as string,
         signature: req.query.signature as string,
-        limit: parseInt(req.query.limit as string) || 100,
-        offset: parseInt(req.query.offset as string) || 0,
+        limit: parseBoundedQueryInteger(req.query.limit, 100, 1, 500, 'limit'),
+        offset: parseBoundedQueryInteger(
+          req.query.offset,
+          0,
+          0,
+          10_000,
+          'offset',
+        ),
         fromSlot: req.query.fromSlot
           ? parseInt(req.query.fromSlot as string)
           : undefined,
@@ -234,6 +249,10 @@ const run = async () => {
       res.send(result);
     } catch (error) {
       console.error('Error in completeFills handler:', error);
+      if (error instanceof RangeError) {
+        res.status(400).send({ error: error.message });
+        return;
+      }
       res.status(500).send({ error: 'Internal server error' });
     }
   };
@@ -250,14 +269,29 @@ const run = async () => {
     res.send(statsServer.getCheckpointStatus());
   };
 
+  // Backfills trigger expensive RPC/database work. Authentication plus a small
+  // in-process queue prevents the endpoint from being used for resource abuse.
+  const activeBackfills = new Set<string>();
   const backfillHandler: RequestHandler = async (req, res) => {
+    if (!isAuthorizedBearer(req.header('authorization'), BACKFILL_API_KEY)) {
+      res.status(401).send({ error: 'Unauthorized' });
+      return;
+    }
+    const signature = req.body?.signature;
+    if (!isValidSolanaSignature(signature)) {
+      res.status(400).send({ error: 'A valid signature is required' });
+      return;
+    }
+    if (activeBackfills.has(signature)) {
+      res.status(409).send({ error: 'Backfill already in progress' });
+      return;
+    }
+    if (activeBackfills.size >= 2) {
+      res.status(429).send({ error: 'Backfill queue is full' });
+      return;
+    }
+    activeBackfills.add(signature);
     try {
-      const signature = req.query.signature as string;
-      if (!signature) {
-        res.status(400).send({ error: 'signature parameter is required' });
-        return;
-      }
-
       const result = await statsServer.backfillTransaction(signature);
       res.send({
         success: true,
@@ -268,6 +302,8 @@ const run = async () => {
     } catch (error) {
       console.error('Error in backfill handler:', error);
       res.status(500).send({ error: 'Internal server error' });
+    } finally {
+      activeBackfills.delete(signature);
     }
   };
 
@@ -291,6 +327,7 @@ const run = async () => {
   };
 
   const app = express();
+  app.use(express.json({ limit: '4kb' }));
   app.use(cors());
 
   // HTTP request metrics middleware - tracks latency and status codes per endpoint
@@ -340,7 +377,7 @@ const run = async () => {
   app.get('/notional', notionalHandler);
   app.get('/checkpoints', checkpointsHandler);
   app.get('/checkpointStatus', checkpointStatusHandler);
-  app.get('/backfill', backfillHandler);
+  app.post('/backfill', backfillHandler);
   app.get('/wrapper', wrapperHandler);
   app.get('/wrappers', wrappersHandler);
 

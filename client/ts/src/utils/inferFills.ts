@@ -176,6 +176,7 @@ interface SwapSite {
   instruction: NormalizedInstruction;
   layout: SwapAccountLayout;
   cpiInstructions: NormalizedInstruction[];
+  invocationIndex: number;
 }
 
 function swapAccountLayout(
@@ -201,6 +202,7 @@ function swapAccountLayout(
  */
 function findSwapSites(tx: any, accountKeys: string[]): SwapSite[] {
   const sites: SwapSite[] = [];
+  const manifestProgramId = PROGRAM_ID.toBase58();
   const innerGroups: any[] = tx.meta?.innerInstructions ?? [];
   const innerByTopIndex: Map<number, NormalizedInstruction[]> = new Map();
   for (const group of innerGroups) {
@@ -210,24 +212,31 @@ function findSwapSites(tx: any, accountKeys: string[]): SwapSite[] {
     );
   }
 
-  topLevelInstructions(tx, accountKeys).forEach(
-    (ix: NormalizedInstruction, topIndex: number) => {
-      const layout: SwapAccountLayout | undefined = swapAccountLayout(ix);
-      if (layout) {
-        sites.push({
-          instruction: ix,
-          layout,
-          cpiInstructions: innerByTopIndex.get(topIndex) ?? [],
-        });
-      }
-    },
-  );
+  let manifestInvocationIndex = 0;
+  topLevelInstructions(tx, accountKeys).forEach((topIx, topIndex) => {
+    const topInvocationIndex =
+      topIx.programId === manifestProgramId
+        ? manifestInvocationIndex++
+        : undefined;
+    const topLayout = swapAccountLayout(topIx);
+    const group = innerByTopIndex.get(topIndex) ?? [];
+    if (topLayout && topInvocationIndex !== undefined) {
+      sites.push({
+        instruction: topIx,
+        layout: topLayout,
+        cpiInstructions: group,
+        invocationIndex: topInvocationIndex,
+      });
+    }
 
-  for (const group of innerByTopIndex.values()) {
     for (let i = 0; i < group.length; i++) {
       const ix: NormalizedInstruction = group[i];
+      const invocationIndex =
+        ix.programId === manifestProgramId
+          ? manifestInvocationIndex++
+          : undefined;
       const layout: SwapAccountLayout | undefined = swapAccountLayout(ix);
-      if (!layout) {
+      if (!layout || invocationIndex === undefined) {
         continue;
       }
       const cpiInstructions: NormalizedInstruction[] = [];
@@ -237,9 +246,9 @@ function findSwapSites(tx: any, accountKeys: string[]): SwapSite[] {
         }
         cpiInstructions.push(group[j]);
       }
-      sites.push({ instruction: ix, layout, cpiInstructions });
+      sites.push({ instruction: ix, layout, cpiInstructions, invocationIndex });
     }
-  }
+  });
   return sites;
 }
 
@@ -328,6 +337,7 @@ export function inferFillsFromTransaction(
       takerSequenceNumber: '0',
       signature,
       slot,
+      invocationIndex: site.invocationIndex,
     };
     if (extras.originalSigner) {
       result.originalSigner = extras.originalSigner;
@@ -361,17 +371,27 @@ export function computeInferredRemainders(
   parsed: FillLogResult[],
 ): FillLogResult[] {
   const remainders: FillLogResult[] = [];
+  // Reconcile within the same Manifest invocation. Matching only market/taker
+  // lets one parsed fill erase a distinct inferred swap in the transaction.
+  const consumedParsed = new Set<number>();
   for (const fill of inferred) {
     let baseAtoms: bigint = BigInt(fill.baseAtoms);
     let quoteAtoms: bigint = BigInt(fill.quoteAtoms);
-    for (const parsedFill of parsed) {
+    for (let index = 0; index < parsed.length; index++) {
+      if (consumedParsed.has(index)) {
+        continue;
+      }
+      const parsedFill = parsed[index];
       if (
+        fill.invocationIndex !== undefined &&
+        parsedFill.invocationIndex === fill.invocationIndex &&
         parsedFill.market === fill.market &&
         parsedFill.taker === fill.taker &&
         parsedFill.takerIsBuy === fill.takerIsBuy
       ) {
         baseAtoms -= BigInt(parsedFill.baseAtoms);
         quoteAtoms -= BigInt(parsedFill.quoteAtoms);
+        consumedParsed.add(index);
       }
     }
     if (baseAtoms > 0n && quoteAtoms > 0n) {

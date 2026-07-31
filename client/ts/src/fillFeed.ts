@@ -16,6 +16,7 @@ import {
 } from './utils/inferFills';
 import * as promClient from 'prom-client';
 import { FillLogResult } from './types';
+import { extractProgramDataLogs } from './utils/programLogs';
 import {
   detectAggregatorFromKeys,
   detectOriginatingProtocolFromKeys,
@@ -265,9 +266,12 @@ export class FillFeed {
       this.onTruncatedLogs?.(signature.signature, signature.slot);
     }
 
-    const programDatas: string[] = messages.filter((message) => {
-      return message.includes('Program data:');
-    });
+    // Attribute logs to the active invocation stack; any program can emit the
+    // same "Program data" bytes, so transaction account presence is not proof.
+    const programDatas = extractProgramDataLogs(
+      messages,
+      PROGRAM_ID.toBase58(),
+    );
 
     if (programDatas.length == 0 && !truncated) {
       console.log('No program datas');
@@ -276,17 +280,21 @@ export class FillFeed {
 
     const parsedFills: FillLogResult[] = [];
     for (const programDataEntry of programDatas) {
-      const programData = programDataEntry.split(' ')[2];
-      const byteArray: Uint8Array = Uint8Array.from(atob(programData), (c) =>
-        c.charCodeAt(0),
-      );
-      const buffer = Buffer.from(byteArray);
-      if (!buffer.subarray(0, 8).equals(fillDiscriminant)) {
+      let buffer: Buffer;
+      let deserializedFillLog: FillLog;
+      try {
+        buffer = Buffer.from(programDataEntry.data, 'base64');
+        if (
+          buffer.length < 8 ||
+          !buffer.subarray(0, 8).equals(fillDiscriminant)
+        ) {
+          continue;
+        }
+        deserializedFillLog = FillLog.deserialize(buffer.subarray(8))[0];
+      } catch (error) {
+        console.warn('Skipping malformed Manifest program data:', error);
         continue;
       }
-      const deserializedFillLog: FillLog = FillLog.deserialize(
-        buffer.subarray(8),
-      )[0];
       const fillResult = toFillLogResult(
         deserializedFillLog,
         signature.slot,
@@ -298,6 +306,7 @@ export class FillFeed {
         // ?? undefined because can be null or undefined
         signature.blockTime ?? undefined,
       );
+      fillResult.invocationIndex = programDataEntry.invocationIndex;
       const resultString: string = JSON.stringify(fillResult);
       console.log('Got a fill', resultString);
       parsedFills.push(fillResult);
