@@ -5,6 +5,8 @@ import { FillLog } from '@/../../client/ts/src/manifest/accounts/FillLog';
 import { getVaultAddress } from '@/../../client/ts/src/utils/market';
 import { convertU128 } from '@/../../client/ts/src/utils/numbers';
 import { genAccDiscriminator } from '@/../../client/ts/src/utils/discriminator';
+import { extractProgramDataLogs } from '@/../../client/ts/src/utils/programLogs';
+import { PROGRAM_ID } from '@/../../client/ts/src/manifest';
 import { hasTruncatedLogs as checkTruncatedLogs } from '@/../../client/ts/src/utils/solana';
 import {
   detectAggregatorFromKeys,
@@ -364,17 +366,14 @@ const parseTransactionForFills = async (
     }
 
     const messages = tx.meta.logMessages;
-    const programDatas = messages.filter((message) =>
-      message.includes('Program data:'),
-    );
+    const programDatas = extractProgramDataLogs(messages, PROGRAM_ID.toBase58());
 
     if (programDatas.length === 0) {
       return { fills, hasTruncatedLogs }; // No program data logs
     }
 
     for (let i = 0; i < programDatas.length; i++) {
-      const programDataEntry = programDatas[i];
-      const programData = programDataEntry.split(' ')[2];
+      const programData = programDatas[i].data;
       const byteArray = Uint8Array.from(atob(programData), (c) =>
         c.charCodeAt(0),
       );
@@ -1024,16 +1023,13 @@ const run = async () => {
         return { mismatches, unparseableFills, truncatedSignatures };
       } catch (error) {
         console.error(logPrefix, 'Error processing market:', error);
-        return {
-          mismatches: [],
-          unparseableFills: [],
-          truncatedSignatures: new Set<string>(),
-        };
+        throw error;
       }
     };
 
     // Process markets with a concurrency pool
     const allMismatches: TradeMismatch[] = [];
+    const failedMarkets: string[] = [];
     const allUnparseableFills: UnparseableFill[] = [];
     // Truncated signatures across all markets, keyed by signature so a tx that
     // touches multiple markets is only counted once. Value is the market it was
@@ -1059,6 +1055,11 @@ const run = async () => {
             }
             pending.delete(p);
           },
+          (error) => {
+            failedMarkets.push(market.ticker_id);
+            console.error(`Verification failed for ${market.ticker_id}:`, error);
+            pending.delete(p);
+          },
         );
         pending.add(p);
       }
@@ -1068,7 +1069,10 @@ const run = async () => {
     }
 
     // Attempt to backfill any missing_in_db mismatches
-    if (allMismatches.length > 0) {
+    if (failedMarkets.length > 0) {
+      console.error(`Verification failed for ${failedMarkets.length} market(s): ${failedMarkets.join(', ')}`);
+      process.exit(1);
+    } else if (allMismatches.length > 0) {
       const missingInDbMismatches = allMismatches.filter(
         (m) => m.type === 'missing_in_db',
       );

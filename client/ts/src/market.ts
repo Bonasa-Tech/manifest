@@ -31,6 +31,8 @@ import { getVaultAddress } from './utils/market';
 import { TOKEN_2022_PROGRAM_ID } from '@solana/spl-token';
 import BN from 'bn.js';
 
+const MARKET_FIXED_DISCRIMINANT = 4859840929024028656n;
+
 /**
  * RestingOrder on the market.
  */
@@ -168,23 +170,27 @@ export class Market {
     connection: Connection;
     address: PublicKey;
   }): Promise<Market> {
-    const [buffer, slot]: [Buffer | undefined, number] = await connection
-      .getAccountInfoAndContext(address)
-      .then(
-        (
-          getAccountInfoAndContext: RpcResponseAndContext<AccountInfo<Buffer> | null>,
-        ) => {
-          return [
-            getAccountInfoAndContext.value?.data,
-            getAccountInfoAndContext.context.slot,
-          ];
-        },
-      );
+    const [account, slot]: [AccountInfo<Buffer> | null, number] =
+      await connection
+        .getAccountInfoAndContext(address)
+        .then(
+          (
+            getAccountInfoAndContext: RpcResponseAndContext<AccountInfo<Buffer> | null>,
+          ) => {
+            return [
+              getAccountInfoAndContext.value,
+              getAccountInfoAndContext.context.slot,
+            ];
+          },
+        );
 
-    if (buffer === undefined) {
+    if (account === null) {
       throw new Error(`Failed to load ${address}`);
     }
-    return Market.loadFromBuffer({ address, buffer, slot });
+    if (!account.owner.equals(PROGRAM_ID)) {
+      throw new Error(`Market ${address} is not owned by the Manifest program`);
+    }
+    return Market.loadFromBuffer({ address, buffer: account.data, slot });
   }
 
   /**
@@ -193,23 +199,29 @@ export class Market {
    * @param connection The Solana `Connection` object
    */
   public async reload(connection: Connection): Promise<void> {
-    const [buffer, slot]: [Buffer | undefined, number] = await connection
-      .getAccountInfoAndContext(this.address)
-      .then(
-        (
-          getAccountInfoAndContext: RpcResponseAndContext<AccountInfo<Buffer> | null>,
-        ) => {
-          return [
-            getAccountInfoAndContext.value?.data,
-            getAccountInfoAndContext.context.slot,
-          ];
-        },
-      );
-    if (buffer === undefined) {
+    const [account, slot]: [AccountInfo<Buffer> | null, number] =
+      await connection
+        .getAccountInfoAndContext(this.address)
+        .then(
+          (
+            getAccountInfoAndContext: RpcResponseAndContext<AccountInfo<Buffer> | null>,
+          ) => {
+            return [
+              getAccountInfoAndContext.value,
+              getAccountInfoAndContext.context.slot,
+            ];
+          },
+        );
+    if (account === null) {
       throw new Error(`Failed to load ${this.address}`);
     }
+    if (!account.owner.equals(PROGRAM_ID)) {
+      throw new Error(
+        `Market ${this.address} is not owned by the Manifest program`,
+      );
+    }
     this.slot = slot;
-    this.data = Market.deserializeMarketBuffer(buffer, slot);
+    this.data = Market.deserializeMarketBuffer(account.data, slot);
   }
 
   /**
@@ -662,7 +674,13 @@ export class Market {
   ): MarketData {
     let offset = 0;
     // Deserialize the market header
-    const _discriminant = data.readBigUInt64LE(0);
+    if (data.length < FIXED_MANIFEST_HEADER_SIZE) {
+      throw new Error('Market account data is truncated');
+    }
+    const discriminant = data.readBigUInt64LE(0);
+    if (discriminant !== MARKET_FIXED_DISCRIMINANT) {
+      throw new Error('Account is not a Manifest market');
+    }
     offset += 8;
 
     const version = data.readUInt8(offset);

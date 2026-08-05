@@ -911,6 +911,19 @@ export class LiquidityMonitor {
 // API Setup
 const setupAPI = (monitor: LiquidityMonitor) => {
   const app = express();
+  const boundedQueryInt = (
+    value: unknown,
+    fallback: number,
+    maximum: number,
+    name: string,
+  ): number => {
+    if (value === undefined) return fallback;
+    const parsed = Number(value);
+    if (!Number.isSafeInteger(parsed) || parsed < 1 || parsed > maximum) {
+      throw new Error(`${name} must be an integer between 1 and ${maximum}`);
+    }
+    return parsed;
+  };
   app.use(cors());
   app.use(express.json());
 
@@ -919,14 +932,14 @@ const setupAPI = (monitor: LiquidityMonitor) => {
     try {
       const market = req.query.market as string;
       const trader = req.query.trader as string;
-      const hours = req.query.hours ? parseInt(req.query.hours as string) : 24;
+      const hours = boundedQueryInt(req.query.hours, 24, 24 * 31, 'hours');
       const startTimestamp = req.query.start
         ? parseInt(req.query.start as string)
         : undefined;
       const endTimestamp = req.query.end
         ? parseInt(req.query.end as string)
         : undefined;
-      const limit = req.query.limit ? parseInt(req.query.limit as string) : 100;
+      const limit = boundedQueryInt(req.query.limit, 100, 1_000, 'limit');
 
       const stats = await monitor.getMarketMakerStats({
         market,
@@ -969,16 +982,14 @@ const setupAPI = (monitor: LiquidityMonitor) => {
     try {
       const market = req.query.market as string;
       const trader = req.query.trader as string;
-      const hours = req.query.hours ? parseInt(req.query.hours as string) : 24;
+      const hours = boundedQueryInt(req.query.hours, 24, 24 * 31, 'hours');
       const startTimestamp = req.query.start
         ? parseInt(req.query.start as string)
         : undefined;
       const endTimestamp = req.query.end
         ? parseInt(req.query.end as string)
         : undefined;
-      const limit = req.query.limit
-        ? parseInt(req.query.limit as string)
-        : 1000;
+      const limit = boundedQueryInt(req.query.limit, 1_000, 5_000, 'limit');
 
       // Build time filter - prioritize timestamps over hours
       let timeFilter = '';

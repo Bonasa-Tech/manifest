@@ -12,7 +12,7 @@ use manifest::{
     },
     validation::{
         get_global_address, get_global_vault_address, get_vault_address,
-        loaders::GlobalTradeAccounts, ManifestAccountInfo,
+        loaders::GlobalTradeAccounts, ManifestAccount, ManifestAccountInfo,
     },
 };
 use solana_program::{
@@ -133,22 +133,34 @@ impl Amm for ManifestMarket {
             self.quote_token_program = mint.owner;
         };
         if let Some(global) = account_map.get(&self.get_quote_global_address()) {
+            if global.owner != manifest::ID {
+                anyhow::bail!("quote global account has an invalid owner");
+            }
             if global.data.len() < size_of::<GlobalFixed>() {
                 anyhow::bail!("quote global account data is truncated");
             }
             let (header_bytes, dynamic_data) = global.data.split_at(size_of::<GlobalFixed>());
             let global_fixed: &GlobalFixed = get_helper::<GlobalFixed>(header_bytes, 0_u32);
+            global_fixed
+                .verify_discriminant()
+                .map_err(|error| anyhow::anyhow!("quote global account is invalid: {error}"))?;
             self.quote_global = Some(DynamicAccount::<GlobalFixed, Vec<u8>> {
                 fixed: *global_fixed,
                 dynamic: dynamic_data.to_vec(),
             });
         };
         if let Some(global) = account_map.get(&self.get_base_global_address()) {
+            if global.owner != manifest::ID {
+                anyhow::bail!("base global account has an invalid owner");
+            }
             if global.data.len() < size_of::<GlobalFixed>() {
                 anyhow::bail!("base global account data is truncated");
             }
             let (header_bytes, dynamic_data) = global.data.split_at(size_of::<GlobalFixed>());
             let global_fixed: &GlobalFixed = get_helper::<GlobalFixed>(header_bytes, 0_u32);
+            global_fixed
+                .verify_discriminant()
+                .map_err(|error| anyhow::anyhow!("base global account is invalid: {error}"))?;
             self.base_global = Some(DynamicAccount::<GlobalFixed, Vec<u8>> {
                 fixed: *global_fixed,
                 dynamic: dynamic_data.to_vec(),
@@ -201,7 +213,7 @@ impl Amm for ManifestMarket {
             if self.quote_global.is_some() {
                 Some(GlobalTradeAccounts {
                     mint_opt: None,
-                    global: ManifestAccountInfo::new(&quote_global_account_info).unwrap(),
+                    global: ManifestAccountInfo::new(&quote_global_account_info)?,
                     global_vault_opt: None,
                     market_vault_opt: None,
                     token_program_opt: None,
@@ -227,7 +239,7 @@ impl Amm for ManifestMarket {
             if self.base_global.is_some() {
                 Some(GlobalTradeAccounts {
                     mint_opt: None,
-                    global: ManifestAccountInfo::new(&base_global_account_info).unwrap(),
+                    global: ManifestAccountInfo::new(&base_global_account_info)?,
                     global_vault_opt: None,
                     market_vault_opt: None,
                     token_program_opt: None,

@@ -20,10 +20,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Checkout benchmarking repo
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           repository: CKS-Systems/manifest-private
           token: ${{ secrets.MANIFEST_PAT }}
@@ -38,7 +38,7 @@ jobs:
           python-version: '3.9'
 
       - name: Cache dependencies
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           shared-key: "solana-${{ env.SOLANA_VERSION }}"
 
@@ -64,7 +64,7 @@ jobs:
           mv $GITHUB_WORKSPACE/manifest-private/output.txt $GITHUB_WORKSPACE/output.txt
 
       - name: Store benchmark result
-        uses: benchmark-action/github-action-benchmark@v1
+        uses: benchmark-action/github-action-benchmark@86d8bcf4dc945c81ee3547d15499abafc89a57b5 # HEAD at review time
         with:
           name: CU Benchmark
           tool: 'customSmallerIsBetter'

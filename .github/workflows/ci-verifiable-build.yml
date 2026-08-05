@@ -24,7 +24,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libudev-dev pkg-config
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Set Rust version
         run: rustup toolchain install ${{ env.RUST_TOOLCHAIN }} --component rustfmt
@@ -34,7 +34,7 @@ jobs:
 
       - name: Setup solana-verify
         run: |
-          cargo install solana-verify
+          cargo install solana-verify --version 0.4.1 --locked
 
       - name: Verifiable build manifest
         run: |
@@ -49,7 +49,7 @@ jobs:
           echo "MANIFEST_CHECKSUM=$(sha256sum ./target/deploy/${{ env.MANIFEST_NAME }}.so | head -c 64)" >> $GITHUB_ENV
 
       - name: Generate SBOM manifest
-        uses: aquasecurity/trivy-action@master
+        uses: aquasecurity/trivy-action@2736533278103862a861f4a35ebac3e97854d956 # master at review time
         with:
           scan-type: 'fs'
           format: 'cyclonedx'
@@ -68,7 +68,7 @@ jobs:
           echo "WRAPPER_CHECKSUM=$(sha256sum ./target/deploy/${{ env.WRAPPER_NAME }}.so | head -c 64)" >> $GITHUB_ENV
 
       - name: Generate SBOM wrapper
-        uses: aquasecurity/trivy-action@master
+        uses: aquasecurity/trivy-action@2736533278103862a861f4a35ebac3e97854d956 # master at review time
         with:
           scan-type: 'fs'
           format: 'cyclonedx'
@@ -87,7 +87,7 @@ jobs:
           echo "UI_WRAPPER_CHECKSUM=$(sha256sum ./target/deploy/${{ env.UI_WRAPPER_NAME }}.so | head -c 64)" >> $GITHUB_ENV
 
       - name: Generate SBOM ui wrapper
-        uses: aquasecurity/trivy-action@master
+        uses: aquasecurity/trivy-action@2736533278103862a861f4a35ebac3e97854d956 # master at review time
         with:
           scan-type: 'fs'
           format: 'cyclonedx'
@@ -95,7 +95,7 @@ jobs:
 
       - name: Create Release
         id: create_release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@de2c0eb89ae2a093876385947365aca7b0e5f844 # v1
         with:
           tag_name: ${{ github.ref_name }}
           name: ${{ github.ref_name }}

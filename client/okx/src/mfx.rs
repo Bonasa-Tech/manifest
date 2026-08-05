@@ -86,12 +86,13 @@ impl Dex for Manifest {
                         continue;
                     }
 
-                    if base_tokens < remaining_in {
-                        total_out += remaining_in / base_tokens * quote_tokens;
-                        return total_out;
+                    if base_tokens <= remaining_in {
+                        total_out += quote_tokens;
+                        remaining_in -= base_tokens;
+                        continue;
                     }
-                    total_out += quote_tokens;
-                    remaining_in -= base_tokens;
+                    total_out += remaining_in / base_tokens * quote_tokens;
+                    return total_out;
                 }
                 _ => {}
             }
