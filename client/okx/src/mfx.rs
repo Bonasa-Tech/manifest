@@ -147,11 +147,18 @@ impl Dex for Manifest {
     }
 
     fn fetch_pool_metadata(&self, client: &RpcClient, pool_address: &str) -> Option<PoolMetadata> {
-        let market_data = client
-            .get_account_data(&Pubkey::from_str(pool_address).ok()?)
+        let market_account = client
+            .get_account(&Pubkey::from_str(pool_address).ok()?)
             .ok()?;
+        if market_account.owner != manifest::ID {
+            return None;
+        }
+        let market_data = market_account.data;
         let market: MarketValue =
             manifest::program::get_dynamic_value_or(market_data.as_slice()).ok()?;
+        if market.fixed.discriminant != MARKET_FIXED_DISCRIMINANT {
+            return None;
+        }
         let bids = market.get_bids();
         let asks = market.get_asks();
         // Validate RPC-sourced links before the zero-copy iterator follows them.

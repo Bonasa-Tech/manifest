@@ -1,4 +1,4 @@
-import { Connection, PublicKey } from '@solana/web3.js';
+import { AccountInfo, Connection, PublicKey } from '@solana/web3.js';
 import { bignum } from '@metaplex-foundation/beet';
 import { publicKey as beetPublicKey } from '@metaplex-foundation/beet-solana';
 import { FIXED_WRAPPER_HEADER_SIZE, NIL } from './constants';
@@ -12,6 +12,9 @@ import {
 } from './wrapper/types';
 import { convertU128 } from './utils/numbers';
 import BN from 'bn.js';
+import { PROGRAM_ID as WRAPPER_PROGRAM_ID } from './wrapper';
+
+const WRAPPER_DISCRIMINANT = 1n;
 
 /**
  * All data stored on a wrapper account.
@@ -123,14 +126,12 @@ export class Wrapper {
     connection: Connection;
     address: PublicKey;
   }): Promise<Wrapper> {
-    const buffer = await connection
-      .getAccountInfo(address)
-      .then((accountInfo) => accountInfo?.data);
-
-    if (buffer === undefined) {
+    const accountInfo = await connection.getAccountInfo(address);
+    if (!accountInfo) {
       throw new Error(`Failed to load ${address}`);
     }
-    return Wrapper.loadFromBuffer({ address, buffer });
+    Wrapper.validateAccount(address, accountInfo);
+    return Wrapper.loadFromBuffer({ address, buffer: accountInfo.data });
   }
 
   /**
@@ -139,13 +140,12 @@ export class Wrapper {
    * @param connection The Solana `Connection` object
    */
   public async reload(connection: Connection): Promise<void> {
-    const buffer = await connection
-      .getAccountInfo(this.address)
-      .then((accountInfo) => accountInfo?.data);
-    if (buffer === undefined) {
+    const accountInfo = await connection.getAccountInfo(this.address);
+    if (!accountInfo) {
       throw new Error(`Failed to load ${this.address}`);
     }
-    this.data = Wrapper.deserializeWrapperBuffer(buffer);
+    Wrapper.validateAccount(this.address, accountInfo);
+    this.data = Wrapper.deserializeWrapperBuffer(accountInfo.data);
   }
 
   /**
@@ -224,9 +224,15 @@ export class Wrapper {
    * @returns WrapperData
    */
   public static deserializeWrapperBuffer(data: Buffer): WrapperData {
+    if (data.length < FIXED_WRAPPER_HEADER_SIZE) {
+      throw new Error('Wrapper account data is truncated');
+    }
     let offset = 0;
     // Deserialize the market header
-    const _discriminant = data.readBigUInt64LE(0);
+    const discriminant = data.readBigUInt64LE(0);
+    if (discriminant !== WRAPPER_DISCRIMINANT) {
+      throw new Error('Account is not an initialized Manifest wrapper');
+    }
     offset += 8;
 
     const trader = beetPublicKey.read(data, offset);
@@ -291,5 +297,17 @@ export class Wrapper {
       trader,
       marketInfos: parsedMarketInfos,
     };
+  }
+
+  private static validateAccount(
+    address: PublicKey,
+    accountInfo: AccountInfo<Buffer>,
+  ): void {
+    if (!accountInfo.owner.equals(WRAPPER_PROGRAM_ID)) {
+      throw new Error(`Wrapper ${address} is not owned by the wrapper program`);
+    }
+    if (accountInfo.data.length < FIXED_WRAPPER_HEADER_SIZE) {
+      throw new Error(`Wrapper ${address} is truncated`);
+    }
   }
 }

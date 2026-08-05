@@ -8,6 +8,8 @@ use std::{cmp::Ordering, mem::size_of};
 
 use bytemuck::{Pod, Zeroable};
 #[cfg(not(feature = "certora"))]
+use hypertree::validate_red_black_tree;
+#[cfg(not(feature = "certora"))]
 use hypertree::{
     get_helper, get_mut_helper, FreeList, HyperTreeReadOperations, HyperTreeWriteOperations,
     RBNode, RedBlackTree, RedBlackTreeReadOnly,
@@ -90,6 +92,17 @@ mod global_tree_types {
     pub type GlobalDepositTreeReadOnly<'a> = CvtGlobalDepositTreeReadOnly<'a>;
 }
 pub use global_tree_types::*;
+
+/// Validate Global account trees before off-chain clients traverse RPC bytes.
+#[cfg(not(feature = "certora"))]
+pub fn validate_global_dynamic(fixed: &GlobalFixed, dynamic: &[u8]) -> Result<(), &'static str> {
+    validate_red_black_tree::<GlobalTrader>(dynamic, fixed.global_traders_root_index, NIL)?;
+    validate_red_black_tree::<GlobalDeposit>(
+        dynamic,
+        fixed.global_deposits_root_index,
+        fixed.global_deposits_max_index,
+    )
+}
 
 #[repr(C)]
 #[derive(Default, Copy, Clone, Zeroable, Pod, ShankType)]

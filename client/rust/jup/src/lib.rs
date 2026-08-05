@@ -8,8 +8,8 @@ use hypertree::{get_helper, get_mut_helper, validate_red_black_tree, GetRedBlack
 use manifest::{
     quantities::{BaseAtoms, QuoteAtoms, WrapperU64},
     state::{
-        DynamicAccount, GlobalFixed, GlobalValue, MarketFixed, MarketValue, RestingOrder,
-        GLOBAL_FIXED_SIZE,
+        validate_global_dynamic, DynamicAccount, GlobalFixed, GlobalValue, MarketFixed,
+        MarketValue, RestingOrder, GLOBAL_FIXED_SIZE,
     },
     validation::{
         get_global_address, get_global_vault_address, get_vault_address,
@@ -71,6 +71,9 @@ fn validated_market_value(market_account: &solana_account::Account) -> Result<Ma
         validate_red_black_tree::<RestingOrder>(dynamic_data, book.root_index(), book.max_index())
             .map_err(|error| anyhow::anyhow!("market order book is invalid: {error}"))?;
     }
+    market_fixed
+        .validate_free_list(dynamic_data)
+        .map_err(|error| anyhow::anyhow!("market free list is invalid: {error}"))?;
 
     Ok(DynamicAccount::<MarketFixed, Vec<u8>> {
         fixed: *market_fixed,
@@ -165,6 +168,8 @@ impl Amm for ManifestMarket {
             global_fixed
                 .verify_discriminant()
                 .map_err(|error| anyhow::anyhow!("quote global account is invalid: {error}"))?;
+            validate_global_dynamic(global_fixed, dynamic_data)
+                .map_err(|error| anyhow::anyhow!("quote global account is invalid: {error}"))?;
             self.quote_global = Some(DynamicAccount::<GlobalFixed, Vec<u8>> {
                 fixed: *global_fixed,
                 dynamic: dynamic_data.to_vec(),
@@ -181,6 +186,8 @@ impl Amm for ManifestMarket {
             let global_fixed: &GlobalFixed = get_helper::<GlobalFixed>(header_bytes, 0_u32);
             global_fixed
                 .verify_discriminant()
+                .map_err(|error| anyhow::anyhow!("base global account is invalid: {error}"))?;
+            validate_global_dynamic(global_fixed, dynamic_data)
                 .map_err(|error| anyhow::anyhow!("base global account is invalid: {error}"))?;
             self.base_global = Some(DynamicAccount::<GlobalFixed, Vec<u8>> {
                 fixed: *global_fixed,

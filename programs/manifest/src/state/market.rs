@@ -14,7 +14,7 @@ use hypertree::{
 use shank::ShankType;
 use solana_program::{entrypoint::ProgramResult, program_error::ProgramError, pubkey::Pubkey};
 use static_assertions::const_assert_eq;
-use std::mem::size_of;
+use std::{collections::HashSet, mem::size_of};
 
 use crate::{
     logs::{emit_stack, FillLog},
@@ -382,6 +382,27 @@ impl MarketFixed {
     // Used in benchmark
     pub fn has_free_block(&self) -> bool {
         self.free_list_head_index != NIL
+    }
+
+    /// Validate the account-backed free list before off-chain clients follow
+    /// its indices. RPC data is untrusted outside the on-chain runtime.
+    pub fn validate_free_list(&self, dynamic: &[u8]) -> Result<(), &'static str> {
+        let mut index = self.free_list_head_index;
+        let mut seen = HashSet::new();
+        while index != NIL {
+            let offset = index as usize;
+            let end = offset
+                .checked_add(size_of::<FreeListNode<MarketUnusedFreeListPadding>>())
+                .ok_or("free list offset overflow")?;
+            if offset % 8 != 0 || end > dynamic.len() || !seen.insert(index) {
+                return Err("invalid market free list");
+            }
+            let node = bytemuck::pod_read_unaligned::<FreeListNode<MarketUnusedFreeListPadding>>(
+                &dynamic[offset..end],
+            );
+            index = node.get_next_index();
+        }
+        Ok(())
     }
 }
 

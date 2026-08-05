@@ -354,6 +354,9 @@ export class ManifestClient {
     const wrapperData: WrapperData = Wrapper.deserializeWrapperBuffer(
       userWrapper.account.data,
     );
+    if (!wrapperData.trader.equals(payerKeypair.publicKey)) {
+      throw new Error('Loaded wrapper does not belong to the requested payer');
+    }
     const existingMarketInfos: WrapperMarketInfo[] =
       wrapperData.marketInfos.filter((marketInfo: WrapperMarketInfo) => {
         return marketInfo.market.toBase58() == marketPk.toBase58();
