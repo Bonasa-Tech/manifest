@@ -12,6 +12,7 @@ const TOKEN_PROGRAM_IDS: Set<string> = new Set([
   'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA',
   'TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb',
 ]);
+const TOKEN_2022_PROGRAM_ID = 'TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb';
 
 const SWAP_INSTRUCTION_DISCRIMINATOR: number = 4;
 const SWAP_V2_INSTRUCTION_DISCRIMINATOR: number = 13;
@@ -137,6 +138,7 @@ function normalizeInner(ix: any, accountKeys: string[]): NormalizedInstruction {
 }
 
 interface TokenTransfer {
+  programId: string;
   source: string;
   destination: string;
   amount: bigint;
@@ -154,6 +156,7 @@ function parseTokenTransfer(
     ix.accountKeys.length >= 3
   ) {
     return {
+      programId: ix.programId,
       source: ix.accountKeys[0],
       destination: ix.accountKeys[1],
       amount: readU64LE(ix.data, 1),
@@ -164,6 +167,7 @@ function parseTokenTransfer(
     ix.accountKeys.length >= 4
   ) {
     return {
+      programId: ix.programId,
       source: ix.accountKeys[0],
       destination: ix.accountKeys[2],
       amount: readU64LE(ix.data, 1),
@@ -288,11 +292,15 @@ export function inferFillsFromTransaction(
     let baseReceived: bigint = 0n;
     let quotePaid: bigint = 0n;
     let quoteReceived: bigint = 0n;
+    let hasToken2022Transfer = false;
 
     for (const cpi of site.cpiInstructions) {
       const transfer: TokenTransfer | undefined = parseTokenTransfer(cpi);
       if (!transfer) {
         continue;
+      }
+      if (transfer.programId === TOKEN_2022_PROGRAM_ID) {
+        hasToken2022Transfer = true;
       }
       if (transfer.source === traderBase) {
         basePaid += transfer.amount;
@@ -306,6 +314,13 @@ export function inferFillsFromTransaction(
       if (transfer.destination === traderQuote) {
         quoteReceived += transfer.amount;
       }
+    }
+
+    // A Token-2022 transfer instruction records the gross amount, while a
+    // fee-bearing mint credits the vault with less. Without mint fee state the
+    // fallback cannot derive an exact fill, so do not publish a false one.
+    if (hasToken2022Transfer) {
+      continue;
     }
 
     let takerIsBuy: boolean;

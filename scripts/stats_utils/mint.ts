@@ -1,5 +1,4 @@
 import { Connection, PublicKey } from '@solana/web3.js';
-import { Metaplex, Pda } from '@metaplex-foundation/js';
 import {
   ENV,
   TokenInfo,
@@ -24,18 +23,9 @@ export async function lookupMintTicker(
   connection: Connection,
   mint: PublicKey,
 ): Promise<string> {
-  // Create Metaplex instance
-  const metaplex: Metaplex = Metaplex.make(connection);
-
-  // First try Metaplex metadata for SPL tokens
-  const metadataAccount: Pda = metaplex.nfts().pdas().metadata({ mint });
-  const metadataAccountInfo = await connection.getAccountInfo(metadataAccount);
-  if (metadataAccountInfo) {
-    const token = await metaplex.nfts().findByMint({ mintAddress: mint });
-    return token.symbol;
-  }
-
-  // Then try SPL token registry
+  // Do not follow arbitrary Metaplex JSON URIs from a public stats service.
+  // The registry and Token-2022 extension below provide on-chain/curated
+  // symbols without turning permissionless mint metadata into server fetches.
   const provider: TokenListContainer = await new TokenListProvider().resolve();
   const tokenList: TokenInfo[] = provider
     .filterByChainId(ENV.MainnetBeta)
