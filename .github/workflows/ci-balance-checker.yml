@@ -22,7 +22,7 @@ jobs:
         run: yarn install --frozen-lockfile
 
       - name: Run the balance checker. Crashes on failure
-        run: npx tsx scripts/balance-checker.ts
+        run: yarn tsx scripts/balance-checker.ts
         env:
           RPC_URL: ${{ secrets.RPC_URL }}
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
@@ -44,7 +44,7 @@ jobs:
         run: yarn install --frozen-lockfile
 
       - name: Check token extensions
-        run: npx tsx scripts/check-extensions.ts
+        run: yarn tsx scripts/check-extensions.ts
         env:
           RPC_URL: ${{ secrets.RPC_URL }}
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}

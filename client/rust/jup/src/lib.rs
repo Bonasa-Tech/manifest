@@ -45,6 +45,39 @@ macro_rules! dynamic_value_opt_to_account_info {
     };
 }
 
+/// Convert provider-supplied market bytes only after re-establishing every
+/// invariant required by quote traversal. Both construction and refresh use
+/// this path so a later update cannot replace a validated market with raw RPC
+/// bytes.
+fn validated_market_value(market_account: &solana_account::Account) -> Result<MarketValue> {
+    if market_account.owner != manifest::ID {
+        anyhow::bail!("market account has an invalid owner");
+    }
+    if market_account.data.len() < size_of::<MarketFixed>() {
+        anyhow::bail!("market account data is truncated");
+    }
+
+    let (header_bytes, dynamic_data) = market_account.data.split_at(size_of::<MarketFixed>());
+    let market_fixed: &MarketFixed = get_helper::<MarketFixed>(header_bytes, 0_u32);
+    market_fixed
+        .verify_discriminant()
+        .map_err(|error| anyhow::anyhow!("market account is invalid: {error}"))?;
+
+    let market = DynamicAccount {
+        fixed: market_fixed,
+        dynamic: dynamic_data,
+    };
+    for book in [market.get_bids(), market.get_asks()] {
+        validate_red_black_tree::<RestingOrder>(dynamic_data, book.root_index(), book.max_index())
+            .map_err(|error| anyhow::anyhow!("market order book is invalid: {error}"))?;
+    }
+
+    Ok(DynamicAccount::<MarketFixed, Vec<u8>> {
+        fixed: *market_fixed,
+        dynamic: dynamic_data.to_vec(),
+    })
+}
+
 #[derive(Clone)]
 pub struct ManifestMarket {
     market: MarketValue,
@@ -99,43 +132,8 @@ impl Amm for ManifestMarket {
     }
 
     fn from_keyed_account(keyed_account: &KeyedAccount, _amm_context: &AmmContext) -> Result<Self> {
-        if keyed_account.account.owner != manifest::ID {
-            anyhow::bail!("market account has an invalid owner");
-        }
-        // Jupiter supplies account bytes from RPC; reject truncation before
-        // split_at/get_helper can panic while refreshing routes.
-        if keyed_account.account.data.len() < size_of::<MarketFixed>() {
-            anyhow::bail!("market account data is truncated");
-        }
-        let mut_data: &mut &[u8] = &mut keyed_account.account.data.as_slice();
-
-        let (header_bytes, dynamic_data) = mut_data.split_at(size_of::<MarketFixed>());
-        let market_fixed: &MarketFixed = get_helper::<MarketFixed>(header_bytes, 0_u32);
-        market_fixed
-            .verify_discriminant()
-            .map_err(|error| anyhow::anyhow!("market account is invalid: {error}"))?;
-
-        // The Jupiter route loader traverses both books immediately after this
-        // constructor. Validate untrusted RPC offsets and parent links before
-        // handing the dynamic bytes to zero-copy tree readers.
-        let market = DynamicAccount {
-            fixed: market_fixed,
-            dynamic: dynamic_data,
-        };
-        for book in [market.get_bids(), market.get_asks()] {
-            validate_red_black_tree::<RestingOrder>(
-                dynamic_data,
-                book.root_index(),
-                book.max_index(),
-            )
-            .map_err(|error| anyhow::anyhow!("market order book is invalid: {error}"))?;
-        }
-
         Ok(ManifestMarket {
-            market: DynamicAccount::<MarketFixed, Vec<u8>> {
-                fixed: *market_fixed,
-                dynamic: dynamic_data.to_vec(),
-            },
+            market: validated_market_value(&keyed_account.account)?,
             key: keyed_account.key,
             label: "Manifest".into(),
             // Gets updated on the first iter
@@ -193,16 +191,7 @@ impl Amm for ManifestMarket {
         let market_account: &solana_account::Account = account_map
             .get(&self.key)
             .ok_or_else(|| anyhow::anyhow!("market account missing from update"))?;
-        if market_account.data.len() < size_of::<MarketFixed>() {
-            anyhow::bail!("market account data is truncated");
-        }
-
-        let (header_bytes, dynamic_data) = market_account.data.split_at(size_of::<MarketFixed>());
-        let market_fixed: &MarketFixed = get_helper::<MarketFixed>(header_bytes, 0_u32);
-        self.market = DynamicAccount::<MarketFixed, Vec<u8>> {
-            fixed: *market_fixed,
-            dynamic: dynamic_data.to_vec(),
-        };
+        self.market = validated_market_value(market_account)?;
         Ok(())
     }
 
