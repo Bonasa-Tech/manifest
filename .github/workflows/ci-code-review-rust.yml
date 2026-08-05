@@ -73,7 +73,10 @@ jobs:
 
       - name: Install Solana
         run: |
-          sh -c "$(curl -sSfL https://release.anza.xyz/v${{ env.SOLANA_VERSION }}/install)"
+          curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
+            --output solana-install.sh https://release.anza.xyz/v${{ env.SOLANA_VERSION }}/install
+          echo '4caed81545b20ddcbc06d65ca8ef8dc69fc9e68fe93a868f5b508309021b49af  solana-install.sh' | sha256sum --check --strict
+          sh solana-install.sh
           echo "$HOME/.local/share/solana/install/active_release/bin" >> $GITHUB_PATH
           export PATH="/home/runner/.local/share/solana/install/active_release/bin:$PATH"
           solana --version
@@ -105,7 +108,10 @@ jobs:
 
       - name: Install Solana
         run: |
-          sh -c "$(curl -sSfL https://release.anza.xyz/v${{ env.SOLANA_VERSION }}/install)"
+          curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
+            --output solana-install.sh https://release.anza.xyz/v${{ env.SOLANA_VERSION }}/install
+          echo '4caed81545b20ddcbc06d65ca8ef8dc69fc9e68fe93a868f5b508309021b49af  solana-install.sh' | sha256sum --check --strict
+          sh solana-install.sh
           echo "$HOME/.local/share/solana/install/active_release/bin" >> $GITHUB_PATH
           export PATH="/home/runner/.local/share/solana/install/active_release/bin:$PATH"
           solana --version

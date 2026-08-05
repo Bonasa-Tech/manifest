@@ -46,6 +46,6 @@ jobs:
       - name: Install dependencies
         run: yarn install --frozen-lockfile
 
-      - uses: nickcharlton/diff-check@main
+      - uses: nickcharlton/diff-check@9fa7ac2bd275b9ec60f13dbcef1b90cfaadc1872 # main at review time
         with:
           command: cd client/idl && yarn && node generateIdl.js && node generateClient.js && node generateIdl.js && cd - ; npm install -g prettier; prettier client/ts --write ; prettier client/ts/src/manifest --write; prettier client/ts/src/wrapper --write; prettier client/ts/src/ui_wrapper --write; git diff;

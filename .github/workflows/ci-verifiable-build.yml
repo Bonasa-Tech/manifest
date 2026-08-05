@@ -12,6 +12,7 @@ env:
   RUST_TOOLCHAIN: '1.86.0'
   SOLANA_TOOLCHAIN: '2.2.20'
   SVM_ARCH: 'v2'
+  SOLANA_VERIFIABLE_BUILD_IMAGE: 'solanafoundation/solana-verifiable-build@sha256:a1c0d5899ee0ffc81412428760662d9ba4643c2003ec3a92ab6f75a6e2e52a1b'
 
 
 jobs:
@@ -38,7 +39,7 @@ jobs:
 
       - name: Verifiable build manifest
         run: |
-          solana-verify build --arch=${{ env.SVM_ARCH }} --base-image solanafoundation/solana-verifiable-build:${{ env.SOLANA_TOOLCHAIN }} --library-name ${{ env.MANIFEST_NAME }}
+          solana-verify build --arch=${{ env.SVM_ARCH }} --base-image ${{ env.SOLANA_VERIFIABLE_BUILD_IMAGE }} --library-name ${{ env.MANIFEST_NAME }}
 
       - name: Get hash manifest
         run: |
@@ -57,7 +58,7 @@ jobs:
 
       - name: Verifiable build wrapper
         run: |
-          solana-verify build --arch=${{ env.SVM_ARCH }} --base-image solanafoundation/solana-verifiable-build:${{ env.SOLANA_TOOLCHAIN }} --library-name ${{ env.WRAPPER_NAME }}
+          solana-verify build --arch=${{ env.SVM_ARCH }} --base-image ${{ env.SOLANA_VERIFIABLE_BUILD_IMAGE }} --library-name ${{ env.WRAPPER_NAME }}
 
       - name: Get hash wrapper
         run: |
@@ -76,7 +77,7 @@ jobs:
 
       - name: Verifiable build ui wrapper
         run: |
-          solana-verify build --arch=${{ env.SVM_ARCH }} --base-image solanafoundation/solana-verifiable-build:${{ env.SOLANA_TOOLCHAIN }} --library-name ${{ env.UI_WRAPPER_NAME }}
+          solana-verify build --arch=${{ env.SVM_ARCH }} --base-image ${{ env.SOLANA_VERIFIABLE_BUILD_IMAGE }} --library-name ${{ env.UI_WRAPPER_NAME }}
 
       - name: Get hash ui wrapper
         run: |

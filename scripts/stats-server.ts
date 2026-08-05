@@ -214,9 +214,23 @@ const run = async () => {
     res.send(await statsServer.getVolume());
   };
   const tradersHandler: RequestHandler = (req, res) => {
-    const includeDebug = req.query.debug === 'true';
-    const limit = req.query.limit ? parseInt(req.query.limit as string) : 500;
-    res.send(statsServer.getTraders(includeDebug, limit));
+    try {
+      const includeDebug = req.query.debug === 'true';
+      const limit = parseBoundedQueryInteger(
+        req.query.limit,
+        500,
+        1,
+        1_000,
+        'limit',
+      );
+      res.send(statsServer.getTraders(includeDebug, limit));
+    } catch (error) {
+      if (error instanceof RangeError) {
+        res.status(400).send({ error: error.message });
+        return;
+      }
+      throw error;
+    }
   };
   const recentFillsHandler: RequestHandler = (req, res) => {
     res.send(statsServer.getRecentFills(req.query.market as string));
