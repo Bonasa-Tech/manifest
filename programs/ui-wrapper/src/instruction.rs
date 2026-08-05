@@ -13,7 +13,7 @@ pub enum ManifestWrapperInstruction {
     #[account(0, name = "owner", desc = "Owner of the Manifest account")]
     #[account(1, name = "system_program", desc = "System program")]
     #[account(2, writable, signer, name = "payer", desc = "Payer of rent and gas")]
-    #[account(3, writable, name = "wrapper_state", desc = "Wrapper state")]
+    #[account(3, writable, signer, name = "wrapper_state", desc = "Wrapper state")]
     CreateWrapper = 0,
 
     /// Unused

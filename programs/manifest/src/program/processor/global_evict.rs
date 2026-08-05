@@ -109,8 +109,8 @@ pub(crate) fn process_global_evict_core(
 
         emit_stack(GlobalWithdrawLog {
             global: *global.key,
-            trader: *payer.key,
-            global_atoms: GlobalAtoms::new(amount_atoms),
+            trader: evictee_token.get_owner(),
+            global_atoms: evictee_balance,
         })?;
     }
 
@@ -162,7 +162,7 @@ pub(crate) fn process_global_evict_core(
         emit_stack(GlobalDepositLog {
             global: *global.key,
             trader: *payer.key,
-            global_atoms: GlobalAtoms::new(amount_atoms),
+            global_atoms: GlobalAtoms::new(deposited_amount_atoms),
         })?;
     }
 
