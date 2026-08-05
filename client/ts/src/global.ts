@@ -1,4 +1,4 @@
-import { PublicKey, Connection } from '@solana/web3.js';
+import { PublicKey, Connection, AccountInfo } from '@solana/web3.js';
 import { bignum } from '@metaplex-foundation/beet';
 import { publicKey as beetPublicKey } from '@metaplex-foundation/beet-solana';
 import { deserializeRedBlackTree } from './utils/redBlackTree';
@@ -6,6 +6,9 @@ import { toNum } from './utils/numbers';
 import { FIXED_GLOBAL_HEADER_SIZE, NIL } from './constants';
 import { getMint } from '@solana/spl-token';
 import { globalDepositBeet } from './manifest/types';
+import { PROGRAM_ID } from './manifest';
+
+const GLOBAL_FIXED_DISCRIMINANT = 10787423733276977665n;
 
 export type GlobalDeposit = {
   trader: PublicKey;
@@ -54,6 +57,7 @@ export class Global {
       // This is possible to fail because the global account was not initialized.
       return null;
     }
+    Global.validateAccount(address, accountInfo);
     return Global.loadFromBuffer({ address, buffer: accountInfo.data });
   }
 
@@ -82,6 +86,7 @@ export class Global {
     if (!accountInfo?.data) {
       throw new Error(`Failed to load ${this.address}`);
     }
+    Global.validateAccount(this.address, accountInfo);
     this.data = Global.deserializeGlobalBuffer(accountInfo.data);
   }
 
@@ -168,6 +173,12 @@ export class Global {
    * @param data The data buffer to deserialize
    */
   private static deserializeGlobalBuffer(data: Buffer): GlobalData {
+    if (data.length < FIXED_GLOBAL_HEADER_SIZE) {
+      throw new Error('Global account data is truncated');
+    }
+    if (data.readBigUInt64LE(0) !== GLOBAL_FIXED_DISCRIMINANT) {
+      throw new Error('Account is not a Manifest global');
+    }
     let offset = 0;
     offset += 8; // Skip discriminant
 
@@ -210,5 +221,17 @@ export class Global {
       numBytesAllocated,
       numSeatsClaimed,
     };
+  }
+
+  private static validateAccount(
+    address: PublicKey,
+    accountInfo: AccountInfo<Buffer>,
+  ): void {
+    if (!accountInfo.owner.equals(PROGRAM_ID)) {
+      throw new Error(`Global ${address} is not owned by the Manifest program`);
+    }
+    if (accountInfo.data.length < FIXED_GLOBAL_HEADER_SIZE) {
+      throw new Error(`Global ${address} is truncated`);
+    }
   }
 }

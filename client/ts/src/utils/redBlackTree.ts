@@ -56,24 +56,45 @@ export function deserializeRedBlackTree<Value>(
     return header;
   };
 
-  const validate = (index: number, expectedParent: number): void => {
-    if (index === NIL) return;
+  // Avoid recursion: account data controls the number of reachable nodes, so
+  // a malformed but acyclic tree must not be able to exhaust the JS stack.
+  const validationStack: Array<{
+    index: number;
+    expectedParent: number;
+    complete: boolean;
+  }> = [{ index: rootIndex, expectedParent: NIL, complete: false }];
+  while (validationStack.length > 0) {
+    const { index, expectedParent, complete } = validationStack.pop()!;
+    if (index === NIL) continue;
+
+    if (complete) {
+      visiting.delete(index);
+      visited.add(index);
+      continue;
+    }
     if (visiting.has(index) || visited.has(index)) {
       throw new Error(
         `Cycle or duplicate red-black tree node at offset ${index}`,
       );
     }
+
     visiting.add(index);
     const header = readHeader(index);
     if (toNum(header.parent) !== expectedParent) {
       throw new Error(`Invalid red-black tree parent at offset ${index}`);
     }
-    validate(toNum(header.left), index);
-    validate(toNum(header.right), index);
-    visiting.delete(index);
-    visited.add(index);
-  };
-  validate(rootIndex, NIL);
+    validationStack.push({ index, expectedParent, complete: true });
+    validationStack.push({
+      index: toNum(header.right),
+      expectedParent: index,
+      complete: false,
+    });
+    validationStack.push({
+      index: toNum(header.left),
+      expectedParent: index,
+      complete: false,
+    });
+  }
 
   const result: Value[] = [];
   const stack: number[] = [];

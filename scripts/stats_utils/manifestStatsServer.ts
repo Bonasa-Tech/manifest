@@ -902,7 +902,11 @@ export class ManifestStatsServer {
       );
 
       for (const { pubkey, account } of wrapperAccounts) {
-        if (account.data.length >= 40) {
+        if (
+          account.owner.equals(WRAPPER_PROGRAM_ID) &&
+          account.data.length >= 40 &&
+          account.data.readBigUInt64LE(0) === 1n
+        ) {
           // Extract trader pubkey from bytes 8-40
           const traderPubkey = new PublicKey(account.data.subarray(8, 40));
           this.wrapperCache.set(traderPubkey.toBase58(), pubkey.toBase58());
@@ -1427,11 +1431,9 @@ export class ManifestStatsServer {
       // Known market but stale: refresh its order state in place.
       await market.reload(this.connection);
     } else {
-      // Unknown market (e.g. created after startup): full load + indexing.
-      market = await this.loadNewMarket(marketPk);
-      if (market === undefined) {
-        return undefined;
-      }
+      // Public requests may not turn arbitrary account keys into RPC work.
+      // New markets are indexed by the checkpoint loader before being served.
+      return undefined;
     }
     this.orderbookMarketLastLoadMs.set(marketPk, now);
     return market;

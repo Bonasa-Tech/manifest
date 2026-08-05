@@ -50,10 +50,14 @@ pub struct MarketFixed {
     /// Red-black tree root representing the seats
     pub claimed_seats_root_index: DataIndex,
 
+    /// Cached best claimed seat. This is presently unused by the client, but
+    /// retained so the following fields match the on-chain account layout.
+    pub claimed_seats_best_index: DataIndex,
+
     /// LinkedList representing all free blocks
     pub free_list_head_index: DataIndex,
 
-    pub _padding2: [u32; 1],
+    pub _padding2: [u64; 1],
 
     /// Quote volume traded over lifetime, can overflow.
     pub quote_volume: u64,
@@ -209,9 +213,16 @@ impl<'a> Market<'a> {
         let fixed = MarketFixed::try_from_bytes(data)?;
         let dynamic = &data[MARKET_FIXED_SIZE..];
         let market = Self { fixed, dynamic };
-        market.validate_tree(market.fixed.bids_root_index, RESTING_ORDER_SIZE)?;
-        market.validate_tree(market.fixed.asks_root_index, RESTING_ORDER_SIZE)?;
-        market.validate_tree(market.fixed.claimed_seats_root_index, CLAIMED_SEAT_SIZE)?;
+        let bids = market.validate_tree(market.fixed.bids_root_index, RESTING_ORDER_SIZE, true)?;
+        let asks = market.validate_tree(market.fixed.asks_root_index, RESTING_ORDER_SIZE, true)?;
+        let seats = market.validate_tree(
+            market.fixed.claimed_seats_root_index,
+            CLAIMED_SEAT_SIZE,
+            false,
+        )?;
+        if !bids.is_disjoint(&asks) || !bids.is_disjoint(&seats) || !asks.is_disjoint(&seats) {
+            return None;
+        }
         market.validate_best_index(market.fixed.bids_root_index, market.fixed.bids_best_index)?;
         market.validate_best_index(market.fixed.asks_root_index, market.fixed.asks_best_index)?;
         Some(market)
@@ -310,14 +321,30 @@ impl<'a> Market<'a> {
         })
     }
 
-    fn validate_tree(&self, root: DataIndex, payload_size: usize) -> Option<()> {
+    fn validate_tree(
+        &self,
+        root: DataIndex,
+        payload_size: usize,
+        validate_order_payload: bool,
+    ) -> Option<HashSet<DataIndex>> {
         if root == NIL {
-            return Some(());
+            return Some(HashSet::new());
         }
-        let mut stack = vec![(root, NIL)];
+        if self.get_header(root)?.color != 0 {
+            return None;
+        }
+        let mut stack = vec![(root, NIL, 0_u32)];
         let mut seen = HashSet::new();
-        while let Some((index, expected_parent)) = stack.pop() {
+        let mut expected_black_height: Option<u32> = None;
+        while let Some((index, expected_parent, black_height)) = stack.pop() {
             if index == NIL {
+                let leaf_black_height = black_height + 1;
+                if expected_black_height
+                    .replace(leaf_black_height)
+                    .is_some_and(|height| height != leaf_black_height)
+                {
+                    return None;
+                }
                 continue;
             }
             if index as usize % 8 != 0 || !seen.insert(index) {
@@ -333,10 +360,28 @@ impl<'a> Market<'a> {
             if header.color > 1 || header.parent != expected_parent {
                 return None;
             }
-            stack.push((header.left, index));
-            stack.push((header.right, index));
+            if header.color == 1 {
+                if self
+                    .get_header(header.left)
+                    .is_some_and(|child| child.color == 1)
+                    || self
+                        .get_header(header.right)
+                        .is_some_and(|child| child.color == 1)
+                {
+                    return None;
+                }
+            }
+            if validate_order_payload {
+                let order = self.get_order(index)?;
+                if order.is_bid > 1 || OrderType::from_u8(order.order_type).is_none() {
+                    return None;
+                }
+            }
+            let next_black_height = black_height + u32::from(header.color == 0);
+            stack.push((header.left, index, next_black_height));
+            stack.push((header.right, index, next_black_height));
         }
-        Some(())
+        Some(seen)
     }
 
     fn validate_best_index(&self, root: DataIndex, best: DataIndex) -> Option<()> {

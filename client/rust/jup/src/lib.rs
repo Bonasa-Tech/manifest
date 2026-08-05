@@ -4,11 +4,12 @@ use jupiter_amm_interface::{
     SwapParams,
 };
 
-use hypertree::{get_helper, get_mut_helper};
+use hypertree::{get_helper, get_mut_helper, validate_red_black_tree, GetRedBlackTreeReadOnlyData};
 use manifest::{
     quantities::{BaseAtoms, QuoteAtoms, WrapperU64},
     state::{
-        DynamicAccount, GlobalFixed, GlobalValue, MarketFixed, MarketValue, GLOBAL_FIXED_SIZE,
+        DynamicAccount, GlobalFixed, GlobalValue, MarketFixed, MarketValue, RestingOrder,
+        GLOBAL_FIXED_SIZE,
     },
     validation::{
         get_global_address, get_global_vault_address, get_vault_address,
@@ -98,6 +99,9 @@ impl Amm for ManifestMarket {
     }
 
     fn from_keyed_account(keyed_account: &KeyedAccount, _amm_context: &AmmContext) -> Result<Self> {
+        if keyed_account.account.owner != manifest::ID {
+            anyhow::bail!("market account has an invalid owner");
+        }
         // Jupiter supplies account bytes from RPC; reject truncation before
         // split_at/get_helper can panic while refreshing routes.
         if keyed_account.account.data.len() < size_of::<MarketFixed>() {
@@ -107,6 +111,25 @@ impl Amm for ManifestMarket {
 
         let (header_bytes, dynamic_data) = mut_data.split_at(size_of::<MarketFixed>());
         let market_fixed: &MarketFixed = get_helper::<MarketFixed>(header_bytes, 0_u32);
+        market_fixed
+            .verify_discriminant()
+            .map_err(|error| anyhow::anyhow!("market account is invalid: {error}"))?;
+
+        // The Jupiter route loader traverses both books immediately after this
+        // constructor. Validate untrusted RPC offsets and parent links before
+        // handing the dynamic bytes to zero-copy tree readers.
+        let market = DynamicAccount {
+            fixed: market_fixed,
+            dynamic: dynamic_data,
+        };
+        for book in [market.get_bids(), market.get_asks()] {
+            validate_red_black_tree::<RestingOrder>(
+                dynamic_data,
+                book.root_index(),
+                book.max_index(),
+            )
+            .map_err(|error| anyhow::anyhow!("market order book is invalid: {error}"))?;
+        }
 
         Ok(ManifestMarket {
             market: DynamicAccount::<MarketFixed, Vec<u8>> {

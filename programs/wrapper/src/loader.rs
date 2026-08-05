@@ -51,6 +51,11 @@ impl<'a, 'info> WrapperStateAccountInfo<'a, 'info> {
     pub fn new_init(
         info: &'a AccountInfo<'info>,
     ) -> Result<WrapperStateAccountInfo<'a, 'info>, ProgramError> {
+        require!(
+            info.is_signer,
+            ProgramError::MissingRequiredSignature,
+            "Wrapper state must sign initialization",
+        )?;
         let wrapper_bytes: Ref<&mut [u8]> = info.try_borrow_data()?;
         let (header_bytes, _) = wrapper_bytes.split_at(size_of::<ManifestWrapperStateFixed>());
         let header: &ManifestWrapperStateFixed =
