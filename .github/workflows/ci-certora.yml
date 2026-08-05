@@ -16,9 +16,9 @@ jobs:
       pull-requests: write
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Submit verification jobs to Certora Prover
-        uses: Certora/certora-run-action@v1
+        uses: Certora/certora-run-action@5a48bad92e08e69dcff67fecbea42086bb9fe83d # v1.4.1
         with:
           configurations: |-
             rules.conf

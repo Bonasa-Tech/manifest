@@ -458,11 +458,15 @@ const setupAPI = (monitor: MarketMakerLeaderboard) => {
    */
   app.get('/snapshots', async (req, res) => {
     try {
-      const hours = req.query.hours ? parseInt(req.query.hours as string) : 24;
-      const snapshotLimit = req.query.limit
-        ? parseInt(req.query.limit as string)
-        : 100;
-      const page = req.query.page ? parseInt(req.query.page as string) : 1;
+      const boundedInt = (value: unknown, fallback: number, maximum: number, name: string) => {
+        if (value === undefined) return fallback;
+        const parsed = Number(value);
+        if (!Number.isSafeInteger(parsed) || parsed < 1 || parsed > maximum) throw new Error(`${name} must be an integer between 1 and ${maximum}`);
+        return parsed;
+      };
+      const hours = boundedInt(req.query.hours, 24, 24 * 31, 'hours');
+      const snapshotLimit = boundedInt(req.query.limit, 100, 500, 'limit');
+      const page = boundedInt(req.query.page, 1, 1_000, 'page');
       const offset = (page - 1) * snapshotLimit;
       const startTime = req.query.start
         ? new Date(parseInt(req.query.start as string) * 1000)

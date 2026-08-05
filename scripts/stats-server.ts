@@ -368,7 +368,12 @@ const run = async () => {
   app.get('/volume', volumeHandler);
   app.get('/traders', tradersHandler);
   app.get('/traders/debug', (req, res) => {
-    const limit = req.query.limit ? parseInt(req.query.limit as string) : 500;
+    const requestedLimit = req.query.limit === undefined ? 500 : Number(req.query.limit);
+    if (!Number.isSafeInteger(requestedLimit) || requestedLimit < 1 || requestedLimit > 1_000) {
+      res.status(400).send({ error: 'limit must be an integer between 1 and 1000' });
+      return;
+    }
+    const limit = requestedLimit;
     res.send(statsServer.getTraders(true, limit));
   });
   app.get('/recentFills', recentFillsHandler);

@@ -212,6 +212,8 @@ impl<'a> Market<'a> {
         market.validate_tree(market.fixed.bids_root_index, RESTING_ORDER_SIZE)?;
         market.validate_tree(market.fixed.asks_root_index, RESTING_ORDER_SIZE)?;
         market.validate_tree(market.fixed.claimed_seats_root_index, CLAIMED_SEAT_SIZE)?;
+        market.validate_best_index(market.fixed.bids_root_index, market.fixed.bids_best_index)?;
+        market.validate_best_index(market.fixed.asks_root_index, market.fixed.asks_best_index)?;
         Some(market)
     }
 
@@ -335,6 +337,29 @@ impl<'a> Market<'a> {
             stack.push((header.right, index));
         }
         Some(())
+    }
+
+    fn validate_best_index(&self, root: DataIndex, best: DataIndex) -> Option<()> {
+        if root == NIL {
+            return (best == NIL).then_some(());
+        }
+        if best == NIL {
+            return None;
+        }
+        let mut stack = vec![root];
+        let mut seen = HashSet::new();
+        while let Some(index) = stack.pop() {
+            if index == NIL || !seen.insert(index) {
+                continue;
+            }
+            if index == best {
+                return self.get_order(index).map(|_| ());
+            }
+            let header = self.get_header(index)?;
+            stack.push(header.left);
+            stack.push(header.right);
+        }
+        None
     }
 }
 

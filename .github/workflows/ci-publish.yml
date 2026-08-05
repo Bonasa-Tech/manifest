@@ -14,14 +14,14 @@ jobs:
       contents: read
       id-token: write
     steps:
-      - uses: actions/checkout@v3
-      - uses: actions/setup-node@v3
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 20
-      - run: npm install -g npm@latest
+      - run: npm install -g npm@11.4.2
       - run: npm --version
       - run: yarn install --frozen-lockfile
       - run: yarn build
-      - uses: JS-DevTools/npm-publish@v4
+      - uses: JS-DevTools/npm-publish@0fd2f4369c5d6bcfcde6091a7c527d810b9b5c3f # v4
         with:
           access: public

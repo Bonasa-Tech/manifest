@@ -23,15 +23,15 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Run radar
         id: radar
-        uses: auditware/radar-action@main
+        uses: auditware/radar-action@965cb6f2750a3aae9996e24301acc2c6fa3e0d91 # main at review time
         with:
           ignore: "low"
 
       - name: Upload SARIF file
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@c4dd10e44af883a891fe31ced449bcb4a6728b9b # v3
         with:
           sarif_file: output.sarif
