@@ -338,7 +338,7 @@ async fn sync_remove_test() -> anyhow::Result<()> {
 async fn wrapper_batch_update_cancel_all_test() -> anyhow::Result<()> {
     let mut test_fixture: TestFixture = TestFixture::new().await;
     test_fixture.claim_seat().await?;
-    test_fixture.deposit(Token::SOL, 2 * SOL_UNIT_SIZE).await?;
+    test_fixture.deposit(Token::SOL, 20 * SOL_UNIT_SIZE).await?;
 
     let payer: Pubkey = test_fixture.payer();
     let payer_keypair: Keypair = test_fixture.payer_keypair().insecure_clone();
@@ -368,6 +368,33 @@ async fn wrapper_batch_update_cancel_all_test() -> anyhow::Result<()> {
     )
     .await?;
 
+    // Add enough wrapper orders to exceed the per-call cancel_all work bound.
+    for client_order_id in 1..=16 {
+        let batch_update_ix = batch_update_instruction(
+            &test_fixture.market.key,
+            &payer,
+            &test_fixture.wrapper.key,
+            vec![],
+            false,
+            vec![WrapperPlaceOrderParams::new(
+                client_order_id,
+                SOL_UNIT_SIZE,
+                client_order_id as u32 + 1,
+                0,
+                false,
+                NO_EXPIRATION_LAST_VALID_SLOT,
+                OrderType::Limit,
+            )],
+        );
+        send_tx_with_retry(
+            Rc::clone(&test_fixture.context),
+            &[batch_update_ix],
+            Some(&payer),
+            &[&payer_keypair],
+        )
+        .await?;
+    }
+
     // Place an order directly via the manifest program (bypassing the wrapper).
     let manifest_place_ix: Instruction = manifest_batch_update_instruction(
         &test_fixture.market.key,
@@ -395,7 +422,36 @@ async fn wrapper_batch_update_cancel_all_test() -> anyhow::Result<()> {
     )
     .await?;
 
-    // Verify there are 2 asks on the market before cancel_all.
+    // Verify there are 18 asks on the market before cancel_all.
+    test_fixture.market.reload().await;
+    assert_eq!(
+        test_fixture
+            .market
+            .market
+            .get_asks()
+            .iter::<RestingOrder>()
+            .count(),
+        18,
+        "Wrapper and direct asks before cancel_all"
+    );
+
+    // cancel_all is bounded to 16 inspected orders per transaction.
+    let batch_update_ix: Instruction = batch_update_instruction(
+        &test_fixture.market.key,
+        &payer,
+        &test_fixture.wrapper.key,
+        vec![],
+        true,
+        vec![],
+    );
+    send_tx_with_retry(
+        Rc::clone(&test_fixture.context),
+        &[batch_update_ix],
+        Some(&payer),
+        &[&payer_keypair],
+    )
+    .await?;
+
     test_fixture.market.reload().await;
     assert_eq!(
         test_fixture
@@ -405,10 +461,9 @@ async fn wrapper_batch_update_cancel_all_test() -> anyhow::Result<()> {
             .iter::<RestingOrder>()
             .count(),
         2,
-        "Two asks before cancel_all"
+        "First bounded cancel_all leaves work for a retry",
     );
 
-    // cancel_all via wrapper should cancel both orders.
     let batch_update_ix: Instruction = batch_update_instruction(
         &test_fixture.market.key,
         &payer,

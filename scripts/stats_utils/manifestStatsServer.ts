@@ -141,6 +141,8 @@ export class ManifestStatsServer {
   // to be stale, NOT on checkpoint advance. Idle markets are never refreshed,
   // so this costs nothing for markets nobody is querying.
   private orderbookMarketLastLoadMs: Map<string, number> = new Map();
+  private orderbookMarketRefreshes: Map<string, Promise<Market | undefined>> =
+    new Map();
   // Markets are assumed fresh for at least this long. Matches the ~5 min
   // checkpoint cadence (VOLUME_CHECKPOINT_DURATION_SEC) used elsewhere.
   private readonly ORDERBOOK_MARKET_TTL_MS: number = 5 * 60 * 1000;
@@ -1427,16 +1429,30 @@ export class ManifestStatsServer {
       return market;
     }
 
-    if (market !== undefined) {
-      // Known market but stale: refresh its order state in place.
-      await market.reload(this.connection);
-    } else {
+    if (market === undefined) {
       // Public requests may not turn arbitrary account keys into RPC work.
       // New markets are indexed by the checkpoint loader before being served.
       return undefined;
     }
-    this.orderbookMarketLastLoadMs.set(marketPk, now);
-    return market;
+
+    const existingRefresh = this.orderbookMarketRefreshes.get(marketPk);
+    if (existingRefresh) {
+      return existingRefresh;
+    }
+
+    const refresh = (async () => {
+      // Publish this promise before awaiting RPC so concurrent requests share
+      // one refresh after a predictable TTL expiry.
+      await market.reload(this.connection);
+      this.orderbookMarketLastLoadMs.set(marketPk, Date.now());
+      return market;
+    })();
+    this.orderbookMarketRefreshes.set(marketPk, refresh);
+    try {
+      return await refresh;
+    } finally {
+      this.orderbookMarketRefreshes.delete(marketPk);
+    }
   }
 
   /**

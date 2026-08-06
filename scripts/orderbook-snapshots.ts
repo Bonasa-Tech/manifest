@@ -6,6 +6,7 @@ import { Pool } from 'pg';
 import express from 'express';
 import cors from 'cors';
 import { USDC_MINT, STABLECOIN_MINTS } from './stats_utils/constants';
+import { createExpensiveQueryAdmission } from './stats_utils/httpAdmission';
 
 // Configuration constants
 const SNAPSHOT_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
@@ -444,6 +445,12 @@ const setupAPI = (monitor: MarketMakerLeaderboard) => {
   const app = express();
   app.use(cors());
   app.use(express.json());
+  app.use(
+    createExpensiveQueryAdmission({
+      maxConcurrent: 4,
+      maxRequestsPerMinute: 30,
+    }),
+  );
 
   /**
    * Get orderbook snapshots in compact format
@@ -458,10 +465,18 @@ const setupAPI = (monitor: MarketMakerLeaderboard) => {
    */
   app.get('/snapshots', async (req, res) => {
     try {
-      const boundedInt = (value: unknown, fallback: number, maximum: number, name: string) => {
+      const boundedInt = (
+        value: unknown,
+        fallback: number,
+        maximum: number,
+        name: string,
+      ) => {
         if (value === undefined) return fallback;
         const parsed = Number(value);
-        if (!Number.isSafeInteger(parsed) || parsed < 1 || parsed > maximum) throw new Error(`${name} must be an integer between 1 and ${maximum}`);
+        if (!Number.isSafeInteger(parsed) || parsed < 1 || parsed > maximum)
+          throw new Error(
+            `${name} must be an integer between 1 and ${maximum}`,
+          );
         return parsed;
       };
       const hours = boundedInt(req.query.hours, 24, 24 * 31, 'hours');

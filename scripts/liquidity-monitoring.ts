@@ -14,6 +14,7 @@ import {
   CBBTC_USDC_MARKET,
   STABLECOIN_MINTS,
 } from './stats_utils/constants';
+import { createExpensiveQueryAdmission } from './stats_utils/httpAdmission';
 
 // Configuration constants
 const MONITORING_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
@@ -926,6 +927,12 @@ const setupAPI = (monitor: LiquidityMonitor) => {
   };
   app.use(cors());
   app.use(express.json());
+  app.use(
+    createExpensiveQueryAdmission({
+      maxConcurrent: 2,
+      maxRequestsPerMinute: 20,
+    }),
+  );
 
   // Market maker statistics with flexible time periods
   app.get('/market-makers', async (req, res) => {
