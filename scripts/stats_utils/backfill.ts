@@ -10,6 +10,8 @@ import {
   detectOriginatingProtocolFromKeys,
   resolveTakerFromSigners,
 } from '../../client/ts/src/aggregators';
+import { extractProgramDataLogs } from '../../client/ts/src/utils/programLogs';
+import { PROGRAM_ID } from '../../client/ts/src/manifest';
 
 const fillDiscriminant = genAccDiscriminator('manifest::logs::FillLog');
 
@@ -129,11 +131,13 @@ export const parseTransactionForFills = async (
     originatingProtocol = detectOriginatingProtocolFromKeys(accountKeysStr);
   }
 
-  const messages = tx.meta.logMessages;
-  const programDatas = messages.filter((msg) => msg.includes('Program data:'));
+  const programDatas = extractProgramDataLogs(
+    tx.meta.logMessages,
+    PROGRAM_ID.toBase58(),
+  );
 
   for (const programDataEntry of programDatas) {
-    const programData = programDataEntry.split(' ')[2];
+    const programData = programDataEntry.data;
     const byteArray = Uint8Array.from(atob(programData), (c) =>
       c.charCodeAt(0),
     );
