@@ -6,7 +6,7 @@ use crate::constants::{
 };
 use hypertree::{DataIndex, NIL, RBTREE_OVERHEAD_BYTES};
 use solana_pubkey::Pubkey;
-use std::collections::HashSet;
+use std::{cmp::Ordering, collections::HashSet};
 
 /// The fixed header of a market account.
 #[derive(Debug, Clone, Copy)]
@@ -213,12 +213,17 @@ impl<'a> Market<'a> {
         let fixed = MarketFixed::try_from_bytes(data)?;
         let dynamic = &data[MARKET_FIXED_SIZE..];
         let market = Self { fixed, dynamic };
-        let bids = market.validate_tree(market.fixed.bids_root_index, RESTING_ORDER_SIZE, true)?;
-        let asks = market.validate_tree(market.fixed.asks_root_index, RESTING_ORDER_SIZE, true)?;
+        let bids =
+            market.validate_tree(market.fixed.bids_root_index, RESTING_ORDER_SIZE, Some(true))?;
+        let asks = market.validate_tree(
+            market.fixed.asks_root_index,
+            RESTING_ORDER_SIZE,
+            Some(false),
+        )?;
         let seats = market.validate_tree(
             market.fixed.claimed_seats_root_index,
             CLAIMED_SEAT_SIZE,
-            false,
+            None,
         )?;
         if !bids.is_disjoint(&asks) || !bids.is_disjoint(&seats) || !asks.is_disjoint(&seats) {
             return None;
@@ -325,7 +330,7 @@ impl<'a> Market<'a> {
         &self,
         root: DataIndex,
         payload_size: usize,
-        validate_order_payload: bool,
+        expected_is_bid: Option<bool>,
     ) -> Option<HashSet<DataIndex>> {
         if root == NIL {
             return Some(HashSet::new());
@@ -333,10 +338,10 @@ impl<'a> Market<'a> {
         if self.get_header(root)?.color != 0 {
             return None;
         }
-        let mut stack = vec![(root, NIL, 0_u32)];
+        let mut stack = vec![(root, NIL, 0_u32, None, None)];
         let mut seen = HashSet::new();
         let mut expected_black_height: Option<u32> = None;
-        while let Some((index, expected_parent, black_height)) = stack.pop() {
+        while let Some((index, expected_parent, black_height, lower, upper)) = stack.pop() {
             if index == NIL {
                 let leaf_black_height = black_height + 1;
                 if expected_black_height
@@ -371,17 +376,40 @@ impl<'a> Market<'a> {
                     return None;
                 }
             }
-            if validate_order_payload {
+            if let Some(is_bid) = expected_is_bid {
                 let order = self.get_order(index)?;
-                if order.is_bid > 1 || OrderType::from_u8(order.order_type).is_none() {
+                if order.is_bid != u8::from(is_bid)
+                    || OrderType::from_u8(order.order_type).is_none()
+                    || lower.is_some_and(|minimum| {
+                        Self::compare_orders(&order, &minimum) != Ordering::Greater
+                    })
+                    || upper.is_some_and(|maximum| {
+                        Self::compare_orders(&order, &maximum) != Ordering::Less
+                    })
+                {
                     return None;
                 }
+                let next_black_height = black_height + u32::from(header.color == 0);
+                stack.push((header.left, index, next_black_height, lower, Some(order)));
+                stack.push((header.right, index, next_black_height, Some(order), upper));
+            } else {
+                let next_black_height = black_height + u32::from(header.color == 0);
+                stack.push((header.left, index, next_black_height, None, None));
+                stack.push((header.right, index, next_black_height, None, None));
             }
-            let next_black_height = black_height + u32::from(header.color == 0);
-            stack.push((header.left, index, next_black_height));
-            stack.push((header.right, index, next_black_height));
         }
         Some(seen)
+    }
+
+    fn compare_orders(left: &RestingOrder, right: &RestingOrder) -> Ordering {
+        let price_ordering = if left.is_bid() {
+            left.get_price_raw().cmp(&right.get_price_raw())
+        } else {
+            right.get_price_raw().cmp(&left.get_price_raw())
+        };
+        price_ordering
+            .then_with(|| left.trader_index.cmp(&right.trader_index))
+            .then_with(|| left.order_type.cmp(&right.order_type))
     }
 
     fn validate_best_index(&self, root: DataIndex, best: DataIndex) -> Option<()> {
@@ -391,20 +419,14 @@ impl<'a> Market<'a> {
         if best == NIL {
             return None;
         }
-        let mut stack = vec![root];
-        let mut seen = HashSet::new();
-        while let Some(index) = stack.pop() {
-            if index == NIL || !seen.insert(index) {
-                continue;
-            }
-            if index == best {
-                return self.get_order(index).map(|_| ());
-            }
+        let mut index = root;
+        loop {
             let header = self.get_header(index)?;
-            stack.push(header.left);
-            stack.push(header.right);
+            if header.right == NIL {
+                return (index == best).then_some(());
+            }
+            index = header.right;
         }
-        None
     }
 }
 
@@ -478,6 +500,58 @@ mod parsing_tests {
         let dynamic = &mut data[MARKET_FIXED_SIZE..];
         dynamic[0..12].copy_from_slice(&[0xff; 12]);
         dynamic[12] = 2;
+        assert!(Market::try_from_bytes(&data).is_none());
+    }
+
+    fn set_order(data: &mut [u8], index: DataIndex, price: u64) {
+        let offset = MARKET_FIXED_SIZE
+            + index as usize
+            + RBTREE_OVERHEAD_BYTES
+            + std::mem::offset_of!(RestingOrder, price);
+        data[offset..offset + 8].copy_from_slice(&price.to_le_bytes());
+        let is_bid_offset = MARKET_FIXED_SIZE
+            + index as usize
+            + RBTREE_OVERHEAD_BYTES
+            + std::mem::offset_of!(RestingOrder, is_bid);
+        data[is_bid_offset] = 1;
+    }
+
+    #[test]
+    fn rejects_non_extremal_best_index_and_invalid_ordering() {
+        let child = (RBTREE_OVERHEAD_BYTES + RESTING_ORDER_SIZE) as DataIndex;
+        let mut data =
+            vec![
+                0_u8;
+                MARKET_FIXED_SIZE + child as usize + RBTREE_OVERHEAD_BYTES + RESTING_ORDER_SIZE
+            ];
+        data[..8].copy_from_slice(&MARKET_FIXED_DISCRIMINANT.to_le_bytes());
+        for (field, value) in [
+            (std::mem::offset_of!(MarketFixed, bids_root_index), 0),
+            (std::mem::offset_of!(MarketFixed, bids_best_index), 0),
+            (std::mem::offset_of!(MarketFixed, asks_root_index), NIL),
+            (std::mem::offset_of!(MarketFixed, asks_best_index), NIL),
+            (
+                std::mem::offset_of!(MarketFixed, claimed_seats_root_index),
+                NIL,
+            ),
+            (std::mem::offset_of!(MarketFixed, free_list_head_index), NIL),
+        ] {
+            data[field..field + 4].copy_from_slice(&value.to_le_bytes());
+        }
+        let dynamic = &mut data[MARKET_FIXED_SIZE..];
+        dynamic[4..8].copy_from_slice(&child.to_le_bytes());
+        dynamic[child as usize + 8..child as usize + 12].copy_from_slice(&0_u32.to_le_bytes());
+        dynamic[child as usize + 12] = 1;
+        set_order(&mut data, 0, 1);
+        set_order(&mut data, child, 2);
+
+        // The right child is the best bid, not the reachable root.
+        assert!(Market::try_from_bytes(&data).is_none());
+
+        data[std::mem::offset_of!(MarketFixed, bids_best_index)
+            ..std::mem::offset_of!(MarketFixed, bids_best_index) + 4]
+            .copy_from_slice(&child.to_le_bytes());
+        set_order(&mut data, child, 0);
         assert!(Market::try_from_bytes(&data).is_none());
     }
 }
