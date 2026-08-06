@@ -119,12 +119,26 @@ export class FillFeed {
         // integrations give us steady flow.
         await new Promise((f) => setTimeout(f, 400));
 
-        const signatures: ConfirmedSignatureInfo[] =
-          await this.connection.getSignaturesForAddress(
+        const signatures: ConfirmedSignatureInfo[] = [];
+        let before: string | undefined;
+        do {
+          const page = await this.connection.getSignaturesForAddress(
             PROGRAM_ID,
-            lastSignature ? { until: lastSignature } : undefined,
+            {
+              ...(lastSignature ? { until: lastSignature } : {}),
+              ...(before ? { before } : {}),
+            },
             'finalized',
           );
+          signatures.push(...page);
+          before = page.at(-1)?.signature;
+          if (
+            page.length < 1_000 ||
+            page.some((sig) => sig.signature === lastSignature)
+          ) {
+            break;
+          }
+        } while (before);
         // Flip it so we do oldest first.
         signatures.reverse();
 
