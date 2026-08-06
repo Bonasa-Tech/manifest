@@ -110,7 +110,15 @@ export class ManifestClient {
         };
         const wrapperPubkey = new PublicKey(data.wrapper);
         const accountInfo = await connection.getAccountInfo(wrapperPubkey);
-        if (accountInfo) {
+        if (accountInfo?.owner.equals(WRAPPER_PROGRAM_ID)) {
+          const wrapperData = Wrapper.deserializeWrapperBuffer(
+            accountInfo.data,
+          );
+          if (!wrapperData.trader.equals(payerPub)) {
+            throw new Error(
+              'Stats service returned a wrapper for another trader',
+            );
+          }
           return {
             pubkey: wrapperPubkey,
             account: accountInfo,
