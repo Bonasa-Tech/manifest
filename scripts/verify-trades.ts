@@ -11,6 +11,7 @@ import { hasTruncatedLogs as checkTruncatedLogs } from '@/../../client/ts/src/ut
 import {
   detectAggregatorFromKeys,
   detectOriginatingProtocolFromKeys,
+  resolveTakerFromSigners,
 } from '@/../../client/ts/src/aggregators';
 import { TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID } from '@solana/spl-token';
 
@@ -143,10 +144,20 @@ const toFillLogResult = (
   signers?: string[],
   blockTime?: number,
 ): FillLogResult => {
+  // When a delegating signer (e.g. jupui) signed on behalf of the real taker,
+  // attribute the fill to the other signer instead of the on-chain taker. This
+  // mirrors toFillLogResult in the fills feed - the DB stores the rewritten
+  // taker, so the onchain reconstruction must rewrite it too or every
+  // delegating-signer fill fails the comparison.
+  const takerFromSigner: string | undefined = resolveTakerFromSigners(
+    signers,
+    originalSigner,
+  );
+
   const result: FillLogResult = {
     market: fillLog.market.toBase58(),
     maker: fillLog.maker.toBase58(),
-    taker: fillLog.taker.toBase58(),
+    taker: takerFromSigner ?? fillLog.taker.toBase58(),
     baseAtoms: fillLog.baseAtoms.inner.toString(),
     quoteAtoms: fillLog.quoteAtoms.inner.toString(),
     priceAtoms: convertU128(fillLog.price.inner),
@@ -458,31 +469,44 @@ const fetchDatabaseFills = async (
       }
 
       // The stats server can return transient 503s when the database is
-      // temporarily unavailable. Retry with backoff before giving up so a
-      // brief blip doesn't abort the whole market.
+      // temporarily unavailable, and slow queries can stall long enough to
+      // trip undici's body timeout (thrown as "TypeError: terminated"). Retry
+      // both with backoff before giving up so a brief blip doesn't abort the
+      // whole market. The body read is inside the retried block because body
+      // timeouts fire while streaming the response, after fetch() resolves.
       const maxFetchAttempts = 5;
-      let response: Response | undefined;
+      let data: { fills?: FillLogResult[]; hasMore?: boolean } | undefined;
       for (let attempt = 1; attempt <= maxFetchAttempts; attempt++) {
-        response = await fetch(`${statsServerUrl}/completeFills?${params}`);
-        if (response.ok) {
+        try {
+          const response: Response = await fetch(
+            `${statsServerUrl}/completeFills?${params}`,
+          );
+          if (!response.ok) {
+            if (response.status === 503 && attempt < maxFetchAttempts) {
+              throw new Error(`completeFills returned 503`);
+            }
+            throw new Error(
+              `Failed to fetch fills: ${response.status} ${response.statusText}`,
+            );
+          }
+          data = await response.json();
           break;
-        }
-        if (response.status === 503 && attempt < maxFetchAttempts) {
+        } catch (error) {
+          if (attempt >= maxFetchAttempts) {
+            throw error;
+          }
           const delayMs = 1000 * 2 ** (attempt - 1);
+          const errorMsg: string =
+            error instanceof Error ? error.message : String(error);
           console.warn(
             logPrefix,
-            `completeFills returned 503, retrying in ${delayMs / 1000}s (attempt ${attempt}/${maxFetchAttempts})...`,
+            `completeFills fetch failed (${errorMsg}), retrying in ${delayMs / 1000}s (attempt ${attempt}/${maxFetchAttempts})...`,
           );
           await sleep(delayMs);
-          continue;
         }
-        throw new Error(
-          `Failed to fetch fills: ${response.status} ${response.statusText}`,
-        );
       }
-      const data = await response!.json();
 
-      const { fills: batchFills, hasMore } = data;
+      const { fills: batchFills, hasMore } = data!;
 
       if (!batchFills || batchFills.length === 0) {
         break;
