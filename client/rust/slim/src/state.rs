@@ -62,13 +62,13 @@ pub struct MarketFixed {
     /// Quote volume traded over lifetime, can overflow.
     pub quote_volume: u64,
 
-    pub _padding3: [u64; 8],
+    pub _padding3: [u64; 7],
 }
 
 impl MarketFixed {
     /// Parse a MarketFixed from bytes.
     pub fn try_from_bytes(data: &[u8]) -> Option<Self> {
-        if data.len() < MARKET_FIXED_SIZE {
+        if data.len() < std::mem::size_of::<MarketFixed>() {
             return None;
         }
 
@@ -457,6 +457,7 @@ mod parsing_tests {
 
     #[test]
     fn rejects_truncated_and_out_of_bounds_market_data() {
+        assert_eq!(std::mem::size_of::<MarketFixed>(), MARKET_FIXED_SIZE);
         assert!(Market::try_from_bytes(&[]).is_none());
         assert!(Market::try_from_bytes(&market_bytes(8)).is_none());
     }

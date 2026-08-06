@@ -6,7 +6,7 @@ use manifest::{
         batch_update::{CancelOrderParams, PlaceOrderParams},
         batch_update_instruction, expand_market_instruction, global_add_trader_instruction,
         global_deposit_instruction, global_withdraw_instruction, swap_instruction,
-        ManifestInstruction, SwapParams,
+        swap_v2_instruction, ManifestInstruction, SwapParams,
     },
     quantities::{BaseAtoms, WrapperU64},
     state::{constants::NO_EXPIRATION_LAST_VALID_SLOT, OrderType, RestingOrder},
@@ -1191,9 +1191,47 @@ async fn swap_global_not_backed() -> anyhow::Result<()> {
     )
     .await?;
 
-    test_fixture
-        .swap_with_global(SOL_UNIT_SIZE, 1_000 * USDC_UNIT_SIZE, true, true)
-        .await?;
+    // SwapV2 permits a separate gas payer. Deliberately make that payer a
+    // non-signer while the token-account owner signs; the unbacked global
+    // maker must be skipped instead of panicking in cleanup logging.
+    let owner = test_fixture.context.borrow().payer.insecure_clone();
+    // Ensure swap does not need the non-signing rent payer to expand the
+    // market before it reaches the global-order cleanup path.
+    send_tx_with_retry(
+        Rc::clone(&test_fixture.context),
+        &[expand_market_instruction(
+            &test_fixture.market_fixture.key,
+            &owner.pubkey(),
+        )],
+        Some(&owner.pubkey()),
+        &[&owner],
+    )
+    .await?;
+    let mut swap_ix = swap_v2_instruction(
+        &test_fixture.market_fixture.key,
+        &second_keypair.pubkey(),
+        &owner.pubkey(),
+        &test_fixture.sol_mint_fixture.key,
+        &test_fixture.usdc_mint_fixture.key,
+        &test_fixture.payer_sol_fixture.key,
+        &test_fixture.payer_usdc_fixture.key,
+        SOL_UNIT_SIZE,
+        1_000 * USDC_UNIT_SIZE,
+        true,
+        true,
+        spl_token::id(),
+        spl_token::id(),
+        true,
+    );
+    swap_ix.accounts[0].is_signer = false;
+    swap_ix.accounts[0].is_writable = true;
+    send_tx_with_retry(
+        Rc::clone(&test_fixture.context),
+        &[swap_ix],
+        Some(&owner.pubkey()),
+        &[&owner],
+    )
+    .await?;
 
     // Only get 1 out because the top of global is not backed.
     assert_eq!(test_fixture.payer_sol_fixture.balance_atoms().await, 0);

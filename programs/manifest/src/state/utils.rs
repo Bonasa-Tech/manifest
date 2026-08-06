@@ -347,6 +347,12 @@ pub(crate) fn try_to_reduce_global_tokens<'a, 'info>(
 
     let num_deposited_atoms: GlobalAtoms =
         global_dynamic_account.get_balance_atoms(resting_order_trader);
+    // Cleanup is advisory logging; a non-signer SwapV2 has no gas receiver.
+    // Never let that optional account turn an unbacked maker into a panic.
+    let cleaner: Pubkey = gas_receiver_opt
+        .as_ref()
+        .map(|receiver| *receiver.key)
+        .unwrap_or(*resting_order_trader);
     // Intentionally does not allow partial fills against a global order. The
     // reason for this is to punish global orders that are not backed. There is
     // no technical blocker for supporting partial fills against a global. It is
@@ -354,7 +360,7 @@ pub(crate) fn try_to_reduce_global_tokens<'a, 'info>(
     // when needed, not just for all orders.
     if desired_global_atoms > num_deposited_atoms {
         emit_stack(GlobalCleanupLog {
-            cleaner: *gas_receiver_opt.as_ref().unwrap().key,
+            cleaner,
             maker: *resting_order_trader,
             amount_desired: desired_global_atoms,
             amount_deposited: num_deposited_atoms,
@@ -394,7 +400,7 @@ pub(crate) fn try_to_reduce_global_tokens<'a, 'info>(
         {
             solana_program::msg!("Treating global order as unbacked because it has a transfer fee");
             emit_stack(GlobalCleanupLog {
-                cleaner: *gas_receiver_opt.as_ref().unwrap().key,
+                cleaner,
                 maker: *resting_order_trader,
                 amount_desired: desired_global_atoms,
                 amount_deposited: num_deposited_atoms,
@@ -409,7 +415,7 @@ pub(crate) fn try_to_reduce_global_tokens<'a, 'info>(
                 "Treating global order as unbacked because it has a transfer hook"
             );
             emit_stack(GlobalCleanupLog {
-                cleaner: *gas_receiver_opt.as_ref().unwrap().key,
+                cleaner,
                 maker: *resting_order_trader,
                 amount_desired: desired_global_atoms,
                 amount_deposited: num_deposited_atoms,

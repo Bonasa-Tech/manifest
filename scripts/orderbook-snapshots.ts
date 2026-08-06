@@ -590,6 +590,7 @@ const setupAPI = (monitor: MarketMakerLeaderboard) => {
         JOIN orders o ON os.id = o.snapshot_id
         WHERE os.id = ANY($1)
         ORDER BY os.timestamp DESC, os.market, o.side DESC, o.price DESC
+        LIMIT 10000
       `;
 
       const result = await monitor.pool.query(orderQuery, [snapshotIds]);
