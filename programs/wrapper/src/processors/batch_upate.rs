@@ -136,7 +136,19 @@ fn prepare_cancels(
 
     let mut wrapper_indices: Vec<DataIndex> = Vec::with_capacity(EXPECTED_ORDER_BATCH_SIZE);
     let mut core_cancels: Vec<CancelOrderParams> = Vec::with_capacity(EXPECTED_ORDER_BATCH_SIZE);
+    // cancel_all is a convenience operation on permissionless shared state.
+    // Bound both inspection and cancellation work so callers can retry it
+    // until their tracked orders are exhausted.
+    let mut remaining_cancel_all_scans = if cancel_all {
+        EXPECTED_ORDER_BATCH_SIZE
+    } else {
+        usize::MAX
+    };
     for (wrapper_index, open_order) in open_orders_tree.iter::<WrapperOpenOrder>() {
+        if remaining_cancel_all_scans == 0 {
+            break;
+        }
+        remaining_cancel_all_scans -= 1;
         if cancel_all || client_ids_to_cancel.contains(&open_order.get_client_order_id()) {
             wrapper_indices.push(wrapper_index);
             core_cancels.push(CancelOrderParams::new_with_hint(
@@ -168,6 +180,10 @@ fn prepare_cancels(
             get_dynamic_account::<MarketFixed>(&market_data);
 
         for (index, resting_order) in market_ref.get_bids().iter::<RestingOrder>() {
+            if remaining_cancel_all_scans == 0 {
+                break;
+            }
+            remaining_cancel_all_scans -= 1;
             if resting_order.get_trader_index() == trader_index
                 && !known_sequence_numbers.contains(&resting_order.get_sequence_number())
             {
@@ -182,6 +198,10 @@ fn prepare_cancels(
             }
         }
         for (index, resting_order) in market_ref.get_asks().iter::<RestingOrder>() {
+            if remaining_cancel_all_scans == 0 {
+                break;
+            }
+            remaining_cancel_all_scans -= 1;
             if resting_order.get_trader_index() == trader_index
                 && !known_sequence_numbers.contains(&resting_order.get_sequence_number())
             {
