@@ -7,6 +7,7 @@ import { fillDiscriminant, toFillLogResult } from './fillFeed';
 import {
   detectAggregatorFromKeys,
   detectOriginatingProtocolFromKeys,
+  getInvokedProgramIds,
 } from './aggregators';
 import { WebSocketManager } from './utils/WebSocketManager';
 import { hasTruncatedLogs } from './utils/solana';
@@ -271,14 +272,15 @@ export class FillFeedBlockSub {
     // Extract signers from the transaction
     let originalSigner: string | undefined;
     let signers: string[] = [];
-    let accountKeysStr: string[] = [];
 
     try {
       const message = tx.transaction.message;
 
       if ('accountKeys' in message) {
         // Legacy transaction
-        accountKeysStr = message.accountKeys.map((key: any) => key.toBase58());
+        const accountKeysStr = message.accountKeys.map((key: any) =>
+          key.toBase58(),
+        );
         originalSigner = accountKeysStr[0];
         // Extract all signers using isAccountSigner method
         signers = message.accountKeys
@@ -287,7 +289,7 @@ export class FillFeedBlockSub {
           .map(({ key }: any) => key.toBase58());
       } else {
         // Versioned transaction (v0) - use staticAccountKeys
-        accountKeysStr = message.staticAccountKeys.map((key: any) =>
+        const accountKeysStr = message.staticAccountKeys.map((key: any) =>
           key.toBase58(),
         );
         originalSigner = accountKeysStr[0];
@@ -302,9 +304,10 @@ export class FillFeedBlockSub {
       return;
     }
 
-    const aggregator = detectAggregatorFromKeys(accountKeysStr);
+    const invokedProgramIds = getInvokedProgramIds(tx);
+    const aggregator = detectAggregatorFromKeys(invokedProgramIds);
     const originatingProtocol =
-      detectOriginatingProtocolFromKeys(accountKeysStr);
+      detectOriginatingProtocolFromKeys(invokedProgramIds);
 
     const messages: string[] = tx.meta.logMessages;
 
@@ -336,7 +339,7 @@ export class FillFeedBlockSub {
       try {
         buffer = Buffer.from(programDataEntry.data, 'base64');
         if (
-          buffer.length < 8 ||
+          buffer.length < 8 + FillLog.byteSize ||
           !buffer.subarray(0, 8).equals(fillDiscriminant)
         ) {
           continue;

@@ -11,6 +11,7 @@ import { hasTruncatedLogs as checkTruncatedLogs } from '@/../../client/ts/src/ut
 import {
   detectAggregatorFromKeys,
   detectOriginatingProtocolFromKeys,
+  getInvokedProgramIds,
   resolveTakerFromSigners,
 } from '@/../../client/ts/src/aggregators';
 import { TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID } from '@solana/spl-token';
@@ -357,21 +358,10 @@ const parseTransactionForFills = async (
     let originatingProtocol: string | undefined;
 
     try {
-      const message = tx.transaction.message;
-
-      if ('accountKeys' in message) {
-        // Legacy transaction
-        const accountKeysStr = message.accountKeys.map((k) => k.toBase58());
-        aggregator = detectAggregatorFromKeys(accountKeysStr);
-        originatingProtocol = detectOriginatingProtocolFromKeys(accountKeysStr);
-      } else {
-        // V0 transaction
-        const accountKeysStr = message.staticAccountKeys.map((k) =>
-          k.toBase58(),
-        );
-        aggregator = detectAggregatorFromKeys(accountKeysStr);
-        originatingProtocol = detectOriginatingProtocolFromKeys(accountKeysStr);
-      }
+      const invokedProgramIds = getInvokedProgramIds(tx);
+      aggregator = detectAggregatorFromKeys(invokedProgramIds);
+      originatingProtocol =
+        detectOriginatingProtocolFromKeys(invokedProgramIds);
     } catch (error) {
       console.warn(logPrefix, 'Error detecting aggregator/protocol:', error);
     }
@@ -395,6 +385,7 @@ const parseTransactionForFills = async (
       }
 
       try {
+        if (buffer.length < 8 + FillLog.byteSize) continue;
         const deserializedFillLog = FillLog.deserialize(buffer.subarray(8))[0];
         const fillResult = toFillLogResult(
           deserializedFillLog,

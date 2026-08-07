@@ -1,6 +1,7 @@
 const { Solita } = require('@metaplex-foundation/solita');
 const { spawnSync } = require('child_process');
 const path = require('path');
+const fs = require('fs');
 const idlDir = __dirname;
 
 async function main() {
@@ -22,6 +23,31 @@ async function main() {
     const gen = new Solita(idl, { formatCode: true });
 
     gen.renderAndWriteTo(sdkDir).then(() => {
+      if (programName === 'manifest') {
+        for (const accountName of [
+          'BaseAtoms',
+          'QuoteAtoms',
+          'GlobalAtoms',
+          'QuoteAtomsPerBaseAtom',
+        ]) {
+          const accountFile = path.join(
+            sdkDir,
+            'accounts',
+            `${accountName}.ts`,
+          );
+          const beetName = `${accountName[0].toLowerCase()}${accountName.slice(1)}Beet`;
+          const source = fs.readFileSync(accountFile, 'utf8');
+          const deserialize = `    return ${beetName}.deserialize(buf, offset);`;
+          const checked =
+            `    if (offset < 0 || buf.length - offset < ${beetName}.byteSize) {\n` +
+            `      throw new RangeError('${accountName} buffer is truncated');\n` +
+            `    }\n${deserialize}`;
+          if (!source.includes(deserialize)) {
+            throw new Error(`Unable to harden ${accountFile}`);
+          }
+          fs.writeFileSync(accountFile, source.replace(deserialize, checked));
+        }
+      }
       console.log('Running prettier on generated files...');
       spawnSync('prettier', ['--write', sdkDir, '--trailing-comma all'], {
         stdio: 'inherit',

@@ -60,6 +60,25 @@ export const DELEGATING_SIGNERS: Set<string> = new Set<string>([
   'sighWH8KaiT7QhtV4w29ReVF8kG6D5yG3EQP1KYyGVF',
 ]);
 
+const PROGRAM_INVOKE_PATTERN =
+  /^Program ([1-9A-HJ-NP-Za-km-z]+) invoke \[\d+\]$/;
+
+/**
+ * Extract programs that Solana's runtime says were actually invoked. Merely
+ * appearing in the transaction account list is not execution evidence because
+ * callers may append arbitrary unused readonly accounts.
+ */
+export function getInvokedProgramIds(transaction: {
+  meta?: { logMessages?: string[] | null } | null;
+}): string[] {
+  const invoked = new Set<string>();
+  for (const message of transaction.meta?.logMessages ?? []) {
+    const match = message.match(PROGRAM_INVOKE_PATTERN);
+    if (match) invoked.add(match[1]);
+  }
+  return [...invoked];
+}
+
 /**
  * If a known delegating signer signed the transaction, return the real taker:
  * the fee payer (original signer) when it isn't itself the delegating signer,

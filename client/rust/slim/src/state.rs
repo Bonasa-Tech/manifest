@@ -225,6 +225,7 @@ impl<'a> Market<'a> {
             CLAIMED_SEAT_SIZE,
             None,
         )?;
+        market.validate_claimed_seat_ordering(market.fixed.claimed_seats_root_index)?;
         if !bids.is_disjoint(&asks) || !bids.is_disjoint(&seats) || !asks.is_disjoint(&seats) {
             return None;
         }
@@ -412,6 +413,25 @@ impl<'a> Market<'a> {
             .then_with(|| left.order_type.cmp(&right.order_type))
     }
 
+    fn validate_claimed_seat_ordering(&self, root: DataIndex) -> Option<()> {
+        let mut stack = vec![(root, None::<[u8; 32]>, None::<[u8; 32]>)];
+        while let Some((index, lower, upper)) = stack.pop() {
+            if index == NIL {
+                continue;
+            }
+            let header = self.get_header(index)?;
+            let trader = self.get_seat(index)?.trader;
+            if lower.is_some_and(|minimum| trader <= minimum)
+                || upper.is_some_and(|maximum| trader >= maximum)
+            {
+                return None;
+            }
+            stack.push((header.left, lower, Some(trader)));
+            stack.push((header.right, Some(trader), upper));
+        }
+        Some(())
+    }
+
     fn validate_best_index(&self, root: DataIndex, best: DataIndex) -> Option<()> {
         if root == NIL {
             return (best == NIL).then_some(());
@@ -552,6 +572,45 @@ mod parsing_tests {
             ..std::mem::offset_of!(MarketFixed, bids_best_index) + 4]
             .copy_from_slice(&child.to_le_bytes());
         set_order(&mut data, child, 0);
+        assert!(Market::try_from_bytes(&data).is_none());
+    }
+
+    #[test]
+    fn rejects_unordered_claimed_seats() {
+        let child = (RBTREE_OVERHEAD_BYTES + CLAIMED_SEAT_SIZE) as DataIndex;
+        let mut data =
+            vec![
+                0_u8;
+                MARKET_FIXED_SIZE + child as usize + RBTREE_OVERHEAD_BYTES + CLAIMED_SEAT_SIZE
+            ];
+        data[..8].copy_from_slice(&MARKET_FIXED_DISCRIMINANT.to_le_bytes());
+        for (field, value) in [
+            (std::mem::offset_of!(MarketFixed, bids_root_index), NIL),
+            (std::mem::offset_of!(MarketFixed, bids_best_index), NIL),
+            (std::mem::offset_of!(MarketFixed, asks_root_index), NIL),
+            (std::mem::offset_of!(MarketFixed, asks_best_index), NIL),
+            (
+                std::mem::offset_of!(MarketFixed, claimed_seats_root_index),
+                0,
+            ),
+            (std::mem::offset_of!(MarketFixed, free_list_head_index), NIL),
+        ] {
+            data[field..field + 4].copy_from_slice(&value.to_le_bytes());
+        }
+        let dynamic = &mut data[MARKET_FIXED_SIZE..];
+        dynamic[0..4].copy_from_slice(&NIL.to_le_bytes());
+        dynamic[4..8].copy_from_slice(&child.to_le_bytes());
+        dynamic[8..12].copy_from_slice(&NIL.to_le_bytes());
+        dynamic[child as usize..child as usize + 4].copy_from_slice(&NIL.to_le_bytes());
+        dynamic[child as usize + 4..child as usize + 8].copy_from_slice(&NIL.to_le_bytes());
+        dynamic[child as usize + 8..child as usize + 12].copy_from_slice(&0_u32.to_le_bytes());
+        dynamic[child as usize + 12] = 1;
+
+        let root_trader_offset = RBTREE_OVERHEAD_BYTES;
+        dynamic[root_trader_offset..root_trader_offset + 32].fill(2);
+        let child_trader_offset = child as usize + RBTREE_OVERHEAD_BYTES;
+        // A right child must be greater than its parent, but this one is lower.
+        dynamic[child_trader_offset..child_trader_offset + 32].fill(1);
         assert!(Market::try_from_bytes(&data).is_none());
     }
 }

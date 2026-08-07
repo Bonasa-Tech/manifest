@@ -203,12 +203,20 @@ const run = async () => {
     res.send(JSON.stringify(Object.fromEntries(statsServer.getMetadata())));
   };
   const orderbookHandler: RequestHandler = async (req, res) => {
-    res.send(
-      await statsServer.getOrderbook(
-        req.query.ticker_id as string,
-        Number(req.query.depth),
-      ),
-    );
+    try {
+      const depth = parseBoundedQueryInteger(
+        req.query.depth,
+        100,
+        1,
+        500,
+        'depth',
+      );
+      res.send(
+        await statsServer.getOrderbook(req.query.ticker_id as string, depth),
+      );
+    } catch (error) {
+      res.status(400).send({ error: (error as Error).message });
+    }
   };
   const volumeHandler: RequestHandler = async (_req, res) => {
     res.send(await statsServer.getVolume());

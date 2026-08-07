@@ -8,6 +8,7 @@ import {
 import {
   detectAggregatorFromKeys,
   detectOriginatingProtocolFromKeys,
+  getInvokedProgramIds,
   resolveTakerFromSigners,
 } from '../../client/ts/src/aggregators';
 import { extractProgramDataLogs } from '../../client/ts/src/utils/programLogs';
@@ -121,15 +122,9 @@ export const parseTransactionForFills = async (
   let aggregator: string | undefined;
   let originatingProtocol: string | undefined;
 
-  if ('accountKeys' in message) {
-    const accountKeysStr = message.accountKeys.map((k) => k.toBase58());
-    aggregator = detectAggregatorFromKeys(accountKeysStr);
-    originatingProtocol = detectOriginatingProtocolFromKeys(accountKeysStr);
-  } else {
-    const accountKeysStr = message.staticAccountKeys.map((k) => k.toBase58());
-    aggregator = detectAggregatorFromKeys(accountKeysStr);
-    originatingProtocol = detectOriginatingProtocolFromKeys(accountKeysStr);
-  }
+  const invokedProgramIds = getInvokedProgramIds(tx);
+  aggregator = detectAggregatorFromKeys(invokedProgramIds);
+  originatingProtocol = detectOriginatingProtocolFromKeys(invokedProgramIds);
 
   const programDatas = extractProgramDataLogs(
     tx.meta.logMessages,
@@ -148,6 +143,7 @@ export const parseTransactionForFills = async (
     }
 
     try {
+      if (buffer.length < 8 + FillLog.byteSize) continue;
       const deserializedFillLog = FillLog.deserialize(buffer.subarray(8))[0];
       const fillResult = toFillLogResult(
         deserializedFillLog,

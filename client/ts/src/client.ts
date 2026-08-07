@@ -102,6 +102,7 @@ export class ManifestClient {
     try {
       const response = await fetch(
         `https://mfx-stats-mainnet.fly.dev/wrapper?owner=${payerPub.toBase58()}`,
+        { signal: AbortSignal.timeout(5_000) },
       );
       if (response.ok) {
         const data = (await response.json()) as {

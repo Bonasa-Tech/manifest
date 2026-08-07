@@ -1473,32 +1473,8 @@ export class ManifestStatsServer {
       }
       const timestamp = Math.floor(Date.now() / 1000).toString();
 
-      if (depth == 0) {
-        return {
-          ticker_id: tickerId,
-          timestamp,
-          bids: market
-            .bids()
-            .reverse()
-            .map((restingOrder: RestingOrder) => {
-              return [
-                restingOrder.tokenPrice,
-                Number(restingOrder.numBaseTokens),
-              ];
-            }),
-          asks: market
-            .asks()
-            .reverse()
-            .map((restingOrder: RestingOrder) => {
-              return [
-                restingOrder.tokenPrice,
-                Number(restingOrder.numBaseTokens),
-              ];
-            }),
-        };
-      }
-      const bids: RestingOrder[] = market.bids().reverse();
-      const asks: RestingOrder[] = market.asks().reverse();
+      const bids: RestingOrder[] = market.bids().slice().reverse();
+      const asks: RestingOrder[] = market.asks().slice().reverse();
 
       // CoinGecko spec: depth = total orders, split evenly between bids/asks
       // depth=100 means 50 bids + 50 asks
@@ -1512,9 +1488,15 @@ export class ManifestStatsServer {
         bids: bidsUpToDepth.map((restingOrder: RestingOrder) => {
           return [restingOrder.tokenPrice, Number(restingOrder.numBaseTokens)];
         }),
-        asks: asksUpToDepth.reverse().map((restingOrder: RestingOrder) => {
-          return [restingOrder.tokenPrice, Number(restingOrder.numBaseTokens)];
-        }),
+        asks: asksUpToDepth
+          .slice()
+          .reverse()
+          .map((restingOrder: RestingOrder) => {
+            return [
+              restingOrder.tokenPrice,
+              Number(restingOrder.numBaseTokens),
+            ];
+          }),
       };
     } catch (err) {
       console.log('Error getOrderbook', tickerId, depth, err);
