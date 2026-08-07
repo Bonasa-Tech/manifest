@@ -22,6 +22,15 @@ describe('stats HTTP validation', () => {
     }
   });
 
+  it('caps public orderbook depth', () => {
+    assert.equal(parseBoundedQueryInteger('500', 100, 1, 500, 'depth'), 500);
+    for (const value of ['0', '501', 'Infinity']) {
+      assert.throws(() =>
+        parseBoundedQueryInteger(value, 100, 1, 500, 'depth'),
+      );
+    }
+  });
+
   it('compares bearer credentials without accepting partial tokens', () => {
     assert.isTrue(
       isAuthorizedBearer('Bearer operator-secret', 'operator-secret'),

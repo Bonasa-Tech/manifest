@@ -85,6 +85,9 @@ export class BaseAtoms implements BaseAtomsArgs {
    * @returns a tuple of the account data and the offset up to which the buffer was read to obtain it.
    */
   static deserialize(buf: Buffer, offset = 0): [BaseAtoms, number] {
+    if (offset < 0 || buf.length - offset < baseAtomsBeet.byteSize) {
+      throw new RangeError('BaseAtoms buffer is truncated');
+    }
     return baseAtomsBeet.deserialize(buf, offset);
   }
 

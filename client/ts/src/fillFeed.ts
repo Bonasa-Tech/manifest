@@ -20,10 +20,13 @@ import { extractProgramDataLogs } from './utils/programLogs';
 import {
   detectAggregatorFromKeys,
   detectOriginatingProtocolFromKeys,
+  getInvokedProgramIds,
   resolveTakerFromSigners,
 } from './aggregators';
 
 const SIGNATURE_BATCH_SIZE = 10;
+const SIGNATURE_PAGE_SIZE = 1_000;
+const MAX_SIGNATURE_PAGES_PER_POLL = 10;
 
 // For live monitoring of the fill feed. For a more complete look at fill
 // history stats, need to index all trades.
@@ -119,9 +122,13 @@ export class FillFeed {
         // integrations give us steady flow.
         await new Promise((f) => setTimeout(f, 400));
 
-        const signatures: ConfirmedSignatureInfo[] = [];
+        const signaturePages: ConfirmedSignatureInfo[][] = [];
         let before: string | undefined;
-        do {
+        for (
+          let pageNumber = 0;
+          pageNumber < MAX_SIGNATURE_PAGES_PER_POLL;
+          pageNumber++
+        ) {
           const page = await this.connection.getSignaturesForAddress(
             PROGRAM_ID,
             {
@@ -130,17 +137,30 @@ export class FillFeed {
             },
             'finalized',
           );
-          signatures.push(...page);
+          signaturePages.push(page);
           before = page.at(-1)?.signature;
           if (
-            page.length < 1_000 ||
+            page.length < SIGNATURE_PAGE_SIZE ||
             page.some((sig) => sig.signature === lastSignature)
           ) {
             break;
           }
-        } while (before);
-        // Flip it so we do oldest first.
-        signatures.reverse();
+          if (!before) break;
+        }
+
+        if (
+          signaturePages.length === MAX_SIGNATURE_PAGES_PER_POLL &&
+          signaturePages.at(-1)?.length === SIGNATURE_PAGE_SIZE
+        ) {
+          console.warn(
+            `Fill-feed backlog exceeded ${MAX_SIGNATURE_PAGES_PER_POLL * SIGNATURE_PAGE_SIZE} signatures; processing the newest bounded window`,
+          );
+        }
+
+        // Process the bounded window oldest-first without retaining an
+        // unbounded RPC history. If the cap is reached, older history is shed
+        // deliberately so live monitoring can recover with bounded memory.
+        const signatures = signaturePages.flat().reverse();
 
         // Process even single signatures, but handle the edge case differently
         if (signatures.length === 0) {
@@ -299,7 +319,7 @@ export class FillFeed {
       try {
         buffer = Buffer.from(programDataEntry.data, 'base64');
         if (
-          buffer.length < 8 ||
+          buffer.length < 8 + FillLog.byteSize ||
           !buffer.subarray(0, 8).equals(fillDiscriminant)
         ) {
           continue;
@@ -358,21 +378,8 @@ export class FillFeed {
 function detectAggregator(
   tx: VersionedTransactionResponse,
 ): string | undefined {
-  // Look for the aggregator program id from a list of known ids.
   try {
-    // For versioned transactions, we need to handle both static and resolved account keys
-    const message = tx.transaction.message;
-
-    // Handle both legacy and versioned transactions
-    if ('accountKeys' in message) {
-      // Legacy transaction
-      const accountKeysStr = message.accountKeys.map((k) => k.toBase58());
-      return detectAggregatorFromKeys(accountKeysStr);
-    } else {
-      // V0 transaction - use staticAccountKeys directly to avoid lookup resolution issues
-      const accountKeysStr = message.staticAccountKeys.map((k) => k.toBase58());
-      return detectAggregatorFromKeys(accountKeysStr);
-    }
+    return detectAggregatorFromKeys(getInvokedProgramIds(tx));
   } catch (error) {
     console.warn('Error detecting aggregator:', error);
     // Fall back to undefined if we can't detect the aggregator
@@ -384,18 +391,7 @@ function detectOriginatingProtocol(
   tx: VersionedTransactionResponse,
 ): string | undefined {
   try {
-    const message = tx.transaction.message;
-
-    // Handle both legacy and versioned transactions
-    if ('accountKeys' in message) {
-      // Legacy transaction
-      const accountKeysStr = message.accountKeys.map((k) => k.toBase58());
-      return detectOriginatingProtocolFromKeys(accountKeysStr);
-    } else {
-      // V0 transaction - use staticAccountKeys directly to avoid lookup resolution issues
-      const accountKeysStr = message.staticAccountKeys.map((k) => k.toBase58());
-      return detectOriginatingProtocolFromKeys(accountKeysStr);
-    }
+    return detectOriginatingProtocolFromKeys(getInvokedProgramIds(tx));
   } catch (error) {
     console.warn('Error detecting originating protocol:', error);
     // Fall back to undefined if we can't detect the originating protocol

@@ -85,6 +85,9 @@ export class QuoteAtoms implements QuoteAtomsArgs {
    * @returns a tuple of the account data and the offset up to which the buffer was read to obtain it.
    */
   static deserialize(buf: Buffer, offset = 0): [QuoteAtoms, number] {
+    if (offset < 0 || buf.length - offset < quoteAtomsBeet.byteSize) {
+      throw new RangeError('QuoteAtoms buffer is truncated');
+    }
     return quoteAtomsBeet.deserialize(buf, offset);
   }
 

@@ -90,6 +90,12 @@ export class QuoteAtomsPerBaseAtom implements QuoteAtomsPerBaseAtomArgs {
    * @returns a tuple of the account data and the offset up to which the buffer was read to obtain it.
    */
   static deserialize(buf: Buffer, offset = 0): [QuoteAtomsPerBaseAtom, number] {
+    if (
+      offset < 0 ||
+      buf.length - offset < quoteAtomsPerBaseAtomBeet.byteSize
+    ) {
+      throw new RangeError('QuoteAtomsPerBaseAtom buffer is truncated');
+    }
     return quoteAtomsPerBaseAtomBeet.deserialize(buf, offset);
   }
 

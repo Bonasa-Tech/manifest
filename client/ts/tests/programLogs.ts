@@ -1,5 +1,9 @@
 import { assert } from 'chai';
 import { extractProgramDataLogs } from '../src/utils/programLogs';
+import {
+  detectAggregatorFromKeys,
+  getInvokedProgramIds,
+} from '../src/aggregators';
 
 const MANIFEST = 'MNFSTqtC93rEfYHB6hF82sKdZpUDFWkViLByLd1k1Ms';
 const OTHER = '11111111111111111111111111111111';
@@ -35,5 +39,24 @@ describe('program log attribution', () => {
       { data: 'first', invocationIndex: 0 },
       { data: 'second', invocationIndex: 1 },
     ]);
+  });
+
+  it('attributes aggregators only when the runtime invoked them', () => {
+    const jupiter = 'JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4';
+    const tx = {
+      meta: {
+        logMessages: [
+          `Program ${OTHER} invoke [1]`,
+          `Program log: Program ${jupiter} invoke [2]`,
+          `Program ${OTHER} success`,
+        ],
+      },
+    };
+    const invoked = getInvokedProgramIds(tx);
+    assert.deepEqual(invoked, [OTHER]);
+    assert.isUndefined(detectAggregatorFromKeys(invoked));
+
+    tx.meta.logMessages.splice(1, 0, `Program ${jupiter} invoke [2]`);
+    assert.equal(detectAggregatorFromKeys(getInvokedProgramIds(tx)), 'Jupiter');
   });
 });

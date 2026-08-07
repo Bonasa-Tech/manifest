@@ -85,6 +85,9 @@ export class GlobalAtoms implements GlobalAtomsArgs {
    * @returns a tuple of the account data and the offset up to which the buffer was read to obtain it.
    */
   static deserialize(buf: Buffer, offset = 0): [GlobalAtoms, number] {
+    if (offset < 0 || buf.length - offset < globalAtomsBeet.byteSize) {
+      throw new RangeError('GlobalAtoms buffer is truncated');
+    }
     return globalAtomsBeet.deserialize(buf, offset);
   }
 
