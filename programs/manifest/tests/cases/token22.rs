@@ -285,6 +285,36 @@ async fn token22_base() -> anyhow::Result<()> {
         spl_token::id(),
         false,
     );
+
+    // SwapContext must not accept a missing or unrelated Token-2022 base mint.
+    // The optional-account parser previously identified any token-owned account
+    // as the mint without proving it was the market's configured base mint.
+    let mut missing_base_mint_ix: Instruction = swap_base_in_ix.clone();
+    let removed_base_mint: solana_instruction::AccountMeta =
+        missing_base_mint_ix.accounts.remove(8);
+    assert_eq!(removed_base_mint.pubkey, spl_mint_key);
+    assert!(send_tx_with_retry(
+        Rc::clone(&context),
+        &[missing_base_mint_ix],
+        Some(&payer),
+        &[&payer_keypair.insecure_clone()],
+    )
+    .await
+    .is_err());
+
+    let unrelated_base_mint: MintFixture =
+        MintFixture::new_with_version(Rc::clone(&context), Some(9), true).await;
+    let mut wrong_base_mint_ix: Instruction = swap_base_in_ix.clone();
+    wrong_base_mint_ix.accounts[8].pubkey = unrelated_base_mint.key;
+    assert!(send_tx_with_retry(
+        Rc::clone(&context),
+        &[wrong_base_mint_ix],
+        Some(&payer),
+        &[&payer_keypair.insecure_clone()],
+    )
+    .await
+    .is_err());
+
     send_tx_with_retry(
         Rc::clone(&context),
         &[swap_base_in_ix, swap_base_out_ix],
@@ -549,6 +579,36 @@ async fn token22_quote() -> anyhow::Result<()> {
         spl_token_2022::id(),
         false,
     );
+
+    // Exercise the quote-side Token-2022 checks in SwapContext as well. The
+    // quote program account remains present when index 9 is removed, proving
+    // that a Token-2022 swap is rejected specifically for its missing mint.
+    let mut missing_quote_mint_ix: Instruction = swap_base_in_ix.clone();
+    let removed_quote_mint: solana_instruction::AccountMeta =
+        missing_quote_mint_ix.accounts.remove(9);
+    assert_eq!(removed_quote_mint.pubkey, usdc_mint_key);
+    assert!(send_tx_with_retry(
+        Rc::clone(&context),
+        &[missing_quote_mint_ix],
+        Some(&payer),
+        &[&payer_keypair.insecure_clone()],
+    )
+    .await
+    .is_err());
+
+    let unrelated_quote_mint: MintFixture =
+        MintFixture::new_with_version(Rc::clone(&context), Some(6), true).await;
+    let mut wrong_quote_mint_ix: Instruction = swap_base_in_ix.clone();
+    wrong_quote_mint_ix.accounts[9].pubkey = unrelated_quote_mint.key;
+    assert!(send_tx_with_retry(
+        Rc::clone(&context),
+        &[wrong_quote_mint_ix],
+        Some(&payer),
+        &[&payer_keypair.insecure_clone()],
+    )
+    .await
+    .is_err());
+
     send_tx_with_retry(
         Rc::clone(&context),
         &[swap_base_in_ix, swap_base_out_ix],

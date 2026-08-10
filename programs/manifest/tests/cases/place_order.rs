@@ -301,6 +301,102 @@ async fn match_limit_orders_basic_test_reverse() -> anyhow::Result<()> {
 }
 
 #[tokio::test]
+async fn same_price_asks_match_fifo_in_program_test() -> anyhow::Result<()> {
+    let mut test_fixture: TestFixture = TestFixture::new().await;
+    test_fixture.claim_seat().await?;
+    test_fixture.deposit(Token::SOL, 3 * SOL_UNIT_SIZE).await?;
+
+    for num_base_atoms in [SOL_UNIT_SIZE, 2 * SOL_UNIT_SIZE] {
+        let num_base_atoms: u64 = num_base_atoms;
+        test_fixture
+            .place_order(
+                Side::Ask,
+                num_base_atoms,
+                1,
+                0,
+                NO_EXPIRATION_LAST_VALID_SLOT,
+                OrderType::Limit,
+            )
+            .await?;
+    }
+
+    let second_keypair: Keypair = test_fixture.second_keypair.insecure_clone();
+    test_fixture.claim_seat_for_keypair(&second_keypair).await?;
+    test_fixture
+        .deposit_for_keypair(Token::USDC, 1_000 * USDC_UNIT_SIZE, &second_keypair)
+        .await?;
+    test_fixture
+        .place_order_for_keypair(
+            Side::Bid,
+            SOL_UNIT_SIZE,
+            1,
+            0,
+            NO_EXPIRATION_LAST_VALID_SLOT,
+            OrderType::ImmediateOrCancel,
+            &second_keypair,
+        )
+        .await?;
+
+    let resting_orders: Vec<RestingOrder> = test_fixture.market_fixture.get_resting_orders().await;
+    assert_eq!(resting_orders.len(), 1);
+    assert_eq!(resting_orders[0].get_sequence_number(), 1);
+    assert_eq!(
+        resting_orders[0].get_num_base_atoms().as_u64(),
+        2 * SOL_UNIT_SIZE
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn same_price_bids_match_fifo_in_program_test() -> anyhow::Result<()> {
+    let mut test_fixture: TestFixture = TestFixture::new().await;
+    test_fixture.claim_seat().await?;
+    test_fixture
+        .deposit(Token::USDC, 3_000 * USDC_UNIT_SIZE)
+        .await?;
+
+    for num_base_atoms in [SOL_UNIT_SIZE, 2 * SOL_UNIT_SIZE] {
+        let num_base_atoms: u64 = num_base_atoms;
+        test_fixture
+            .place_order(
+                Side::Bid,
+                num_base_atoms,
+                1,
+                0,
+                NO_EXPIRATION_LAST_VALID_SLOT,
+                OrderType::Limit,
+            )
+            .await?;
+    }
+
+    let second_keypair: Keypair = test_fixture.second_keypair.insecure_clone();
+    test_fixture.claim_seat_for_keypair(&second_keypair).await?;
+    test_fixture
+        .deposit_for_keypair(Token::SOL, SOL_UNIT_SIZE, &second_keypair)
+        .await?;
+    test_fixture
+        .place_order_for_keypair(
+            Side::Ask,
+            SOL_UNIT_SIZE,
+            1,
+            0,
+            NO_EXPIRATION_LAST_VALID_SLOT,
+            OrderType::ImmediateOrCancel,
+            &second_keypair,
+        )
+        .await?;
+
+    let resting_orders: Vec<RestingOrder> = test_fixture.market_fixture.get_resting_orders().await;
+    assert_eq!(resting_orders.len(), 1);
+    assert_eq!(resting_orders[0].get_sequence_number(), 1);
+    assert_eq!(
+        resting_orders[0].get_num_base_atoms().as_u64(),
+        2 * SOL_UNIT_SIZE
+    );
+    Ok(())
+}
+
+#[tokio::test]
 async fn match_limit_orders_more_than_resting_test() -> anyhow::Result<()> {
     let mut test_fixture: TestFixture = TestFixture::new().await;
     test_fixture.claim_seat().await?;
