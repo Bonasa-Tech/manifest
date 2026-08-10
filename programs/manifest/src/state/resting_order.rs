@@ -135,6 +135,9 @@ impl RestingOrder {
         is_bid: bool,
         order_type: OrderType,
     ) -> Result<Self, ProgramError> {
+        if !order_type.is_valid() {
+            return Err(ProgramError::InvalidInstructionData);
+        }
         // Reverse orders cannot have expiration. The purpose of those orders is to
         // be a permanent liquidity on the book.
         assert!(!(order_type.is_reversible() && last_valid_slot != NO_EXPIRATION_LAST_VALID_SLOT));

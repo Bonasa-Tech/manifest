@@ -234,7 +234,7 @@ const_assert_eq!(
 );
 const_assert_eq!(size_of::<MarketFixed>(), MARKET_FIXED_SIZE);
 const_assert_eq!(size_of::<MarketFixed>() % 8, 0);
-impl Get for MarketFixed {}
+unsafe impl Get for MarketFixed {}
 
 impl MarketFixed {
     pub fn new_empty(
@@ -397,9 +397,10 @@ impl MarketFixed {
             if offset % 8 != 0 || end > dynamic.len() || !seen.insert(index) {
                 return Err("invalid market free list");
             }
-            let node = bytemuck::pod_read_unaligned::<FreeListNode<MarketUnusedFreeListPadding>>(
-                &dynamic[offset..end],
-            );
+            let node: FreeListNode<MarketUnusedFreeListPadding> =
+                hypertree::read_unaligned::<FreeListNode<MarketUnusedFreeListPadding>>(
+                    &dynamic[offset..end],
+                );
             index = node.get_next_index();
         }
         Ok(())

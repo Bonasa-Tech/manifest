@@ -4,15 +4,15 @@
 /// more effective for landing transactions. Rather than requiring a write lock
 /// for state that covers all markets, you just need to write lock state that
 /// covers all orders involving a given token.
-use std::{cmp::Ordering, mem::size_of};
+use std::{cmp::Ordering, collections::BTreeMap, mem::size_of};
 
 use bytemuck::{Pod, Zeroable};
 #[cfg(not(feature = "certora"))]
 use hypertree::validate_red_black_tree;
 #[cfg(not(feature = "certora"))]
 use hypertree::{
-    get_helper, get_mut_helper, FreeList, HyperTreeReadOperations, HyperTreeWriteOperations,
-    RBNode, RedBlackTree, RedBlackTreeReadOnly,
+    get_helper, get_mut_helper, FreeList, HyperTreeReadOperations, HyperTreeValueIteratorTrait,
+    HyperTreeWriteOperations, RBNode, RedBlackTree, RedBlackTreeReadOnly,
 };
 use hypertree::{DataIndex, Get, NIL};
 use shank::ShankType;
@@ -101,7 +101,28 @@ pub fn validate_global_dynamic(fixed: &GlobalFixed, dynamic: &[u8]) -> Result<()
         dynamic,
         fixed.global_deposits_root_index,
         fixed.global_deposits_max_index,
-    )
+    )?;
+
+    let deposit_tree: GlobalDepositTreeReadOnly<'_> = GlobalDepositTreeReadOnly::new(
+        dynamic,
+        fixed.global_deposits_root_index,
+        fixed.global_deposits_max_index,
+    );
+    let deposits_by_index: BTreeMap<DataIndex, Pubkey> = deposit_tree
+        .iter::<GlobalDeposit>()
+        .map(|(index, deposit): (DataIndex, &GlobalDeposit)| (index, *deposit.get_trader()))
+        .collect();
+    let trader_tree: GlobalTraderTreeReadOnly<'_> =
+        GlobalTraderTreeReadOnly::new(dynamic, fixed.global_traders_root_index, NIL);
+    for (_index, trader) in trader_tree.iter::<GlobalTrader>() {
+        let deposit_owner: &Pubkey = deposits_by_index
+            .get(&trader.get_deposit_index())
+            .ok_or("global trader points to an unreachable deposit")?;
+        if deposit_owner != trader.get_trader() {
+            return Err("global trader points to another trader's deposit");
+        }
+    }
+    Ok(())
 }
 
 #[repr(C)]
@@ -162,7 +183,7 @@ const_assert_eq!(
 #[cfg(not(feature = "certora"))]
 const_assert_eq!(size_of::<GlobalFixed>(), GLOBAL_FIXED_SIZE);
 const_assert_eq!(size_of::<GlobalFixed>() % 8, 0);
-impl Get for GlobalFixed {}
+unsafe impl Get for GlobalFixed {}
 
 #[cfg(not(feature = "certora"))]
 #[repr(C, packed)]
@@ -832,6 +853,31 @@ mod test {
     use super::*;
     use crate::quantities::WrapperU64;
 
+    fn global_with_one_trader() -> (GlobalFixed, [u8; 2 * GLOBAL_BLOCK_SIZE], Pubkey) {
+        const TRADER_INDEX: DataIndex = 0;
+        const DEPOSIT_INDEX: DataIndex = GLOBAL_BLOCK_SIZE as DataIndex;
+
+        let trader: Pubkey = Pubkey::new_unique();
+        let mut fixed: GlobalFixed = GlobalFixed::new_empty(&Pubkey::new_unique());
+        let mut dynamic: [u8; 2 * GLOBAL_BLOCK_SIZE] = [0; 2 * GLOBAL_BLOCK_SIZE];
+
+        let mut trader_tree: GlobalTraderTree<'_> = GlobalTraderTree::new(&mut dynamic, NIL, NIL);
+        trader_tree.insert(
+            TRADER_INDEX,
+            GlobalTrader::new_empty(&trader, DEPOSIT_INDEX),
+        );
+        fixed.global_traders_root_index = trader_tree.get_root_index();
+        drop(trader_tree);
+
+        let mut deposit_tree: GlobalDepositTree<'_> =
+            GlobalDepositTree::new(&mut dynamic, NIL, NIL);
+        deposit_tree.insert(DEPOSIT_INDEX, GlobalDeposit::new_empty(&trader));
+        fixed.global_deposits_root_index = deposit_tree.get_root_index();
+        fixed.global_deposits_max_index = deposit_tree.get_max_index();
+
+        (fixed, dynamic, trader)
+    }
+
     #[test]
     fn test_display_trader() {
         let _ = format!("{}", GlobalTrader::default());
@@ -859,5 +905,42 @@ mod test {
         // Reversed order than expected because Hypertrees give max pointer, but we want a min balance.
         assert!(global_deposit1 > global_deposit2);
         assert!(global_deposit1 != global_deposit2);
+    }
+
+    #[test]
+    fn validation_accepts_matching_trader_deposit_reference() {
+        let (fixed, dynamic, _trader): (GlobalFixed, [u8; 2 * GLOBAL_BLOCK_SIZE], Pubkey) =
+            global_with_one_trader();
+
+        assert_eq!(validate_global_dynamic(&fixed, &dynamic), Ok(()));
+    }
+
+    #[test]
+    fn validation_rejects_unreachable_trader_deposit_reference() {
+        let (fixed, mut dynamic, _trader): (GlobalFixed, [u8; 2 * GLOBAL_BLOCK_SIZE], Pubkey) =
+            global_with_one_trader();
+        let trader_node: &mut RBNode<GlobalTrader> =
+            get_mut_helper(&mut dynamic, fixed.global_traders_root_index);
+        trader_node.get_mut_value().deposit_index = 2 * GLOBAL_BLOCK_SIZE as DataIndex;
+
+        assert_eq!(
+            validate_global_dynamic(&fixed, &dynamic),
+            Err("global trader points to an unreachable deposit")
+        );
+    }
+
+    #[test]
+    fn validation_rejects_deposit_owned_by_another_trader() {
+        let (fixed, mut dynamic, trader): (GlobalFixed, [u8; 2 * GLOBAL_BLOCK_SIZE], Pubkey) =
+            global_with_one_trader();
+        let deposit_node: &mut RBNode<GlobalDeposit> =
+            get_mut_helper(&mut dynamic, fixed.global_deposits_root_index);
+        deposit_node.get_mut_value().trader = Pubkey::new_unique();
+
+        assert_ne!(deposit_node.get_value().get_trader(), &trader);
+        assert_eq!(
+            validate_global_dynamic(&fixed, &dynamic),
+            Err("global trader points to another trader's deposit")
+        );
     }
 }
