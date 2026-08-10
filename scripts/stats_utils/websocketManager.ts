@@ -7,7 +7,9 @@ export interface WebSocketManagerOptions {
   maxReconnectDelay?: number;
   heartbeatInterval?: number;
   connectionTimeout?: number;
-  onMessage: (data: any) => void;
+  maxPayloadBytes?: number;
+  maxQueuedMessages?: number;
+  onMessage: (data: unknown) => Promise<void> | void;
   onConnect?: () => void;
   onDisconnect?: (code: number, reason: string) => void;
   onError?: (error: Error) => void;
@@ -30,9 +32,13 @@ export class WebSocketManager {
   private isConnecting: boolean = false;
   private shouldReconnect: boolean = true;
   private isClosed: boolean = false;
+  private maxPayloadBytes: number;
+  private maxQueuedMessages: number;
+  private messageQueue: unknown[] = [];
+  private drainingMessages: boolean = false;
 
   // Callbacks
-  private onMessage: (data: any) => void;
+  private onMessage: (data: unknown) => Promise<void> | void;
   private onConnect?: () => void;
   private onDisconnect?: (code: number, reason: string) => void;
   private onError?: (error: Error) => void;
@@ -45,6 +51,8 @@ export class WebSocketManager {
     this.maxReconnectDelay = options.maxReconnectDelay ?? 30000;
     this.heartbeatIntervalMs = options.heartbeatInterval ?? 30000;
     this.connectionTimeout = options.connectionTimeout ?? 10000;
+    this.maxPayloadBytes = options.maxPayloadBytes ?? 64 * 1024;
+    this.maxQueuedMessages = options.maxQueuedMessages ?? 256;
     this.onMessage = options.onMessage;
     this.onConnect = options.onConnect;
     this.onDisconnect = options.onDisconnect;
@@ -78,7 +86,7 @@ export class WebSocketManager {
     );
 
     try {
-      this.ws = new WebSocket(this.url);
+      this.ws = new WebSocket(this.url, { maxPayload: this.maxPayloadBytes });
 
       // Set connection timeout
       this.connectionTimer = setTimeout(() => {
@@ -129,8 +137,18 @@ export class WebSocketManager {
 
       this.ws.onmessage = (event) => {
         try {
-          const data = JSON.parse(event.data.toString());
-          this.onMessage(data);
+          const raw = event.data.toString();
+          if (Buffer.byteLength(raw) > this.maxPayloadBytes) {
+            this.ws?.close(1009, 'message too large');
+            return;
+          }
+          const data: unknown = JSON.parse(raw);
+          if (this.messageQueue.length >= this.maxQueuedMessages) {
+            this.ws?.close(1013, 'fill consumer overloaded');
+            return;
+          }
+          this.messageQueue.push(data);
+          void this.drainMessageQueue();
         } catch (error) {
           console.error('[WebSocket] Failed to parse message:', error);
         }
@@ -147,6 +165,21 @@ export class WebSocketManager {
       if (this.shouldReconnect && !this.isClosed) {
         this.scheduleReconnect();
       }
+    }
+  }
+
+  private async drainMessageQueue(): Promise<void> {
+    if (this.drainingMessages) return;
+    this.drainingMessages = true;
+    try {
+      while (this.messageQueue.length > 0) {
+        await this.onMessage(this.messageQueue.shift());
+      }
+    } catch (error) {
+      console.error('[WebSocket] Message processing failed:', error);
+      this.ws?.close(1008, 'invalid fill message');
+    } finally {
+      this.drainingMessages = false;
     }
   }
 

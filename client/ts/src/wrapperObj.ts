@@ -3,7 +3,10 @@ import { bignum } from '@metaplex-foundation/beet';
 import { publicKey as beetPublicKey } from '@metaplex-foundation/beet-solana';
 import { FIXED_WRAPPER_HEADER_SIZE, NIL } from './constants';
 import { OrderType } from './manifest';
-import { deserializeRedBlackTree } from './utils/redBlackTree';
+import {
+  createRedBlackTreeParseContext,
+  deserializeRedBlackTree,
+} from './utils/redBlackTree';
 import {
   MarketInfo,
   WrapperOpenOrder as WrapperOpenOrderRaw,
@@ -251,12 +254,15 @@ export class Wrapper {
     const _padding = data.readUInt32LE(offset);
     offset += 12;
 
+    const dynamicData = data.subarray(FIXED_WRAPPER_HEADER_SIZE);
+    const parseContext = createRedBlackTreeParseContext(dynamicData.length);
     const marketInfos: MarketInfo[] =
       marketInfosRootIndex != NIL
         ? deserializeRedBlackTree(
-            data.subarray(FIXED_WRAPPER_HEADER_SIZE),
+            dynamicData,
             marketInfosRootIndex,
             marketInfoBeet,
+            parseContext,
           )
         : [];
 
@@ -266,9 +272,10 @@ export class Wrapper {
         const rawOpenOrders: WrapperOpenOrderRaw[] =
           rootIndex != NIL
             ? deserializeRedBlackTree(
-                data.subarray(FIXED_WRAPPER_HEADER_SIZE),
+                dynamicData,
                 rootIndex,
                 wrapperOpenOrderBeet,
+                parseContext,
               )
             : [];
 

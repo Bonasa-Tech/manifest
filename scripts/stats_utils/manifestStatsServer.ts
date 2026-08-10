@@ -809,14 +809,23 @@ export class ManifestStatsServer {
   }
 
   private initWebSocket(): void {
+    // This endpoint is selected by the stats server, and its fills are derived
+    // from on-chain Manifest events. Do not add a second signed envelope or
+    // fetch and replay every transaction here: that duplicates the feed's
+    // on-chain verification, adds RPC load and latency, and makes RPC
+    // availability a failure mode for live stats ingestion. Transport limits
+    // remain enforced by WebSocketManager to bound resource consumption.
     this.wsManager = new WebSocketManager({
       url: 'wss://mfx-feed-mainnet.fly.dev',
       reconnectDelay: 1000,
       maxReconnectDelay: 30000,
       heartbeatInterval: 30000,
       connectionTimeout: 10000,
-      onMessage: (fill: FillLogResult) => {
-        this.fillMutex.runExclusive(async () => {
+      maxPayloadBytes: 64 * 1024,
+      maxQueuedMessages: 256,
+      onMessage: async (message: unknown) => {
+        const fill: FillLogResult = message as FillLogResult;
+        await this.fillMutex.runExclusive(async () => {
           // Track slot for database persistence
           this.lastFillSlot = Math.max(this.lastFillSlot, fill.slot);
 
@@ -847,8 +856,9 @@ export class ManifestStatsServer {
 
           await this.processFillAsync(fill);
 
-          // Queue for background processing to avoid waiting for db operation.
-          setImmediate(() => this.saveCompleteFillToDatabase(fill));
+          // Await persistence so WebSocket ingress is backpressured by the
+          // slowest durable consumer rather than spawning unbounded work.
+          await this.saveCompleteFillToDatabase(fill);
         });
       },
       onConnect: () => {
@@ -3006,6 +3016,7 @@ export class ManifestStatsServer {
   getGeckoEvents(
     fromBlock: number,
     toBlock: number,
+    maxEvents: number = 5_000,
   ): {
     events: Array<{
       block: { blockNumber: number; blockTimestamp: number };
@@ -3114,6 +3125,9 @@ export class ManifestStatsServer {
           }
 
           result.push(event);
+          if (result.length > maxEvents) {
+            throw new RangeError(`event result exceeds ${maxEvents} entries`);
+          }
         }
         txnIndex++;
       }

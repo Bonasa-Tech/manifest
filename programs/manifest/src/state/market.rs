@@ -761,6 +761,15 @@ impl<Fixed: DerefOrBorrow<MarketFixed>, Dynamic: DerefOrBorrow<[u8]>>
         claimed_seat.quote_volume
     }
 
+    /// Expose the claimed-seat index for off-chain validation of order
+    /// cross-references before quote traversal.
+    pub fn get_claimed_seats(&self) -> ClaimedSeatTreeReadOnly<'_> {
+        let market: MarketRef<'_> = self.borrow_market();
+        let dynamic: &[u8] = market.dynamic;
+        let fixed: &MarketFixed = market.fixed;
+        ClaimedSeatTreeReadOnly::new(dynamic, fixed.claimed_seats_root_index, NIL)
+    }
+
     pub fn get_bids(&self) -> BooksideReadOnly {
         let DynamicAccount { dynamic, fixed } = self.borrow_market();
         BooksideReadOnly::new(
@@ -1338,10 +1347,13 @@ impl<
                     //   atom stranded in the vault, owned by nobody.
                     let mut reverse_quote_atoms_debited: QuoteAtoms = QuoteAtoms::ZERO;
                     {
-                        let other_tree: Bookside = if is_bid {
-                            Bookside::new(dynamic, fixed.bids_root_index, fixed.bids_best_index)
-                        } else {
-                            Bookside::new(dynamic, fixed.asks_root_index, fixed.asks_best_index)
+                        let top_index: DataIndex = {
+                            let other_tree: Bookside = if is_bid {
+                                Bookside::new(dynamic, fixed.bids_root_index, fixed.bids_best_index)
+                            } else {
+                                Bookside::new(dynamic, fixed.asks_root_index, fixed.asks_best_index)
+                            };
+                            other_tree.get_max_index()
                         };
                         let lookup_resting_order: RestingOrder = RestingOrder::new(
                             maker_trader_index,
@@ -1353,18 +1365,28 @@ impl<
                             maker_order_type,
                         )?;
 
-                        // Because there is a slight relaxation in matching reverse
-                        // orders, do not need to worry about off by one errors
-                        // causing fragmented liqudity.
-                        // Probe the three accepted reverse prices as distinct
-                        // total keys. Each probe remains logarithmic even when
-                        // an attacker fills the price level with other traders.
-                        let lookup_index: DataIndex = [0, -1, 1]
-                            .into_iter()
-                            .filter_map(|offset| lookup_resting_order.with_price_offset(offset))
-                            .map(|candidate| other_tree.lookup_index(&candidate))
-                            .find(|index| *index != NIL)
-                            .unwrap_or(NIL);
+                        // Coalesce only into the current top-of-book order. This
+                        // keeps the check constant-time without letting a newer
+                        // order jump ahead of an earlier same-price maker.
+                        let lookup_index: DataIndex = if top_index != NIL {
+                            let top_order: &RestingOrder =
+                                get_helper::<RBNode<RestingOrder>>(dynamic, top_index).get_value();
+                            if [0, -1, 1]
+                                .into_iter()
+                                .filter_map(|offset: i8| {
+                                    lookup_resting_order.with_price_offset(offset)
+                                })
+                                .any(|candidate: RestingOrder| {
+                                    top_order.has_same_coalescing_key(&candidate)
+                                })
+                            {
+                                top_index
+                            } else {
+                                NIL
+                            }
+                        } else {
+                            NIL
+                        };
                         if lookup_index != NIL {
                             #[cfg(feature = "certora")]
                             remove_from_orderbook_balance(fixed, dynamic, lookup_index);

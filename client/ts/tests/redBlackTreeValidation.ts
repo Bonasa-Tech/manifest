@@ -1,7 +1,10 @@
 import { expect } from 'chai';
 import { BeetArgsStruct, u32 } from '@metaplex-foundation/beet';
 import { NIL } from '../src/constants';
-import { deserializeRedBlackTree } from '../src/utils/redBlackTree';
+import {
+  createRedBlackTreeParseContext,
+  deserializeRedBlackTree,
+} from '../src/utils/redBlackTree';
 
 type TestValue = { value: number };
 const valueBeet = new BeetArgsStruct<TestValue>([['value', u32]], 'TestValue');
@@ -43,6 +46,18 @@ describe('red-black tree validation', () => {
     writeNode(outOfBounds, 0, NIL, 24, NIL, 1);
     expect(() => deserializeRedBlackTree(outOfBounds, 0, valueBeet)).to.throw(
       /offset/,
+    );
+  });
+
+  it('rejects subtree reuse across parses sharing one account budget', () => {
+    const data = Buffer.alloc(20);
+    writeNode(data, 0, NIL, NIL, NIL, 1);
+    const context = createRedBlackTreeParseContext(data.length);
+    expect(deserializeRedBlackTree(data, 0, valueBeet, context)).to.deep.equal([
+      { value: 1 },
+    ]);
+    expect(() => deserializeRedBlackTree(data, 0, valueBeet, context)).to.throw(
+      /overlaps a previously parsed node/,
     );
   });
 });

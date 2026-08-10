@@ -6,7 +6,6 @@ use crate::quantities::{QuoteAtoms, WrapperU64};
 use borsh::{BorshDeserialize, BorshSerialize};
 use bytemuck::{Pod, Zeroable};
 use hypertree::{DataIndex, PodBool};
-use num_enum::{IntoPrimitive, TryFromPrimitive};
 use shank::ShankType;
 use solana_program::{entrypoint::ProgramResult, program_error::ProgramError};
 use static_assertions::const_assert_eq;
@@ -25,40 +24,39 @@ use super::{constants::NO_EXPIRATION_LAST_VALID_SLOT, RESTING_ORDER_SIZE};
     Clone,
     Copy,
     ShankType,
-    IntoPrimitive,
-    TryFromPrimitive,
+    Zeroable,
+    Pod,
 )]
-#[repr(u8)]
-pub enum OrderType {
-    // Normal limit order.
-    Limit = 0,
+#[repr(transparent)]
+pub struct OrderType(u8);
 
-    // Does not rest. Take only.
-    ImmediateOrCancel = 1,
-
-    // Fails if would cross the orderbook.
-    PostOnly = 2,
-
-    // Global orders are post only but use funds from the global account.
-    Global = 3,
-
-    // Reverse orders behave like an AMM. When filled, they place an order on
-    // the other side of the book with a small fee (spread).
-    // Note: reverse orders can take but don't reverse when taking.
-    Reverse = 4,
-
-    // Same as a reverse order except that it much tighter, allowing for stables
-    // to have even smaller spreads.
-    ReverseTight = 5,
-}
-unsafe impl bytemuck::Zeroable for OrderType {}
-unsafe impl bytemuck::Pod for OrderType {}
 impl Default for OrderType {
     fn default() -> Self {
         OrderType::Limit
     }
 }
 impl OrderType {
+    #[allow(non_upper_case_globals)]
+    pub const Limit: Self = Self(0);
+    #[allow(non_upper_case_globals)]
+    pub const ImmediateOrCancel: Self = Self(1);
+    #[allow(non_upper_case_globals)]
+    pub const PostOnly: Self = Self(2);
+    #[allow(non_upper_case_globals)]
+    pub const Global: Self = Self(3);
+    #[allow(non_upper_case_globals)]
+    pub const Reverse: Self = Self(4);
+    #[allow(non_upper_case_globals)]
+    pub const ReverseTight: Self = Self(5);
+
+    pub const fn as_u8(self) -> u8 {
+        self.0
+    }
+
+    pub const fn is_valid(self) -> bool {
+        self.0 <= Self::ReverseTight.0
+    }
+
     pub fn is_reversible(self) -> bool {
         self == OrderType::Reverse || self == OrderType::ReverseTight
     }
@@ -69,6 +67,25 @@ impl OrderType {
             OrderType::ReverseTight => QuoteAtomsPerBaseAtom::MAX_EXP - 8,
             _ => QuoteAtomsPerBaseAtom::MAX_EXP,
         }
+    }
+}
+
+impl TryFrom<u8> for OrderType {
+    type Error = ProgramError;
+
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        let order_type: OrderType = Self(value);
+        if order_type.is_valid() {
+            Ok(order_type)
+        } else {
+            Err(ProgramError::InvalidInstructionData)
+        }
+    }
+}
+
+impl From<OrderType> for u8 {
+    fn from(value: OrderType) -> Self {
+        value.0
     }
 }
 
@@ -157,7 +174,12 @@ impl RestingOrder {
     }
 
     pub fn get_order_type(&self) -> OrderType {
+        debug_assert!(self.order_type.is_valid());
         self.order_type
+    }
+
+    pub fn has_valid_order_type(&self) -> bool {
+        self.order_type.is_valid()
     }
 
     pub fn is_global(&self) -> bool {
@@ -261,6 +283,12 @@ impl RestingOrder {
         };
         Some(self)
     }
+
+    pub(crate) fn has_same_coalescing_key(&self, other: &Self) -> bool {
+        self.price == other.price
+            && self.trader_index == other.trader_index
+            && self.order_type == other.order_type
+    }
 }
 
 impl Ord for RestingOrder {
@@ -282,11 +310,13 @@ impl Ord for RestingOrder {
         // same price, and a reverse-order lookup for one trader could scan that
         // attacker-controlled bucket until it exhausts the compute budget.
         //
-        // Trader and order type disambiguate orders within a price level. This
-        // makes `cmp(a, b) == Equal` exactly when `a == b`, allowing lookup to
-        // follow one tree branch. Size and sequence number are intentionally
-        // omitted because coalescing must find an order as those values change.
+        // Earlier sequence numbers have priority within a price level. The
+        // tree's maximum is the next order to match, so reverse the sequence
+        // comparison: a lower (earlier) sequence sorts higher. Trader and
+        // order type remain deterministic final tie breakers for defensive
+        // handling of malformed duplicate sequences.
         price_ordering
+            .then_with(|| other.sequence_number.cmp(&self.sequence_number))
             .then_with(|| self.trader_index.cmp(&other.trader_index))
             .then_with(|| self.order_type.cmp(&other.order_type))
     }
@@ -300,11 +330,8 @@ impl PartialOrd for RestingOrder {
 
 impl PartialEq for RestingOrder {
     fn eq(&self, other: &Self) -> bool {
-        // Keep equality identical to the total tree key. In particular, prices
-        // one encoded unit apart are not equal here; reverse coalescing
-        // preserves that tolerance with explicit bounded lookups through
-        // `with_price_offset`.
-        self.trader_index == other.trader_index
+        self.sequence_number == other.sequence_number
+            && self.trader_index == other.trader_index
             && self.order_type == other.order_type
             && self.price == other.price
     }
@@ -433,6 +460,44 @@ mod test {
                 "same-price attacker orders must not enter the tree's equal-key subtree scan"
             );
         }
+    }
+
+    #[test]
+    fn same_price_orders_are_fifo_on_both_sides() {
+        for is_bid in [true, false] {
+            let is_bid: bool = is_bid;
+            let earlier: RestingOrder = RestingOrder::new(
+                9,
+                BaseAtoms::ONE,
+                1.0.try_into().unwrap(),
+                41,
+                NO_EXPIRATION_LAST_VALID_SLOT,
+                is_bid,
+                OrderType::Limit,
+            )
+            .unwrap();
+            let later: RestingOrder = RestingOrder::new(
+                1,
+                BaseAtoms::ONE,
+                earlier.get_price(),
+                42,
+                NO_EXPIRATION_LAST_VALID_SLOT,
+                is_bid,
+                OrderType::Limit,
+            )
+            .unwrap();
+            assert!(earlier > later, "earlier order must be tree maximum");
+        }
+    }
+
+    #[test]
+    fn invalid_order_type_byte_is_safe_and_detectable() {
+        let mut bytes: [u8; size_of::<RestingOrder>()] = [0_u8; size_of::<RestingOrder>()];
+        // order_type is byte 41 in the stable account layout.
+        bytes[41] = u8::MAX;
+        let order: RestingOrder = bytemuck::pod_read_unaligned::<RestingOrder>(&bytes);
+        assert!(!order.has_valid_order_type());
+        assert!(OrderType::try_from(u8::MAX).is_err());
     }
 
     #[test]

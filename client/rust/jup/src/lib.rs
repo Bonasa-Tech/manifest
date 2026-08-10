@@ -4,11 +4,15 @@ use jupiter_amm_interface::{
     SwapParams,
 };
 
-use hypertree::{get_helper, get_mut_helper, validate_red_black_tree, GetRedBlackTreeReadOnlyData};
+use hypertree::{
+    get_helper, get_mut_helper, validate_red_black_tree, DataIndex, GetRedBlackTreeReadOnlyData,
+    HyperTreeValueIteratorTrait,
+};
 use manifest::{
     quantities::{BaseAtoms, QuoteAtoms, WrapperU64},
     state::{
-        validate_global_dynamic, DynamicAccount, GlobalFixed, GlobalValue, MarketFixed,
+        claimed_seat::ClaimedSeat, validate_global_dynamic, BooksideReadOnly,
+        ClaimedSeatTreeReadOnly, DynamicAccount, GlobalFixed, GlobalValue, MarketFixed,
         MarketValue, RestingOrder, GLOBAL_FIXED_SIZE,
     },
     validation::{
@@ -19,7 +23,7 @@ use manifest::{
 use solana_program::{
     account_info::AccountInfo, instruction::AccountMeta, pubkey::Pubkey, system_program,
 };
-use std::{cell::RefCell, mem::size_of, rc::Rc};
+use std::{cell::RefCell, collections::HashSet, mem::size_of, rc::Rc};
 
 macro_rules! dynamic_value_opt_to_account_info {
     ( $name:ident, $value_opt:expr, $fixed_size:expr, $type:ident, $key:expr ) => {
@@ -67,9 +71,31 @@ fn validated_market_value(market_account: &solana_account::Account) -> Result<Ma
         fixed: market_fixed,
         dynamic: dynamic_data,
     };
-    for book in [market.get_bids(), market.get_asks()] {
+    let claimed_seats: ClaimedSeatTreeReadOnly<'_> = market.get_claimed_seats();
+    validate_red_black_tree::<ClaimedSeat>(
+        dynamic_data,
+        claimed_seats.root_index(),
+        claimed_seats.max_index(),
+    )
+    .map_err(|error| anyhow::anyhow!("market claimed-seat tree is invalid: {error}"))?;
+    let claimed_seat_indices: HashSet<DataIndex> = claimed_seats
+        .iter::<ClaimedSeat>()
+        .map(|(index, _)| index)
+        .collect();
+
+    let books: [BooksideReadOnly<'_>; 2] = [market.get_bids(), market.get_asks()];
+    for book in books {
         validate_red_black_tree::<RestingOrder>(dynamic_data, book.root_index(), book.max_index())
             .map_err(|error| anyhow::anyhow!("market order book is invalid: {error}"))?;
+        for item in book.iter::<RestingOrder>() {
+            let (_order_index, order): (DataIndex, &RestingOrder) = item;
+            if !order.has_valid_order_type() {
+                anyhow::bail!("market order book contains an invalid order type");
+            }
+            if !claimed_seat_indices.contains(&order.get_trader_index()) {
+                anyhow::bail!("market order points to an invalid claimed seat");
+            }
+        }
     }
     market_fixed
         .validate_free_list(dynamic_data)
