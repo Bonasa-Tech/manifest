@@ -26,7 +26,8 @@ export const INSERT_TRADER_POSITION =
 
 // ========== SELECT QUERIES ==========
 
-export const SELECT_ALT_MARKETS = 'SELECT alt, market FROM alt_markets';
+export const SELECT_ALT_MARKETS =
+  'SELECT alt, market FROM alt_markets ORDER BY market, alt LIMIT 5000';
 
 // Select the most recent checkpoint that actually has market data
 // This handles cases where a checkpoint was created but market data save failed/was interrupted

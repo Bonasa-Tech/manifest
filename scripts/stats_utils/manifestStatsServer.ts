@@ -49,6 +49,10 @@ import { WebSocketManager } from './websocketManager';
 import { parseTransactionForFills } from './backfill';
 import { VolumeMonitor } from './volumeMonitor';
 import { MarketMakerMonitor } from './marketMakerMonitor';
+import {
+  canonicalFillIdentity,
+  validateSignedFillEnvelope,
+} from './fillFeedValidation';
 
 // Memory management constants
 const MAX_TRADERS = 50000; // Maximum number of traders to track in memory
@@ -57,6 +61,7 @@ const MAX_FILL_LOG_MARKETS = 500; // Maximum number of markets to track fills fo
 export class ManifestStatsServer {
   private connection: Connection;
   private wsManager: WebSocketManager | null = null;
+  private seenFeedEvents: Set<string> = new Set();
   // Base and quote volume
   private baseVolumeAtomsSinceLastCheckpoint: Map<string, number> = new Map();
   private quoteVolumeAtomsSinceLastCheckpoint: Map<string, number> = new Map();
@@ -809,14 +814,50 @@ export class ManifestStatsServer {
   }
 
   private initWebSocket(): void {
+    const feedPublicKeyPem = process.env.FILL_FEED_PUBLIC_KEY_PEM;
+    if (!feedPublicKeyPem) {
+      throw new Error('FILL_FEED_PUBLIC_KEY_PEM is required');
+    }
     this.wsManager = new WebSocketManager({
       url: 'wss://mfx-feed-mainnet.fly.dev',
       reconnectDelay: 1000,
       maxReconnectDelay: 30000,
       heartbeatInterval: 30000,
       connectionTimeout: 10000,
-      onMessage: (fill: FillLogResult) => {
-        this.fillMutex.runExclusive(async () => {
+      maxPayloadBytes: 64 * 1024,
+      maxQueuedMessages: 256,
+      onMessage: async (message: unknown) => {
+        const fill = validateSignedFillEnvelope(
+          message,
+          feedPublicKeyPem,
+          new Set(this.markets.keys()),
+        );
+        const chainFills = await parseTransactionForFills(
+          this.connection,
+          fill.signature,
+        );
+        const isConfirmedOnChain = chainFills.fills.some(
+          (candidate) =>
+            candidate.market === fill.market &&
+            candidate.maker === fill.maker &&
+            candidate.taker === fill.taker &&
+            candidate.baseAtoms === fill.baseAtoms &&
+            candidate.quoteAtoms === fill.quoteAtoms &&
+            candidate.makerSequenceNumber === fill.makerSequenceNumber &&
+            candidate.takerSequenceNumber === fill.takerSequenceNumber,
+        );
+        if (!isConfirmedOnChain) {
+          throw new Error('signed fill was not confirmed by the trusted RPC');
+        }
+        const identity = canonicalFillIdentity(fill);
+        if (this.seenFeedEvents.has(identity)) return;
+        if (this.seenFeedEvents.size >= 10_000) {
+          const oldest = this.seenFeedEvents.values().next().value;
+          if (oldest !== undefined) this.seenFeedEvents.delete(oldest);
+        }
+        this.seenFeedEvents.add(identity);
+
+        await this.fillMutex.runExclusive(async () => {
           // Track slot for database persistence
           this.lastFillSlot = Math.max(this.lastFillSlot, fill.slot);
 
@@ -847,8 +888,9 @@ export class ManifestStatsServer {
 
           await this.processFillAsync(fill);
 
-          // Queue for background processing to avoid waiting for db operation.
-          setImmediate(() => this.saveCompleteFillToDatabase(fill));
+          // Await persistence so WebSocket ingress is backpressured by the
+          // slowest durable consumer rather than spawning unbounded work.
+          await this.saveCompleteFillToDatabase(fill);
         });
       },
       onConnect: () => {
@@ -3006,6 +3048,7 @@ export class ManifestStatsServer {
   getGeckoEvents(
     fromBlock: number,
     toBlock: number,
+    maxEvents: number = 5_000,
   ): {
     events: Array<{
       block: { blockNumber: number; blockTimestamp: number };
@@ -3114,6 +3157,9 @@ export class ManifestStatsServer {
           }
 
           result.push(event);
+          if (result.length > maxEvents) {
+            throw new RangeError(`event result exceeds ${maxEvents} entries`);
+          }
         }
         txnIndex++;
       }

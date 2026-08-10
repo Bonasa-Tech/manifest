@@ -343,6 +343,16 @@ impl<'a, 'info> SwapContext<'a, 'info> {
             .is_ok_and(|f| *f.owner == spl_token::id() || *f.owner == spl_token_2022::id())
         {
             let current_account_info: &AccountInfo<'info> = current_account_info_or?;
+            require!(
+                current_account_info.key == &base_mint_key,
+                ManifestError::IncorrectAccount,
+                "Optional base mint does not match the market base mint",
+            )?;
+            require!(
+                current_account_info.owner == token_program_base.info.key,
+                ProgramError::IncorrectProgramId,
+                "Base mint owner does not match the base token program",
+            )?;
             base_mint = Some(MintAccountInfo::new(current_account_info)?);
             current_account_info_or = next_account_info(account_iter);
         }
@@ -369,9 +379,30 @@ impl<'a, 'info> SwapContext<'a, 'info> {
             .is_ok_and(|f| *f.owner == spl_token::id() || *f.owner == spl_token_2022::id())
         {
             let current_account_info: &AccountInfo<'info> = current_account_info_or?;
+            require!(
+                current_account_info.key == &quote_mint_key,
+                ManifestError::IncorrectAccount,
+                "Optional quote mint does not match the market quote mint",
+            )?;
+            require!(
+                current_account_info.owner == token_program_quote.info.key,
+                ProgramError::IncorrectProgramId,
+                "Quote mint owner does not match the quote token program",
+            )?;
             quote_mint = Some(MintAccountInfo::new(current_account_info)?);
             current_account_info_or = next_account_info(account_iter);
         }
+
+        require!(
+            *token_program_base.info.key != spl_token_2022::id() || base_mint.is_some(),
+            ManifestError::IncorrectAccount,
+            "Token-2022 base transfers require the validated market base mint",
+        )?;
+        require!(
+            *token_program_quote.info.key != spl_token_2022::id() || quote_mint.is_some(),
+            ManifestError::IncorrectAccount,
+            "Token-2022 quote transfers require the validated market quote mint",
+        )?;
 
         if current_account_info_or.is_ok() {
             let current_account_info: &AccountInfo<'info> = current_account_info_or?;

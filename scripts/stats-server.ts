@@ -22,6 +22,7 @@ import {
   isValidSolanaSignature,
   parseBoundedQueryInteger,
 } from './stats_utils/httpValidation';
+import { createExpensiveQueryAdmission } from './stats_utils/httpAdmission';
 
 // Global error handlers to catch unhandled errors and log them before exit
 process.on('unhandledRejection', (reason, promise) => {
@@ -349,6 +350,10 @@ const run = async () => {
   };
 
   const app = express();
+  const expensiveQueryAdmission = createExpensiveQueryAdmission({
+    maxConcurrent: 8,
+    maxRequestsPerMinute: 30,
+  });
   app.use(express.json({ limit: '4kb' }));
   app.use(cors());
 
@@ -390,17 +395,24 @@ const run = async () => {
   app.get('/volume', volumeHandler);
   app.get('/traders', tradersHandler);
   app.get('/traders/debug', (req, res) => {
-    const requestedLimit = req.query.limit === undefined ? 500 : Number(req.query.limit);
-    if (!Number.isSafeInteger(requestedLimit) || requestedLimit < 1 || requestedLimit > 1_000) {
-      res.status(400).send({ error: 'limit must be an integer between 1 and 1000' });
+    const requestedLimit =
+      req.query.limit === undefined ? 500 : Number(req.query.limit);
+    if (
+      !Number.isSafeInteger(requestedLimit) ||
+      requestedLimit < 1 ||
+      requestedLimit > 1_000
+    ) {
+      res
+        .status(400)
+        .send({ error: 'limit must be an integer between 1 and 1000' });
       return;
     }
     const limit = requestedLimit;
     res.send(statsServer.getTraders(true, limit));
   });
   app.get('/recentFills', recentFillsHandler);
-  app.get('/completeFills', completeFillsHandler);
-  app.get('/alts', altsHandler);
+  app.get('/completeFills', expensiveQueryAdmission, completeFillsHandler);
+  app.get('/alts', expensiveQueryAdmission, altsHandler);
   app.get('/notional', notionalHandler);
   app.get('/checkpoints', checkpointsHandler);
   app.get('/checkpointStatus', checkpointStatusHandler);
@@ -441,7 +453,7 @@ const run = async () => {
     res.send(pair);
   });
 
-  app.get('/events', (req, res) => {
+  app.get('/events', expensiveQueryAdmission, (req, res) => {
     const fromBlock = parseInt(req.query.fromBlock as string);
     const toBlock = parseInt(req.query.toBlock as string);
     if (isNaN(fromBlock) || isNaN(toBlock)) {
@@ -450,7 +462,21 @@ const run = async () => {
         .send({ error: 'fromBlock and toBlock parameters are required' });
       return;
     }
-    res.send(statsServer.getGeckoEvents(fromBlock, toBlock));
+    if (fromBlock < 0 || toBlock < fromBlock || toBlock - fromBlock > 10_000) {
+      res.status(400).send({
+        error: 'block range must be ordered, non-negative, and at most 10000',
+      });
+      return;
+    }
+    try {
+      res.send(statsServer.getGeckoEvents(fromBlock, toBlock, 5_000));
+    } catch (error) {
+      if (error instanceof RangeError) {
+        res.status(413).send({ error: error.message });
+        return;
+      }
+      throw error;
+    }
   });
 
   // Add health check endpoint for Fly.io

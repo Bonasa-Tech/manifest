@@ -15,6 +15,22 @@ export type RedBlackTreeNodeHeader = {
 const NUM_TREE_HEADER_BYTES = 16;
 const TREE_NODE_ALIGNMENT = 8;
 
+export type RedBlackTreeParseContext = {
+  claimedBytes: Uint8Array;
+  parsedNodes: number;
+  maxNodes: number;
+};
+
+export function createRedBlackTreeParseContext(
+  dataLength: number,
+): RedBlackTreeParseContext {
+  return {
+    claimedBytes: new Uint8Array(dataLength),
+    parsedNodes: 0,
+    maxNodes: Math.floor(dataLength / NUM_TREE_HEADER_BYTES),
+  };
+}
+
 /**
  * Deserializes an account-backed red-black tree after validating every
  * reachable node. RPC account bytes are untrusted, so malformed offsets and
@@ -24,6 +40,9 @@ export function deserializeRedBlackTree<Value>(
   data: Buffer,
   rootIndex: number,
   valueDeserializer: BeetArgsStruct<Value>,
+  context: RedBlackTreeParseContext = createRedBlackTreeParseContext(
+    data.length,
+  ),
 ): Value[] {
   if (rootIndex === NIL) {
     return [];
@@ -45,6 +64,21 @@ export function deserializeRedBlackTree<Value>(
     }
     const cached = headers.get(index);
     if (cached) return cached;
+    if (context.claimedBytes.length !== data.length) {
+      throw new Error('Red-black tree parse context has the wrong size');
+    }
+    for (let byte = index; byte < index + nodeSize; byte += 1) {
+      if (context.claimedBytes[byte] !== 0) {
+        throw new Error(
+          `Red-black tree node overlaps a previously parsed node at offset ${index}`,
+        );
+      }
+    }
+    if (context.parsedNodes >= context.maxNodes) {
+      throw new Error('Red-black tree aggregate node budget exceeded');
+    }
+    context.claimedBytes.fill(1, index, index + nodeSize);
+    context.parsedNodes += 1;
     const [header] = redBlackTreeHeaderBeet.deserialize(
       data.subarray(index, index + NUM_TREE_HEADER_BYTES),
     );

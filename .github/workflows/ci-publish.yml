@@ -2,26 +2,49 @@ name: NPM Publish
 on:
   push:
     branches: ['main']
-    paths: [
-      'package.json',
-    ]
+    paths: ['package.json']
   workflow_dispatch:
 
 jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - run: npm --version
+      - run: yarn install --frozen-lockfile --ignore-scripts
+      - run: yarn build
+      - name: Pack the reviewed build without lifecycle scripts
+        run: |
+          mkdir -p package
+          npm pack --ignore-scripts --pack-destination package
+      - uses: actions/upload-artifact@65462800fd760344b1a7b4382951275a0abb4808 # v4
+        with:
+          name: npm-package
+          path: package/*.tgz
+          if-no-files-found: error
+
   publish:
+    needs: build
     runs-on: ubuntu-latest
     permissions:
       contents: read
       id-token: write
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
-          node-version: 20
-      - run: npm install -g npm@11.4.2
-      - run: npm --version
-      - run: yarn install --frozen-lockfile
-      - run: yarn build
-      - uses: JS-DevTools/npm-publish@0fd2f4369c5d6bcfcde6091a7c527d810b9b5c3f # v4
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v4
         with:
-          access: public
+          name: npm-package
+          path: package
+      - name: Publish the exact artifact produced by the unprivileged job
+        run: npm publish package/*.tgz --access public --provenance
