@@ -23,8 +23,7 @@ use manifest::{
 use solana_program::{
     account_info::AccountInfo, instruction::AccountMeta, pubkey::Pubkey, system_program,
 };
-use std::collections::HashSet;
-use std::{cell::RefCell, mem::size_of, rc::Rc};
+use std::{cell::RefCell, collections::HashSet, mem::size_of, rc::Rc};
 
 macro_rules! dynamic_value_opt_to_account_info {
     ( $name:ident, $value_opt:expr, $fixed_size:expr, $type:ident, $key:expr ) => {
