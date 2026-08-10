@@ -49,10 +49,12 @@ import { WebSocketManager } from './websocketManager';
 import { parseTransactionForFills } from './backfill';
 import { VolumeMonitor } from './volumeMonitor';
 import { MarketMakerMonitor } from './marketMakerMonitor';
+import { appendUniqueFill } from './fillRetention';
 
 // Memory management constants
 const MAX_TRADERS = 50000; // Maximum number of traders to track in memory
 const MAX_FILL_LOG_MARKETS = 500; // Maximum number of markets to track fills for
+const MAX_GECKO_EVENTS_PER_BLOCK: number = 4_096;
 
 export class ManifestStatsServer {
   private connection: Connection;
@@ -2925,7 +2927,13 @@ export class ManifestStatsServer {
 
     // Add event to existing block or create new block entry
     if (this.geckoBlockEvents.has(slot)) {
-      this.geckoBlockEvents.get(slot)!.events.push(fill);
+      const block = this.geckoBlockEvents.get(slot)!;
+      appendUniqueFill(
+        block.events,
+        fill,
+        MAX_GECKO_EVENTS_PER_BLOCK,
+        `slot ${slot}`,
+      );
     } else {
       this.geckoBlockEvents.set(slot, { blockTime, events: [fill] });
 

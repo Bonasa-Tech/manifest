@@ -23,8 +23,9 @@ pub struct FreeListNode<T> {
     /// Payload. For free lists, this is just unused, zeroed bytes.
     node_inner: T,
 }
-unsafe impl<T: Pod> Pod for FreeListNode<T> {}
-impl<T: Pod> Get for FreeListNode<T> {}
+// SAFETY: `T: Pod` and `DataIndex` accept every initialized bit pattern.
+// `Get` permits the C-layout padding and never exposes it as initialized bytes.
+unsafe impl<T: Pod> Get for FreeListNode<T> {}
 impl<T: Pod> FreeListNode<T> {
     pub fn has_next(&self) -> bool {
         self.next_index != NIL
@@ -81,6 +82,9 @@ impl<'a, T: Pod> FreeList<'a, T> {
 
 mod test {
     use super::*;
+    use static_assertions::assert_not_impl_any;
+
+    assert_not_impl_any!(FreeListNode<u64>: Pod);
 
     #[allow(unused)]
     #[repr(C, packed)]

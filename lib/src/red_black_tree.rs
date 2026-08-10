@@ -164,7 +164,7 @@ pub fn validate_red_black_tree<V: Payload>(
         if !seen.insert(index) {
             return Err("tree contains a cycle or duplicate child");
         }
-        let node = bytemuck::pod_read_unaligned::<RBNode<V>>(&data[offset..end]);
+        let node: RBNode<V> = crate::read_unaligned::<RBNode<V>>(&data[offset..end]);
         if node.color != Color::Black && node.color != Color::Red {
             return Err("tree node has invalid color");
         }
@@ -1025,8 +1025,9 @@ pub struct RBNode<V> {
     pub(crate) _unused_padding: u16,
     pub(crate) value: V,
 }
-unsafe impl<V: Payload> Pod for RBNode<V> {}
-impl<V: Payload> Get for RBNode<V> {}
+// SAFETY: every field accepts every initialized bit pattern because `V` is
+// Pod. `Get` permits any C-layout padding and does not expose it as bytes.
+unsafe impl<V: Payload> Get for RBNode<V> {}
 
 impl<V: Payload> Ord for RBNode<V> {
     fn cmp(&self, other: &Self) -> Ordering {
@@ -1503,6 +1504,9 @@ pub(crate) mod test {
     use std::fmt::Display;
 
     use super::*;
+    use static_assertions::assert_not_impl_any;
+
+    assert_not_impl_any!(RBNode<u64>: Pod);
 
     #[test]
     fn test_color_default() {

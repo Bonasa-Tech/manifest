@@ -316,6 +316,12 @@ pub(crate) fn process_batch_update_core(
             let base_atoms: BaseAtoms = BaseAtoms::new(place_order_params.base_atoms());
             let price: QuoteAtomsPerBaseAtom = place_order_params.try_price()?;
             let order_type: OrderType = place_order_params.order_type();
+            require!(
+                order_type.is_valid(),
+                ProgramError::InvalidInstructionData,
+                "Invalid order type {}",
+                order_type.as_u8(),
+            )?;
             let last_valid_slot: u32 = place_order_params.last_valid_slot();
 
             // Need to reborrow every iteration so we can borrow later for expanding.

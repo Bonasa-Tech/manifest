@@ -35,7 +35,7 @@ const_assert_eq!(
 pub const WRAPPER_FIXED_SIZE: usize = 64;
 const_assert_eq!(size_of::<ManifestWrapperStateFixed>(), WRAPPER_FIXED_SIZE);
 const_assert_eq!(size_of::<ManifestWrapperStateFixed>() % 8, 0);
-impl Get for ManifestWrapperStateFixed {}
+unsafe impl Get for ManifestWrapperStateFixed {}
 
 impl ManifestWrapperStateFixed {
     pub fn new_empty(trader: &Pubkey) -> ManifestWrapperStateFixed {

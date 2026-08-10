@@ -1,6 +1,7 @@
 import { FillLogResult, Market } from '../../client/ts/src';
 import { sendDiscordNotification } from './utils';
 import { SOL_MINT, STABLECOIN_MINTS } from './constants';
+import { fillIdentity } from './fillRetention';
 
 // Volume decrease threshold (90% decrease to trigger alert)
 const VOLUME_DECREASE_THRESHOLD: number = 0.9;
@@ -12,6 +13,9 @@ const LARGE_FILL_THRESHOLD_USDC: number = 1_000_000;
 
 // Time to wait before finalizing a transaction's fills (ms)
 const TRANSACTION_FINALIZE_DELAY_MS: number = 5_000;
+const TRANSACTION_MAX_AGE_MS: number = 30_000;
+const MAX_FILLS_PER_TRANSACTION: number = 256;
+const MAX_BUFFERED_TRANSACTIONS: number = 10_000;
 
 // Type for hourly volume snapshot
 interface HourlyVolumeSnapshot {
@@ -28,7 +32,9 @@ interface FillValueResult {
 // Type for buffered transaction fills
 interface TransactionFillBuffer {
   fills: FillLogResult[];
+  fillIdentities: Set<string>;
   totalValueUsdc: number;
+  createdAtMs: number;
   lastSeenMs: number;
   markets: Set<string>;
   taker: string;
@@ -51,7 +57,9 @@ export class VolumeMonitor {
   private readonly getMarket: (marketPk: string) => Market | undefined;
 
   // Callback to get ticker symbols from stats server
-  private readonly getTicker: (marketPk: string) => [string, string] | undefined;
+  private readonly getTicker: (
+    marketPk: string,
+  ) => [string, string] | undefined;
 
   constructor(
     discordWebhookUrl: string | undefined,
@@ -84,32 +92,44 @@ export class VolumeMonitor {
       return;
     }
 
-    // Accumulate hourly volume
-    this.currentHourVolumeUsdc += fillValue.valueUsdc;
-
     // Finalize any old transactions before processing new fill
     await this.finalizeOldTransactions();
 
     // Buffer this fill by transaction signature
     const signature: string = fill.signature;
+    const identity: string = fillIdentity(fill);
     const existing: TransactionFillBuffer | undefined =
       this.transactionBuffer.get(signature);
 
     if (existing) {
+      if (existing.fillIdentities.has(identity)) return;
+      if (existing.fills.length >= MAX_FILLS_PER_TRANSACTION) {
+        throw new Error(`too many fills for transaction ${signature}`);
+      }
       existing.fills.push(fill);
+      existing.fillIdentities.add(identity);
       existing.totalValueUsdc += fillValue.valueUsdc;
       existing.lastSeenMs = Date.now();
       existing.markets.add(fillValue.symbol);
     } else {
+      if (this.transactionBuffer.size >= MAX_BUFFERED_TRANSACTIONS) {
+        throw new Error('too many buffered fill transactions');
+      }
+      const now: number = Date.now();
       this.transactionBuffer.set(signature, {
         fills: [fill],
+        fillIdentities: new Set([identity]),
         totalValueUsdc: fillValue.valueUsdc,
-        lastSeenMs: Date.now(),
+        createdAtMs: now,
+        lastSeenMs: now,
         markets: new Set([fillValue.symbol]),
         taker: fill.taker,
         aggregator: fill.aggregator,
       });
     }
+
+    // Count only fills admitted to the bounded, deduplicated buffer.
+    this.currentHourVolumeUsdc += fillValue.valueUsdc;
   }
 
   /**
@@ -121,7 +141,10 @@ export class VolumeMonitor {
     const signaturestoFinalize: string[] = [];
 
     this.transactionBuffer.forEach((buffer, signature) => {
-      if (now - buffer.lastSeenMs >= TRANSACTION_FINALIZE_DELAY_MS) {
+      if (
+        now - buffer.lastSeenMs >= TRANSACTION_FINALIZE_DELAY_MS ||
+        now - buffer.createdAtMs >= TRANSACTION_MAX_AGE_MS
+      ) {
         signaturestoFinalize.push(signature);
       }
     });
@@ -150,7 +173,9 @@ export class VolumeMonitor {
 
     // Get ticker symbol for display
     const ticker: [string, string] | undefined = this.getTicker(fill.market);
-    const symbol: string = ticker ? `${ticker[0]}/${ticker[1]}` : fill.market.slice(0, 8);
+    const symbol: string = ticker
+      ? `${ticker[0]}/${ticker[1]}`
+      : fill.market.slice(0, 8);
 
     // If quote is a stablecoin, use 1:1 conversion
     if (STABLECOIN_MINTS.has(quoteMint)) {
@@ -189,7 +214,8 @@ export class VolumeMonitor {
     const side: string = firstFill.takerIsBuy ? 'BUY' : 'SELL';
 
     // Get original signer if available
-    const originalSigner: string | undefined = (firstFill as any).originalSigner;
+    const originalSigner: string | undefined = (firstFill as any)
+      .originalSigner;
     const signerDisplay: string = originalSigner
       ? `\`${originalSigner.slice(0, 8)}...\``
       : `\`${buffer.taker.slice(0, 8)}...\``;
@@ -209,7 +235,9 @@ export class VolumeMonitor {
       message.push(`Aggregator: ${buffer.aggregator}`);
     }
 
-    message.push(`[View on Solscan](${solscanLink}) | [View Market](${marketLink})`);
+    message.push(
+      `[View on Solscan](${solscanLink}) | [View Market](${marketLink})`,
+    );
 
     await sendDiscordNotification(this.discordWebhookUrl, message.join('\n'), {
       title: '💰 Large Transaction Alert',
@@ -228,13 +256,20 @@ export class VolumeMonitor {
       totalVolumeUsdc: this.currentHourVolumeUsdc,
     };
 
-    if (this.previousHourlyVolume && this.previousHourlyVolume.totalVolumeUsdc > 0) {
+    if (
+      this.previousHourlyVolume &&
+      this.previousHourlyVolume.totalVolumeUsdc > 0
+    ) {
       const previousVolume: number = this.previousHourlyVolume.totalVolumeUsdc;
       const currentVolume: number = currentSnapshot.totalVolumeUsdc;
-      const percentChange: number = (currentVolume - previousVolume) / previousVolume;
+      const percentChange: number =
+        (currentVolume - previousVolume) / previousVolume;
 
       // Alert on decreases of more than 90% or increases of more than 10x
-      if (percentChange < -VOLUME_DECREASE_THRESHOLD || percentChange > VOLUME_INCREASE_THRESHOLD) {
+      if (
+        percentChange < -VOLUME_DECREASE_THRESHOLD ||
+        percentChange > VOLUME_INCREASE_THRESHOLD
+      ) {
         await this.sendVolumeChangeAlert(
           previousVolume,
           currentVolume,

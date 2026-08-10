@@ -2,20 +2,41 @@ use std::mem::size_of;
 
 pub type DataIndex = u32;
 
-/// Marker trait to emit warnings when using get_helper on the Value type
-/// rather than on Node<Value>
-pub trait Get: bytemuck::Pod {}
+/// Marker for zero-copy account layouts accepted by [`get_helper`].
+///
+/// # Safety
+/// Every initialized byte pattern must be valid for the type, and callers must
+/// provide storage aligned for the type. Unlike `bytemuck::Pod`, this contract
+/// permits inert C-layout padding because these helpers never expose the value
+/// as bytes.
+pub unsafe trait Get: Copy {}
 
 /// Read a struct of type T in an array of data at a given index.
 pub fn get_helper<T: Get>(data: &[u8], index: DataIndex) -> &T {
     let index_usize: usize = index as usize;
-    bytemuck::from_bytes(&data[index_usize..index_usize + size_of::<T>()])
+    let bytes: &[u8] = &data[index_usize..index_usize + size_of::<T>()];
+    assert_eq!((bytes.as_ptr() as usize) % std::mem::align_of::<T>(), 0);
+    // SAFETY: `Get` supplies the validity contract and the alignment and range
+    // are checked above. The returned reference is tied to `data`.
+    unsafe { &*bytes.as_ptr().cast::<T>() }
 }
 
 /// Read a struct of type T in an array of data at a given index.
 pub fn get_mut_helper<T: Get>(data: &mut [u8], index: DataIndex) -> &mut T {
     let index_usize: usize = index as usize;
-    bytemuck::from_bytes_mut(&mut data[index_usize..index_usize + size_of::<T>()])
+    let bytes: &mut [u8] = &mut data[index_usize..index_usize + size_of::<T>()];
+    assert_eq!((bytes.as_ptr() as usize) % std::mem::align_of::<T>(), 0);
+    // SAFETY: `Get` supplies the validity contract and the alignment and range
+    // are checked above. The exclusive reference is tied to `data`.
+    unsafe { &mut *bytes.as_mut_ptr().cast::<T>() }
+}
+
+/// Copy a possibly unaligned zero-copy value from a bounded byte slice.
+pub fn read_unaligned<T: Get>(data: &[u8]) -> T {
+    assert!(data.len() >= size_of::<T>());
+    // SAFETY: `Get` guarantees that initialized bytes form a valid value, and
+    // `read_unaligned` does not require the source address to be aligned.
+    unsafe { data.as_ptr().cast::<T>().read_unaligned() }
 }
 
 /// The standard `bool` is not a `Pod`, define a replacement that is
