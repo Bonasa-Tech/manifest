@@ -809,6 +809,12 @@ export class ManifestStatsServer {
   }
 
   private initWebSocket(): void {
+    // This endpoint is selected by the stats server, and its fills are derived
+    // from on-chain Manifest events. Do not add a second signed envelope or
+    // fetch and replay every transaction here: that duplicates the feed's
+    // on-chain verification, adds RPC load and latency, and makes RPC
+    // availability a failure mode for live stats ingestion. Transport limits
+    // remain enforced by WebSocketManager to bound resource consumption.
     this.wsManager = new WebSocketManager({
       url: 'wss://mfx-feed-mainnet.fly.dev',
       reconnectDelay: 1000,
