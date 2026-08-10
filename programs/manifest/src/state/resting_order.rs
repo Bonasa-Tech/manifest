@@ -74,7 +74,7 @@ impl TryFrom<u8> for OrderType {
     type Error = ProgramError;
 
     fn try_from(value: u8) -> Result<Self, Self::Error> {
-        let order_type = Self(value);
+        let order_type: OrderType = Self(value);
         if order_type.is_valid() {
             Ok(order_type)
         } else {
@@ -465,7 +465,8 @@ mod test {
     #[test]
     fn same_price_orders_are_fifo_on_both_sides() {
         for is_bid in [true, false] {
-            let earlier = RestingOrder::new(
+            let is_bid: bool = is_bid;
+            let earlier: RestingOrder = RestingOrder::new(
                 9,
                 BaseAtoms::ONE,
                 1.0.try_into().unwrap(),
@@ -475,7 +476,7 @@ mod test {
                 OrderType::Limit,
             )
             .unwrap();
-            let later = RestingOrder::new(
+            let later: RestingOrder = RestingOrder::new(
                 1,
                 BaseAtoms::ONE,
                 earlier.get_price(),
@@ -491,10 +492,10 @@ mod test {
 
     #[test]
     fn invalid_order_type_byte_is_safe_and_detectable() {
-        let mut bytes = [0_u8; size_of::<RestingOrder>()];
+        let mut bytes: [u8; size_of::<RestingOrder>()] = [0_u8; size_of::<RestingOrder>()];
         // order_type is byte 41 in the stable account layout.
         bytes[41] = u8::MAX;
-        let order = bytemuck::pod_read_unaligned::<RestingOrder>(&bytes);
+        let order: RestingOrder = bytemuck::pod_read_unaligned::<RestingOrder>(&bytes);
         assert!(!order.has_valid_order_type());
         assert!(OrderType::try_from(u8::MAX).is_err());
     }

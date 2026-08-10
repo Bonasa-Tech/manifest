@@ -763,8 +763,10 @@ impl<Fixed: DerefOrBorrow<MarketFixed>, Dynamic: DerefOrBorrow<[u8]>>
 
     /// Expose the claimed-seat index for off-chain validation of order
     /// cross-references before quote traversal.
-    pub fn get_claimed_seats(&self) -> ClaimedSeatTreeReadOnly {
-        let DynamicAccount { dynamic, fixed } = self.borrow_market();
+    pub fn get_claimed_seats(&self) -> ClaimedSeatTreeReadOnly<'_> {
+        let market: MarketRef<'_> = self.borrow_market();
+        let dynamic: &[u8] = market.dynamic;
+        let fixed: &MarketFixed = market.fixed;
         ClaimedSeatTreeReadOnly::new(dynamic, fixed.claimed_seats_root_index, NIL)
     }
 
@@ -1363,15 +1365,19 @@ impl<
                         // Coalesce only into the current top-of-book order. This
                         // keeps the check constant-time without letting a newer
                         // order jump ahead of an earlier same-price maker.
-                        let top_index = other_tree.get_max_index();
+                        let top_index: DataIndex = other_tree.get_max_index();
                         drop(other_tree);
                         let lookup_index: DataIndex = if top_index != NIL {
-                            let top_order =
+                            let top_order: &RestingOrder =
                                 get_helper::<RBNode<RestingOrder>>(dynamic, top_index).get_value();
                             if [0, -1, 1]
                                 .into_iter()
-                                .filter_map(|offset| lookup_resting_order.with_price_offset(offset))
-                                .any(|candidate| top_order.has_same_coalescing_key(&candidate))
+                                .filter_map(|offset: i8| {
+                                    lookup_resting_order.with_price_offset(offset)
+                                })
+                                .any(|candidate: RestingOrder| {
+                                    top_order.has_same_coalescing_key(&candidate)
+                                })
                             {
                                 top_index
                             } else {

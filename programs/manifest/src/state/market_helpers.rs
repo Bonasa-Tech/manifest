@@ -608,14 +608,14 @@ fn place_reverse_order(
 
         // Coalesce only at top of book so reverse-order reuse stays bounded
         // while preserving FIFO priority for distinct same-price orders.
-        let top_index = other_tree.get_max_index();
+        let top_index: DataIndex = other_tree.get_max_index();
         drop(other_tree);
         let lookup_index: DataIndex = if top_index != NIL {
-            let top_order = get_helper_order(dynamic, top_index).get_value();
+            let top_order: &RestingOrder = get_helper_order(dynamic, top_index).get_value();
             if [0, -1, 1]
                 .into_iter()
-                .filter_map(|offset| lookup_resting_order.with_price_offset(offset))
-                .any(|candidate| top_order.has_same_coalescing_key(&candidate))
+                .filter_map(|offset: i8| lookup_resting_order.with_price_offset(offset))
+                .any(|candidate: RestingOrder| top_order.has_same_coalescing_key(&candidate))
             {
                 top_index
             } else {

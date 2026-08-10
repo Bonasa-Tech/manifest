@@ -5,14 +5,15 @@ use jupiter_amm_interface::{
 };
 
 use hypertree::{
-    get_helper, get_mut_helper, validate_red_black_tree, GetRedBlackTreeReadOnlyData,
+    get_helper, get_mut_helper, validate_red_black_tree, DataIndex, GetRedBlackTreeReadOnlyData,
     HyperTreeValueIteratorTrait,
 };
 use manifest::{
     quantities::{BaseAtoms, QuoteAtoms, WrapperU64},
     state::{
-        claimed_seat::ClaimedSeat, validate_global_dynamic, DynamicAccount, GlobalFixed,
-        GlobalValue, MarketFixed, MarketValue, RestingOrder, GLOBAL_FIXED_SIZE,
+        claimed_seat::ClaimedSeat, validate_global_dynamic, BooksideReadOnly,
+        ClaimedSeatTreeReadOnly, DynamicAccount, GlobalFixed, GlobalValue, MarketFixed,
+        MarketValue, RestingOrder, GLOBAL_FIXED_SIZE,
     },
     validation::{
         get_global_address, get_global_vault_address, get_vault_address,
@@ -71,22 +72,24 @@ fn validated_market_value(market_account: &solana_account::Account) -> Result<Ma
         fixed: market_fixed,
         dynamic: dynamic_data,
     };
-    let claimed_seats = market.get_claimed_seats();
+    let claimed_seats: ClaimedSeatTreeReadOnly<'_> = market.get_claimed_seats();
     validate_red_black_tree::<ClaimedSeat>(
         dynamic_data,
         claimed_seats.root_index(),
         claimed_seats.max_index(),
     )
     .map_err(|error| anyhow::anyhow!("market claimed-seat tree is invalid: {error}"))?;
-    let claimed_seat_indices: HashSet<_> = claimed_seats
+    let claimed_seat_indices: HashSet<DataIndex> = claimed_seats
         .iter::<ClaimedSeat>()
         .map(|(index, _)| index)
         .collect();
 
-    for book in [market.get_bids(), market.get_asks()] {
+    let books: [BooksideReadOnly<'_>; 2] = [market.get_bids(), market.get_asks()];
+    for book in books {
         validate_red_black_tree::<RestingOrder>(dynamic_data, book.root_index(), book.max_index())
             .map_err(|error| anyhow::anyhow!("market order book is invalid: {error}"))?;
-        for (_, order) in book.iter::<RestingOrder>() {
+        for item in book.iter::<RestingOrder>() {
+            let (_order_index, order): (DataIndex, &RestingOrder) = item;
             if !order.has_valid_order_type() {
                 anyhow::bail!("market order book contains an invalid order type");
             }
