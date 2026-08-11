@@ -118,6 +118,10 @@ export class ManifestStatsServer {
   // keeps prices live at the cost of a light per-request loop + serialization,
   // while still avoiding the 24h-volume summation and base58 work.
   private cachedTickersJson: string | null = null;
+  private cachedVolumeJson: string = '{}';
+  private cachedNotionalJson: string = '{}';
+  private cachedCheckpointsJson: string = '{}';
+  private cachedWrappersJson: string = '{}';
 
   // Cached lifetime (total) volume in USDC equivalent for the /volume endpoint.
   // Computing this requires a getProgramAccounts RPC call (see
@@ -940,6 +944,8 @@ export class ManifestStatsServer {
         }
       }
 
+      this.cachedWrappersJson = JSON.stringify(this.getAllWrappers());
+
       console.log(`Loaded ${this.wrapperCache.size} wrapper accounts`);
     } catch (error) {
       console.error('Error loading wrapper accounts:', error);
@@ -960,6 +966,10 @@ export class ManifestStatsServer {
    */
   getAllWrappers(): { [owner: string]: string } {
     return Object.fromEntries(this.wrapperCache);
+  }
+
+  getAllWrappersJson(): string {
+    return this.cachedWrappersJson;
   }
 
   /**
@@ -1141,7 +1151,7 @@ export class ManifestStatsServer {
    * Periodically save the volume so a 24 hour rolling volume can be calculated.
    */
   async advanceCheckpoints(): Promise<void> {
-    this.fillMutex.runExclusive(async () => {
+    await this.fillMutex.runExclusive(async () => {
       console.log('Advancing checkpoints');
 
       // Run memory cleanup to prevent unbounded growth
@@ -1232,6 +1242,19 @@ export class ManifestStatsServer {
         `Checkpoint advances since startup: ${this.checkpointAdvancesSinceStartup}/${this.MIN_CHECKPOINT_ADVANCES_BEFORE_SAVE}`,
       );
     });
+    await this.refreshAggregateResponseCaches();
+  }
+
+  private async refreshAggregateResponseCaches(): Promise<void> {
+    this.cachedCheckpointsJson = JSON.stringify(this.getCheckpoints());
+    this.cachedVolumeJson = JSON.stringify(await this.getVolume());
+    try {
+      this.cachedNotionalJson = JSON.stringify(await this.getNotional());
+    } catch (error) {
+      // Keep the last complete snapshot when the external BTC-price fallback
+      // fails. HTTP requests never retry this checkpoint-owned work.
+      console.error('Failed to refresh cached notional response:', error);
+    }
   }
 
   /**
@@ -1566,6 +1589,10 @@ export class ManifestStatsServer {
     return checkpointsByMarket;
   }
 
+  getCheckpointsJson(): string {
+    return this.cachedCheckpointsJson;
+  }
+
   /**
    * Get checkpoint health status for debugging.
    * Returns information about checkpoint data quality and save readiness.
@@ -1716,6 +1743,10 @@ export class ManifestStatsServer {
     return notionalByMarket;
   }
 
+  getNotionalJson(): string {
+    return this.cachedNotionalJson;
+  }
+
   /**
    * Get normalized SOL and BTC prices
    * @returns Object containing solPrice and cbbtcPrice (both normalized to USDC)
@@ -1773,6 +1804,7 @@ export class ManifestStatsServer {
         solPrice,
         cbbtcPrice,
       );
+      this.cachedVolumeJson = JSON.stringify(await this.getVolume());
     } catch (error) {
       console.error(
         'Failed to get market program accounts for volume calculation:',
@@ -1876,6 +1908,9 @@ export class ManifestStatsServer {
       },
       dailyVolume: Object.fromEntries(dailyVolumesByToken),
     };
+  }
+  getVolumeJson(): string {
+    return this.cachedVolumeJson;
   }
   /**
    * Get Traders to be used in a leaderboard if a UI wants to.

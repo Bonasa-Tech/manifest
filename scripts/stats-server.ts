@@ -219,8 +219,8 @@ const run = async () => {
       res.status(400).send({ error: (error as Error).message });
     }
   };
-  const volumeHandler: RequestHandler = async (_req, res) => {
-    res.send(await statsServer.getVolume());
+  const volumeHandler: RequestHandler = (_req, res) => {
+    res.type('application/json').send(statsServer.getVolumeJson());
   };
   const tradersHandler: RequestHandler = (req, res) => {
     try {
@@ -282,11 +282,11 @@ const run = async () => {
   const altsHandler: RequestHandler = async (_req, res) => {
     res.send(await statsServer.getAlts());
   };
-  const notionalHandler: RequestHandler = async (_req, res) => {
-    res.send(await statsServer.getNotional());
+  const notionalHandler: RequestHandler = (_req, res) => {
+    res.type('application/json').send(statsServer.getNotionalJson());
   };
   const checkpointsHandler: RequestHandler = (_req, res) => {
-    res.send(statsServer.getCheckpoints());
+    res.type('application/json').send(statsServer.getCheckpointsJson());
   };
   const checkpointStatusHandler: RequestHandler = (_req, res) => {
     res.send(statsServer.getCheckpointStatus());
@@ -346,7 +346,7 @@ const run = async () => {
   };
 
   const wrappersHandler: RequestHandler = (_req, res) => {
-    res.send(statsServer.getAllWrappers());
+    res.type('application/json').send(statsServer.getAllWrappersJson());
   };
 
   const app = express();
@@ -392,7 +392,7 @@ const run = async () => {
   app.get('/tickers', tickersHandler);
   app.get('/metadata', metadataHandler);
   app.get('/orderbook', orderbookHandler);
-  app.get('/volume', expensiveQueryAdmission, volumeHandler);
+  app.get('/volume', volumeHandler);
   app.get('/traders', tradersHandler);
   app.get('/traders/debug', (req, res) => {
     const requestedLimit =
@@ -413,12 +413,12 @@ const run = async () => {
   app.get('/recentFills', recentFillsHandler);
   app.get('/completeFills', expensiveQueryAdmission, completeFillsHandler);
   app.get('/alts', expensiveQueryAdmission, altsHandler);
-  app.get('/notional', expensiveQueryAdmission, notionalHandler);
-  app.get('/checkpoints', expensiveQueryAdmission, checkpointsHandler);
+  app.get('/notional', notionalHandler);
+  app.get('/checkpoints', checkpointsHandler);
   app.get('/checkpointStatus', checkpointStatusHandler);
   app.post('/backfill', backfillHandler);
   app.get('/wrapper', wrapperHandler);
-  app.get('/wrappers', expensiveQueryAdmission, wrappersHandler);
+  app.get('/wrappers', wrappersHandler);
 
   // GeckoTerminal integration endpoints
   app.get('/latest-block', (_req, res) => {
