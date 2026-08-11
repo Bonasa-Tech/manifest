@@ -40,7 +40,10 @@ import {
 } from './utils';
 import * as queries from './queries';
 import { lookupMintTicker } from './mint';
-import { fetchMarketProgramAccounts } from './marketFetcher';
+import {
+  fetchMarketProgramAccounts,
+  MAX_TRACKED_MARKETS,
+} from './marketFetcher';
 import { calculateTraderPnL } from './pnl';
 import { TraderVolumeIndex } from './traderVolumeIndex';
 import { CompleteFillsQueryOptions, CompleteFillsQueryResult } from './types';
@@ -675,6 +678,16 @@ export class ManifestStatsServer {
   // Helper method for market loading. Does not look up tickers - callers must handle separately.
   private async loadNewMarket(market: string): Promise<Market | undefined> {
     try {
+      if (
+        !this.markets.has(market) &&
+        !this.baseVolumeAtomsCheckpoints.has(market) &&
+        Math.max(this.markets.size, this.baseVolumeAtomsCheckpoints.size) >=
+          MAX_TRACKED_MARKETS
+      ) {
+        throw new RangeError(
+          `Refusing to track more than ${MAX_TRACKED_MARKETS} markets`,
+        );
+      }
       // Validate and load the market BEFORE touching any state maps. A null,
       // undefined, or otherwise invalid `market` (e.g. from a malformed fill)
       // would throw in `new PublicKey(market)`; initializing the checkpoint maps

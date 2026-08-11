@@ -392,7 +392,7 @@ const run = async () => {
   app.get('/tickers', tickersHandler);
   app.get('/metadata', metadataHandler);
   app.get('/orderbook', orderbookHandler);
-  app.get('/volume', volumeHandler);
+  app.get('/volume', expensiveQueryAdmission, volumeHandler);
   app.get('/traders', tradersHandler);
   app.get('/traders/debug', (req, res) => {
     const requestedLimit =
@@ -413,12 +413,12 @@ const run = async () => {
   app.get('/recentFills', recentFillsHandler);
   app.get('/completeFills', expensiveQueryAdmission, completeFillsHandler);
   app.get('/alts', expensiveQueryAdmission, altsHandler);
-  app.get('/notional', notionalHandler);
-  app.get('/checkpoints', checkpointsHandler);
+  app.get('/notional', expensiveQueryAdmission, notionalHandler);
+  app.get('/checkpoints', expensiveQueryAdmission, checkpointsHandler);
   app.get('/checkpointStatus', checkpointStatusHandler);
   app.post('/backfill', backfillHandler);
   app.get('/wrapper', wrapperHandler);
-  app.get('/wrappers', wrappersHandler);
+  app.get('/wrappers', expensiveQueryAdmission, wrappersHandler);
 
   // GeckoTerminal integration endpoints
   app.get('/latest-block', (_req, res) => {

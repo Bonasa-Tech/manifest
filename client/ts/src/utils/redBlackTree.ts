@@ -21,6 +21,11 @@ export type RedBlackTreeParseContext = {
   maxNodes: number;
 };
 
+export type IndexedRedBlackTreeValue<Value> = {
+  index: number;
+  value: Value;
+};
+
 export function createRedBlackTreeParseContext(
   dataLength: number,
 ): RedBlackTreeParseContext {
@@ -44,6 +49,27 @@ export function deserializeRedBlackTree<Value>(
     data.length,
   ),
 ): Value[] {
+  return deserializeRedBlackTreeWithIndices(
+    data,
+    rootIndex,
+    valueDeserializer,
+    context,
+  ).map(({ value }: IndexedRedBlackTreeValue<Value>): Value => value);
+}
+
+/**
+ * Deserializes a tree while retaining each value's dynamic-account offset.
+ * Cross-tree references must be matched against these validated node offsets;
+ * reading a payload directly from an otherwise in-bounds byte offset is unsafe.
+ */
+export function deserializeRedBlackTreeWithIndices<Value>(
+  data: Buffer,
+  rootIndex: number,
+  valueDeserializer: BeetArgsStruct<Value>,
+  context: RedBlackTreeParseContext = createRedBlackTreeParseContext(
+    data.length,
+  ),
+): IndexedRedBlackTreeValue<Value>[] {
   if (rootIndex === NIL) {
     return [];
   }
@@ -130,7 +156,7 @@ export function deserializeRedBlackTree<Value>(
     });
   }
 
-  const result: Value[] = [];
+  const result: IndexedRedBlackTreeValue<Value>[] = [];
   const stack: number[] = [];
   let current = rootIndex;
   while (current !== NIL || stack.length > 0) {
@@ -145,7 +171,7 @@ export function deserializeRedBlackTree<Value>(
         index + NUM_TREE_HEADER_BYTES + valueDeserializer.byteSize,
       ),
     );
-    result.push(value);
+    result.push({ index, value });
     current = toNum(readHeader(index).right);
   }
   return result;

@@ -12,6 +12,34 @@ import { Pool } from 'pg';
 
 const { RPC_URL, DATABASE_URL, PRIVATE_KEY } = process.env;
 
+const MAX_MARKETS_PER_RUN: number = 100;
+const MAX_TRANSACTIONS_PER_RUN: number = 100;
+const MAX_LAMPORTS_PER_RUN: number = 100_000_000;
+const MAX_ALT_ACCOUNT_BYTES: number = 56 + 32 * 256;
+
+type MutationBudget = {
+  transactions: number;
+  lamports: number;
+};
+
+function reserveMutation(
+  budget: MutationBudget,
+  estimatedLamports: number,
+): void {
+  if (budget.transactions + 1 > MAX_TRANSACTIONS_PER_RUN) {
+    throw new RangeError(
+      `Refusing to send more than ${MAX_TRANSACTIONS_PER_RUN} ALT transactions`,
+    );
+  }
+  if (budget.lamports + estimatedLamports > MAX_LAMPORTS_PER_RUN) {
+    throw new RangeError(
+      `Refusing ALT mutations above ${MAX_LAMPORTS_PER_RUN} lamports`,
+    );
+  }
+  budget.transactions += 1;
+  budget.lamports += estimatedLamports;
+}
+
 if (!RPC_URL) {
   throw new Error('RPC_URL missing from env');
 }
@@ -66,7 +94,8 @@ async function addMarketToAlts(
   pool: Pool,
   keypair: Keypair,
   market: string,
-) {
+  budget: MutationBudget,
+): Promise<void> {
   const marketPk = new PublicKey(market);
   const client = await ManifestClient.getClientReadOnly(connection, marketPk);
   const pksForSwap = await client.getSwapAltPks();
@@ -107,6 +136,13 @@ async function addMarketToAlts(
         recentBlockhash: blockhash,
       }),
     );
+    const transactionFee: number | null = (
+      await connection.getFeeForMessage(tx.message)
+    ).value;
+    if (transactionFee === null) {
+      throw new Error('RPC did not return an ALT transaction fee');
+    }
+    reserveMutation(budget, transactionFee);
     tx.sign([keypair]);
 
     console.log(
@@ -164,6 +200,15 @@ async function addMarketToAlts(
       recentBlockhash: blockhash,
     }),
   );
+  const transactionFee: number | null = (
+    await connection.getFeeForMessage(tx.message)
+  ).value;
+  if (transactionFee === null) {
+    throw new Error('RPC did not return an ALT transaction fee');
+  }
+  const maximumAltRent: number =
+    await connection.getMinimumBalanceForRentExemption(MAX_ALT_ACCOUNT_BYTES);
+  reserveMutation(budget, transactionFee + maximumAltRent);
   tx.sign([keypair]);
 
   const altAddress = altPk.toString();
@@ -190,7 +235,7 @@ async function addMarketToAlts(
   ]);
 }
 
-async function main() {
+async function main(): Promise<void> {
   const connection = new Connection(RPC_URL!, 'confirmed');
   const pool = new Pool({
     connectionString: DATABASE_URL!,
@@ -204,8 +249,25 @@ async function main() {
 
   const markets: string[] = await findMarketsWithoutAlt(connection, pool);
   console.log('found', markets.length, 'without ALTs', markets);
-  for (const market of markets) {
-    await addMarketToAlts(connection, pool, keypair, market);
+  if (markets.length > MAX_MARKETS_PER_RUN) {
+    throw new RangeError(
+      `Refusing to process ${markets.length} markets; maximum per run is ${MAX_MARKETS_PER_RUN}`,
+    );
   }
+  // This operator workflow holds a funding key. Requiring an explicit apply
+  // flag prevents a discovery or CI invocation from signing RPC-directed
+  // mutations merely because credentials happen to be present.
+  if (process.env.APPLY_ALT_UPDATES !== 'true') {
+    console.log(
+      'Dry run only. Set APPLY_ALT_UPDATES=true after reviewing the market list.',
+    );
+    await pool.end();
+    return;
+  }
+  const budget: MutationBudget = { transactions: 0, lamports: 0 };
+  for (const market of markets) {
+    await addMarketToAlts(connection, pool, keypair, market, budget);
+  }
+  await pool.end();
 }
-main();
+void main();

@@ -9,9 +9,13 @@ import {
   AccountInfo,
 } from '@solana/web3.js';
 import { bignum } from '@metaplex-foundation/beet';
-import { publicKeyBeet } from './utils/beet';
 import { publicKey as beetPublicKey } from '@metaplex-foundation/beet-solana';
-import { deserializeRedBlackTree } from './utils/redBlackTree';
+import {
+  createRedBlackTreeParseContext,
+  deserializeRedBlackTreeWithIndices,
+  IndexedRedBlackTreeValue,
+  RedBlackTreeParseContext,
+} from './utils/redBlackTree';
 import { convertU128, toBigInt, toNum } from './utils/numbers';
 import {
   FIXED_MANIFEST_HEADER_SIZE,
@@ -735,61 +739,81 @@ export class Market {
 
     // _padding3: [u64; 8],
 
+    const dynamicData: Buffer = data.subarray(FIXED_MANIFEST_HEADER_SIZE);
+    const parseContext: RedBlackTreeParseContext =
+      createRedBlackTreeParseContext(dynamicData.length);
+    const indexedClaimedSeats: IndexedRedBlackTreeValue<ClaimedSeatRaw>[] =
+      claimedSeatsRootIndex != NIL
+        ? deserializeRedBlackTreeWithIndices(
+            dynamicData,
+            claimedSeatsRootIndex,
+            claimedSeatBeet,
+            parseContext,
+          )
+        : [];
+    const claimedSeatsByIndex: Map<number, ClaimedSeatRaw> = new Map(
+      indexedClaimedSeats.map(
+        ({
+          index,
+          value,
+        }: IndexedRedBlackTreeValue<ClaimedSeatRaw>): [
+          number,
+          ClaimedSeatRaw,
+        ] => [index, value],
+      ),
+    );
+
+    const toRestingOrder = (
+      restingOrderInternal: RestingOrderRaw,
+    ): RestingOrder => {
+      const traderIndex: number = toNum(restingOrderInternal.traderIndex);
+      const claimedSeat: ClaimedSeatRaw | undefined =
+        claimedSeatsByIndex.get(traderIndex);
+      if (claimedSeat === undefined) {
+        throw new Error(
+          `Resting order references an unclaimed trader seat at offset ${traderIndex}`,
+        );
+      }
+      const baseOrder: RestingOrder = {
+        trader: claimedSeat.trader,
+        numBaseTokens:
+          toNum(restingOrderInternal.numBaseAtoms) / 10 ** baseMintDecimals,
+        tokenPrice:
+          convertU128(restingOrderInternal.price) *
+          10 ** (baseMintDecimals - quoteMintDecimals),
+        ...restingOrderInternal,
+      };
+
+      if (
+        restingOrderInternal.orderType === OrderType.Reverse ||
+        restingOrderInternal.orderType === OrderType.ReverseTight
+      ) {
+        const paddingBytes: number[] = restingOrderInternal.padding;
+        const spreadRaw: number =
+          paddingBytes[0] |
+          (paddingBytes[1] << 8) |
+          (paddingBytes[2] << 16) |
+          (paddingBytes[3] << 24);
+        const spreadBps: number =
+          restingOrderInternal.orderType === OrderType.ReverseTight
+            ? spreadRaw / 10000
+            : spreadRaw / 10;
+        return { ...baseOrder, spreadBps };
+      }
+      return baseOrder;
+    };
+
     const bids: RestingOrder[] =
       bidsRootIndex != NIL
-        ? deserializeRedBlackTree(
-            data.subarray(FIXED_MANIFEST_HEADER_SIZE),
+        ? deserializeRedBlackTreeWithIndices(
+            dynamicData,
             bidsRootIndex,
             restingOrderBeet,
+            parseContext,
           )
-            .map((restingOrderInternal: RestingOrderRaw) => {
-              const baseOrder = {
-                trader: publicKeyBeet.deserialize(
-                  data.subarray(
-                    Number(restingOrderInternal.traderIndex) +
-                      16 +
-                      FIXED_MANIFEST_HEADER_SIZE,
-                    Number(restingOrderInternal.traderIndex) +
-                      48 +
-                      FIXED_MANIFEST_HEADER_SIZE,
-                  ),
-                )[0].publicKey,
-                numBaseTokens:
-                  toNum(restingOrderInternal.numBaseAtoms) /
-                  10 ** baseMintDecimals,
-                tokenPrice:
-                  convertU128(restingOrderInternal.price) *
-                  10 ** (baseMintDecimals - quoteMintDecimals),
-                ...restingOrderInternal,
-              };
-
-              if (
-                restingOrderInternal.orderType === OrderType.Reverse ||
-                restingOrderInternal.orderType === OrderType.ReverseTight
-              ) {
-                const paddingBytes = restingOrderInternal.padding;
-                const spreadRaw =
-                  paddingBytes[0] |
-                  (paddingBytes[1] << 8) |
-                  (paddingBytes[2] << 16) |
-                  (paddingBytes[3] << 24);
-
-                // Convert spreadRaw to bps based on order type
-                // Reverse: spreadRaw is in units of 1/100,000 (base), divide by 10 to get bps
-                // ReverseTight: spreadRaw is in units of 1/100,000,000 (base), divide by 10,000 to get bps
-                const spreadBps =
-                  restingOrderInternal.orderType === OrderType.ReverseTight
-                    ? spreadRaw / 10000
-                    : spreadRaw / 10;
-
-                return {
-                  ...baseOrder,
-                  spreadBps,
-                };
-              }
-
-              return baseOrder;
-            })
+            .map(({ value }: IndexedRedBlackTreeValue<RestingOrderRaw>) =>
+              toRestingOrder(value),
+            )
             .filter((bid: RestingOrder) => {
               return (
                 bid.lastValidSlot == NO_EXPIRATION_LAST_VALID_SLOT ||
@@ -800,59 +824,15 @@ export class Market {
 
     const asks: RestingOrder[] =
       asksRootIndex != NIL
-        ? deserializeRedBlackTree(
-            data.subarray(FIXED_MANIFEST_HEADER_SIZE),
+        ? deserializeRedBlackTreeWithIndices(
+            dynamicData,
             asksRootIndex,
             restingOrderBeet,
+            parseContext,
           )
-            .map((restingOrderInternal: RestingOrderRaw) => {
-              const baseOrder = {
-                trader: publicKeyBeet.deserialize(
-                  data.subarray(
-                    Number(restingOrderInternal.traderIndex) +
-                      16 +
-                      FIXED_MANIFEST_HEADER_SIZE,
-                    Number(restingOrderInternal.traderIndex) +
-                      48 +
-                      FIXED_MANIFEST_HEADER_SIZE,
-                  ),
-                )[0].publicKey,
-                numBaseTokens:
-                  toNum(restingOrderInternal.numBaseAtoms) /
-                  10 ** baseMintDecimals,
-                tokenPrice:
-                  convertU128(restingOrderInternal.price) *
-                  10 ** (baseMintDecimals - quoteMintDecimals),
-                ...restingOrderInternal,
-              };
-
-              if (
-                restingOrderInternal.orderType === OrderType.Reverse ||
-                restingOrderInternal.orderType === OrderType.ReverseTight
-              ) {
-                const paddingBytes = restingOrderInternal.padding;
-                const spreadRaw =
-                  paddingBytes[0] |
-                  (paddingBytes[1] << 8) |
-                  (paddingBytes[2] << 16) |
-                  (paddingBytes[3] << 24);
-
-                // Convert spreadRaw to bps based on order type
-                // Reverse: spreadRaw is in units of 1/100,000 (base), divide by 10 to get bps
-                // ReverseTight: spreadRaw is in units of 1/100,000,000 (base), divide by 10,000 to get bps
-                const spreadBps =
-                  restingOrderInternal.orderType === OrderType.ReverseTight
-                    ? spreadRaw / 10000
-                    : spreadRaw / 10;
-
-                return {
-                  ...baseOrder,
-                  spreadBps,
-                };
-              }
-
-              return baseOrder;
-            })
+            .map(({ value }: IndexedRedBlackTreeValue<RestingOrderRaw>) =>
+              toRestingOrder(value),
+            )
             .filter((ask: RestingOrder) => {
               return (
                 ask.lastValidSlot == NO_EXPIRATION_LAST_VALID_SLOT ||
@@ -861,21 +841,18 @@ export class Market {
             })
         : [];
 
-    const claimedSeats: ClaimedSeat[] =
-      claimedSeatsRootIndex != NIL
-        ? deserializeRedBlackTree(
-            data.subarray(FIXED_MANIFEST_HEADER_SIZE),
-            claimedSeatsRootIndex,
-            claimedSeatBeet,
-          ).map((claimedSeatInternal: ClaimedSeatRaw) => {
-            return {
-              publicKey: claimedSeatInternal.trader,
-              baseBalance: claimedSeatInternal.baseWithdrawableBalance,
-              quoteBalance: claimedSeatInternal.quoteWithdrawableBalance,
-              quoteVolume: claimedSeatInternal.quoteVolume,
-            };
-          })
-        : [];
+    const claimedSeats: ClaimedSeat[] = indexedClaimedSeats.map(
+      ({
+        value: claimedSeatInternal,
+      }: IndexedRedBlackTreeValue<ClaimedSeatRaw>) => {
+        return {
+          publicKey: claimedSeatInternal.trader,
+          baseBalance: claimedSeatInternal.baseWithdrawableBalance,
+          quoteBalance: claimedSeatInternal.quoteWithdrawableBalance,
+          quoteVolume: claimedSeatInternal.quoteVolume,
+        };
+      },
+    );
 
     return {
       version,

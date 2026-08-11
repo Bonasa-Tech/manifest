@@ -1,9 +1,11 @@
 import { assert } from 'chai';
+import { GetProgramAccountsResponse } from '@solana/web3.js';
 import {
   isAuthorizedBearer,
   isValidSolanaSignature,
   parseBoundedQueryInteger,
 } from '../../../scripts/stats_utils/httpValidation';
+import { enforceMarketAccountLimit } from '../../../scripts/stats_utils/marketFetcher';
 
 describe('stats HTTP validation', () => {
   it('accepts bounded integer query values', () => {
@@ -43,5 +45,16 @@ describe('stats HTTP validation', () => {
     assert.isTrue(isValidSolanaSignature('1'.repeat(64)));
     assert.isFalse(isValidSolanaSignature('0'.repeat(64)));
     assert.isFalse(isValidSolanaSignature('1'.repeat(63)));
+  });
+
+  it('rejects an RPC market collection above the configured bound', () => {
+    const syntheticAccounts: GetProgramAccountsResponse = new Array(3).fill(
+      {},
+    ) as GetProgramAccountsResponse;
+    assert.throws(
+      () => enforceMarketAccountLimit(syntheticAccounts, 2),
+      /refusing to track more than 2/,
+    );
+    assert.lengthOf(enforceMarketAccountLimit(syntheticAccounts, 3), 3);
   });
 });

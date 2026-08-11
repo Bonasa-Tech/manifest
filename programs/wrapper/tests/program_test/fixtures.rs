@@ -77,6 +77,17 @@ impl TestFixture {
             second_keypair.pubkey(),
             solana_account::Account::new(u32::MAX as u64, 0, &solana_program::system_program::id()),
         );
+        let collector: Keypair = Keypair::from_bytes(&[
+            42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42,
+            42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 25, 127, 107, 35, 225, 108, 133, 50, 198, 171,
+            200, 56, 250, 205, 94, 167, 137, 190, 12, 118, 178, 146, 3, 52, 3, 155, 250, 139, 61,
+            54, 141, 97,
+        ])
+        .unwrap();
+        program.add_account(
+            collector.pubkey(),
+            solana_account::Account::new(SOL_UNIT_SIZE, 0, &solana_program::system_program::id()),
+        );
 
         let usdc_keypair: Keypair = Keypair::new();
         let sol_keypair: Keypair = Keypair::new();
