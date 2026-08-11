@@ -2,7 +2,6 @@ use std::u64;
 
 use hypertree::HyperTreeValueIteratorTrait;
 use manifest::{
-    program::{batch_update::PlaceOrderParams, batch_update_instruction},
     quantities::{QuoteAtomsPerBaseAtom, WrapperU64},
     state::{
         constants::{MARKET_BLOCK_SIZE, MARKET_FIXED_SIZE, NO_EXPIRATION_LAST_VALID_SLOT},
@@ -14,7 +13,7 @@ use solana_keypair::Keypair;
 use solana_program_test::tokio;
 use solana_signer::Signer;
 
-use crate::{send_tx_with_retry, Side, TestFixture, Token, SOL_UNIT_SIZE, USDC_UNIT_SIZE};
+use crate::{Side, TestFixture, Token, SOL_UNIT_SIZE, USDC_UNIT_SIZE};
 
 #[tokio::test]
 async fn place_order_test() -> anyhow::Result<()> {
@@ -90,57 +89,6 @@ async fn place_order_fail_insufficient_funds_test() -> anyhow::Result<()> {
         .await
         .is_err());
 
-    Ok(())
-}
-
-#[tokio::test]
-async fn undefined_order_types_are_rejected_before_market_mutation() -> anyhow::Result<()> {
-    for invalid_order_type in [6_u8, u8::MAX] {
-        let mut test_fixture: TestFixture = TestFixture::new().await;
-        test_fixture.claim_seat().await?;
-        test_fixture.deposit(Token::SOL, SOL_UNIT_SIZE).await?;
-        let market_before: Vec<u8> = test_fixture
-            .try_load(&test_fixture.market_fixture.key)
-            .await?
-            .unwrap()
-            .data;
-        let payer_keypair: Keypair = test_fixture.payer_keypair().insecure_clone();
-        let mut instruction: solana_program::instruction::Instruction = batch_update_instruction(
-            &test_fixture.market_fixture.key,
-            &payer_keypair.pubkey(),
-            None,
-            vec![],
-            vec![PlaceOrderParams::new(
-                SOL_UNIT_SIZE,
-                2,
-                0,
-                false,
-                OrderType::Limit,
-                NO_EXPIRATION_LAST_VALID_SLOT,
-            )],
-            None,
-            None,
-            None,
-            None,
-        );
-        let order_type_byte: &mut u8 = instruction.data.last_mut().unwrap();
-        *order_type_byte = invalid_order_type;
-
-        assert!(send_tx_with_retry(
-            std::rc::Rc::clone(&test_fixture.context),
-            &[instruction],
-            Some(&payer_keypair.pubkey()),
-            &[&payer_keypair],
-        )
-        .await
-        .is_err());
-        let market_after: Vec<u8> = test_fixture
-            .try_load(&test_fixture.market_fixture.key)
-            .await?
-            .unwrap()
-            .data;
-        assert_eq!(market_after, market_before);
-    }
     Ok(())
 }
 

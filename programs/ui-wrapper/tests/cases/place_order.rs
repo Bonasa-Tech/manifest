@@ -35,7 +35,8 @@ use ui_wrapper::{
 };
 
 use crate::{
-    send_tx_with_retry, TestFixture, Token, WrapperFixture, SOL_UNIT_SIZE, USDC_UNIT_SIZE,
+    fee_authority_keypair, send_tx_with_retry, TestFixture, Token, WrapperFixture, SOL_UNIT_SIZE,
+    USDC_UNIT_SIZE,
 };
 
 #[tokio::test]
@@ -245,6 +246,7 @@ async fn wrapper_place_order_test() -> anyhow::Result<()> {
             AccountMeta::new_readonly(spl_token::id(), false),
             AccountMeta::new_readonly(spl_token::id(), false),
             AccountMeta::new_readonly(manifest::id(), false),
+            AccountMeta::new_readonly(fee_authority_keypair().pubkey(), true),
             AccountMeta::new(platform_token_account, false),
             AccountMeta::new(referred_token_account, false),
         ],
@@ -522,6 +524,7 @@ async fn wrapper_place_order_with_broke_owner_test() -> anyhow::Result<()> {
             AccountMeta::new_readonly(spl_token::id(), false),
             AccountMeta::new_readonly(spl_token::id(), false),
             AccountMeta::new_readonly(manifest::id(), false),
+            AccountMeta::new_readonly(fee_authority_keypair().pubkey(), true),
             AccountMeta::new(platform_token_account, false),
             AccountMeta::new(referred_token_account, false),
         ],
@@ -755,6 +758,7 @@ async fn wrapper_place_order_without_globals_test() -> anyhow::Result<()> {
             AccountMeta::new_readonly(spl_token::id(), false),
             AccountMeta::new_readonly(spl_token::id(), false),
             AccountMeta::new_readonly(manifest::id(), false),
+            AccountMeta::new_readonly(fee_authority_keypair().pubkey(), true),
             AccountMeta::new(platform_token_account, false),
             AccountMeta::new(referred_token_account, false),
         ],
@@ -1167,6 +1171,7 @@ async fn wrapper_fill_order_test() -> anyhow::Result<()> {
             AccountMeta::new_readonly(spl_token::id(), false),
             AccountMeta::new_readonly(spl_token::id(), false),
             AccountMeta::new_readonly(manifest::id(), false),
+            AccountMeta::new_readonly(fee_authority_keypair().pubkey(), true),
             AccountMeta::new(platform_token_account, false),
         ],
         data: [
@@ -1255,6 +1260,7 @@ async fn wrapper_fill_order_test() -> anyhow::Result<()> {
             AccountMeta::new_readonly(spl_token::id(), false),
             AccountMeta::new_readonly(spl_token::id(), false),
             AccountMeta::new_readonly(manifest::id(), false),
+            AccountMeta::new_readonly(fee_authority_keypair().pubkey(), true),
             AccountMeta::new(platform_token_account, false),
         ],
         data: [
@@ -1535,6 +1541,7 @@ async fn wrapper_fill_order_without_referral_test() -> anyhow::Result<()> {
             AccountMeta::new_readonly(spl_token::id(), false),
             AccountMeta::new_readonly(spl_token::id(), false),
             AccountMeta::new_readonly(manifest::id(), false),
+            AccountMeta::new_readonly(fee_authority_keypair().pubkey(), true),
             AccountMeta::new(platform_token_account, false),
             AccountMeta::new(referred_token_account, false),
         ],
@@ -1624,6 +1631,7 @@ async fn wrapper_fill_order_without_referral_test() -> anyhow::Result<()> {
             AccountMeta::new_readonly(spl_token::id(), false),
             AccountMeta::new_readonly(spl_token::id(), false),
             AccountMeta::new_readonly(manifest::id(), false),
+            AccountMeta::new_readonly(fee_authority_keypair().pubkey(), true),
             AccountMeta::new(platform_token_account, false),
             AccountMeta::new(referred_token_account, false),
         ],
@@ -1909,6 +1917,7 @@ async fn wrapper_fill_order_with_transfer_fees_test() -> anyhow::Result<()> {
             AccountMeta::new_readonly(spl_token::id(), false),
             AccountMeta::new_readonly(spl_token_2022::id(), false),
             AccountMeta::new_readonly(manifest::id(), false),
+            AccountMeta::new_readonly(fee_authority_keypair().pubkey(), true),
             AccountMeta::new(platform_token_account, false),
             AccountMeta::new(referred_token_account, false),
         ],
@@ -2013,6 +2022,7 @@ async fn wrapper_fill_order_with_transfer_fees_test() -> anyhow::Result<()> {
             AccountMeta::new_readonly(spl_token::id(), false),
             AccountMeta::new_readonly(spl_token_2022::id(), false),
             AccountMeta::new_readonly(manifest::id(), false),
+            AccountMeta::new_readonly(fee_authority_keypair().pubkey(), true),
             AccountMeta::new(platform_token_account, false),
             AccountMeta::new(referred_token_account, false),
         ],
@@ -2295,6 +2305,7 @@ async fn wrapper_fill_order_with_transfer_fees_without_referral_test() -> anyhow
             AccountMeta::new_readonly(spl_token::id(), false),
             AccountMeta::new_readonly(spl_token_2022::id(), false),
             AccountMeta::new_readonly(manifest::id(), false),
+            AccountMeta::new_readonly(fee_authority_keypair().pubkey(), true),
             AccountMeta::new(platform_token_account, false),
         ],
         data: [
@@ -2380,6 +2391,7 @@ async fn wrapper_fill_order_with_transfer_fees_without_referral_test() -> anyhow
             AccountMeta::new_readonly(spl_token::id(), false),
             AccountMeta::new_readonly(spl_token_2022::id(), false),
             AccountMeta::new_readonly(manifest::id(), false),
+            AccountMeta::new_readonly(fee_authority_keypair().pubkey(), true),
             AccountMeta::new(platform_token_account, false),
         ],
         data: [
@@ -2576,6 +2588,7 @@ async fn wrapper_self_trade_test() -> anyhow::Result<()> {
             AccountMeta::new_readonly(spl_token::id(), false),
             AccountMeta::new_readonly(spl_token::id(), false),
             AccountMeta::new_readonly(manifest::id(), false),
+            AccountMeta::new_readonly(fee_authority_keypair().pubkey(), true),
             AccountMeta::new(platform_token_account, false),
             AccountMeta::new(referred_token_account, false),
         ],

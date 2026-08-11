@@ -219,8 +219,8 @@ const run = async () => {
       res.status(400).send({ error: (error as Error).message });
     }
   };
-  const volumeHandler: RequestHandler = async (_req, res) => {
-    res.send(await statsServer.getVolume());
+  const volumeHandler: RequestHandler = (_req, res) => {
+    res.type('application/json').send(statsServer.getVolumeJson());
   };
   const tradersHandler: RequestHandler = (req, res) => {
     try {
@@ -282,11 +282,11 @@ const run = async () => {
   const altsHandler: RequestHandler = async (_req, res) => {
     res.send(await statsServer.getAlts());
   };
-  const notionalHandler: RequestHandler = async (_req, res) => {
-    res.send(await statsServer.getNotional());
+  const notionalHandler: RequestHandler = (_req, res) => {
+    res.type('application/json').send(statsServer.getNotionalJson());
   };
   const checkpointsHandler: RequestHandler = (_req, res) => {
-    res.send(statsServer.getCheckpoints());
+    res.type('application/json').send(statsServer.getCheckpointsJson());
   };
   const checkpointStatusHandler: RequestHandler = (_req, res) => {
     res.send(statsServer.getCheckpointStatus());
@@ -346,7 +346,7 @@ const run = async () => {
   };
 
   const wrappersHandler: RequestHandler = (_req, res) => {
-    res.send(statsServer.getAllWrappers());
+    res.type('application/json').send(statsServer.getAllWrappersJson());
   };
 
   const app = express();

@@ -56,6 +56,15 @@ const RUST_LOG_DEFAULT: &str = "solana_rbpf::vm=info,\
 pub const SOL_UNIT_SIZE: u64 = 1_000_000_000;
 pub const USDC_UNIT_SIZE: u64 = 1_000_000;
 
+pub fn fee_authority_keypair() -> Keypair {
+    Keypair::from_bytes(&[
+        42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42,
+        42, 42, 42, 42, 42, 42, 42, 42, 42, 25, 127, 107, 35, 225, 108, 133, 50, 198, 171, 200, 56,
+        250, 205, 94, 167, 137, 190, 12, 118, 178, 146, 3, 52, 3, 155, 250, 139, 61, 54, 141, 97,
+    ])
+    .unwrap()
+}
+
 pub struct TestFixture {
     pub context: Rc<RefCell<ProgramTestContext>>,
     pub sol_mint: MintFixture,
@@ -87,6 +96,10 @@ impl TestFixture {
         let second_keypair: Keypair = Keypair::new();
         program.add_account(
             second_keypair.pubkey(),
+            solana_account::Account::new(SOL_UNIT_SIZE, 0, &solana_program::system_program::id()),
+        );
+        program.add_account(
+            fee_authority_keypair().pubkey(),
             solana_account::Account::new(SOL_UNIT_SIZE, 0, &solana_program::system_program::id()),
         );
 
@@ -179,6 +192,10 @@ impl TestFixture {
         let second_keypair: Keypair = Keypair::new();
         program.add_account(
             second_keypair.pubkey(),
+            solana_account::Account::new(SOL_UNIT_SIZE, 0, &solana_program::system_program::id()),
+        );
+        program.add_account(
+            fee_authority_keypair().pubkey(),
             solana_account::Account::new(SOL_UNIT_SIZE, 0, &solana_program::system_program::id()),
         );
 
@@ -972,14 +989,35 @@ pub async fn send_tx_with_retry(
     signers: &[&Keypair],
 ) -> Result<(), BanksClientError> {
     let mut context: RefMut<ProgramTestContext> = context.borrow_mut();
+    let fee_authority: Keypair = fee_authority_keypair();
+    let mut all_signers: Vec<&Keypair> = signers.to_vec();
+    let requires_fee_authority: bool = instructions.iter().any(|instruction: &Instruction| {
+        instruction
+            .accounts
+            .iter()
+            .any(|account: &solana_instruction::AccountMeta| {
+                account.is_signer && account.pubkey == fee_authority.pubkey()
+            })
+    });
+    if requires_fee_authority
+        && !all_signers
+            .iter()
+            .any(|signer: &&Keypair| signer.pubkey() == fee_authority.pubkey())
+    {
+        all_signers.push(&fee_authority);
+    }
 
     loop {
         let blockhash_or: Result<Hash, Error> = context.get_new_latest_blockhash().await;
         if blockhash_or.is_err() {
             continue;
         }
-        let tx: Transaction =
-            Transaction::new_signed_with_payer(instructions, payer, signers, blockhash_or.unwrap());
+        let tx: Transaction = Transaction::new_signed_with_payer(
+            instructions,
+            payer,
+            &all_signers,
+            blockhash_or.unwrap(),
+        );
         let result: Result<(), BanksClientError> =
             context.banks_client.process_transaction(tx).await;
         if result.is_ok() {

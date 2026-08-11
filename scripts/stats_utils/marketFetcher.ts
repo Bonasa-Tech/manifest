@@ -6,6 +6,20 @@ import {
 import { ManifestClient } from '../../client/ts/src';
 import { MANIFEST_PROGRAM_ID, MARKET_DISCRIMINATOR } from './constants';
 
+export const MAX_TRACKED_MARKETS: number = 5_000;
+
+export function enforceMarketAccountLimit(
+  marketProgramAccounts: GetProgramAccountsResponse,
+  maximumMarkets: number = MAX_TRACKED_MARKETS,
+): GetProgramAccountsResponse {
+  if (marketProgramAccounts.length > maximumMarkets) {
+    throw new RangeError(
+      `RPC returned ${marketProgramAccounts.length} markets; refusing to track more than ${maximumMarkets}`,
+    );
+  }
+  return marketProgramAccounts;
+}
+
 /**
  * Fetch all market program accounts from the Manifest program
  * Tries to get full account data first, falls back to pubkeys only if that fails
@@ -63,5 +77,7 @@ export async function fetchMarketProgramAccounts(
     }
   }
 
-  return marketProgramAccounts;
+  // Apply the limit after both RPC paths so a size violation cannot be caught
+  // as a transport failure and silently replaced with another unbounded result.
+  return enforceMarketAccountLimit(marketProgramAccounts);
 }

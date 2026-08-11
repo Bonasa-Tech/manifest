@@ -13,6 +13,7 @@ use solana_program::{
     account_info::{next_account_info, AccountInfo},
     entrypoint::ProgramResult,
     program_error::ProgramError,
+    pubkey,
     pubkey::Pubkey,
 };
 
@@ -27,6 +28,10 @@ use super::shared::{
 };
 
 const FEE_DENOMINATOR: u128 = 10u128.pow(9);
+#[cfg(not(feature = "test"))]
+const FEE_AUTHORITY: Pubkey = pubkey!("B6dmr2UAn2wgjdm3T4N1Vjd8oPYRRTguByW7AEngkeL6");
+#[cfg(feature = "test")]
+const FEE_AUTHORITY: Pubkey = pubkey!("2iXtA8oeZqUU5pofxK971TCEvFGfems2AcDRaZHKD2pQ");
 
 #[derive(BorshDeserialize, BorshSerialize, Clone)]
 pub struct WrapperSettleFundsParams {
@@ -63,11 +68,15 @@ pub(crate) fn process_settle_funds(
     let token_program_quote: &AccountInfo = next_account_info(account_iter)?;
     let manifest_program: Program =
         Program::new(next_account_info(account_iter)?, &manifest::id())?;
+    let fee_authority: Signer = Signer::new(next_account_info(account_iter)?)?;
     let platform_token_account: &AccountInfo = next_account_info(account_iter)?;
     let referrer_token_account: Result<&AccountInfo, ProgramError> =
         next_account_info(account_iter);
 
     check_signer(&wrapper_state, owner.key);
+    if *fee_authority.key != FEE_AUTHORITY {
+        return Err(ProgramError::InvalidArgument);
+    }
     let market_info_index: DataIndex = get_market_info_index_for_market(&wrapper_state, market.key);
 
     // Do an initial sync to update withdrawable balances and volume traded for fee calculation.
@@ -87,6 +96,9 @@ pub(crate) fn process_settle_funds(
         platform_fee_percent,
     } = WrapperSettleFundsParams::try_from_slice(data)?;
     let fee_mantissa = (fee_mantissa as u128).min(FEE_DENOMINATOR);
+    if fee_mantissa == 0 {
+        return Err(ProgramError::InvalidArgument);
+    }
 
     // limits:
     // quote_volume_unpaid = [0..u64::MAX]
@@ -98,12 +110,8 @@ pub(crate) fn process_settle_funds(
     // limits:
     // quote_volume_paid = [0..quote_volume_unpaid] safe to cast to u64
     // intermediate results can extend above u64
-    let quote_volume_paid = QuoteAtoms::new((fee_atoms * FEE_DENOMINATOR / fee_mantissa) as u64);
-    // limits:
-    // saturating_sub not needed, but doesn't hurt
-    market_info.quote_volume_unpaid = market_info
-        .quote_volume_unpaid
-        .saturating_sub(quote_volume_paid);
+    let quote_volume_paid: QuoteAtoms =
+        QuoteAtoms::new((fee_atoms * FEE_DENOMINATOR / fee_mantissa) as u64);
 
     let MarketInfo {
         base_balance,
@@ -278,6 +286,18 @@ pub(crate) fn process_settle_funds(
 
     // Sync to update the remaining balances post settlement.
     sync_fast(&wrapper_state, &market, market_info_index)?;
+
+    // Updating after the authenticated transfers makes the accounting
+    // invariant explicit: fee volume is cleared only after payment succeeds.
+    let mut wrapper_data: RefMut<&mut [u8]> = wrapper_state.info.try_borrow_mut_data()?;
+    let mut wrapper: DynamicAccount<&mut ManifestWrapperUserFixed, &mut [u8]> =
+        get_mut_dynamic_account(&mut wrapper_data);
+    let market_info: &mut MarketInfo =
+        get_mut_helper::<RBNode<MarketInfo>>(&mut wrapper.dynamic, market_info_index)
+            .get_mut_value();
+    market_info.quote_volume_unpaid = market_info
+        .quote_volume_unpaid
+        .saturating_sub(quote_volume_paid);
 
     Ok(())
 }
