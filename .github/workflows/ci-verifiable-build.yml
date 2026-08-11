@@ -19,6 +19,11 @@ jobs:
   build:
     name: Build Verifiable Artifact
     runs-on: ubuntu-latest
+    # Building and publishing intentionally share one tag-triggered job so the
+    # exact verified artifacts are released without a mutable handoff. Inputs
+    # are pinned (actions by SHA, tool versions, Cargo --locked, and the build
+    # image by digest), and GitHub grants only the repository-scoped token used
+    # by action-gh-release for this trusted tag workflow.
     steps:
       - name: Install system dependencies
         run: |

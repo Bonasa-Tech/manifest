@@ -117,7 +117,12 @@ export class FillFeedBlockSub {
           }
 
           if (slotsToProcess.length === 0) {
-            // No new slots to process, continue immediately
+            // Being caught up is the normal idle state. Apply the same loop
+            // delay here so successful empty polls do not busy-loop against
+            // the finalized-slot RPC endpoint.
+            await new Promise<void>((resolve: () => void) =>
+              setTimeout(resolve, this.blockProcessingDelay),
+            );
             continue;
           }
 

@@ -728,11 +728,12 @@ async fn global_get_balance_not_in_global() -> anyhow::Result<()> {
 
 #[tokio::test]
 async fn global_run_out_of_seats() -> anyhow::Result<()> {
-    let test_fixture: TestFixture = TestFixture::new().await;
+    let mut test_fixture: TestFixture = TestFixture::new().await;
     let payer: Pubkey = test_fixture.payer();
     let payer_keypair: Keypair = test_fixture.payer_keypair().insecure_clone();
+    let mut first_trader: Option<Keypair> = None;
 
-    for _ in 0..MAX_GLOBAL_SEATS {
+    for index in 0..MAX_GLOBAL_SEATS {
         let keypair: Keypair = Keypair::new();
         // Fund gas and fee for the account.
         let _ = send_tx_with_retry(
@@ -749,10 +750,58 @@ async fn global_run_out_of_seats() -> anyhow::Result<()> {
             &[&payer_keypair, &keypair],
         )
         .await;
+        if index == 0 {
+            first_trader = Some(keypair);
+        }
     }
 
     // Last one doesnt work.
     assert!(test_fixture.global_add_trader().await.is_err());
+
+    // Every occupied seat has the same zero deposit. Eviction must still work
+    // when withdrawal reinsertion changes which equal node is cached as the
+    // minimum.
+    let first_trader: Keypair = first_trader.expect("first trader was inserted");
+    let evictee_token: TokenAccountFixture = TokenAccountFixture::new(
+        Rc::clone(&test_fixture.context),
+        &test_fixture.global_fixture.mint_key,
+        &first_trader.pubkey(),
+    )
+    .await;
+    let evictor_token: TokenAccountFixture = TokenAccountFixture::new(
+        Rc::clone(&test_fixture.context),
+        &test_fixture.global_fixture.mint_key,
+        &test_fixture.second_keypair.pubkey(),
+    )
+    .await;
+    test_fixture
+        .usdc_mint_fixture
+        .mint_to(&evictor_token.key, 1_u64)
+        .await;
+
+    send_tx_with_retry(
+        Rc::clone(&test_fixture.context),
+        &[global_evict_instruction(
+            &test_fixture.global_fixture.mint_key,
+            &test_fixture.second_keypair.pubkey(),
+            &evictor_token.key,
+            &evictee_token.key,
+            &spl_token::id(),
+            1_u64,
+        )],
+        Some(&test_fixture.second_keypair.pubkey()),
+        &[&test_fixture.second_keypair.insecure_clone()],
+    )
+    .await?;
+
+    test_fixture.global_fixture.reload().await;
+    assert_eq!(
+        test_fixture
+            .global_fixture
+            .global
+            .get_balance_atoms(&test_fixture.second_keypair.pubkey()),
+        GlobalAtoms::new(1_u64)
+    );
 
     Ok(())
 }

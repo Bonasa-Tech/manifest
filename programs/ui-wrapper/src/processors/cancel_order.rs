@@ -145,7 +145,10 @@ pub(crate) fn process_cancel_order(
         get_mut_helper::<RBNode<MarketInfo>>(wrapper.dynamic, market_info_index).get_mut_value();
     market_info.orders_root_index = orders_root_index;
 
-    // update balances from seat
+    // CancelOrder intentionally synchronizes only balances and the cumulative
+    // volume baseline. Wrapper fees are assessed by the settlement path, not
+    // by cancellation, and advancing the baseline here is the established
+    // accounting contract rather than an omitted fee accrual.
     let market_data = market.info.data.borrow();
     let market_ref = get_dynamic_account::<MarketFixed>(&market_data);
     let claimed_seat: &ClaimedSeat =

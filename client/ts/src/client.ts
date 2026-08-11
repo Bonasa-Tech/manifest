@@ -64,6 +64,12 @@ const marketDiscriminator: Buffer = genAccDiscriminator(
   'manifest::state::market::MarketFixed',
 );
 
+export function isToken2022Program(programId: PublicKey): boolean {
+  if (programId.equals(TOKEN_2022_PROGRAM_ID)) return true;
+  if (programId.equals(TOKEN_PROGRAM_ID)) return false;
+  throw new Error(`Unsupported token program: ${programId}`);
+}
+
 export class ManifestClient {
   public isBase22: boolean;
   public isQuote22: boolean;
@@ -74,15 +80,18 @@ export class ManifestClient {
     public market: Market,
     private payer: PublicKey | null,
     private baseMint: Mint,
+    baseTokenProgram: PublicKey,
     private quoteMint: Mint,
+    quoteTokenProgram: PublicKey,
     // Globals are public. The expectation is that users will directly access
     // them, similar to the market.
     public baseGlobal: Global | null,
     public quoteGlobal: Global | null,
   ) {
-    // If no extension data then the mint is not Token2022
-    this.isBase22 = baseMint.tlvData.length > 0;
-    this.isQuote22 = quoteMint.tlvData.length > 0;
+    // The mint account owner is authoritative. Token-2022 mints are valid
+    // without extensions, so TLV length cannot identify their token program.
+    this.isBase22 = isToken2022Program(baseTokenProgram);
+    this.isQuote22 = isToken2022Program(quoteTokenProgram);
   }
 
   /**
@@ -353,7 +362,9 @@ export class ManifestClient {
         marketObject,
         payerKeypair.publicKey,
         baseMint,
+        baseMintAccountInfo.owner,
         quoteMint,
+        quoteMintAccountInfo.owner,
         baseGlobal,
         quoteGlobal,
       );
@@ -381,7 +392,9 @@ export class ManifestClient {
         marketObject,
         payerKeypair.publicKey,
         baseMint,
+        baseMintAccountInfo.owner,
         quoteMint,
+        quoteMintAccountInfo.owner,
         baseGlobal,
         quoteGlobal,
       );
@@ -407,7 +420,9 @@ export class ManifestClient {
       marketObject,
       payerKeypair.publicKey,
       baseMint,
+      baseMintAccountInfo.owner,
       quoteMint,
+      quoteMintAccountInfo.owner,
       baseGlobal,
       quoteGlobal,
     );
@@ -571,7 +586,9 @@ export class ManifestClient {
       marketObject,
       trader,
       baseMint,
+      baseMintAccountInfo.owner,
       quoteMint,
+      quoteMintAccountInfo.owner,
       baseGlobal,
       quoteGlobal,
     );
@@ -656,7 +673,9 @@ export class ManifestClient {
       marketObject,
       null,
       baseMint,
+      baseMintAccountInfo!.owner,
       quoteMint,
+      quoteMintAccountInfo!.owner,
       baseGlobal,
       quoteGlobal,
     );
@@ -781,7 +800,9 @@ export class ManifestClient {
         m,
         null,
         baseMint,
+        baseMintAccountInfo!.owner,
         quoteMint,
+        quoteMintAccountInfo!.owner,
         baseGlobal,
         quoteGlobal,
       );

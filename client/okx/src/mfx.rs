@@ -18,7 +18,7 @@ use solana_program::pubkey::Pubkey;
 use std::{collections::HashMap, error::Error, str::FromStr};
 use tokio::sync::mpsc::Sender;
 
-use super::{get_extra, Dex, PoolMetadata, PoolMetadataValue};
+use super::{get_extra, Dex, PoolMetadata, PoolMetadataValue, SwapDirection};
 
 pub struct Manifest;
 
@@ -32,19 +32,23 @@ impl Dex for Manifest {
         manifest::ID
     }
 
-    fn quote(&self, amount_in: f64, metadata: &PoolMetadata) -> f64 {
-        // Assumes asks only because the interface does not have a way to differentiate direction.
+    fn quote(&self, amount_in: f64, metadata: &PoolMetadata, direction: SwapDirection) -> f64 {
         if amount_in <= 0.0 {
             return 0.0;
         }
 
-        let mut remaining_in = amount_in;
-        let mut total_out = 0.0;
+        let mut remaining_in: f64 = amount_in;
+        let mut total_out: f64 = 0.0;
 
-        let asks = get_extra!(metadata, "asks", PoolMetadataValue::Array).unwrap_or(vec![]);
-        let base_decimals =
+        let book_key: &str = match direction {
+            SwapDirection::BaseToQuote => "bids",
+            SwapDirection::QuoteToBase => "asks",
+        };
+        let levels: Vec<PoolMetadataValue> =
+            get_extra!(metadata, book_key, PoolMetadataValue::Array).unwrap_or_default();
+        let base_decimals: f64 =
             get_extra!(metadata, "base_decimals", PoolMetadataValue::Number).unwrap_or(6.0_f64);
-        let quote_decimals =
+        let quote_decimals: f64 =
             get_extra!(metadata, "quote_decimals", PoolMetadataValue::Number).unwrap_or(6.0_f64);
         // Metadata is untrusted: bound exponents before integer pow and reject
         // NaN/fractional values that would otherwise truncate during casting.
@@ -55,29 +59,31 @@ impl Dex for Manifest {
             }
             Some(10_u64.checked_pow(decimals as u32)? as f64)
         };
-        let Some(base_scale) = decimal_scale(base_decimals) else {
+        let base_scale_opt: Option<f64> = decimal_scale(base_decimals);
+        let Some(base_scale): Option<f64> = base_scale_opt else {
             return 0.0;
         };
-        let Some(quote_scale) = decimal_scale(quote_decimals) else {
+        let quote_scale_opt: Option<f64> = decimal_scale(quote_decimals);
+        let Some(quote_scale): Option<f64> = quote_scale_opt else {
             return 0.0;
         };
 
-        for ask in asks {
-            match ask {
-                PoolMetadataValue::Array(ask) => {
-                    if ask.len() < 2 {
+        for level in levels.into_iter() {
+            match level {
+                PoolMetadataValue::Array(level_values) => {
+                    if level_values.len() < 2 {
                         continue;
                     }
-                    let base_atoms = match ask[0] {
+                    let base_atoms: f64 = match level_values[0] {
                         PoolMetadataValue::Number(base_atoms) => base_atoms,
                         _ => 0.0_f64,
                     };
-                    let quote_atoms = match ask[1] {
-                        PoolMetadataValue::Number(base_atoms) => base_atoms,
+                    let quote_atoms: f64 = match level_values[1] {
+                        PoolMetadataValue::Number(quote_atoms) => quote_atoms,
                         _ => 0.0_f64,
                     };
-                    let base_tokens = base_atoms / base_scale;
-                    let quote_tokens = quote_atoms / quote_scale;
+                    let base_tokens: f64 = base_atoms / base_scale;
+                    let quote_tokens: f64 = quote_atoms / quote_scale;
                     if !base_tokens.is_finite()
                         || !quote_tokens.is_finite()
                         || base_tokens <= 0.0
@@ -86,12 +92,20 @@ impl Dex for Manifest {
                         continue;
                     }
 
-                    if base_tokens <= remaining_in {
-                        total_out += quote_tokens;
-                        remaining_in -= base_tokens;
+                    let (level_input, level_output): (f64, f64) = match direction {
+                        SwapDirection::BaseToQuote => (base_tokens, quote_tokens),
+                        SwapDirection::QuoteToBase => (quote_tokens, base_tokens),
+                    };
+                    if level_input <= 0.0 || level_output < 0.0 {
                         continue;
                     }
-                    total_out += remaining_in / base_tokens * quote_tokens;
+
+                    if level_input <= remaining_in {
+                        total_out += level_output;
+                        remaining_in -= level_input;
+                        continue;
+                    }
+                    total_out += remaining_in / level_input * level_output;
                     return total_out;
                 }
                 _ => {}
@@ -242,5 +256,57 @@ impl Dex for Manifest {
             trade_fee: Some(0.0_f64),
             extra,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn metadata() -> PoolMetadata {
+        let mut extra: HashMap<String, PoolMetadataValue> = HashMap::new();
+        extra.insert(
+            "base_decimals".to_string(),
+            PoolMetadataValue::Number(0.0_f64),
+        );
+        extra.insert(
+            "quote_decimals".to_string(),
+            PoolMetadataValue::Number(0.0_f64),
+        );
+        extra.insert(
+            "bids".to_string(),
+            PoolMetadataValue::Array(vec![PoolMetadataValue::Array(vec![
+                PoolMetadataValue::Number(2.0_f64),
+                PoolMetadataValue::Number(6.0_f64),
+            ])]),
+        );
+        extra.insert(
+            "asks".to_string(),
+            PoolMetadataValue::Array(vec![PoolMetadataValue::Array(vec![
+                PoolMetadataValue::Number(2.0_f64),
+                PoolMetadataValue::Number(8.0_f64),
+            ])]),
+        );
+        PoolMetadata {
+            pool_address: String::new(),
+            base_mint: String::new(),
+            quote_mint: String::new(),
+            base_reserve: None,
+            quote_reserve: None,
+            trade_fee: None,
+            extra,
+        }
+    }
+
+    #[test]
+    fn quote_uses_bids_for_base_input() {
+        let output: f64 = Manifest.quote(1.0_f64, &metadata(), SwapDirection::BaseToQuote);
+        assert_eq!(output, 3.0_f64);
+    }
+
+    #[test]
+    fn quote_uses_asks_for_quote_input() {
+        let output: f64 = Manifest.quote(4.0_f64, &metadata(), SwapDirection::QuoteToBase);
+        assert_eq!(output, 1.0_f64);
     }
 }

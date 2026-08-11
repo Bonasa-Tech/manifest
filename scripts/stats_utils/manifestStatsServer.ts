@@ -1488,7 +1488,11 @@ export class ManifestStatsServer {
       return existingRefresh;
     }
 
-    const refresh = (async () => {
+    const refresh: Promise<Market> = (async (): Promise<Market> => {
+      // A stale cached market must be refreshed before it is returned. This is
+      // intentionally request-driven: the five-minute TTL and per-market
+      // shared promise keep ordinary hits cheap while ensuring callers never
+      // receive data that this service already knows is stale.
       // Publish this promise before awaiting RPC so concurrent requests share
       // one refresh after a predictable TTL expiry.
       await market.reload(this.connection);
@@ -2048,6 +2052,10 @@ export class ManifestStatsServer {
 
       // wallet matches either taker OR maker
       if (wallet) {
+        // Explicit fromSlot values intentionally support complete wallet
+        // history. If this becomes expensive at larger retention, split this
+        // into indexed taker and maker scans and merge their ordered results
+        // instead of changing the API's all-history semantics.
         conditions.push(`(taker = $${paramIndex} OR maker = $${paramIndex})`);
         params.push(wallet);
         paramIndex++;
