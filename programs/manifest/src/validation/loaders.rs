@@ -43,6 +43,11 @@ impl<'a, 'info> CreateMarketContext<'a, 'info> {
         let account_iter: &mut Iter<AccountInfo<'info>> = &mut accounts.iter();
 
         let payer: Signer = Signer::new_payer(next_account_info(account_iter)?)?;
+        // The supported create-market transaction creates and initializes this
+        // keypair atomically. SystemProgram::create_account requires the new
+        // account key to sign that transaction; once assigned to Manifest, the
+        // runtime permits this program to initialize its writable data without
+        // requiring a redundant signer flag on the program instruction.
         let market: ManifestAccountInfo<MarketFixed> =
             ManifestAccountInfo::<MarketFixed>::new_init(next_account_info(account_iter)?)?;
         let system_program: Program =

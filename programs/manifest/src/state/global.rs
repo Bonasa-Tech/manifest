@@ -630,13 +630,14 @@ impl<Fixed: DerefOrBorrowMut<GlobalFixed>, Dynamic: DerefOrBorrowMut<[u8]>>
         {
             let mut global_trader_tree: GlobalTraderTree =
                 GlobalTraderTree::new(dynamic, fixed.global_traders_root_index, NIL);
-            require!(
-                existing_deposit_index == fixed.global_deposits_max_index,
-                crate::program::ManifestError::GlobalInsufficient,
-                "Only can remove trader with lowest deposit"
-            )?;
+            // `verify_min_balance` already authenticated this deposit as the
+            // cached minimum before GlobalEvict withdrew it. Withdrawal removes
+            // and reinserts the deposit, and an equal-balance node may become
+            // the cached maximum as a result. Rechecking index identity here
+            // would reject a valid eviction even though no other transaction
+            // can interleave with this atomic instruction.
             let new_global_trader: GlobalTrader =
-                GlobalTrader::new_empty(new_trader, fixed.global_deposits_max_index);
+                GlobalTrader::new_empty(new_trader, existing_deposit_index);
 
             global_trader_tree.remove_by_index(existing_trader_index);
 

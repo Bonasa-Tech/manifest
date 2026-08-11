@@ -4,6 +4,8 @@ import {
   isAuthorizedBearer,
   isValidSolanaSignature,
   parseBoundedQueryInteger,
+  parseOptionalUnixTimestamp,
+  validateUnixTimestampRange,
 } from '../../../scripts/stats_utils/httpValidation';
 import { enforceMarketAccountLimit } from '../../../scripts/stats_utils/marketFetcher';
 
@@ -31,6 +33,25 @@ describe('stats HTTP validation', () => {
         parseBoundedQueryInteger(value, 100, 1, 500, 'depth'),
       );
     }
+  });
+
+  it('bounds explicit timestamp query windows', () => {
+    const maximumSeconds: number = 31 * 24 * 60 * 60;
+    const start: number | undefined = parseOptionalUnixTimestamp(
+      '100',
+      'start',
+    );
+    const end: number | undefined = parseOptionalUnixTimestamp('200', 'end');
+    assert.doesNotThrow(() =>
+      validateUnixTimestampRange(start, end, maximumSeconds),
+    );
+    assert.throws(() =>
+      validateUnixTimestampRange(1, maximumSeconds + 2, maximumSeconds),
+    );
+    assert.throws(() =>
+      validateUnixTimestampRange(undefined, end, maximumSeconds),
+    );
+    assert.throws(() => parseOptionalUnixTimestamp('1.5', 'start'));
   });
 
   it('compares bearer credentials without accepting partial tokens', () => {

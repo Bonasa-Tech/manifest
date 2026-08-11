@@ -15,6 +15,10 @@ import {
   STABLECOIN_MINTS,
 } from './stats_utils/constants';
 import { createExpensiveQueryAdmission } from './stats_utils/httpAdmission';
+import {
+  parseOptionalUnixTimestamp,
+  validateUnixTimestampRange,
+} from './stats_utils/httpValidation';
 
 // Configuration constants
 const MONITORING_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
@@ -940,12 +944,19 @@ const setupAPI = (monitor: LiquidityMonitor) => {
       const market = req.query.market as string;
       const trader = req.query.trader as string;
       const hours = boundedQueryInt(req.query.hours, 24, 24 * 31, 'hours');
-      const startTimestamp = req.query.start
-        ? parseInt(req.query.start as string)
-        : undefined;
-      const endTimestamp = req.query.end
-        ? parseInt(req.query.end as string)
-        : undefined;
+      const startTimestamp: number | undefined = parseOptionalUnixTimestamp(
+        req.query.start,
+        'start',
+      );
+      const endTimestamp: number | undefined = parseOptionalUnixTimestamp(
+        req.query.end,
+        'end',
+      );
+      validateUnixTimestampRange(
+        startTimestamp,
+        endTimestamp,
+        24 * 31 * 60 * 60,
+      );
       const limit = boundedQueryInt(req.query.limit, 100, 1_000, 'limit');
 
       const stats = await monitor.getMarketMakerStats({
@@ -990,12 +1001,19 @@ const setupAPI = (monitor: LiquidityMonitor) => {
       const market = req.query.market as string;
       const trader = req.query.trader as string;
       const hours = boundedQueryInt(req.query.hours, 24, 24 * 31, 'hours');
-      const startTimestamp = req.query.start
-        ? parseInt(req.query.start as string)
-        : undefined;
-      const endTimestamp = req.query.end
-        ? parseInt(req.query.end as string)
-        : undefined;
+      const startTimestamp: number | undefined = parseOptionalUnixTimestamp(
+        req.query.start,
+        'start',
+      );
+      const endTimestamp: number | undefined = parseOptionalUnixTimestamp(
+        req.query.end,
+        'end',
+      );
+      validateUnixTimestampRange(
+        startTimestamp,
+        endTimestamp,
+        24 * 31 * 60 * 60,
+      );
       const limit = boundedQueryInt(req.query.limit, 1_000, 5_000, 'limit');
 
       // Build time filter - prioritize timestamps over hours

@@ -409,6 +409,10 @@ impl<'a> Market<'a> {
             right.get_price_raw().cmp(&left.get_price_raw())
         };
         price_ordering
+            // RestingOrder::cmp uses reversed sequence order so the earliest
+            // order has priority at a price level. This validator must match
+            // the on-chain ordering exactly or it can reject authentic trees.
+            .then_with(|| right.sequence_number.cmp(&left.sequence_number))
             .then_with(|| left.trader_index.cmp(&right.trader_index))
             .then_with(|| left.order_type.cmp(&right.order_type))
     }
@@ -479,6 +483,29 @@ impl<'a> OrderIterator<'a> {
 #[cfg(test)]
 mod parsing_tests {
     use super::*;
+
+    fn resting_order(sequence_number: u64, trader_index: DataIndex) -> RestingOrder {
+        RestingOrder {
+            price: [100_u64, 0_u64],
+            num_base_atoms: 1_u64,
+            sequence_number,
+            trader_index,
+            last_valid_slot: NO_EXPIRATION_LAST_VALID_SLOT,
+            is_bid: 1_u8,
+            order_type: OrderType::Limit as u8,
+            reverse_spread: 0_u16,
+            _padding: [0_u8; 20],
+        }
+    }
+
+    #[test]
+    fn same_price_orders_use_reversed_sequence_priority_before_trader() {
+        let earlier: RestingOrder = resting_order(1_u64, 9_u32);
+        let later: RestingOrder = resting_order(2_u64, 1_u32);
+
+        assert_eq!(Market::compare_orders(&earlier, &later), Ordering::Greater);
+        assert_eq!(Market::compare_orders(&later, &earlier), Ordering::Less);
+    }
 
     fn market_bytes(root: DataIndex) -> Vec<u8> {
         let mut data = vec![0_u8; MARKET_FIXED_SIZE + RBTREE_OVERHEAD_BYTES + RESTING_ORDER_SIZE];

@@ -6,6 +6,12 @@ use tokio::sync::mpsc::Sender;
 
 pub mod mfx;
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SwapDirection {
+    BaseToQuote,
+    QuoteToBase,
+}
+
 // Trait from: https://web3.okx.com/build/docs/waas/dex-integration
 #[async_trait]
 pub trait Dex: Send + Sync {
@@ -16,7 +22,7 @@ pub trait Dex: Send + Sync {
     fn dex_program_id(&self) -> Pubkey;
 
     // Quote function
-    fn quote(&self, amount_in: f64, metadata: &PoolMetadata) -> f64;
+    fn quote(&self, amount_in: f64, metadata: &PoolMetadata, direction: SwapDirection) -> f64;
 
     // fetch all the pool address
     fn fetch_pool_addresses(&self, client: &RpcClient) -> Vec<String>;

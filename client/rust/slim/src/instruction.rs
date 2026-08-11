@@ -536,8 +536,8 @@ pub fn batch_update_with_global_instruction(
 
         accounts.push(AccountMeta::new_readonly(mint, false));
         accounts.push(AccountMeta::new(global, false));
-        accounts.push(AccountMeta::new_readonly(global_vault, false));
-        accounts.push(AccountMeta::new_readonly(market_vault, false));
+        accounts.push(AccountMeta::new(global_vault, false));
+        accounts.push(AccountMeta::new(market_vault, false));
         accounts.push(AccountMeta::new_readonly(token_program, false));
     }
 
@@ -550,8 +550,8 @@ pub fn batch_update_with_global_instruction(
 
         accounts.push(AccountMeta::new_readonly(mint, false));
         accounts.push(AccountMeta::new(global, false));
-        accounts.push(AccountMeta::new_readonly(global_vault, false));
-        accounts.push(AccountMeta::new_readonly(market_vault, false));
+        accounts.push(AccountMeta::new(global_vault, false));
+        accounts.push(AccountMeta::new(market_vault, false));
         accounts.push(AccountMeta::new_readonly(token_program, false));
     }
 
@@ -577,4 +577,26 @@ pub fn expand_instruction(payer: Pubkey, market: Pubkey) -> Instruction {
             AccountMeta::new_readonly(SYSTEM_PROGRAM_ID, false),
         ],
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn global_batch_update_marks_transfer_vaults_writable() {
+        let instruction: Instruction = batch_update_with_global_instruction(
+            Pubkey::new_unique(),
+            Pubkey::new_unique(),
+            Some(Pubkey::new_unique()),
+            Some(Pubkey::new_unique()),
+            Some(TOKEN_PROGRAM_ID),
+            Some(TOKEN_PROGRAM_ID),
+            BatchUpdateParams::new(),
+        );
+
+        for index in [5_usize, 6_usize, 10_usize, 11_usize] {
+            assert!(instruction.accounts[index].is_writable);
+        }
+    }
 }
