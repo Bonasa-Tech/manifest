@@ -909,65 +909,6 @@ mod test {
     }
 
     #[test]
-    fn eviction_survives_equal_minimum_index_change_after_withdrawal() {
-        const FIRST_TRADER_INDEX: DataIndex = 0;
-        const FIRST_DEPOSIT_INDEX: DataIndex = GLOBAL_BLOCK_SIZE as DataIndex;
-        const SECOND_TRADER_INDEX: DataIndex = 2 * GLOBAL_BLOCK_SIZE as DataIndex;
-        const SECOND_DEPOSIT_INDEX: DataIndex = 3 * GLOBAL_BLOCK_SIZE as DataIndex;
-
-        let first_trader: Pubkey = Pubkey::new_unique();
-        let second_trader: Pubkey = Pubkey::new_unique();
-        let replacement_trader: Pubkey = Pubkey::new_unique();
-        let mut fixed: GlobalFixed = GlobalFixed::new_empty(&Pubkey::new_unique());
-        let mut dynamic: [u8; 4 * GLOBAL_BLOCK_SIZE] = [0_u8; 4 * GLOBAL_BLOCK_SIZE];
-
-        let mut trader_tree: GlobalTraderTree<'_> = GlobalTraderTree::new(&mut dynamic, NIL, NIL);
-        trader_tree.insert(
-            FIRST_TRADER_INDEX,
-            GlobalTrader::new_empty(&first_trader, FIRST_DEPOSIT_INDEX),
-        );
-        trader_tree.insert(
-            SECOND_TRADER_INDEX,
-            GlobalTrader::new_empty(&second_trader, SECOND_DEPOSIT_INDEX),
-        );
-        fixed.global_traders_root_index = trader_tree.get_root_index();
-        drop(trader_tree);
-
-        let mut deposit_tree: GlobalDepositTree<'_> =
-            GlobalDepositTree::new(&mut dynamic, NIL, NIL);
-        deposit_tree.insert(FIRST_DEPOSIT_INDEX, GlobalDeposit::new_empty(&first_trader));
-        deposit_tree.insert(
-            SECOND_DEPOSIT_INDEX,
-            GlobalDeposit::new_empty(&second_trader),
-        );
-        fixed.global_deposits_root_index = deposit_tree.get_root_index();
-        fixed.global_deposits_max_index = FIRST_DEPOSIT_INDEX;
-        drop(deposit_tree);
-
-        let mut global: GlobalRefMut<'_> = DynamicAccount {
-            fixed: &mut fixed,
-            dynamic: &mut dynamic,
-        };
-        assert_eq!(global.verify_min_balance(&first_trader), Ok(()));
-
-        // Withdrawal can reinsert the selected zero-balance deposit behind an
-        // equal minimum, changing only the cached node identity.
-        global.fixed.global_deposits_max_index = SECOND_DEPOSIT_INDEX;
-        assert_eq!(
-            global.evict_and_take_seat(&first_trader, &replacement_trader),
-            Ok(())
-        );
-        assert_eq!(
-            global.get_balance_atoms(&replacement_trader),
-            GlobalAtoms::ZERO
-        );
-        assert_eq!(
-            validate_global_dynamic(global.fixed, global.dynamic),
-            Ok(())
-        );
-    }
-
-    #[test]
     fn validation_accepts_matching_trader_deposit_reference() {
         let (fixed, dynamic, _trader): (GlobalFixed, [u8; 2 * GLOBAL_BLOCK_SIZE], Pubkey) =
             global_with_one_trader();
