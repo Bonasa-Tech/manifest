@@ -16,6 +16,7 @@ const MAX_MARKETS_PER_RUN: number = 100;
 const MAX_TRANSACTIONS_PER_RUN: number = 100;
 const MAX_LAMPORTS_PER_RUN: number = 100_000_000;
 const MAX_ALT_ACCOUNT_BYTES: number = 56 + 32 * 256;
+const APPROVED_MARKETS_ENV: string = 'APPROVED_ALT_MARKETS';
 
 type MutationBudget = {
   transactions: number;
@@ -38,6 +39,20 @@ function reserveMutation(
   }
   budget.transactions += 1;
   budget.lamports += estimatedLamports;
+}
+
+function approvedMarketsFromEnvironment(): Set<string> {
+  const rawApprovedMarkets: string | undefined = process.env[APPROVED_MARKETS_ENV];
+  if (!rawApprovedMarkets) {
+    return new Set<string>();
+  }
+  return new Set<string>(
+    rawApprovedMarkets
+      .split(',')
+      .map((market: string): string => market.trim())
+      .filter((market: string): boolean => market.length > 0)
+      .map((market: string): string => new PublicKey(market).toBase58()),
+  );
 }
 
 if (!RPC_URL) {
@@ -263,6 +278,16 @@ async function main(): Promise<void> {
     );
     await pool.end();
     return;
+  }
+  const approvedMarkets: Set<string> = approvedMarketsFromEnvironment();
+  const unapprovedMarkets: string[] = markets.filter(
+    (market: string): boolean => !approvedMarkets.has(market),
+  );
+  if (unapprovedMarkets.length > 0) {
+    throw new Error(
+      `Refusing unapproved ALT markets: ${unapprovedMarkets.join(', ')}. ` +
+        `Set ${APPROVED_MARKETS_ENV} to the reviewed comma-separated market keys.`,
+    );
   }
   const budget: MutationBudget = { transactions: 0, lamports: 0 };
   for (const market of markets) {

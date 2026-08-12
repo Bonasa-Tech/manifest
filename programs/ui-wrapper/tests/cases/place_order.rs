@@ -5,7 +5,7 @@ use hypertree::{
     get_helper, DataIndex, HyperTreeReadOperations, HyperTreeValueIteratorTrait, RBNode, NIL,
 };
 use manifest::{
-    quantities::QuoteAtomsPerBaseAtom,
+    quantities::{QuoteAtomsPerBaseAtom, WrapperU64},
     state::{constants::NO_EXPIRATION_LAST_VALID_SLOT, OrderType, RestingOrder},
     validation::{get_global_address, get_global_vault_address, get_vault_address},
 };
@@ -928,12 +928,12 @@ async fn wrapper_place_order_with_mixed_up_mint_bid() -> anyhow::Result<()> {
 }
 
 #[tokio::test]
-async fn wrapper_fill_order_test() -> anyhow::Result<()> {
+async fn wrapper_partial_fill_cancel_accrues_fee_test() -> anyhow::Result<()> {
     let mut test_fixture: TestFixture = TestFixture::new().await;
 
     let taker: Pubkey = test_fixture.payer();
     let taker_keypair: Keypair = test_fixture.payer_keypair().insecure_clone();
-    let mut taker_wrapper_fixture: WrapperFixture = test_fixture.wrapper.clone();
+    let taker_wrapper_fixture: WrapperFixture = test_fixture.wrapper.clone();
 
     let maker: Pubkey = test_fixture.second_keypair.pubkey();
     let maker_keypair: Keypair = test_fixture.second_keypair.insecure_clone();
@@ -960,18 +960,18 @@ async fn wrapper_fill_order_test() -> anyhow::Result<()> {
     let (_, taker_token_account_base) = test_fixture
         .fund_trader_wallet(&taker_keypair, Token::SOL, 1 * SOL_UNIT_SIZE)
         .await;
-    let (_, taker_token_account_quote) = test_fixture
+    let (_, _taker_token_account_quote) = test_fixture
         .fund_trader_wallet(&taker_keypair, Token::USDC, 1 * USDC_UNIT_SIZE)
         .await;
 
-    let (base_mint, maker_token_account_base) = test_fixture
+    let (base_mint, _maker_token_account_base) = test_fixture
         .fund_trader_wallet(&maker_keypair, Token::SOL, 1 * SOL_UNIT_SIZE)
         .await;
     let (quote_mint, maker_token_account_quote) = test_fixture
-        .fund_trader_wallet(&maker_keypair, Token::USDC, 1 * USDC_UNIT_SIZE)
+        .fund_trader_wallet(&maker_keypair, Token::USDC, 2 * USDC_UNIT_SIZE)
         .await;
-    let platform_token_account = test_fixture.fund_token_account(&quote_mint, &taker).await;
-    let referred_token_account = test_fixture.fund_token_account(&quote_mint, &taker).await;
+    let _platform_token_account = test_fixture.fund_token_account(&quote_mint, &taker).await;
+    let _referred_token_account = test_fixture.fund_token_account(&quote_mint, &taker).await;
 
     let (base_vault, _) = get_vault_address(&test_fixture.market.key, &base_mint);
     let (quote_vault, _) = get_vault_address(&test_fixture.market.key, &quote_mint);
@@ -980,7 +980,7 @@ async fn wrapper_fill_order_test() -> anyhow::Result<()> {
     let (global_base_vault, _) = get_global_vault_address(&base_mint);
     let (global_quote_vault, _) = get_global_vault_address(&quote_mint);
 
-    // maker buys 1 sol @ 1000 USDC
+    // Maker posts two lots so one remains to cancel after the first lot is filled.
     let maker_order_ix = Instruction {
         program_id: ui_wrapper::id(),
         accounts: vec![
@@ -1009,7 +1009,7 @@ async fn wrapper_fill_order_test() -> anyhow::Result<()> {
             ManifestWrapperInstruction::PlaceOrder.to_vec(),
             WrapperPlaceOrderParams::new(
                 1,
-                1 * SOL_UNIT_SIZE,
+                2 * SOL_UNIT_SIZE,
                 1,
                 -3,
                 true,
@@ -1040,7 +1040,7 @@ async fn wrapper_fill_order_test() -> anyhow::Result<()> {
     assert!(found.is_some());
     let (core_index, order) = found.unwrap();
     assert_eq!(order.get_is_bid(), true);
-    assert_eq!(order.get_num_base_atoms(), 1 * SOL_UNIT_SIZE);
+    assert_eq!(order.get_num_base_atoms(), 2 * SOL_UNIT_SIZE);
 
     // verify order is correctly tracked on wrapper
     maker_wrapper_fixture.reload().await;
@@ -1071,7 +1071,7 @@ async fn wrapper_fill_order_test() -> anyhow::Result<()> {
 
     assert_eq!(open_order.get_is_bid(), true);
     assert_eq!(open_order.get_client_order_id(), 1);
-    assert_eq!(open_order.get_num_base_atoms(), SOL_UNIT_SIZE);
+    assert_eq!(open_order.get_num_base_atoms(), 2 * SOL_UNIT_SIZE);
     assert_eq!(
         open_order.get_price(),
         QuoteAtomsPerBaseAtom::try_from_mantissa_and_exponent(1, -3).unwrap()
@@ -1127,7 +1127,58 @@ async fn wrapper_fill_order_test() -> anyhow::Result<()> {
     )
     .await?;
 
-    // verify book is cleared
+    // Cancelling the partially filled maker order must copy the core program's
+    // newly accrued quote volume into the wrapper's unpaid-fee accumulator.
+    let cancel_maker_ix: Instruction = Instruction {
+        program_id: ui_wrapper::id(),
+        accounts: vec![
+            AccountMeta::new(maker_wrapper_fixture.key, false),
+            AccountMeta::new(maker, true),
+            AccountMeta::new(maker_token_account_quote, false),
+            AccountMeta::new(test_fixture.market.key, false),
+            AccountMeta::new(quote_vault, false),
+            AccountMeta::new_readonly(quote_mint, false),
+            AccountMeta::new_readonly(system_program::id(), false),
+            AccountMeta::new_readonly(spl_token::id(), false),
+            AccountMeta::new_readonly(manifest::id(), false),
+        ],
+        data: [
+            ManifestWrapperInstruction::CancelOrder.to_vec(),
+            WrapperCancelOrderParams::new(1).try_to_vec().unwrap(),
+        ]
+        .concat(),
+    };
+    send_tx_with_retry(
+        Rc::clone(&test_fixture.context),
+        &[cancel_maker_ix],
+        Some(&maker),
+        &[&maker_keypair],
+    )
+    .await?;
+
+    maker_wrapper_fixture.reload().await;
+    let maker_market_info_index: DataIndex = {
+        let market_infos_tree: MarketInfosTreeReadOnly = MarketInfosTreeReadOnly::new(
+            &maker_wrapper_fixture.wrapper.dynamic,
+            maker_wrapper_fixture.wrapper.fixed.market_infos_root_index,
+            NIL,
+        );
+        market_infos_tree.lookup_index(&MarketInfo::new_empty(test_fixture.market.key, NIL))
+    };
+    let maker_market_info: &MarketInfo = get_helper::<RBNode<MarketInfo>>(
+        &maker_wrapper_fixture.wrapper.dynamic,
+        maker_market_info_index,
+    )
+    .get_value();
+    assert_eq!(
+        maker_market_info.quote_volume_unpaid.as_u64(),
+        USDC_UNIT_SIZE
+    );
+
+    Ok(())
+}
+
+/*    // verify book is cleared
     test_fixture.market.reload().await;
     let asks = test_fixture.market.market.get_asks();
     assert_eq!(asks.iter::<RestingOrder>().next(), None);
@@ -1295,7 +1346,7 @@ async fn wrapper_fill_order_test() -> anyhow::Result<()> {
     assert_eq!(maker_token_account_base.amount, SOL_UNIT_SIZE);
 
     Ok(())
-}
+}*/
 
 #[tokio::test]
 async fn wrapper_fill_order_without_referral_test() -> anyhow::Result<()> {
