@@ -231,7 +231,9 @@ pub fn validate_red_black_tree<V: Payload>(
         }
         computed_max_index = node.right;
     }
-    if max_index != computed_max_index {
+    // NIL explicitly means the caller did not cache a maximum and will use
+    // dynamic lookup. When a cached index is supplied, it must be exact.
+    if max_index != NIL && max_index != computed_max_index {
         return Err("tree max node is not the rightmost node");
     }
     Ok(())
