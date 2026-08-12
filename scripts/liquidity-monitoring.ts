@@ -347,23 +347,29 @@ export class LiquidityMonitor {
       `Market ${market.address.toBase58()}: bestBid=${bestBid}, bestAsk=${bestAsk}, midPrice=${midPrice}`,
     );
 
-    // Track unique traders
-    const traders = new Set<string>();
-    [...bids, ...asks].forEach((order) => traders.add(order.trader.toBase58()));
+    const ordersByTrader: Map<string, { bids: typeof bids; asks: typeof asks }> = new Map();
+    for (const order of bids) {
+      const trader: string = order.trader.toBase58();
+      const grouped = ordersByTrader.get(trader) ?? { bids: [], asks: [] };
+      grouped.bids.push(order);
+      ordersByTrader.set(trader, grouped);
+    }
+    for (const order of asks) {
+      const trader: string = order.trader.toBase58();
+      const grouped = ordersByTrader.get(trader) ?? { bids: [], asks: [] };
+      grouped.asks.push(order);
+      ordersByTrader.set(trader, grouped);
+    }
 
     console.log(
-      `Market ${market.address.toBase58()}: ${traders.size} unique traders found`,
+      `Market ${market.address.toBase58()}: ${ordersByTrader.size} unique traders found`,
     );
 
     const stats: MarketMakerStats[] = [];
 
-    for (const trader of traders) {
-      const traderBids = bids.filter(
-        (order) => order.trader.toBase58() === trader,
-      );
-      const traderAsks = asks.filter(
-        (order) => order.trader.toBase58() === trader,
-      );
+    for (const [trader, traderOrders] of ordersByTrader) {
+      const traderBids: typeof bids = traderOrders.bids;
+      const traderAsks: typeof asks = traderOrders.asks;
 
       const bidDepth: { [spreadBps: number]: number } = {};
       const askDepth: { [spreadBps: number]: number } = {};

@@ -38,6 +38,7 @@ import {
   getLifetimeVolumeForMarkets,
   sendDiscordNotification,
 } from './utils';
+import { safeAtomsToNumber } from './safeAtoms';
 import * as queries from './queries';
 import { lookupMintTicker } from './mint';
 import {
@@ -384,7 +385,7 @@ export class ManifestStatsServer {
 
     // Get current acquisition value
     const currentValue = acquisitionValues.get(baseMint) || 0;
-    const usdcValue = Number(quoteAtoms) / 10 ** market.quoteDecimals();
+    const usdcValue = safeAtomsToNumber(quoteAtoms) / 10 ** market.quoteDecimals();
 
     if (baseAtomsDelta > 0) {
       acquisitionValues.set(baseMint, currentValue + usdcValue);
@@ -611,12 +612,12 @@ export class ManifestStatsServer {
         this.baseVolumeAtomsSinceLastCheckpoint.set(
           market,
           (this.baseVolumeAtomsSinceLastCheckpoint.get(market) || 0) +
-            Number(baseAtoms),
+            safeAtomsToNumber(baseAtoms),
         );
         this.quoteVolumeAtomsSinceLastCheckpoint.set(
           market,
           (this.quoteVolumeAtomsSinceLastCheckpoint.get(market) || 0) +
-            Number(quoteAtoms),
+            safeAtomsToNumber(quoteAtoms),
         );
 
         // Process notional volumes and positions
@@ -781,7 +782,7 @@ export class ManifestStatsServer {
 
     if (STABLECOIN_MINTS.has(quoteMint)) {
       const notionalVolume =
-        Number(quoteAtoms) / 10 ** marketObject.quoteDecimals();
+        safeAtomsToNumber(quoteAtoms) / 10 ** marketObject.quoteDecimals();
 
       this.addTraderNotionalVolume(actualTaker, 'taker', notionalVolume);
       this.addTraderNotionalVolume(maker, 'maker', notionalVolume);
@@ -793,23 +794,23 @@ export class ManifestStatsServer {
       this.updateTraderPosition(
         actualTaker,
         baseMint,
-        takerIsBuy ? Number(baseAtoms) : -Number(baseAtoms),
-        Number(quoteAtoms),
+        takerIsBuy ? safeAtomsToNumber(baseAtoms) : -safeAtomsToNumber(baseAtoms),
+        safeAtomsToNumber(quoteAtoms),
         marketObject,
       );
 
       this.updateTraderPosition(
         maker,
         baseMint,
-        takerIsBuy ? -Number(baseAtoms) : Number(baseAtoms),
-        Number(quoteAtoms),
+        takerIsBuy ? -safeAtomsToNumber(baseAtoms) : safeAtomsToNumber(baseAtoms),
+        safeAtomsToNumber(quoteAtoms),
         marketObject,
       );
     } else if (quoteMint === SOL_MINT) {
       const { solPrice } = this.getSolAndBtcPrices();
       if (solPrice > 0) {
         const notionalVolume =
-          (Number(quoteAtoms) / 10 ** marketObject.quoteDecimals()) * solPrice;
+          (safeAtomsToNumber(quoteAtoms) / 10 ** marketObject.quoteDecimals()) * solPrice;
 
         this.addTraderNotionalVolume(actualTaker, 'taker', notionalVolume);
         this.addTraderNotionalVolume(maker, 'maker', notionalVolume);
@@ -818,7 +819,7 @@ export class ManifestStatsServer {
       const { cbbtcPrice } = this.getSolAndBtcPrices();
       if (cbbtcPrice > 0) {
         const notionalVolume =
-          (Number(quoteAtoms) / 10 ** marketObject.quoteDecimals()) *
+          (safeAtomsToNumber(quoteAtoms) / 10 ** marketObject.quoteDecimals()) *
           cbbtcPrice;
 
         this.addTraderNotionalVolume(actualTaker, 'taker', notionalVolume);
@@ -2935,6 +2936,7 @@ export class ManifestStatsServer {
     for (const market of this.fillLogResults.keys()) {
       if (!marketsToKeep.has(market)) {
         this.fillLogResults.delete(market);
+        this.createdAtBlockTimestamp.delete(market);
         removedCount++;
       }
     }

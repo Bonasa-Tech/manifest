@@ -148,10 +148,20 @@ pub fn validate_red_black_tree<V: Payload>(
         };
     }
 
-    let mut stack = vec![(root_index, NIL)];
+    let mut stack: Vec<(DataIndex, DataIndex, Option<V>, Option<V>, u32)> =
+        vec![(root_index, NIL, None, None, 0)];
     let mut seen = HashSet::new();
-    while let Some((index, expected_parent)) = stack.pop() {
+    let mut expected_black_height: Option<u32> = None;
+    while let Some((index, expected_parent, lower_bound, upper_bound, black_height)) = stack.pop() {
         if index == NIL {
+            let leaf_black_height: u32 = black_height + 1;
+            match expected_black_height {
+                Some(expected) if expected != leaf_black_height => {
+                    return Err("tree has inconsistent black height")
+                }
+                None => expected_black_height = Some(leaf_black_height),
+                _ => {}
+            }
             continue;
         }
         let offset = index as usize;
@@ -171,11 +181,60 @@ pub fn validate_red_black_tree<V: Payload>(
         if node.parent != expected_parent {
             return Err("tree node has inconsistent parent");
         }
-        stack.push((node.left, index));
-        stack.push((node.right, index));
+        // Equal values are deliberately inserted on the left to preserve FIFO.
+        if lower_bound.is_some_and(|lower| node.value <= lower)
+            || upper_bound.is_some_and(|upper| node.value > upper)
+        {
+            return Err("tree violates binary-search ordering");
+        }
+        if node.color == Color::Red {
+            for child_index in [node.left, node.right] {
+                if child_index != NIL {
+                    let child_offset: usize = child_index as usize;
+                    let child_end: usize = child_offset
+                        .checked_add(core::mem::size_of::<RBNode<V>>())
+                        .ok_or("tree node offset overflow")?;
+                    if child_offset % 8 != 0 || child_end > data.len() {
+                        return Err("tree node offset is out of bounds or misaligned");
+                    }
+                    let child: RBNode<V> =
+                        crate::read_unaligned::<RBNode<V>>(&data[child_offset..child_end]);
+                    if child.color == Color::Red {
+                        return Err("red tree node has a red child");
+                    }
+                }
+            }
+        }
+        let next_black_height: u32 = black_height + u32::from(node.color == Color::Black);
+        stack.push((
+            node.left,
+            index,
+            lower_bound,
+            Some(node.value),
+            next_black_height,
+        ));
+        stack.push((
+            node.right,
+            index,
+            Some(node.value),
+            upper_bound,
+            next_black_height,
+        ));
     }
-    if max_index != NIL && !seen.contains(&max_index) {
-        return Err("tree max node is not reachable");
+    let mut computed_max_index: DataIndex = root_index;
+    loop {
+        let offset: usize = computed_max_index as usize;
+        let end: usize = offset + core::mem::size_of::<RBNode<V>>();
+        let node: RBNode<V> = crate::read_unaligned::<RBNode<V>>(&data[offset..end]);
+        if node.right == NIL {
+            break;
+        }
+        computed_max_index = node.right;
+    }
+    // NIL explicitly means the caller did not cache a maximum and will use
+    // dynamic lookup. When a cached index is supplied, it must be exact.
+    if max_index != NIL && max_index != computed_max_index {
+        return Err("tree max node is not the rightmost node");
     }
     Ok(())
 }
@@ -1647,6 +1706,24 @@ pub(crate) mod test {
         let root_node = get_mut_helper::<RBNode<TestOrderBid>>(&mut data, root);
         root_node.left = original;
         root_node.color = Color(2);
+        assert!(validate_red_black_tree::<TestOrderBid>(&data, root, max).is_err());
+    }
+
+    #[test]
+    fn test_validate_rejects_false_ordering_and_cached_maximum() {
+        let mut data = [0_u8; 4096];
+        let (root, max) = {
+            let tree = init_simple_tree(&mut data);
+            (tree.get_root_index(), tree.get_max_index())
+        };
+
+        let non_maximum: DataIndex = get_helper::<RBNode<TestOrderBid>>(&data, root).left;
+        assert!(validate_red_black_tree::<TestOrderBid>(&data, root, non_maximum).is_err());
+
+        let left_index: DataIndex = get_helper::<RBNode<TestOrderBid>>(&data, root).left;
+        let root_value: TestOrderBid = get_helper::<RBNode<TestOrderBid>>(&data, root).value;
+        get_mut_helper::<RBNode<TestOrderBid>>(&mut data, left_index).value =
+            TestOrderBid::new(root_value.order_id + 1);
         assert!(validate_red_black_tree::<TestOrderBid>(&data, root, max).is_err());
     }
 

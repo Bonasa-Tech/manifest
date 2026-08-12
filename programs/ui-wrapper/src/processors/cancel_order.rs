@@ -145,16 +145,22 @@ pub(crate) fn process_cancel_order(
         get_mut_helper::<RBNode<MarketInfo>>(wrapper.dynamic, market_info_index).get_mut_value();
     market_info.orders_root_index = orders_root_index;
 
-    // CancelOrder intentionally synchronizes only balances and the cumulative
-    // volume baseline. Wrapper fees are assessed by the settlement path, not
-    // by cancellation, and advancing the baseline here is the established
-    // accounting contract rather than an omitted fee accrual.
+    // Accrue the fee-bearing volume before advancing the cumulative baseline.
+    // A partial fill can occur after the wrapper's previous synchronization;
+    // overwriting quote_volume here would make a later settlement observe a
+    // zero delta and permanently skip the platform/referrer fee for that fill.
     let market_data = market.info.data.borrow();
     let market_ref = get_dynamic_account::<MarketFixed>(&market_data);
     let claimed_seat: &ClaimedSeat =
         get_helper::<RBNode<ClaimedSeat>>(market_ref.dynamic, market_info.trader_index).get_value();
     market_info.base_balance = claimed_seat.base_withdrawable_balance;
     market_info.quote_balance = claimed_seat.quote_withdrawable_balance;
+    let quote_volume_difference = claimed_seat
+        .quote_volume
+        .wrapping_sub(market_info.quote_volume);
+    market_info.quote_volume_unpaid = market_info
+        .quote_volume_unpaid
+        .saturating_add(quote_volume_difference);
     market_info.quote_volume = claimed_seat.quote_volume;
     market_info.last_updated_slot = Clock::get().unwrap().slot as u32;
 

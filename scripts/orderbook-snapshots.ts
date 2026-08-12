@@ -14,6 +14,7 @@ const MIN_VOLUME_THRESHOLD_USD = 1; // $1 minimum 24hr volume
 const GUARANTEED_ORDERS_COUNT = 10; // Always include first 10 orders regardless of spread
 const MAX_SPREAD_FROM_REFERENCE = 0.25; // 25% max distance from reference price (applied after first 10)
 const PORT = 3001;
+const ORDERS_PER_INSERT: number = 1_000;
 
 // Environment variables
 const { RPC_URL, DATABASE_URL } = process.env;
@@ -331,9 +332,13 @@ export class MarketMakerLeaderboard {
         ]),
       ];
 
-      if (allOrders.length > 0) {
+      for (let batchStart: number = 0; batchStart < allOrders.length; batchStart += ORDERS_PER_INSERT) {
+        const orderBatch: (string | number)[][] = allOrders.slice(
+          batchStart,
+          batchStart + ORDERS_PER_INSERT,
+        );
         // Create proper parameterized query for batch insert
-        const orderValues = allOrders
+        const orderValues: string = orderBatch
           .map((_, index) => {
             const offset = index * 5; // 5 parameters per order (snapshot_id + 4 order fields)
             return `($${offset + 1}, $${offset + 2}, $${offset + 3}, $${offset + 4}, $${offset + 5})`;
@@ -341,7 +346,7 @@ export class MarketMakerLeaderboard {
           .join(', ');
 
         // Include snapshotId for each order in the parameters array
-        const orderParams = allOrders.flatMap((order) => [
+        const orderParams: (string | number)[] = orderBatch.flatMap((order) => [
           snapshotId,
           ...order,
         ]);
@@ -392,7 +397,11 @@ export class MarketMakerLeaderboard {
 
       // Save all snapshots
       for (const snapshot of snapshots) {
-        await this.saveSnapshot(snapshot);
+        try {
+          await this.saveSnapshot(snapshot);
+        } catch (error) {
+          console.error(`Failed to save snapshot for ${snapshot.market}:`, error);
+        }
       }
 
       console.log(
