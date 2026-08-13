@@ -6,8 +6,9 @@ export const VOLUME_CHECKPOINT_DURATION_SEC: number = 5 * 60;
 export const DATABASE_CHECKPOINT_DURATION_SEC: number = 60 * 60;
 export const ONE_HOUR_SEC: number = 60 * 60;
 export const ONE_DAY_SEC: number = 24 * ONE_HOUR_SEC;
-// Solana slot time is ~400ms, so ~2.5 slots/sec = ~216,000 slots/day
-export const SLOTS_PER_DAY: number = 216_000;
+// Slot timing lives in client/ts/src/constants (SLOT_DURATION_MS,
+// SLOTS_PER_DAY) so there is a single constant to change when the slot
+// duration changes.
 export const PORT: number = 3000;
 export const DEPTHS_BPS: number[] = [50, 100, 200];
 

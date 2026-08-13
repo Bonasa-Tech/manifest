@@ -16,11 +16,11 @@ import {
   Market,
   RestingOrder,
 } from '../../client/ts/src';
+import { SLOTS_PER_DAY } from '../../client/ts/src/constants';
 import { Pool, PoolClient, QueryResult } from 'pg';
 import {
   VOLUME_CHECKPOINT_DURATION_SEC,
   ONE_DAY_SEC,
-  SLOTS_PER_DAY,
   DEPTHS_BPS,
   SOL_USDC_MARKET,
   CBBTC_USDC_MARKET,
@@ -2028,7 +2028,7 @@ export class ManifestStatsServer {
         `[completeFills] Query without efficient filter, applying default slot range. Options: ${JSON.stringify(options)}`,
       );
       const currentSlot = await this.connection.getSlot();
-      fromSlot = currentSlot - SLOTS_PER_DAY;
+      fromSlot = Math.max(0, currentSlot - SLOTS_PER_DAY);
     }
 
     try {

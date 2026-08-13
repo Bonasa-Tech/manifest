@@ -10,6 +10,7 @@ import { PROGRAM_ID } from './manifest';
 import { convertU128 } from './utils/numbers';
 import { genAccDiscriminator } from './utils/discriminator';
 import { hasTruncatedLogs } from './utils/solana';
+import { SLOT_DURATION_MS } from './constants';
 import {
   inferFillsFromTransaction,
   computeInferredRemainders,
@@ -119,8 +120,10 @@ export class FillFeed {
         // This sleep was originally implemented to wait until there was enough
         // transactions to avoid just spamming the RPC. Reduced to just
         // enough to avoid RPC spam, but not wait too long since the router
-        // integrations give us steady flow.
-        await new Promise((f) => setTimeout(f, 400));
+        // integrations give us steady flow. One slot is the natural interval:
+        // polling faster than the cluster produces blocks only burns RPC
+        // budget.
+        await new Promise((f) => setTimeout(f, SLOT_DURATION_MS));
 
         const signaturePages: ConfirmedSignatureInfo[][] = [];
         let before: string | undefined;
