@@ -8,6 +8,7 @@ import { genAccDiscriminator } from '@/../../client/ts/src/utils/discriminator';
 import { extractProgramDataLogs } from '@/../../client/ts/src/utils/programLogs';
 import { PROGRAM_ID } from '@/../../client/ts/src/manifest';
 import { hasTruncatedLogs as checkTruncatedLogs } from '@/../../client/ts/src/utils/solana';
+import { slotsForDurationMs } from '@/../../client/ts/src/constants';
 import {
   detectAggregatorFromKeys,
   detectOriginatingProtocolFromKeys,
@@ -434,8 +435,7 @@ const fetchDatabaseFills = async (
   // generous padding, then filter precisely by block time on the client.
   let fromSlot: number | undefined;
   try {
-    const APPROX_SLOT_MS = 400; // Solana targets ~400ms/slot
-    const windowSlots = Math.ceil((endTime - startTime) / APPROX_SLOT_MS);
+    const windowSlots = slotsForDurationMs(endTime - startTime);
     // Pad heavily: missing a fill is a false positive, over-fetching is cheap.
     const paddedSlots = Math.ceil(windowSlots * 1.5) + 10000;
     const currentSlot = await connection.getSlot();
