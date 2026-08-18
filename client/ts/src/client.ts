@@ -1442,18 +1442,14 @@ export class ManifestClient {
     if (!this.wrapper || !this.payer) {
       throw new Error('Read only');
     }
-    // Cancels may remove global orders regardless of the replacement order
-    // sides. Include every initialized global so Manifest can return the gas
-    // prepayment without requiring the client to load and classify open orders.
-    const globalAccountsRequiredForCancel: boolean =
-      cancelAll || cancelParams.length > 0;
     // Check if base global is needed:
     // 1. Bid orders (non-Global) might match with makers using base global
     // 2. Ask orders with Global orderType use their own base global
     // 3. Any cancel may remove an existing base-funded Global order
     const baseGlobalRequired: boolean =
       this.baseGlobal !== null &&
-      (globalAccountsRequiredForCancel ||
+      (cancelAll ||
+        cancelParams.length > 0 ||
         placeParams.some(
           (
             placeParams:
@@ -1472,7 +1468,8 @@ export class ManifestClient {
     // 3. Any cancel may remove an existing quote-funded Global order
     const quoteGlobalRequired: boolean =
       this.quoteGlobal !== null &&
-      (globalAccountsRequiredForCancel ||
+      (cancelAll ||
+        cancelParams.length > 0 ||
         placeParams.some(
           (
             placeParams:
