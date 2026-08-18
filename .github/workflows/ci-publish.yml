@@ -47,4 +47,11 @@ jobs:
           name: npm-package
           path: package
       - name: Publish the exact artifact produced by the unprivileged job
-        run: npm publish package/*.tgz --access public --provenance
+        run: |
+          shopt -s nullglob
+          tarballs=(package/*.tgz)
+          if [ "${#tarballs[@]}" -ne 1 ]; then
+            echo "Expected exactly one tarball in package/, found ${#tarballs[@]}: ${tarballs[*]}" >&2
+            exit 1
+          fi
+          npm publish "./${tarballs[0]}" --access public --provenance
