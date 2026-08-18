@@ -1445,37 +1445,43 @@ export class ManifestClient {
     // Check if base global is needed:
     // 1. Bid orders (non-Global) might match with makers using base global
     // 2. Ask orders with Global orderType use their own base global
+    // 3. Any cancel may remove an existing base-funded Global order
     const baseGlobalRequired: boolean =
       this.baseGlobal !== null &&
-      placeParams.some(
-        (
-          placeParams:
-            | WrapperPlaceOrderParamsExternal
-            | WrapperPlaceOrderReverseParamsExternal,
-        ) => {
-          return (
-            placeParams.isBid ||
-            (!placeParams.isBid && placeParams.orderType === OrderType.Global)
-          );
-        },
-      );
+      (cancelAll ||
+        cancelParams.length > 0 ||
+        placeParams.some(
+          (
+            placeParams:
+              | WrapperPlaceOrderParamsExternal
+              | WrapperPlaceOrderReverseParamsExternal,
+          ) => {
+            return (
+              placeParams.isBid ||
+              (!placeParams.isBid && placeParams.orderType === OrderType.Global)
+            );
+          },
+        ));
     // Check if quote global is needed:
     // 1. Ask orders (non-Global) might match with makers using quote global
     // 2. Bid orders with Global orderType use their own quote global
+    // 3. Any cancel may remove an existing quote-funded Global order
     const quoteGlobalRequired: boolean =
       this.quoteGlobal !== null &&
-      placeParams.some(
-        (
-          placeParams:
-            | WrapperPlaceOrderParamsExternal
-            | WrapperPlaceOrderReverseParamsExternal,
-        ) => {
-          return (
-            !placeParams.isBid ||
-            (placeParams.isBid && placeParams.orderType === OrderType.Global)
-          );
-        },
-      );
+      (cancelAll ||
+        cancelParams.length > 0 ||
+        placeParams.some(
+          (
+            placeParams:
+              | WrapperPlaceOrderParamsExternal
+              | WrapperPlaceOrderReverseParamsExternal,
+          ) => {
+            return (
+              !placeParams.isBid ||
+              (placeParams.isBid && placeParams.orderType === OrderType.Global)
+            );
+          },
+        ));
     if (!baseGlobalRequired && !quoteGlobalRequired) {
       return createBatchUpdateInstruction(
         {
