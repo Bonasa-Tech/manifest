@@ -117,6 +117,13 @@ Use the in-repo Manifest skill scaffold for AI-agent workflows:
 ### Client SDK
   [NPM Package](https://www.npmjs.com/package/@bonasa-tech/manifest-sdk)
 
+### Upgrade Authority
+The upgrade authority of the core program (`MNFSTqtC93rEfYHB6hF82sKdZpUDFWkViLByLd1k1Ms`) is a
+[Squads multisig](https://app.squads.so/squads/CDFU8tEWsVU2ZMiek57Sgk3Huha2yBNcSHLAts3V3Cbf/home)
+with a threshold of 4 of 5 signers. The multisig account is
+`6o29zFofTxn8nM5o83JTY12G3cGgFy7mrtM2Cp3GQJXg` and its vault, which holds the upgrade authority, is
+`CDFU8tEWsVU2ZMiek57Sgk3Huha2yBNcSHLAts3V3Cbf`.
+
 ### Audit
 [View Report](https://www.manifest.trade/audit.pdf)
 
