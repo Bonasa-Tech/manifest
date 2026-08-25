@@ -608,9 +608,22 @@ const fetchOnchainFills = async (
         break;
       }
 
-      // Process signatures sequentially
-      const fillBatches: FillLogResult[][] = [];
+      // Process signatures sequentially, newest first. The startTime cutoff is
+      // applied *before* fetching so we never call getTransaction on
+      // out-of-window history: signatures come back newest-first, so the first
+      // one older than the window ends the walk. Checking after the fetch meant
+      // every market paid a full page of getTransaction calls per run, reaching
+      // as far back as its vault's 1000th-most-recent tx (weeks, for low-volume
+      // markets).
       for (const sig of signatures) {
+        // A null blockTime means "unknown", not "old". Treating it as 0 would
+        // terminate the walk early and silently drop in-window fills, so fetch
+        // it and let the per-fill time filter below decide.
+        if (sig.blockTime != null && sig.blockTime * 1000 < startTime) {
+          done = true;
+          break;
+        }
+
         const { fills: sigFills, hasTruncatedLogs } =
           await parseTransactionForFills(
             connection,
@@ -619,29 +632,19 @@ const fetchOnchainFills = async (
             sig.blockTime!,
             logPrefix,
           );
-        fillBatches.push(sigFills);
 
         // Track truncated signatures
         if (hasTruncatedLogs) {
           truncatedSignatures.add(sig.signature);
         }
-      }
 
-      for (let i = 0; i < signatures.length; i++) {
-        const sig = signatures[i];
-        const sigTime = (sig.blockTime ?? 0) * 1000;
-
-        if (sigTime < startTime) {
-          done = true;
-          break;
-        }
-
-        const sigFills = fillBatches[i];
         // Only add fills for this specific market and within our time window
-        const marketFills = sigFills.filter((f) => {
-          const fillMarketMatches = f.market === marketPubkey.toString();
-          const fillTime = (f.blockTime ?? 0) * 1000;
-          const fillInTimeWindow = fillTime >= startTime && fillTime <= endTime;
+        const marketFills: FillLogResult[] = sigFills.filter((f) => {
+          const fillMarketMatches: boolean =
+            f.market === marketPubkey.toString();
+          const fillTime: number = (f.blockTime ?? 0) * 1000;
+          const fillInTimeWindow: boolean =
+            fillTime >= startTime && fillTime <= endTime;
           return fillMarketMatches && fillInTimeWindow;
         });
         fills.push(...marketFills);
