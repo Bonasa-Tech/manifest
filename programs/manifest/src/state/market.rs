@@ -388,6 +388,11 @@ impl MarketFixed {
     pub fn set_quote_global(&mut self, quote_global: Pubkey) {
         self.quote_global = quote_global;
     }
+    /// Sequence number the next placed order gets; increases with every
+    /// order placed on the market, including ones that never rest.
+    pub fn get_order_sequence_number(&self) -> u64 {
+        self.order_sequence_number
+    }
     pub fn get_base_vault(&self) -> &Pubkey {
         &self.base_vault
     }
