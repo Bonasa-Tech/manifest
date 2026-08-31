@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1788192002478,
+  "lastUpdate": 1788192801455,
   "repoUrl": "https://github.com/Bonasa-Tech/manifest",
   "entries": {
     "CU Benchmark": [
@@ -12635,6 +12635,72 @@ window.BENCHMARK_DATA = {
           {
             "name": "MFX_99",
             "value": 5586,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "cyrbritt@gmail.com",
+            "name": "Britt Cyr",
+            "username": "brittcyr"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "8bc6ac9413524abdca748c123aac9a6ceefe06d7",
+          "message": "Deserialize the instruction input without the stock entrypoint (#688)\n\nsolana_program::entrypoint! copies every account into a Vec<AccountInfo>\nthrough a generic deserializer and installs the default allocator. On\nSBPF v2 that costs about 464 CU plus 280 per account before the program\ndoes anything, which for a five account instruction is 1,864 CU of the\nbudget spent on parsing.\n\nWrite the input parsing directly instead: walk the runtime's serialized\naccounts once, build the AccountInfo array in place with a running\npointer, and keep the layout assumptions (original_data_len for realloc,\nthe duplicate marker, the flags byte) in one place. Fall back to the\nstock deserializer above 64 accounts, which no instruction reaches. The\nallocator becomes a bump allocator over the heap.\n\nNow about 185 CU plus 72 per account, so roughly 545 CU on a five\naccount instruction. All three programs use it.\n\nAdds tests/cases/cu.rs, which measures every instruction and prints the\nnumbers so that two builds can be compared line by line. It asserts no\nabsolute values; markets and mints there are created with keys whose\nPDAs derive on the first bump so the numbers do not move with the random\ntest keys.",
+          "timestamp": "2026-08-31T12:06:43-04:00",
+          "tree_id": "9f5df09da5c4f64972b22e07cd98ce4b7f97035b",
+          "url": "https://github.com/Bonasa-Tech/manifest/commit/8bc6ac9413524abdca748c123aac9a6ceefe06d7"
+        },
+        "date": 1788192798945,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "PHX_50",
+            "value": 6897,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "PHX_95",
+            "value": 13208,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "PHX_99",
+            "value": 13902,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_50",
+            "value": 3183,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_95",
+            "value": 5258,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_99",
+            "value": 5492,
             "range": "",
             "unit": "CU",
             "extra": ""
