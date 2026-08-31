@@ -92,6 +92,25 @@ async fn measure_and_send(
     Ok(units_consumed)
 }
 
+/// Simulates `instructions`, requiring success, and prints the compute units
+/// as `CU <name>: <units>` without executing anything. For comparing two
+/// variants of the same instruction from one state: simulation does not
+/// commit, so each sample starts from exactly the state the caller set up.
+async fn measure(
+    test_fixture: &TestFixture,
+    name: &str,
+    instructions: &[Instruction],
+    payer: &Pubkey,
+    signers: &[&Keypair],
+) -> u64 {
+    let (result, units_consumed) = simulate(test_fixture, instructions, payer, signers).await;
+    if let Err(error) = result {
+        panic!("{name} simulation failed: {error}");
+    }
+    println!("CU {name}: {units_consumed}");
+    units_consumed
+}
+
 /// A market keypair whose base and quote vault PDAs derive on the first bump.
 fn market_keypair_with_first_bump_vaults(base_mint: &Pubkey, quote_mint: &Pubkey) -> Keypair {
     loop {
@@ -674,8 +693,42 @@ async fn cu_batch_update_with_globals_test() -> anyhow::Result<()> {
     )
     .await?;
 
-    // Creating the market cached both addresses, so clear them to behave like
-    // a market from before the cache existed.
+    // Both samples are simulations of the same instruction, and simulating
+    // does not commit, so both run against this same state: an empty book, an
+    // untouched global, and a seat that has not traded. The only difference
+    // between them is the 64 bytes of cached addresses, which is the point of
+    // the comparison; sending either one first would leave the second facing a
+    // resting order and a changed global balance.
+    let place_global_bid_ix: Instruction = batch_update_instruction(
+        &market,
+        &payer,
+        None,
+        vec![],
+        vec![PlaceOrderParams::new(
+            10,
+            1,
+            0,
+            true,
+            OrderType::Global,
+            NO_EXPIRATION_LAST_VALID_SLOT,
+        )],
+        Some(base_mint),
+        None,
+        Some(quote_mint),
+        None,
+    );
+
+    // Creating the market cached both addresses, so this is the cached path.
+    let cached_units: u64 = measure(
+        &test_fixture,
+        "batch_update_global_place_1[cached]",
+        &[place_global_bid_ix.clone()],
+        &payer,
+        &[&payer_keypair],
+    )
+    .await;
+
+    // Clear just the cache, to behave like a market from before it existed.
     let mut market_account: Account = test_fixture
         .context
         .borrow_mut()
@@ -689,34 +742,32 @@ async fn cu_batch_update_with_globals_test() -> anyhow::Result<()> {
         .borrow_mut()
         .set_account(&market, &AccountSharedData::from(market_account));
 
-    for (name, price_mantissa) in [("uncached", 1u32), ("cached", 2u32)] {
-        let place_global_bid_ix: Instruction = batch_update_instruction(
-            &market,
-            &payer,
-            None,
-            vec![],
-            vec![PlaceOrderParams::new(
-                10,
-                price_mantissa,
-                0,
-                true,
-                OrderType::Global,
-                NO_EXPIRATION_LAST_VALID_SLOT,
-            )],
-            Some(base_mint),
-            None,
-            Some(quote_mint),
-            None,
+    let uncached_units: u64 = measure(
+        &test_fixture,
+        "batch_update_global_place_1[uncached]",
+        &[place_global_bid_ix.clone()],
+        &payer,
+        &[&payer_keypair],
+    )
+    .await;
+    // Only the BPF program meters compute, see the module docs, so this only
+    // says anything under `cargo test-sbf`.
+    if cfg!(feature = "test-sbf") {
+        assert!(
+            uncached_units > cached_units,
+            "deriving both globals must cost more than comparing them",
         );
-        measure_and_send(
-            &test_fixture,
-            &format!("batch_update_global_place_1[{name}]"),
-            &[place_global_bid_ix],
-            &payer,
-            &[&payer_keypair],
-        )
-        .await?;
     }
+
+    // Run it for real from the cleared state, so the cache being filled in is
+    // covered too.
+    send_tx_with_retry(
+        Rc::clone(&test_fixture.context),
+        &[place_global_bid_ix],
+        Some(&payer),
+        &[&payer_keypair],
+    )
+    .await?;
     let market_account: Account = test_fixture
         .context
         .borrow_mut()
