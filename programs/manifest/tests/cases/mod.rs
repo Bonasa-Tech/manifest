@@ -7,6 +7,7 @@ pub mod deposit;
 pub mod exploit_global_clean;
 pub mod exploit_global_reduce;
 pub mod global;
+pub mod global_address;
 pub mod loaders;
 pub mod matching;
 pub mod place_order;

@@ -8,10 +8,7 @@ use crate::{
     program::get_mut_dynamic_account,
     quantities::{GlobalAtoms, WrapperU64},
     state::GlobalRefMut,
-    validation::{
-        get_global_vault_address, loaders::GlobalWithdrawContext, MintAccountInfo,
-        TokenAccountInfo, TokenProgram,
-    },
+    validation::{loaders::GlobalWithdrawContext, MintAccountInfo, TokenAccountInfo, TokenProgram},
 };
 
 #[cfg(not(feature = "certora"))]
@@ -69,7 +66,8 @@ pub(crate) fn process_global_withdraw_core(
     let mut global_dynamic_account: GlobalRefMut = get_mut_dynamic_account(global_data);
     global_dynamic_account.withdraw_global(payer.key, GlobalAtoms::new(amount_atoms))?;
 
-    let (_, bump) = get_global_vault_address(mint.info.key);
+    // Sign with the bump stored at creation instead of searching for it.
+    let bump: u8 = global_dynamic_account.fixed.get_vault_bump();
 
     // Do the token transfer
     if *global_vault.owner == spl_token_2022::id() {

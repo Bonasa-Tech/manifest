@@ -30,7 +30,8 @@ export type MarketFixed = {
   freeListHeadIndex: number;
   padding2: number[] /* size: 1 */;
   quoteVolume: beet.bignum;
-  padding3: beet.bignum[] /* size: 8 */;
+  baseGlobal: web3.PublicKey;
+  quoteGlobal: web3.PublicKey;
 };
 
 /**
@@ -60,7 +61,8 @@ export const marketFixedBeet = new beet.BeetArgsStruct<MarketFixed>(
     ['freeListHeadIndex', beet.u32],
     ['padding2', beet.uniformFixedSizeArray(beet.u32, 1)],
     ['quoteVolume', beet.u64],
-    ['padding3', beet.uniformFixedSizeArray(beet.u64, 8)],
+    ['baseGlobal', beetSolana.publicKey],
+    ['quoteGlobal', beetSolana.publicKey],
   ],
   'MarketFixed',
 );

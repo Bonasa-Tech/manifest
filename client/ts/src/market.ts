@@ -737,7 +737,8 @@ export class Market {
     const quoteVolumeAtoms: bigint = data.readBigUInt64LE(offset);
     offset += 8;
 
-    // _padding3: [u64; 8],
+    // base_global: Pubkey, quote_global: Pubkey. Canonical global accounts
+    // cached by the program, zero until a market has traded with globals.
 
     const dynamicData: Buffer = data.subarray(FIXED_MANIFEST_HEADER_SIZE);
     const parseContext: RedBlackTreeParseContext =

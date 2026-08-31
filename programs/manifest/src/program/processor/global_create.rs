@@ -6,7 +6,7 @@ use crate::{
     program::invoke,
     state::GlobalFixed,
     utils::create_account,
-    validation::{get_global_address, get_global_vault_address, loaders::GlobalCreateContext},
+    validation::{get_global_vault_address, loaders::GlobalCreateContext},
 };
 use hypertree::{get_mut_helper, trace};
 use solana_program::{
@@ -35,11 +35,13 @@ pub(crate) fn process_global_create(
             global_mint,
             global_vault,
             token_program,
+            global_bump,
         } = global_create_context;
+        let (expected_global_vault_key, global_vault_bump) =
+            get_global_vault_address(global_mint.info.key);
 
         // Make the global account.
         {
-            let (_expected_global_key, global_bump) = get_global_address(global_mint.info.key);
             let global_seeds: Vec<Vec<u8>> = vec![
                 b"global".to_vec(),
                 global_mint.info.key.as_ref().to_vec(),
@@ -72,7 +74,12 @@ pub(crate) fn process_global_create(
             )?;
 
             // Setup the empty market
-            let empty_global_fixed: GlobalFixed = GlobalFixed::new_empty(&global_mint.as_ref().key);
+            let empty_global_fixed: GlobalFixed = GlobalFixed::new_empty_with_bumps(
+                global_mint.as_ref().key,
+                expected_global_vault_key,
+                global_vault_bump,
+                global_bump,
+            );
             assert_eq!(global.info.data_len(), size_of::<GlobalFixed>());
 
             let global_bytes: &mut [u8] = &mut global.info.try_borrow_mut_data()?[..];
@@ -91,8 +98,6 @@ pub(crate) fn process_global_create(
                 spl_token::id()
             };
 
-            let (expected_global_vault_key, global_vault_bump) =
-                get_global_vault_address(global_mint.info.key);
             let global_vault_seeds: Vec<Vec<u8>> = vec![
                 b"global-vault".to_vec(),
                 global_mint.info.key.as_ref().to_vec(),

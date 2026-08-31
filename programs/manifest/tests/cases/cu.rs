@@ -17,6 +17,7 @@
 
 use std::{cell::RefMut, rc::Rc};
 
+use hypertree::get_helper;
 use manifest::{
     program::{
         batch_update::{CancelOrderParams, PlaceOrderParams},
@@ -25,9 +26,10 @@ use manifest::{
         global_add_trader_instruction, global_deposit_instruction, global_withdraw_instruction,
         swap_instruction, withdraw_instruction,
     },
-    state::{constants::NO_EXPIRATION_LAST_VALID_SLOT, OrderType},
+    state::{constants::NO_EXPIRATION_LAST_VALID_SLOT, MarketFixed, OrderType},
     validation::{get_global_address, get_global_vault_address, get_vault_address},
 };
+use solana_account::{Account, AccountSharedData};
 use solana_instruction::{AccountMeta, Instruction};
 use solana_keypair::Keypair;
 use solana_program::{program_pack::Pack, pubkey::Pubkey, rent::Rent, system_instruction};
@@ -585,5 +587,74 @@ async fn cu_global_test() -> anyhow::Result<()> {
         &[&payer_keypair],
     )
     .await?;
+    Ok(())
+}
+
+/// Batch update carrying the global accounts for both sides. The first call
+/// is on a market whose cached global addresses were cleared, so it derives
+/// and stores them (its cost depends on how many bumps the search tries for
+/// the fixture's random mints); the second call takes the cached path.
+#[tokio::test]
+async fn cu_batch_update_with_globals_test() -> anyhow::Result<()> {
+    let mut test_fixture: TestFixture = TestFixture::new().await;
+    test_fixture.claim_seat().await?;
+    test_fixture.global_add_trader().await?;
+    test_fixture.global_deposit(10 * USDC_UNIT_SIZE).await?;
+    let payer: Pubkey = test_fixture.payer();
+    let payer_keypair: Keypair = test_fixture.payer_keypair();
+    let market: Pubkey = test_fixture.market_fixture.key;
+
+    // Clear the cache to behave like a market from before it existed.
+    let mut market_account: Account = test_fixture
+        .context
+        .borrow_mut()
+        .banks_client
+        .get_account(market)
+        .await?
+        .expect("market exists");
+    market_account.data[192..256].fill(0);
+    test_fixture
+        .context
+        .borrow_mut()
+        .set_account(&market, &AccountSharedData::from(market_account));
+
+    for (name, price_mantissa) in [("uncached", 1u32), ("cached", 2u32)] {
+        let place_global_bid_ix: Instruction = batch_update_instruction(
+            &market,
+            &payer,
+            None,
+            vec![],
+            vec![PlaceOrderParams::new(
+                10,
+                price_mantissa,
+                0,
+                true,
+                OrderType::Global,
+                NO_EXPIRATION_LAST_VALID_SLOT,
+            )],
+            Some(test_fixture.sol_mint_fixture.key),
+            None,
+            Some(test_fixture.usdc_mint_fixture.key),
+            None,
+        );
+        measure_and_send(
+            &test_fixture,
+            &format!("batch_update_global_place_1[{name}]"),
+            &[place_global_bid_ix],
+            &payer,
+            &[&payer_keypair],
+        )
+        .await?;
+    }
+    let market_account: Account = test_fixture
+        .context
+        .borrow_mut()
+        .banks_client
+        .get_account(market)
+        .await?
+        .expect("market exists");
+    let market_fixed: &MarketFixed = get_helper::<MarketFixed>(&market_account.data, 0_u32);
+    assert_ne!(*market_fixed.get_base_global(), Pubkey::default());
+    assert_ne!(*market_fixed.get_quote_global(), Pubkey::default());
     Ok(())
 }

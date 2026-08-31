@@ -37,6 +37,7 @@ thiserror = "1.0.66"
 solana-security-txt = "=1.1.2"
 static_assertions = "=1.1.0"
 solana-invoke = "=0.4.0"
+solana-curve25519 = "=2.2.4"
 
 anyhow = "1.0.66"
 solana-program-test = "=2.2.4"

@@ -1,12 +1,14 @@
 use std::{cell::Ref, mem::size_of};
 
+#[cfg(not(feature = "certora"))]
+use crate::validation::get_global_address;
 use crate::{
     logs::{emit_stack, CreateMarketLog},
     program::{expand_market_if_needed, invoke},
     require,
     state::MarketFixed,
     utils::create_account,
-    validation::{get_vault_address, loaders::CreateMarketContext},
+    validation::loaders::CreateMarketContext,
 };
 use hypertree::{get_mut_helper, trace};
 use solana_program::{
@@ -37,6 +39,8 @@ pub(crate) fn process_create_market(
         quote_mint,
         base_vault,
         quote_vault,
+        base_vault_bump,
+        quote_vault_bump,
         system_program,
         token_program,
         token_program_22,
@@ -79,9 +83,9 @@ pub(crate) fn process_create_market(
     {
         // Create the base and quote vaults of this market
         let rent: Rent = Rent::get()?;
-        for (token_account, mint) in [
-            (base_vault.as_ref(), base_mint.as_ref()),
-            (quote_vault.as_ref(), quote_mint.as_ref()),
+        for (token_account, mint, bump) in [
+            (base_vault.as_ref(), base_mint.as_ref(), base_vault_bump),
+            (quote_vault.as_ref(), quote_mint.as_ref(), quote_vault_bump),
         ] {
             // We dont have to deserialize the mint, just check the owner.
             let is_mint_22: bool = *mint.owner == spl_token_2022::id();
@@ -91,7 +95,6 @@ pub(crate) fn process_create_market(
                 spl_token::id()
             };
 
-            let (_vault_key, bump) = get_vault_address(market.key, mint.key);
             let seeds: Vec<Vec<u8>> = vec![
                 b"vault".to_vec(),
                 market.key.as_ref().to_vec(),
@@ -169,8 +172,24 @@ pub(crate) fn process_create_market(
         // would use an inactive market when multiple exist.
 
         // Setup the empty market
-        let empty_market_fixed: MarketFixed =
-            MarketFixed::new_empty(&base_mint, &quote_mint, market.key);
+        #[allow(unused_mut)]
+        let mut empty_market_fixed: MarketFixed = MarketFixed::new_empty_with_vaults(
+            &base_mint,
+            &quote_mint,
+            *base_vault.info.key,
+            base_vault_bump,
+            *quote_vault.info.key,
+            quote_vault_bump,
+        );
+        // Cache the global account addresses so that global trades on this
+        // market never have to derive them.
+        #[cfg(not(feature = "certora"))]
+        {
+            let (base_global, _) = get_global_address(base_mint.info.key);
+            let (quote_global, _) = get_global_address(quote_mint.info.key);
+            empty_market_fixed.set_base_global(base_global);
+            empty_market_fixed.set_quote_global(quote_global);
+        }
         assert_eq!(market.data_len(), size_of::<MarketFixed>());
 
         let market_bytes: &mut [u8] = &mut market.try_borrow_mut_data()?[..];

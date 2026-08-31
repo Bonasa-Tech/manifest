@@ -2020,13 +2020,12 @@
             "type": "u64"
           },
           {
-            "name": "padding3",
-            "type": {
-              "array": [
-                "u64",
-                8
-              ]
-            }
+            "name": "baseGlobal",
+            "type": "publicKey"
+          },
+          {
+            "name": "quoteGlobal",
+            "type": "publicKey"
           }
         ]
       }

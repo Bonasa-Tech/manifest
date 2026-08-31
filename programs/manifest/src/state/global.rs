@@ -275,6 +275,16 @@ impl GlobalFixed {
     pub fn new_empty(mint: &Pubkey) -> Self {
         let (vault, vault_bump) = get_global_vault_address(mint);
         let (_, global_bump) = get_global_address(mint);
+        Self::new_empty_with_bumps(mint, vault, vault_bump, global_bump)
+    }
+
+    /// Like `new_empty` for a caller that has already derived the PDAs.
+    pub fn new_empty_with_bumps(
+        mint: &Pubkey,
+        vault: Pubkey,
+        vault_bump: u8,
+        global_bump: u8,
+    ) -> Self {
         GlobalFixed {
             discriminant: GLOBAL_FIXED_DISCRIMINANT,
             mint: *mint,
@@ -322,6 +332,9 @@ impl GlobalFixed {
     }
     pub fn get_vault_bump(&self) -> u8 {
         self.vault_bump
+    }
+    pub fn get_global_bump(&self) -> u8 {
+        self.global_bump
     }
     pub fn needs_eviction(&self) -> bool {
         self.num_seats_claimed >= MAX_GLOBAL_SEATS
