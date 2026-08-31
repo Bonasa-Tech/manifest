@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1788208565988,
+  "lastUpdate": 1788214351514,
   "repoUrl": "https://github.com/Bonasa-Tech/manifest",
   "entries": {
     "CU Benchmark": [
@@ -12833,6 +12833,72 @@ window.BENCHMARK_DATA = {
           {
             "name": "MFX_99",
             "value": 5061,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "cyrbritt@gmail.com",
+            "name": "Britt Cyr",
+            "username": "brittcyr"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "440f05d3563816bc383c4b34f46d6857b6500c2b",
+          "message": "hypertree: add LinkedList (#693)\n\nAn unordered doubly linked list over the same node blocks the red-black\ntree uses, for collections that are always walked in full and are small\nenough that a tree is pure overhead. Insert and remove are a couple of\nlink writes and a walk step is one link read, a few dozen CU each,\nagainst roughly 500, 440 and 100 CU for the tree.\n\nThe nodes are RBNode, with left as the previous node, right as the next\nand parent always NIL, so a tree can be converted to a list in place and\nboth share one free list.\n\nconvert_red_black_tree_to_linked_list is what migrates an account that\nalready holds a tree. It allocates nothing: the program heap is a bump\nallocator that never frees, so a scratch buffer proportional to the node\ncount would put a ceiling on the trees it can convert, and hitting that\nceiling would strand the very account the conversion exists to migrate.\nInstead it clobbers header fields in the order the tree walk stops\nneeding them. It requires a well formed tree, which its caller owns and\nmaintains, and says so.\n\nvalidate_linked_list is for callers parsing bytes they did not produce.\nOk from it means the list can then be walked with LinkedListReadOnly, so\nit checks what that walk needs: offsets in bounds, no cycles, consistent\nback links, no two nodes sharing a byte, and node addresses aligned for\nthe reader, counting the buffer's own address rather than just the\noffset within it. Its own reads are unaligned so that it answers rather\nthan panicking on the buffers it exists to reject.\n\nThe value iterator that was implemented for the tree is now behind a\nsmall HyperTreeData trait so that both structures share it; the tree\nbehaves exactly as before.\n\nNo callers yet, this only adds to the library.",
+          "timestamp": "2026-08-31T18:05:16-04:00",
+          "tree_id": "6c8f9083c01941b12314e69bb663d886e6dff628",
+          "url": "https://github.com/Bonasa-Tech/manifest/commit/440f05d3563816bc383c4b34f46d6857b6500c2b"
+        },
+        "date": 1788214348471,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "PHX_50",
+            "value": 6897,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "PHX_95",
+            "value": 13208,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "PHX_99",
+            "value": 13902,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_50",
+            "value": 2804,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_95",
+            "value": 4594,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_99",
+            "value": 5078,
             "range": "",
             "unit": "CU",
             "extra": ""
