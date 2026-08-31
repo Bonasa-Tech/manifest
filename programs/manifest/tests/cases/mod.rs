@@ -1,4 +1,5 @@
 pub mod batch_update;
+pub mod batch_update_log;
 pub mod cancel_order;
 pub mod claim_seat;
 pub mod create_market;

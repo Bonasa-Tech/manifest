@@ -1,4 +1,5 @@
 export * from './BatchUpdateParams';
+export * from './CancelOrderLogEntry';
 export * from './CancelOrderParams';
 export * from './ClaimedSeat';
 export * from './DepositParams';
@@ -11,6 +12,7 @@ export * from './GlobalTrader';
 export * from './GlobalWithdrawParams';
 export * from './MarketFixed';
 export * from './OrderType';
+export * from './PlaceOrderLogEntry';
 export * from './PlaceOrderParams';
 export * from './RestingOrder';
 export * from './SwapParams';

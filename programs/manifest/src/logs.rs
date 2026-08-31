@@ -1,6 +1,6 @@
 use bytemuck::{Pod, Zeroable};
 use hypertree::PodBool;
-use shank::ShankAccount;
+use shank::{ShankAccount, ShankType};
 use solana_program::{program_error::ProgramError, pubkey::Pubkey};
 
 use crate::{
@@ -19,12 +19,20 @@ use crate::{
 #[cfg(not(feature = "certora"))]
 #[inline(never)] // ensure fresh stack frame
 pub fn emit_stack<T: bytemuck::Pod + Discriminant>(e: T) -> Result<(), ProgramError> {
-    // stack buffer, stack frames are 4kb
-    let mut buffer: [u8; 3000] = [0u8; 3000];
-    buffer[..8].copy_from_slice(&T::discriminant());
-    *bytemuck::from_bytes_mut::<T>(&mut buffer[8..8 + std::mem::size_of::<T>()]) = e;
-
-    solana_program::log::sol_log_data(&[&buffer[..(std::mem::size_of::<T>() + 8)]]);
+    // Stack buffer, stack frames are 4kb. Only the bytes written below are
+    // ever read, so it is not zeroed first (that was a 3000 byte memset, 23 CU
+    // per event).
+    let len: usize = 8 + std::mem::size_of::<T>();
+    assert!(len <= 3000);
+    let mut buffer: std::mem::MaybeUninit<[u8; 3000]> = std::mem::MaybeUninit::uninit();
+    let bytes: &[u8] = unsafe {
+        let ptr: *mut u8 = buffer.as_mut_ptr() as *mut u8;
+        ptr.copy_from_nonoverlapping(T::discriminant().as_ptr(), 8);
+        ptr.add(8)
+            .copy_from_nonoverlapping(bytemuck::bytes_of(&e).as_ptr(), std::mem::size_of::<T>());
+        std::slice::from_raw_parts(ptr, len)
+    };
+    solana_program::log::sol_log_data(&[bytes]);
     Ok(())
 }
 
@@ -125,6 +133,78 @@ pub struct CancelOrderLog {
     pub order_sequence_number: u64,
 }
 
+/// Header of the order events of one batch update. The same log payload
+/// continues with `num_cancels` [`CancelOrderLogEntry`] followed by
+/// `num_orders` [`PlaceOrderLogEntry`], so a whole batch costs one log syscall
+/// (about 200 CU plus the bytes) instead of one per order. Emitted once, after
+/// the batch's [`FillLog`]s. Batch updates emit this instead of
+/// [`PlaceOrderLog`] and [`CancelOrderLog`].
+#[repr(C)]
+#[derive(Clone, Copy, Zeroable, Pod, ShankAccount)]
+pub struct BatchUpdateLog {
+    pub market: Pubkey,
+    pub trader: Pubkey,
+    pub num_cancels: u32,
+    pub num_orders: u32,
+}
+
+/// One cancelled order inside a [`BatchUpdateLog`].
+#[repr(C)]
+#[derive(Clone, Copy, Zeroable, Pod, ShankType)]
+pub struct CancelOrderLogEntry {
+    pub order_sequence_number: u64,
+}
+
+/// One placed order inside a [`BatchUpdateLog`]: [`PlaceOrderLog`] without
+/// the market and trader, which are in the header.
+#[repr(C)]
+#[derive(Clone, Copy, Zeroable, Pod, ShankType)]
+pub struct PlaceOrderLogEntry {
+    pub price: QuoteAtomsPerBaseAtom,
+    pub base_atoms: BaseAtoms,
+    pub order_sequence_number: u64,
+    pub order_index: u32,
+    pub last_valid_slot: u32,
+    pub order_type: OrderType,
+    pub is_bid: PodBool,
+    pub _padding: [u8; 6],
+}
+
+/// Logs the order events of one batch update as a single `sol_log_data`
+/// payload: [`BatchUpdateLog`] discriminant and header, the cancel entries,
+/// then the place entries. Nothing is logged for an empty batch.
+#[cfg(not(feature = "certora"))]
+pub fn emit_batch_update_log(
+    header: BatchUpdateLog,
+    cancels: &[CancelOrderLogEntry],
+    orders: &[PlaceOrderLogEntry],
+) -> Result<(), ProgramError> {
+    if cancels.is_empty() && orders.is_empty() {
+        return Ok(());
+    }
+    let mut buffer: Vec<u8> = Vec::with_capacity(
+        8 + std::mem::size_of::<BatchUpdateLog>()
+            + cancels.len() * std::mem::size_of::<CancelOrderLogEntry>()
+            + orders.len() * std::mem::size_of::<PlaceOrderLogEntry>(),
+    );
+    buffer.extend_from_slice(&BatchUpdateLog::discriminant());
+    buffer.extend_from_slice(bytemuck::bytes_of(&header));
+    buffer.extend_from_slice(bytemuck::cast_slice(cancels));
+    buffer.extend_from_slice(bytemuck::cast_slice(orders));
+    solana_program::log::sol_log_data(&[&buffer]);
+    Ok(())
+}
+
+// Do not emit logs for formal verification.
+#[cfg(feature = "certora")]
+pub fn emit_batch_update_log(
+    _header: BatchUpdateLog,
+    _cancels: &[CancelOrderLogEntry],
+    _orders: &[PlaceOrderLogEntry],
+) -> Result<(), ProgramError> {
+    Ok(())
+}
+
 #[repr(C)]
 #[derive(Clone, Copy, Zeroable, Pod, ShankAccount)]
 pub struct GlobalCreateLog {
@@ -211,6 +291,7 @@ const FILL_LOG_DISCRIMINANT: [u8; 8] = [58, 230, 242, 3, 75, 113, 4, 169];
 const PLACE_ORDER_LOG_DISCRIMINANT: [u8; 8] = [157, 118, 247, 213, 47, 19, 164, 120];
 const PLACE_ORDER_LOG_V2_DISCRIMINANT: [u8; 8] = [189, 97, 159, 235, 136, 5, 1, 141];
 const CANCEL_ORDER_LOG_DISCRIMINANT: [u8; 8] = [22, 65, 71, 33, 244, 235, 255, 215];
+const BATCH_UPDATE_LOG_DISCRIMINANT: [u8; 8] = [184, 213, 71, 201, 110, 248, 249, 131];
 const GLOBAL_CREATE_LOG_DISCRIMINANT: [u8; 8] = [188, 25, 199, 77, 26, 15, 142, 193];
 const GLOBAL_ADD_TRADER_LOG_DISCRIMINANT: [u8; 8] = [129, 246, 90, 94, 87, 186, 242, 7];
 const GLOBAL_CLAIM_SEAT_LOG_DISCRIMINANT: [u8; 8] = [164, 46, 227, 175, 3, 143, 73, 86];
@@ -246,6 +327,11 @@ discriminant!(
     CancelOrderLog,
     CANCEL_ORDER_LOG_DISCRIMINANT,
     test_cancel_order
+);
+discriminant!(
+    BatchUpdateLog,
+    BATCH_UPDATE_LOG_DISCRIMINANT,
+    test_batch_update_log
 );
 discriminant!(
     GlobalCreateLog,

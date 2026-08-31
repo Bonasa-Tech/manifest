@@ -1,7 +1,6 @@
 use std::cell::RefMut;
 
 use crate::{
-    logs::{emit_stack, CancelOrderLog, PlaceOrderLog},
     program::get_trader_index_with_hint,
     quantities::{BaseAtoms, PriceConversionError, QuoteAtomsPerBaseAtom, WrapperU64},
     require,
@@ -14,10 +13,15 @@ use crate::{
 };
 use borsh::{BorshDeserialize, BorshSerialize};
 
-use hypertree::{get_helper, trace, DataIndex, PodBool, RBNode};
+use hypertree::{get_helper, trace, DataIndex, RBNode};
 use solana_program::{
     account_info::AccountInfo, entrypoint::ProgramResult, program_error::ProgramError,
     pubkey::Pubkey,
+};
+#[cfg(not(feature = "certora"))]
+use {
+    crate::logs::{emit_batch_update_log, BatchUpdateLog, CancelOrderLogEntry, PlaceOrderLogEntry},
+    hypertree::PodBool,
 };
 
 use super::{expand_market_if_needed, shared::get_mut_dynamic_account};
@@ -231,6 +235,11 @@ pub(crate) fn process_batch_update_core(
     } = params;
 
     let current_slot: Option<u32> = Some(get_now_slot());
+    // Order events are logged once for the whole batch, see `BatchUpdateLog`.
+    #[cfg(not(feature = "certora"))]
+    let mut cancel_entries: Vec<CancelOrderLogEntry> = Vec::with_capacity(cancels.len());
+    #[cfg(not(feature = "certora"))]
+    let mut order_entries: Vec<PlaceOrderLogEntry> = Vec::with_capacity(orders.len());
 
     trace!("batch_update trader_index_hint:{trader_index_hint:?} cancels:{cancels:?} orders:{orders:?}");
 
@@ -295,11 +304,10 @@ pub(crate) fn process_batch_update_core(
                 }
             };
 
-            emit_stack(CancelOrderLog {
-                market: *market.key,
-                trader: *payer.key,
+            #[cfg(not(feature = "certora"))]
+            cancel_entries.push(CancelOrderLogEntry {
                 order_sequence_number: cancel_order_params.order_sequence_number(),
-            })?;
+            });
         }
         trader_index
     };
@@ -349,18 +357,17 @@ pub(crate) fn process_batch_update_core(
                 ..
             } = add_order_to_market_result;
 
-            emit_stack(PlaceOrderLog {
-                market: *market.key,
-                trader: *payer.key,
-                base_atoms,
+            #[cfg(not(feature = "certora"))]
+            order_entries.push(PlaceOrderLogEntry {
                 price,
-                order_type,
-                is_bid: PodBool::from(place_order_params.is_bid()),
-                _padding: [0; 6],
+                base_atoms,
                 order_sequence_number,
                 order_index,
                 last_valid_slot,
-            })?;
+                order_type,
+                is_bid: PodBool::from(place_order_params.is_bid()),
+                _padding: [0; 6],
+            });
             result.push((order_sequence_number, order_index));
         }
         expand_market_if_needed(&payer, &market)?;
@@ -370,6 +377,19 @@ pub(crate) fn process_batch_update_core(
     // happen after the last CPI of this instruction (gas prepayments and
     // market expansions above) because it moves lamports directly.
     settle_global_gas_refunds(&global_trade_accounts_opts)?;
+    #[cfg(not(feature = "certora"))]
+    {
+        emit_batch_update_log(
+            BatchUpdateLog {
+                market: *market.key,
+                trader: *payer.key,
+                num_cancels: cancel_entries.len() as u32,
+                num_orders: order_entries.len() as u32,
+            },
+            &cancel_entries,
+            &order_entries,
+        )?;
+    }
 
     // Formal verification does not cover return values.
     #[cfg(not(feature = "certora"))]

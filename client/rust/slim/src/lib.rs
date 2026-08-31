@@ -31,18 +31,20 @@ pub use state::{ClaimedSeat, Market, MarketFixed, OrderIterator, RBNodeHeader, R
 pub use events::{BaseAtoms, GlobalAtoms, PodBool, QuoteAtoms, QuoteAtomsPerBaseAtom};
 // Event discriminants
 pub use events::{
-    CANCEL_ORDER_LOG_DISCRIMINANT, CLAIM_SEAT_LOG_DISCRIMINANT, CREATE_MARKET_LOG_DISCRIMINANT,
-    DEPOSIT_LOG_DISCRIMINANT, FILL_LOG_DISCRIMINANT, GLOBAL_ADD_TRADER_LOG_DISCRIMINANT,
-    GLOBAL_CLAIM_SEAT_LOG_DISCRIMINANT, GLOBAL_CLEANUP_LOG_DISCRIMINANT,
-    GLOBAL_CREATE_LOG_DISCRIMINANT, GLOBAL_DEPOSIT_LOG_DISCRIMINANT, GLOBAL_EVICT_LOG_DISCRIMINANT,
+    BATCH_UPDATE_LOG_DISCRIMINANT, CANCEL_ORDER_LOG_DISCRIMINANT, CLAIM_SEAT_LOG_DISCRIMINANT,
+    CREATE_MARKET_LOG_DISCRIMINANT, DEPOSIT_LOG_DISCRIMINANT, FILL_LOG_DISCRIMINANT,
+    GLOBAL_ADD_TRADER_LOG_DISCRIMINANT, GLOBAL_CLAIM_SEAT_LOG_DISCRIMINANT,
+    GLOBAL_CLEANUP_LOG_DISCRIMINANT, GLOBAL_CREATE_LOG_DISCRIMINANT,
+    GLOBAL_DEPOSIT_LOG_DISCRIMINANT, GLOBAL_EVICT_LOG_DISCRIMINANT,
     GLOBAL_WITHDRAW_LOG_DISCRIMINANT, PLACE_ORDER_LOG_DISCRIMINANT,
     PLACE_ORDER_LOG_V2_DISCRIMINANT, WITHDRAW_LOG_DISCRIMINANT,
 };
 // Event structs
 pub use events::{
-    CancelOrderLog, ClaimSeatLog, CreateMarketLog, DepositLog, FillLog, GlobalAddTraderLog,
-    GlobalClaimSeatLog, GlobalCleanupLog, GlobalCreateLog, GlobalDepositLog, GlobalEvictLog,
-    GlobalWithdrawLog, PlaceOrderLog, PlaceOrderLogV2, WithdrawLog,
+    BatchUpdateLog, CancelOrderLog, CancelOrderLogEntry, ClaimSeatLog, CreateMarketLog, DepositLog,
+    FillLog, GlobalAddTraderLog, GlobalClaimSeatLog, GlobalCleanupLog, GlobalCreateLog,
+    GlobalDepositLog, GlobalEvictLog, GlobalWithdrawLog, PlaceOrderLog, PlaceOrderLogEntry,
+    PlaceOrderLogV2, WithdrawLog,
 };
 
 #[cfg(test)]

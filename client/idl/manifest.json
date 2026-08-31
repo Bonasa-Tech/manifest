@@ -1406,6 +1406,30 @@
       }
     },
     {
+      "name": "BatchUpdateLog",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "market",
+            "type": "publicKey"
+          },
+          {
+            "name": "trader",
+            "type": "publicKey"
+          },
+          {
+            "name": "numCancels",
+            "type": "u32"
+          },
+          {
+            "name": "numOrders",
+            "type": "u32"
+          }
+        ]
+      }
+    },
+    {
       "name": "GlobalCreateLog",
       "type": {
         "kind": "struct",
@@ -2102,6 +2126,69 @@
           }
         ]
       }
+    },
+    {
+      "name": "CancelOrderLogEntry",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "orderSequenceNumber",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "PlaceOrderLogEntry",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "price",
+            "type": {
+              "defined": "QuoteAtomsPerBaseAtom"
+            }
+          },
+          {
+            "name": "baseAtoms",
+            "type": {
+              "defined": "BaseAtoms"
+            }
+          },
+          {
+            "name": "orderSequenceNumber",
+            "type": "u64"
+          },
+          {
+            "name": "orderIndex",
+            "type": "u32"
+          },
+          {
+            "name": "lastValidSlot",
+            "type": "u32"
+          },
+          {
+            "name": "orderType",
+            "type": {
+              "defined": "OrderType"
+            }
+          },
+          {
+            "name": "isBid",
+            "type": "bool"
+          },
+          {
+            "name": "padding",
+            "type": {
+              "array": [
+                "u8",
+                6
+              ]
+            }
+          }
+        ]
+      }
     }
   ],
   "errors": [
@@ -2625,6 +2712,41 @@
         {
           "name": "orderSequenceNumber",
           "type": "u64",
+          "index": false
+        }
+      ]
+    },
+    {
+      "name": "BatchUpdateLog",
+      "discriminator": [
+        184,
+        213,
+        71,
+        201,
+        110,
+        248,
+        249,
+        131
+      ],
+      "fields": [
+        {
+          "name": "market",
+          "type": "publicKey",
+          "index": false
+        },
+        {
+          "name": "trader",
+          "type": "publicKey",
+          "index": false
+        },
+        {
+          "name": "numCancels",
+          "type": "u32",
+          "index": false
+        },
+        {
+          "name": "numOrders",
+          "type": "u32",
           "index": false
         }
       ]

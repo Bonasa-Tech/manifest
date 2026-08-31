@@ -1,4 +1,5 @@
 export * from './BaseAtoms';
+export * from './BatchUpdateLog';
 export * from './CancelOrderLog';
 export * from './ClaimSeatLog';
 export * from './CreateMarketLog';

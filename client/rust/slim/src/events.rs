@@ -48,6 +48,7 @@ pub const FILL_LOG_DISCRIMINANT: [u8; 8] = [58, 230, 242, 3, 75, 113, 4, 169];
 pub const PLACE_ORDER_LOG_DISCRIMINANT: [u8; 8] = [157, 118, 247, 213, 47, 19, 164, 120];
 pub const PLACE_ORDER_LOG_V2_DISCRIMINANT: [u8; 8] = [189, 97, 159, 235, 136, 5, 1, 141];
 pub const CANCEL_ORDER_LOG_DISCRIMINANT: [u8; 8] = [22, 65, 71, 33, 244, 235, 255, 215];
+pub const BATCH_UPDATE_LOG_DISCRIMINANT: [u8; 8] = [184, 213, 71, 201, 110, 248, 249, 131];
 pub const GLOBAL_CREATE_LOG_DISCRIMINANT: [u8; 8] = [188, 25, 199, 77, 26, 15, 142, 193];
 pub const GLOBAL_ADD_TRADER_LOG_DISCRIMINANT: [u8; 8] = [129, 246, 90, 94, 87, 186, 242, 7];
 pub const GLOBAL_CLAIM_SEAT_LOG_DISCRIMINANT: [u8; 8] = [164, 46, 227, 175, 3, 143, 73, 86];
@@ -154,6 +155,39 @@ pub struct CancelOrderLog {
     pub market: Pubkey,
     pub trader: Pubkey,
     pub order_sequence_number: u64,
+}
+
+/// Emitted once per batch update instead of per-order `PlaceOrderLog` and
+/// `CancelOrderLog`. The payload continues with `num_cancels`
+/// `CancelOrderLogEntry` followed by `num_orders` `PlaceOrderLogEntry`.
+#[derive(Clone, Copy, Debug)]
+#[repr(C)]
+pub struct BatchUpdateLog {
+    pub market: Pubkey,
+    pub trader: Pubkey,
+    pub num_cancels: u32,
+    pub num_orders: u32,
+}
+
+/// One cancelled order inside a `BatchUpdateLog`.
+#[derive(Clone, Copy, Debug)]
+#[repr(C)]
+pub struct CancelOrderLogEntry {
+    pub order_sequence_number: u64,
+}
+
+/// One placed order inside a `BatchUpdateLog`.
+#[derive(Clone, Copy, Debug)]
+#[repr(C)]
+pub struct PlaceOrderLogEntry {
+    pub price: QuoteAtomsPerBaseAtom,
+    pub base_atoms: BaseAtoms,
+    pub order_sequence_number: u64,
+    pub order_index: u32,
+    pub last_valid_slot: u32,
+    pub order_type: OrderType,
+    pub is_bid: PodBool,
+    pub _padding: [u8; 6],
 }
 
 /// Emitted when a global account is created.

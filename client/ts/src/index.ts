@@ -1,5 +1,6 @@
 export * from './client';
 export * from './market';
+export * from './batchUpdateLog';
 export * from './global';
 export * from './types';
 export * from './utils';
