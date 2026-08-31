@@ -2,9 +2,8 @@ use bytemuck::{Pod, Zeroable};
 use std::{cmp::Ordering, collections::HashSet};
 
 use crate::{
-    get_helper, get_mut_helper, trace, DataIndex, Get, HyperTreeReadOperations,
-    HyperTreeValueIteratorTrait, HyperTreeValueReadOnlyIterator, HyperTreeWriteOperations, Payload,
-    NIL,
+    get_helper, get_mut_helper, trace, DataIndex, Get, HyperTreeData, HyperTreeReadOperations,
+    HyperTreeWriteOperations, Payload, NIL,
 };
 
 pub const RBTREE_OVERHEAD_BYTES: usize = 16;
@@ -28,7 +27,7 @@ pub const RBTREE_OVERHEAD_BYTES: usize = 16;
 //    RedBlackTreeReadOperationsHelpers
 //    HyperTreeReadOperations
 //    RedBlackTreeTestHelpers
-//    HyperTreeValueIteratorTrait
+//    HyperTreeData (and through it HyperTreeValueIteratorTrait)
 //  trait GetRedBlackTreeData<'a>
 //    fn data(&mut self) -> &mut [u8];
 //    fn set_root_index(&mut self, root_index: DataIndex);
@@ -988,38 +987,12 @@ where
     }
 }
 
-impl<'a, T> HyperTreeValueIteratorTrait<'a, T> for T
+impl<'a, T> HyperTreeData<'a> for T
 where
-    T: GetRedBlackTreeReadOnlyData<'a> + HyperTreeReadOperations<'a>,
+    T: GetRedBlackTreeReadOnlyData<'a>,
 {
-    fn iter<V: Payload>(&'a self) -> HyperTreeValueReadOnlyIterator<'a, T, V> {
-        let mut index = self.get_max_index();
-        if index == NIL {
-            index = self.lookup_max_index::<V>();
-        }
-        HyperTreeValueReadOnlyIterator {
-            tree: self,
-            index,
-            phantom: std::marker::PhantomData,
-        }
-    }
-}
-
-impl<'a, T: HyperTreeReadOperations<'a> + GetRedBlackTreeReadOnlyData<'a>, V: Payload> Iterator
-    for HyperTreeValueReadOnlyIterator<'a, T, V>
-{
-    type Item = (DataIndex, &'a V);
-
-    fn next(&mut self) -> Option<Self::Item> {
-        let index: DataIndex = self.index;
-        let next_index: DataIndex = self.tree.get_next_lower_index::<V>(self.index);
-        if index == NIL {
-            None
-        } else {
-            let result: &RBNode<V> = get_helper::<RBNode<V>>(self.tree.data(), index);
-            self.index = next_index;
-            Some((index, result.get_value()))
-        }
+    fn hypertree_data(&self) -> &[u8] {
+        self.data()
     }
 }
 
@@ -1563,6 +1536,7 @@ pub(crate) mod test {
     use std::fmt::Display;
 
     use super::*;
+    use crate::HyperTreeValueIteratorTrait;
     use static_assertions::assert_not_impl_any;
 
     assert_not_impl_any!(RBNode<u64>: Pod);
@@ -1612,6 +1586,9 @@ pub(crate) mod test {
                 order_id,
                 padding: [0; 128],
             }
+        }
+        pub(crate) fn order_id(&self) -> u64 {
+            self.order_id
         }
     }
 
