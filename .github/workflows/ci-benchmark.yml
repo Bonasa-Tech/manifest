@@ -183,7 +183,7 @@ jobs:
           path: .
 
       - name: Store benchmark result
-        uses: benchmark-action/github-action-benchmark@86d8bcf4dc945c81ee3547d15499abafc89a57b5 # HEAD at review time
+        uses: benchmark-action/github-action-benchmark@52576c92bccf6ac60c8223ec7eb2565637cae9ba # v1.22.1
         with:
           name: CU Benchmark
           tool: 'customSmallerIsBetter'
@@ -214,7 +214,7 @@ jobs:
           path: .
 
       - name: Compare benchmark result
-        uses: benchmark-action/github-action-benchmark@86d8bcf4dc945c81ee3547d15499abafc89a57b5 # HEAD at review time
+        uses: benchmark-action/github-action-benchmark@52576c92bccf6ac60c8223ec7eb2565637cae9ba # v1.22.1
         with:
           name: CU Benchmark
           tool: 'customSmallerIsBetter'
