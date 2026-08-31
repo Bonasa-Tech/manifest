@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1788199636904,
+  "lastUpdate": 1788208565988,
   "repoUrl": "https://github.com/Bonasa-Tech/manifest",
   "entries": {
     "CU Benchmark": [
@@ -12767,6 +12767,72 @@ window.BENCHMARK_DATA = {
           {
             "name": "MFX_99",
             "value": 5481,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "cyrbritt@gmail.com",
+            "name": "Britt Cyr",
+            "username": "brittcyr"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "35d075874faf902bcf51337f02be723c76bad2ca",
+          "message": "Stop logging the orders a batch update places and cancels (#692)\n\nEvery placement and every cancel emitted a sol_log_data event. The\ntrader pays for each one, and each told the sender what it had just\nasked for. Measured on SBPF v2, dropping them is worth 450 CU on a batch\nupdate that places one order, 2,218 on one that places five and 373 on\none that cancels one, about 440 CU per order.\n\nThe events were also displacing fills. The transaction log is a fixed\nbyte budget for the whole transaction and the runtime drops whatever\ndoes not fit, so order events were pushing out records of fills, which\nare the part a client cannot reconstruct from what it sent.\n\nThe orders that rested are still reported, on the channel that already\ncarried them: the instruction's return data, which the wrapper reads\nstraight after the call, and which the runtime writes into the log as a\n`Program return:` line when the instruction exits. Read that rather than\nmeta.returnData, which holds only whatever invocation ran last, a fee\ntransfer in the wrapper's case.\n\nPlaceOrderLog and CancelOrderLog are kept, in the program and in the\ngenerated clients and IDL, so that anything decoding historical\ntransactions still works and nothing downstream fails to build. They are\nsimply never emitted now, and the program, the Rust client and the\ngenerated TypeScript all say so; generateClient.js puts the TypeScript\nnote back when the client is regenerated, since solita does not carry\ndocumentation from the IDL. Swap still emits PlaceOrderLogV2, which is a\ndifferent event, and fills are still logged.\n\nThis is a breaking change for anything that watches those two events on\nnew transactions.\n\ntests/cases/logs.rs covers what is left: placing and cancelling log no\nevent; the orders that rested are in the return log line; every fill is\nlogged; matching an unbacked global still logs its cleanup, so the claim\nis about placement and cancellation events rather than about the log as\na whole; and the point at which a fill heavy transaction starts losing\nfills to log truncation.\n\nAlso stops zeroing emit_stack's 3000 byte stack buffer before each\nevent, which was a memset for bytes that are immediately overwritten,\nworth 23 CU on every event the program still emits.",
+          "timestamp": "2026-08-31T16:29:13-04:00",
+          "tree_id": "21c14819ef0530f1e9430d9ab775a36b63912745",
+          "url": "https://github.com/Bonasa-Tech/manifest/commit/35d075874faf902bcf51337f02be723c76bad2ca"
+        },
+        "date": 1788208563814,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "PHX_50",
+            "value": 6897,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "PHX_95",
+            "value": 13208,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "PHX_99",
+            "value": 13902,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_50",
+            "value": 2810,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_95",
+            "value": 4589,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_99",
+            "value": 5061,
             "range": "",
             "unit": "CU",
             "extra": ""
