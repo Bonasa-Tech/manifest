@@ -1,8 +1,44 @@
+# Compute unit benchmark.
+#
+# Replays real mainnet order flow (recorded from another Solana CLOB) through
+# the manifest and wrapper programs with the benchmarking harness that lives
+# in the private CKS-Systems/manifest-private repository, then records the CU
+# per order percentiles with github-action-benchmark. Results for `main` are
+# published to the `gh-pages` branch; pull requests get a comparison against
+# `main` in the job summary (and a comment if a regression trips the alert
+# threshold) without publishing anything.
+#
+# Requirements:
+#   * secret  MANIFEST_PAT: token that can read manifest-private.
+#   * variable MANIFEST_PRIVATE_BENCHMARK_SHA: full commit SHA of the
+#     manifest-private revision to run. Mutable refs are rejected on purpose so
+#     that only a reviewed revision of the private harness can run against a
+#     pull request.
+#
+# The harness expects this repository at manifest-private/deps/manifest; that
+# directory is populated from the commit being benchmarked, so the private
+# repository's own submodule pointer is never used.
 name: Benchmark
 on:
   push:
     branches: ['main']
-    paths: ['lib/**', 'programs/**']
+    paths:
+      [
+        'lib/**',
+        'programs/**',
+        'Cargo.toml',
+        'Cargo.lock',
+        '.github/workflows/ci-benchmark.yml',
+      ]
+  pull_request:
+    paths:
+      [
+        'lib/**',
+        'programs/**',
+        'Cargo.toml',
+        'Cargo.lock',
+        '.github/workflows/ci-benchmark.yml',
+      ]
   workflow_dispatch:
 
 env:
@@ -16,6 +52,9 @@ env:
 jobs:
   benchmark:
     name: Benchmark CU
+    # The private harness needs MANIFEST_PAT, which pull requests from forks
+    # cannot access.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -24,6 +63,10 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
+          # The benchmark's copy of this repository is fetched out of this
+          # checkout below, and git refuses to serve a fetch from a shallow
+          # repository, so take the full history here.
+          fetch-depth: 0
 
       - name: Validate pinned benchmark revision
         shell: bash
@@ -43,14 +86,21 @@ jobs:
           submodules: false
           persist-credentials: false
 
-      - name: Switch submodule to current HEAD
-        # Initialize only the reviewed public dependency. Other private-repo
-        # submodules remain disabled.
+      - name: Use this commit as the benchmark's manifest dependency
+        # Initialize only the reviewed public dependency, from the commit that
+        # was just checked out (no network, and independent of the private
+        # repository's submodule URL). Other private-repo submodules remain
+        # disabled.
+        shell: bash
         run: |
-          mkdir -p "$GITHUB_WORKSPACE/manifest-private/deps/manifest"
-          git -C "$GITHUB_WORKSPACE/manifest-private/deps/manifest" init
-          git -C "$GITHUB_WORKSPACE/manifest-private/deps/manifest" fetch --depth 1 https://github.com/CKS-Systems/manifest.git "$GITHUB_SHA"
-          git -C "$GITHUB_WORKSPACE/manifest-private/deps/manifest" checkout --detach FETCH_HEAD
+          set -euo pipefail
+          DEP="$GITHUB_WORKSPACE/manifest-private/deps/manifest"
+          mkdir -p "$DEP"
+          git -C "$DEP" init --quiet
+          git -C "$DEP" fetch --quiet --depth 1 "file://$GITHUB_WORKSPACE" HEAD
+          git -C "$DEP" checkout --quiet --detach FETCH_HEAD
+          test "$(git -C "$DEP" rev-parse HEAD)" = "$GITHUB_SHA"
+          echo "Benchmarking manifest commit $(git -C "$DEP" rev-parse HEAD)"
 
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
@@ -60,6 +110,10 @@ jobs:
         uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           shared-key: 'solana-${{ env.SOLANA_VERSION }}'
+          workspaces: |
+            . -> target
+            manifest-private/deps/manifest -> target
+            manifest-private/benchmarking -> target
 
       - name: Set Rust version
         run: rustup toolchain install ${{ env.RUST_TOOLCHAIN }}
@@ -75,8 +129,6 @@ jobs:
           solana --version
           echo "Generating keypair..."
           solana-keygen new -o "$HOME/.config/solana/id.json" --no-passphrase --silent
-
-      - run: rustup toolchain update nightly && rustup default nightly
 
       - name: Run benchmark
         run: cd $GITHUB_WORKSPACE/manifest-private; ./benchmarking/benchmark.sh
@@ -95,6 +147,21 @@ jobs:
             exit 1
           fi
 
+      - name: Summarize benchmark output
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          import json
+
+          print('## CU per order')
+          print()
+          print('| Benchmark | CU |')
+          print('| --- | ---: |')
+          for result in json.load(open('output.txt')):
+              print(f"| {result['name']} | {result['value']} |")
+          PY
+
       - uses: actions/upload-artifact@65462800fd760344b1a7b4382951275a0abb4808 # v4
         with:
           name: benchmark-output
@@ -102,7 +169,9 @@ jobs:
           if-no-files-found: error
 
   publish-benchmark:
+    name: Publish benchmark
     needs: benchmark
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -114,7 +183,7 @@ jobs:
           path: .
 
       - name: Store benchmark result
-        uses: benchmark-action/github-action-benchmark@86d8bcf4dc945c81ee3547d15499abafc89a57b5 # HEAD at review time
+        uses: benchmark-action/github-action-benchmark@52576c92bccf6ac60c8223ec7eb2565637cae9ba # v1.22.1
         with:
           name: CU Benchmark
           tool: 'customSmallerIsBetter'
@@ -126,3 +195,35 @@ jobs:
 
           # Push and deploy GitHub pages branch automatically
           auto-push: true
+
+  compare-benchmark:
+    name: Compare benchmark with main
+    needs: benchmark
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v4
+        with:
+          name: benchmark-output
+          path: .
+
+      - name: Compare benchmark result
+        uses: benchmark-action/github-action-benchmark@52576c92bccf6ac60c8223ec7eb2565637cae9ba # v1.22.1
+        with:
+          name: CU Benchmark
+          tool: 'customSmallerIsBetter'
+          output-file-path: output.txt
+          fail-on-alert: true
+          summary-always: true
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          comment-on-alert: true
+
+          # Only compare against the published `main` data, never store.
+          auto-push: false
+          save-data-file: false
