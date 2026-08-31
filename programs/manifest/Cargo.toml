@@ -50,6 +50,7 @@ vectors = { workspace = true, optional = true}
 hook_macro = { workspace = true, optional = true}
 arrayref = { workspace = true}
 solana-invoke = { workspace = true }
+solana-curve25519 = { workspace = true }
 cvlr = { version = "0.4", optional = true } 
 
 [dev-dependencies]

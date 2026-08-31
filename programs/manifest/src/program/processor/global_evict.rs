@@ -8,9 +8,7 @@ use solana_program::{program::invoke_signed, program_pack::Pack, rent::Rent, sys
 use spl_token::state::Account;
 
 #[cfg(not(feature = "certora"))]
-use crate::{
-    global_vault_seeds_with_bump, state::GAS_DEPOSIT_LAMPORTS, validation::get_global_vault_address,
-};
+use crate::{global_vault_seeds_with_bump, state::GAS_DEPOSIT_LAMPORTS};
 use crate::{
     logs::{emit_stack, GlobalDepositLog, GlobalEvictLog, GlobalWithdrawLog},
     program::get_mut_dynamic_account,
@@ -105,6 +103,7 @@ pub(crate) fn process_global_evict_core(
             &global_vault,
             &evictee_token,
             evictee_balance.into(),
+            global_dynamic_account.fixed.get_vault_bump(),
         )?;
 
         emit_stack(GlobalWithdrawLog {
@@ -220,9 +219,8 @@ fn spl_token_transfer_from_global_vault_to_evictee<'a, 'info>(
     global_vault: &TokenAccountInfo<'a, 'info>,
     evictee_token: &TokenAccountInfo<'a, 'info>,
     amount_atoms: u64,
+    bump: u8,
 ) -> ProgramResult {
-    let (_, bump) = get_global_vault_address(mint.info.key);
-
     if *global_vault.owner == spl_token_2022::id() {
         invoke_signed(
             &spl_token_2022::instruction::transfer_checked(
@@ -275,6 +273,7 @@ fn spl_token_transfer_from_global_vault_to_evictee<'a, 'info>(
     global_vault: &TokenAccountInfo<'a, 'info>,
     evictee_token: &TokenAccountInfo<'a, 'info>,
     amount_atoms: u64,
+    _bump: u8,
 ) -> ProgramResult {
     if *global_vault.owner == spl_token_2022::id() {
         spl_token_2022_transfer_with_fee(

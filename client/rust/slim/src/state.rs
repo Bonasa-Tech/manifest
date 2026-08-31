@@ -50,19 +50,19 @@ pub struct MarketFixed {
     /// Red-black tree root representing the seats
     pub claimed_seats_root_index: DataIndex,
 
-    /// Cached best claimed seat. This is presently unused by the client, but
-    /// retained so the following fields match the on-chain account layout.
-    pub claimed_seats_best_index: DataIndex,
-
     /// LinkedList representing all free blocks
     pub free_list_head_index: DataIndex,
 
-    pub _padding2: [u64; 1],
+    pub _padding2: [u32; 1],
 
     /// Quote volume traded over lifetime, can overflow.
     pub quote_volume: u64,
 
-    pub _padding3: [u64; 7],
+    /// Canonical global account for the base mint, cached by the program.
+    /// All zero on markets that have not traded against a global yet.
+    pub base_global: [u8; 32],
+    /// Canonical global account for the quote mint, see `base_global`.
+    pub quote_global: [u8; 32],
 }
 
 impl MarketFixed {
@@ -106,6 +106,20 @@ impl MarketFixed {
     /// Check if there's a free block available.
     pub fn has_free_block(&self) -> bool {
         self.free_list_head_index != NIL
+    }
+
+    /// Get the cached canonical global account for the base mint, or `None`
+    /// when the program has not cached it for this market yet.
+    pub fn get_base_global(&self) -> Option<Pubkey> {
+        let key: Pubkey = Pubkey::from(self.base_global);
+        (key != Pubkey::default()).then_some(key)
+    }
+
+    /// Get the cached canonical global account for the quote mint, see
+    /// `get_base_global`.
+    pub fn get_quote_global(&self) -> Option<Pubkey> {
+        let key: Pubkey = Pubkey::from(self.quote_global);
+        (key != Pubkey::default()).then_some(key)
     }
 }
 

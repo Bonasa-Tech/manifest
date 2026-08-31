@@ -17,6 +17,7 @@
 
 use std::{cell::RefMut, rc::Rc};
 
+use hypertree::get_helper;
 use manifest::{
     program::{
         batch_update::{CancelOrderParams, PlaceOrderParams},
@@ -25,9 +26,10 @@ use manifest::{
         global_add_trader_instruction, global_deposit_instruction, global_withdraw_instruction,
         swap_instruction, withdraw_instruction,
     },
-    state::{constants::NO_EXPIRATION_LAST_VALID_SLOT, OrderType},
+    state::{constants::NO_EXPIRATION_LAST_VALID_SLOT, MarketFixed, OrderType},
     validation::{get_global_address, get_global_vault_address, get_vault_address},
 };
+use solana_account::{Account, AccountSharedData};
 use solana_instruction::{AccountMeta, Instruction};
 use solana_keypair::Keypair;
 use solana_program::{program_pack::Pack, pubkey::Pubkey, rent::Rent, system_instruction};
@@ -90,6 +92,25 @@ async fn measure_and_send(
     Ok(units_consumed)
 }
 
+/// Simulates `instructions`, requiring success, and prints the compute units
+/// as `CU <name>: <units>` without executing anything. For comparing two
+/// variants of the same instruction from one state: simulation does not
+/// commit, so each sample starts from exactly the state the caller set up.
+async fn measure(
+    test_fixture: &TestFixture,
+    name: &str,
+    instructions: &[Instruction],
+    payer: &Pubkey,
+    signers: &[&Keypair],
+) -> u64 {
+    let (result, units_consumed) = simulate(test_fixture, instructions, payer, signers).await;
+    if let Err(error) = result {
+        panic!("{name} simulation failed: {error}");
+    }
+    println!("CU {name}: {units_consumed}");
+    units_consumed
+}
+
 /// A market keypair whose base and quote vault PDAs derive on the first bump.
 fn market_keypair_with_first_bump_vaults(base_mint: &Pubkey, quote_mint: &Pubkey) -> Keypair {
     loop {
@@ -112,6 +133,48 @@ fn mint_keypair_with_first_bump_globals() -> Keypair {
             return keypair;
         }
     }
+}
+
+/// Creates and initializes a mint whose global PDAs derive on the first bump,
+/// with the payer as its mint authority. Measurements that touch a global
+/// account use these so the derivation is a single attempt.
+async fn create_first_bump_globals_mint(
+    test_fixture: &TestFixture,
+    decimals: u8,
+) -> anyhow::Result<Pubkey> {
+    let payer: Pubkey = test_fixture.payer();
+    let payer_keypair: Keypair = test_fixture.payer_keypair();
+    let mint_keypair: Keypair = mint_keypair_with_first_bump_globals();
+    let mint: Pubkey = mint_keypair.pubkey();
+    let rent: Rent = test_fixture
+        .context
+        .borrow_mut()
+        .banks_client
+        .get_rent()
+        .await?;
+    send_tx_with_retry(
+        Rc::clone(&test_fixture.context),
+        &[
+            system_instruction::create_account(
+                &payer,
+                &mint,
+                rent.minimum_balance(spl_token::state::Mint::LEN),
+                spl_token::state::Mint::LEN as u64,
+                &spl_token::id(),
+            ),
+            spl_token::instruction::initialize_mint(
+                &spl_token::id(),
+                &mint,
+                &payer,
+                None,
+                decimals,
+            )?,
+        ],
+        Some(&payer),
+        &[&payer_keypair, &mint_keypair],
+    )
+    .await?;
+    Ok(mint)
 }
 
 /// Creates a market on the fixture's SOL/USDC mints whose vault PDAs derive on
@@ -184,17 +247,16 @@ async fn cu_create_market_test() -> anyhow::Result<()> {
     let test_fixture: TestFixture = TestFixture::new().await;
     let payer: Pubkey = test_fixture.payer();
     let payer_keypair: Keypair = test_fixture.payer_keypair();
-    let market_keypair: Keypair = market_keypair_with_first_bump_vaults(
-        &test_fixture.sol_mint_fixture.key,
-        &test_fixture.usdc_mint_fixture.key,
-    );
+    // Creating a market derives both vault PDAs and caches both global
+    // addresses, so the mints and the market key are all chosen to derive on
+    // the first bump; otherwise this number moves by about 1,500 CU per extra
+    // attempt from run to run.
+    let base_mint: Pubkey = create_first_bump_globals_mint(&test_fixture, 9).await?;
+    let quote_mint: Pubkey = create_first_bump_globals_mint(&test_fixture, 6).await?;
+    let market_keypair: Keypair = market_keypair_with_first_bump_vaults(&base_mint, &quote_mint);
 
-    let create_market_ixs: Vec<Instruction> = create_market_instructions(
-        &market_keypair.pubkey(),
-        &test_fixture.sol_mint_fixture.key,
-        &test_fixture.usdc_mint_fixture.key,
-        &payer,
-    )?;
+    let create_market_ixs: Vec<Instruction> =
+        create_market_instructions(&market_keypair.pubkey(), &base_mint, &quote_mint, &payer)?;
     // Includes the system program create account instruction.
     measure_and_send(
         &test_fixture,
@@ -504,30 +566,7 @@ async fn cu_global_test() -> anyhow::Result<()> {
 
     // A mint whose global PDAs derive on the first bump, with the payer as its
     // mint authority, and a token account for the payer.
-    let mint_keypair: Keypair = mint_keypair_with_first_bump_globals();
-    let mint: Pubkey = mint_keypair.pubkey();
-    let rent: Rent = test_fixture
-        .context
-        .borrow_mut()
-        .banks_client
-        .get_rent()
-        .await?;
-    send_tx_with_retry(
-        Rc::clone(&test_fixture.context),
-        &[
-            system_instruction::create_account(
-                &payer,
-                &mint,
-                rent.minimum_balance(spl_token::state::Mint::LEN),
-                spl_token::state::Mint::LEN as u64,
-                &spl_token::id(),
-            ),
-            spl_token::instruction::initialize_mint(&spl_token::id(), &mint, &payer, None, 6)?,
-        ],
-        Some(&payer),
-        &[&payer_keypair, &mint_keypair],
-    )
-    .await?;
+    let mint: Pubkey = create_first_bump_globals_mint(&test_fixture, 6).await?;
     let token_account: TokenAccountFixture =
         TokenAccountFixture::new(Rc::clone(&test_fixture.context), &mint, &payer).await;
     send_tx_with_retry(
@@ -585,5 +624,159 @@ async fn cu_global_test() -> anyhow::Result<()> {
         &[&payer_keypair],
     )
     .await?;
+    Ok(())
+}
+
+/// Batch update carrying the global accounts for both sides. The first call
+/// is on a market whose cached global addresses were cleared, so it derives
+/// and stores them; the second takes the cached path. Both mints and the
+/// market key derive on the first bump so the uncached number is a single
+/// derivation attempt per side rather than however many the fixture's random
+/// mints happen to need.
+#[tokio::test]
+async fn cu_batch_update_with_globals_test() -> anyhow::Result<()> {
+    let test_fixture: TestFixture = TestFixture::new().await;
+    let payer: Pubkey = test_fixture.payer();
+    let payer_keypair: Keypair = test_fixture.payer_keypair();
+    let amount_atoms: u64 = 10 * USDC_UNIT_SIZE;
+
+    let base_mint: Pubkey = create_first_bump_globals_mint(&test_fixture, 9).await?;
+    let quote_mint: Pubkey = create_first_bump_globals_mint(&test_fixture, 6).await?;
+    let market_keypair: Keypair = market_keypair_with_first_bump_vaults(&base_mint, &quote_mint);
+    let market: Pubkey = market_keypair.pubkey();
+    send_tx_with_retry(
+        Rc::clone(&test_fixture.context),
+        &create_market_instructions(&market, &base_mint, &quote_mint, &payer)?[..],
+        Some(&payer),
+        &[&payer_keypair, &market_keypair],
+    )
+    .await?;
+
+    // A seat on the market, both globals, and quote tokens on the global to
+    // back the global bid placed below.
+    let quote_token_account: TokenAccountFixture =
+        TokenAccountFixture::new(Rc::clone(&test_fixture.context), &quote_mint, &payer).await;
+    send_tx_with_retry(
+        Rc::clone(&test_fixture.context),
+        &[
+            claim_seat_instruction(&market, &payer),
+            create_global_instruction(&base_mint, &payer, &spl_token::id()),
+            create_global_instruction(&quote_mint, &payer, &spl_token::id()),
+            spl_token::instruction::mint_to(
+                &spl_token::id(),
+                &quote_mint,
+                &quote_token_account.key,
+                &payer,
+                &[&payer],
+                amount_atoms,
+            )?,
+        ],
+        Some(&payer),
+        &[&payer_keypair],
+    )
+    .await?;
+    let (quote_global, _) = get_global_address(&quote_mint);
+    send_tx_with_retry(
+        Rc::clone(&test_fixture.context),
+        &[
+            global_add_trader_instruction(&quote_global, &payer),
+            global_deposit_instruction(
+                &quote_mint,
+                &payer,
+                &quote_token_account.key,
+                &spl_token::id(),
+                amount_atoms,
+            ),
+        ],
+        Some(&payer),
+        &[&payer_keypair],
+    )
+    .await?;
+
+    // Both samples are simulations of the same instruction, and simulating
+    // does not commit, so both run against this same state: an empty book, an
+    // untouched global, and a seat that has not traded. The only difference
+    // between them is the 64 bytes of cached addresses, which is the point of
+    // the comparison; sending either one first would leave the second facing a
+    // resting order and a changed global balance.
+    let place_global_bid_ix: Instruction = batch_update_instruction(
+        &market,
+        &payer,
+        None,
+        vec![],
+        vec![PlaceOrderParams::new(
+            10,
+            1,
+            0,
+            true,
+            OrderType::Global,
+            NO_EXPIRATION_LAST_VALID_SLOT,
+        )],
+        Some(base_mint),
+        None,
+        Some(quote_mint),
+        None,
+    );
+
+    // Creating the market cached both addresses, so this is the cached path.
+    let cached_units: u64 = measure(
+        &test_fixture,
+        "batch_update_global_place_1[cached]",
+        &[place_global_bid_ix.clone()],
+        &payer,
+        &[&payer_keypair],
+    )
+    .await;
+
+    // Clear just the cache, to behave like a market from before it existed.
+    let mut market_account: Account = test_fixture
+        .context
+        .borrow_mut()
+        .banks_client
+        .get_account(market)
+        .await?
+        .expect("market exists");
+    market_account.data[192..256].fill(0);
+    test_fixture
+        .context
+        .borrow_mut()
+        .set_account(&market, &AccountSharedData::from(market_account));
+
+    let uncached_units: u64 = measure(
+        &test_fixture,
+        "batch_update_global_place_1[uncached]",
+        &[place_global_bid_ix.clone()],
+        &payer,
+        &[&payer_keypair],
+    )
+    .await;
+    // Only the BPF program meters compute, see the module docs, so this only
+    // says anything under `cargo test-sbf`.
+    if cfg!(feature = "test-sbf") {
+        assert!(
+            uncached_units > cached_units,
+            "deriving both globals must cost more than comparing them",
+        );
+    }
+
+    // Run it for real from the cleared state, so the cache being filled in is
+    // covered too.
+    send_tx_with_retry(
+        Rc::clone(&test_fixture.context),
+        &[place_global_bid_ix],
+        Some(&payer),
+        &[&payer_keypair],
+    )
+    .await?;
+    let market_account: Account = test_fixture
+        .context
+        .borrow_mut()
+        .banks_client
+        .get_account(market)
+        .await?
+        .expect("market exists");
+    let market_fixed: &MarketFixed = get_helper::<MarketFixed>(&market_account.data, 0_u32);
+    assert_ne!(*market_fixed.get_base_global(), Pubkey::default());
+    assert_ne!(*market_fixed.get_quote_global(), Pubkey::default());
     Ok(())
 }

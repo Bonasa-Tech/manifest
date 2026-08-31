@@ -2708,6 +2708,7 @@ dependencies = [
 name = "manifest-client"
 version = "0.1.0"
 dependencies = [
+ "bytemuck",
  "hypertree",
  "manifest-dex",
  "solana-instruction",
@@ -2744,6 +2745,7 @@ dependencies = [
  "solana-account",
  "solana-clock",
  "solana-compute-budget-interface",
+ "solana-curve25519",
  "solana-instruction",
  "solana-invoke",
  "solana-keypair",

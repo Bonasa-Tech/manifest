@@ -201,11 +201,24 @@ pub struct MarketFixed {
     #[cfg(feature = "certora")]
     _padding3: [u64; 4],
 
-    // Unused padding. Saved in case a later version wants to be backwards
-    // compatible. Also, it is nice to have the fixed size be a round number,
-    // 256 bytes.
+    /// Canonical global account for the base mint, cached so that validating
+    /// the global accounts on a trade is a key compare instead of a PDA
+    /// search. All zero on markets created before this field existed (it was
+    /// padding) until their first global batch update or swap derives and
+    /// stores it.
+    ///
+    /// Neither this nor `quote_global` exists in the `certora` build. This
+    /// struct is 256 bytes either way, and that build already spends these
+    /// same 64 bytes on the informational atom totals below, which the specs
+    /// reason about. Verification therefore derives the address on every
+    /// check rather than reading a cache, which is also what lets the prover
+    /// state the property directly; see `verify_market_global`. Everything
+    /// else that touches these two fields is gated for the same reason.
     #[cfg(not(feature = "certora"))]
-    _padding3: [u64; 8],
+    base_global: Pubkey,
+    /// Canonical global account for the quote mint, see `base_global`.
+    #[cfg(not(feature = "certora"))]
+    quote_global: Pubkey,
 }
 const_assert_eq!(
     size_of::<MarketFixed>(),
@@ -230,7 +243,8 @@ const_assert_eq!(
     4 +   // claimed_seats_best_index
     4 +   // free_list_head_index
     8 +   // padding2
-    64 // padding4
+    32 +  // base_global
+    32 // quote_global
 );
 const_assert_eq!(size_of::<MarketFixed>(), MARKET_FIXED_SIZE);
 const_assert_eq!(size_of::<MarketFixed>() % 8, 0);
@@ -244,6 +258,26 @@ impl MarketFixed {
     ) -> Self {
         let (base_vault, base_vault_bump) = get_vault_address(market_key, base_mint.info.key);
         let (quote_vault, quote_vault_bump) = get_vault_address(market_key, quote_mint.info.key);
+        Self::new_empty_with_vaults(
+            base_mint,
+            quote_mint,
+            base_vault,
+            base_vault_bump,
+            quote_vault,
+            quote_vault_bump,
+        )
+    }
+
+    /// Like `new_empty` for a caller that has already derived the vault PDAs.
+    /// The global account cache starts empty, see `set_base_global`.
+    pub fn new_empty_with_vaults(
+        base_mint: &MintAccountInfo,
+        quote_mint: &MintAccountInfo,
+        base_vault: Pubkey,
+        base_vault_bump: u8,
+        quote_vault: Pubkey,
+        quote_vault_bump: u8,
+    ) -> Self {
         MarketFixed {
             discriminant: MARKET_FIXED_DISCRIMINANT,
             version: 0,
@@ -270,8 +304,13 @@ impl MarketFixed {
             free_list_head_index: 0,
             _padding2: [0; 1],
             quote_volume: QuoteAtoms::ZERO,
+            // The global cache does not exist under certora, see the field
+            // definitions; that build fills the same bytes with the totals
+            // below instead.
             #[cfg(not(feature = "certora"))]
-            _padding3: [0; 8],
+            base_global: Pubkey::default(),
+            #[cfg(not(feature = "certora"))]
+            quote_global: Pubkey::default(),
             #[cfg(feature = "certora")]
             withdrawable_base_atoms: BaseAtoms::new(0),
             #[cfg(feature = "certora")]
@@ -325,6 +364,29 @@ impl MarketFixed {
     }
     pub fn get_quote_mint(&self) -> &Pubkey {
         &self.quote_mint
+    }
+    /// Cached canonical global account for the base mint, or the default
+    /// pubkey if it has not been derived for this market yet.
+    ///
+    /// These four accessors are gated only because the fields they read are:
+    /// the `certora` build has no global cache, see `base_global`.
+    #[cfg(not(feature = "certora"))]
+    pub fn get_base_global(&self) -> &Pubkey {
+        &self.base_global
+    }
+    /// Cached canonical global account for the quote mint, or the default
+    /// pubkey if it has not been derived for this market yet.
+    #[cfg(not(feature = "certora"))]
+    pub fn get_quote_global(&self) -> &Pubkey {
+        &self.quote_global
+    }
+    #[cfg(not(feature = "certora"))]
+    pub fn set_base_global(&mut self, base_global: Pubkey) {
+        self.base_global = base_global;
+    }
+    #[cfg(not(feature = "certora"))]
+    pub fn set_quote_global(&mut self, quote_global: Pubkey) {
+        self.quote_global = quote_global;
     }
     pub fn get_base_vault(&self) -> &Pubkey {
         &self.base_vault
