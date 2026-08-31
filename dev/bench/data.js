@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1788192801455,
+  "lastUpdate": 1788199636904,
   "repoUrl": "https://github.com/Bonasa-Tech/manifest",
   "entries": {
     "CU Benchmark": [
@@ -12701,6 +12701,72 @@ window.BENCHMARK_DATA = {
           {
             "name": "MFX_99",
             "value": 5492,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "cyrbritt@gmail.com",
+            "name": "Britt Cyr",
+            "username": "brittcyr"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "33514f7ce8da404f264336d3278063efe014b95a",
+          "message": "Cache the canonical global accounts on the market (#690)\n\n* Cache the canonical global accounts on the market\n\nEvery batch update or swap that carries global accounts validated them\nwith find_program_address, which costs about 1,500 CU per bump tried and\nruns twice when both sides are global. The addresses never change once a\nmarket exists, so store them in MarketFixed (in what was padding3) and\nvalidate by comparing against the stored key.\n\nA market created before this field existed has zeroes there, so the\nfirst global instruction on it derives the addresses and stores them;\nafter that it takes the cached path. Markets created from now on get\nboth addresses at creation.\n\nThe check that replaces the search still has to prove the account is at\nthe program derived address, so is_global_address rebuilds the address\nfrom the seeds, the stored bump, the program id and the PDA marker with\none sha256 and rejects it if the result is on the curve. That is the\nsame computation find_program_address does per attempt, without the\nsearch, and it keeps the property the old code documented: an account\nowned by this program that is a byte for byte copy of a real global,\nincluding its bump, is still rejected because it does not sit at the\nderived address.\n\ntests/cases/global_address.rs covers caching at creation, lazy caching\non an old market, a global for the wrong mint, and the forged account\nattack the check exists for. The exhaustive bump test lives next to\nis_global_address.\n\n* Explain why the global cache is left out of formal verification\n\nThe cached fields cannot exist in the certora build: MarketFixed is 256\nbytes in both, and that build already spends the same 64 bytes on the\ninformational atom totals the specs reason about. Verification therefore\nderives the address on every check, which is also what lets the prover\nstate the property directly.\n\nRecord that at each gated site, and what it means for coverage: the\nprover checks the property, while the tests check that the fast path\nimplements it.\n\n* Fix the slim client's MarketFixed layout and pin it to the program's\n\nThe slim client re-declares MarketFixed so that it does not depend on\nthe program crate, and the two had drifted. It carried a\nclaimed_seats_best_index field that the program has never had (it exists\nonly in a stale comment in the program's size assertion, from the first\ncommit) and an eight byte _padding2 where the program has four. That put\nfree_list_head_index four bytes late and quote_volume eight bytes late.\n\nNothing caught it. The size and the discriminant were unchanged, so\naccounts still parsed, and the fields after the drift read whatever\nhappened to be at the wrong offset. Until now those bytes were the\ntrailing padding, so quote_volume read a plausible zero and\nhas_free_block read padding instead of the free list head. Caching the\nglobal addresses in that padding turns the same bug into the first eight\nbytes of a pubkey surfacing as quote_volume.\n\nRestore the layout the program actually uses, add the two cached global\naddresses, and expose them as Options that are None until the program\nhas cached them.\n\nThe layout tests that existed only used offset_of on the slim struct\nitself, so they were self consistent and could not see this. The new\ncross crate test builds a program MarketFixed whose every byte is\ndistinct, reads it back through the slim definition, and compares the\nfields the program exposes; it fails against the layout this commit\nreplaces.\n\nRemoves two public fields that never held real data.\n\n* Group the layout test's imports for nightly rustfmt\n\nThe repository sets imports_granularity = \"Crate\", which stable rustfmt\nignores and nightly enforces, and CI runs the nightly check. The new\ntest's two manifest imports were left ungrouped.\n\n* Keep the global PDA bumps out of the CU measurements\n\nTwo of the measurements moved between runs. Creating a market now caches\nboth global addresses, so it derives them, and the batch update that\nfills a cleared cache derives them too. Both were doing that on the\nfixture's random mints, where find_program_address tries however many\nbumps that mint needs, at about 1,500 CU each. The module exists so two\nbuilds can be compared line by line, which that defeats.\n\nGive both measurements mints whose global PDAs derive on the first bump,\nthe way the global instructions already do, and a market key whose vault\nPDAs do the same. The batch update test builds its own market, seat,\nglobals and global deposit on those mints rather than borrowing the\nfixture's.\n\nMeasured twice on SBPF v2, identical both times: create_market 22,153,\nbatch_update_global_place_1 12,789 uncached and 9,825 cached. The 2,964\nbetween them is the two derivations the cache removes.\n\nAlso pulls the mint setup that the global test had inline into a helper\nthe three tests share.\n\n* Compare the cached and uncached globals from the same state\n\nThe two samples were taken with measure_and_send, which simulates and\nthen executes, so the uncached order was resting on the book and its\ncost was on the global by the time the cached sample ran. The difference\nbetween them was therefore the cache plus whatever placing into a\nnon-empty book costs, not the cache alone.\n\nSimulating does not commit, so take both samples with a simulation from\none prepared state, an empty book and an untouched global, and change\nonly the 64 bytes of cached addresses between them. Send the transaction\nonce afterwards so that filling the cache is still covered.\n\nCorrected numbers on SBPF v2, identical across two runs: 9,630 cached\nagainst 12,789 uncached, so the cache is worth 3,159 CU. The old\ncomparison reported 2,964, understating it, because the cached sample\nwas paying for the order the uncached one had just placed.\n\nThe inequality is asserted only under test-sbf, since the native\nprocessor does not meter compute and reports both samples as equal.",
+          "timestamp": "2026-08-31T13:59:59-04:00",
+          "tree_id": "7b58b75f1428b0ec0785cb4916c420d979e6d8d2",
+          "url": "https://github.com/Bonasa-Tech/manifest/commit/33514f7ce8da404f264336d3278063efe014b95a"
+        },
+        "date": 1788199634847,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "PHX_50",
+            "value": 6897,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "PHX_95",
+            "value": 13208,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "PHX_99",
+            "value": 13902,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_50",
+            "value": 3183,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_95",
+            "value": 5268,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_99",
+            "value": 5481,
             "range": "",
             "unit": "CU",
             "extra": ""
