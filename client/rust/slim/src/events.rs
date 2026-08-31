@@ -114,7 +114,10 @@ pub struct FillLog {
     pub _padding: [u8; 14],
 }
 
-/// Emitted when an order is placed on the book.
+/// Historical. The program stopped emitting this when batch update stopped
+/// logging the orders it places; it is kept to decode transactions from
+/// before that. Placements on new transactions are not logged at all, and
+/// `PlaceOrderLogV2` below is a different event, still emitted by swap.
 #[derive(Clone, Copy, Debug)]
 #[repr(C)]
 pub struct PlaceOrderLog {
@@ -147,7 +150,9 @@ pub struct PlaceOrderLogV2 {
     pub _padding: [u8; 6],
 }
 
-/// Emitted when an order is cancelled.
+/// Historical, see [`PlaceOrderLog`]. The program no longer emits this; it is
+/// kept to decode transactions from before batch update stopped logging
+/// cancellations.
 #[derive(Clone, Copy, Debug)]
 #[repr(C)]
 pub struct CancelOrderLog {

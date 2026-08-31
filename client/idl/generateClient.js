@@ -48,6 +48,38 @@ async function main() {
           fs.writeFileSync(accountFile, source.replace(deserialize, checked));
         }
       }
+      if (programName === 'manifest') {
+        // These two events are no longer emitted, see logs.rs. Solita does not
+        // carry documentation from the IDL, so the note that says so is put
+        // back here every time the client is regenerated.
+        const historicalBanner =
+          '/**\n' +
+          ' * Historical. The program stopped emitting this event when batch update\n' +
+          ' * stopped logging the orders it places and cancels; it is kept so that\n' +
+          ' * transactions from before that can still be decoded. Nothing emits it on new\n' +
+          ' * transactions.\n' +
+          ' *\n' +
+          ' * To learn which orders rested, read the `Program return:` line of the batch\n' +
+          ' * update instruction rather than watching for this event. Fills are still\n' +
+          ' * emitted as `FillLog`, and swap still emits `PlaceOrderLogV2`, which is a\n' +
+          ' * different event.\n' +
+          ' *\n' +
+          ' * @deprecated No longer emitted by the program.\n' +
+          ' */\n';
+        for (const accountName of ['PlaceOrderLog', 'CancelOrderLog']) {
+          const accountFile = path.join(sdkDir, 'accounts', `${accountName}.ts`);
+          const source = fs.readFileSync(accountFile, 'utf8');
+          const firstImport = source.indexOf('import ');
+          if (firstImport < 0) {
+            throw new Error(`Unable to annotate ${accountFile}`);
+          }
+          fs.writeFileSync(
+            accountFile,
+            source.slice(0, firstImport) + historicalBanner + source.slice(firstImport),
+          );
+        }
+      }
+
       console.log('Running prettier on generated files...');
       spawnSync('prettier', ['--write', sdkDir, '--trailing-comma all'], {
         stdio: 'inherit',

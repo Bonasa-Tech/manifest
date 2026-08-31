@@ -64,6 +64,7 @@ solana-transaction = { workspace = true }
 solana-clock = { workspace = true }
 solana-instruction = { workspace = true }
 solana-compute-budget-interface = { workspace = true }
+base64 = "0.21"
 tokio = { workspace = true }
 serde_json = "1.0.86"
 spl-associated-token-account = { version = "7", features = ["no-entrypoint"] }

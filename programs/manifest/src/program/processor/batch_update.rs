@@ -1,7 +1,6 @@
 use std::cell::RefMut;
 
 use crate::{
-    logs::{emit_stack, CancelOrderLog, PlaceOrderLog},
     program::get_trader_index_with_hint,
     quantities::{BaseAtoms, PriceConversionError, QuoteAtomsPerBaseAtom, WrapperU64},
     require,
@@ -14,7 +13,7 @@ use crate::{
 };
 use borsh::{BorshDeserialize, BorshSerialize};
 
-use hypertree::{get_helper, trace, DataIndex, PodBool, RBNode};
+use hypertree::{get_helper, trace, DataIndex, RBNode};
 use solana_program::{
     account_info::AccountInfo, entrypoint::ProgramResult, program_error::ProgramError,
     pubkey::Pubkey,
@@ -210,6 +209,38 @@ fn batch_place_order(
 }
 
 #[cfg_attr(all(feature = "certora", not(feature = "certora-test")), early_panic)]
+/// Note on logging: a batch update emits no event for the orders it places or
+/// cancels. Matching still logs what it needs to, a `FillLog` per fill and a
+/// `GlobalCleanupLog` when a global maker cannot cover its order; this is a
+/// statement about placement and cancellation events only.
+///
+/// Each event is a `sol_log_data` syscall the trader pays for, and it told the
+/// sender what it had just asked for. Measured on SBPF v2 against the build
+/// that still emitted them, dropping them is worth 450 CU on a batch update
+/// that places one order, 2,218 on one that places five, and 373 on one that
+/// cancels one, so roughly 440 CU per order.
+///
+/// What reports the orders that rested instead. They are in this instruction's
+/// return data, which the wrapper reads straight after the call, and the
+/// runtime also writes that return data into the transaction log as a
+/// `Program return:` line when this instruction exits. The structured
+/// `meta.returnData` is not the place to look for it, because the runtime
+/// clears that slot at the start of every invocation and a wrapper batch
+/// update ends with a fee transfer, but the log line is already written by
+/// then and stays. So an off chain consumer reads the `Program return:` line,
+/// subject to the same log truncation as everything else in the log, and
+/// `tests/cases/logs.rs` pins that. Fills, which a sender cannot predict, are
+/// still logged as events.
+///
+/// They also crowded out the fills. The transaction log is a fixed byte
+/// budget for the whole transaction and the runtime drops whatever does not
+/// fit, so every order event was displacing a fill that a client cannot
+/// reconstruct. See `tests/cases/logs.rs`, which pins both halves of this:
+/// that placing and cancelling log nothing, and that a trade filling enough
+/// orders still loses the tail of its own fills.
+///
+/// `PlaceOrderLog` and `CancelOrderLog` still exist in `logs.rs` for clients
+/// decoding historical transactions; nothing emits them.
 pub(crate) fn process_batch_update_core(
     _program_id: &Pubkey,
     accounts: &[AccountInfo],
@@ -294,12 +325,6 @@ pub(crate) fn process_batch_update_core(
                         .cancel_order_by_index(hinted_cancel_index, &global_trade_accounts_opts)?;
                 }
             };
-
-            emit_stack(CancelOrderLog {
-                market: *market.key,
-                trader: *payer.key,
-                order_sequence_number: cancel_order_params.order_sequence_number(),
-            })?;
         }
         trader_index
     };
@@ -349,18 +374,6 @@ pub(crate) fn process_batch_update_core(
                 ..
             } = add_order_to_market_result;
 
-            emit_stack(PlaceOrderLog {
-                market: *market.key,
-                trader: *payer.key,
-                base_atoms,
-                price,
-                order_type,
-                is_bid: PodBool::from(place_order_params.is_bid()),
-                _padding: [0; 6],
-                order_sequence_number,
-                order_index,
-                last_valid_slot,
-            })?;
             result.push((order_sequence_number, order_index));
         }
         expand_market_if_needed(&payer, &market)?;

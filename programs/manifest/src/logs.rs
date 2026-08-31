@@ -19,12 +19,23 @@ use crate::{
 #[cfg(not(feature = "certora"))]
 #[inline(never)] // ensure fresh stack frame
 pub fn emit_stack<T: bytemuck::Pod + Discriminant>(e: T) -> Result<(), ProgramError> {
-    // stack buffer, stack frames are 4kb
-    let mut buffer: [u8; 3000] = [0u8; 3000];
-    buffer[..8].copy_from_slice(&T::discriminant());
-    *bytemuck::from_bytes_mut::<T>(&mut buffer[8..8 + std::mem::size_of::<T>()]) = e;
-
-    solana_program::log::sol_log_data(&[&buffer[..(std::mem::size_of::<T>() + 8)]]);
+    // Stack buffer, stack frames are 4kb. Only the bytes written below are
+    // ever read, so it is not zeroed first; that was a 3000 byte memset on
+    // every event, 23 CU each.
+    let len: usize = 8 + std::mem::size_of::<T>();
+    assert!(len <= 3000);
+    let mut buffer: std::mem::MaybeUninit<[u8; 3000]> = std::mem::MaybeUninit::uninit();
+    // SAFETY: the discriminant and the value cover the first `len` bytes
+    // before that prefix is read, and `len` is checked against the buffer
+    // size above.
+    let bytes: &[u8] = unsafe {
+        let ptr: *mut u8 = buffer.as_mut_ptr() as *mut u8;
+        ptr.copy_from_nonoverlapping(T::discriminant().as_ptr(), 8);
+        ptr.add(8)
+            .copy_from_nonoverlapping(bytemuck::bytes_of(&e).as_ptr(), std::mem::size_of::<T>());
+        std::slice::from_raw_parts(ptr, len)
+    };
+    solana_program::log::sol_log_data(&[bytes]);
     Ok(())
 }
 
@@ -86,6 +97,21 @@ pub struct FillLog {
     pub _padding: [u8; 14],
 }
 
+/// No longer emitted. A batch update used to log one of these per order it
+/// placed, which cost the trader a `sol_log_data` syscall to be told what it
+/// had just asked for. Dropping this and [`CancelOrderLog`] is worth 450 CU
+/// on a batch update that places one order, 2,218 on one that places five and
+/// 373 on one that cancels one, measured on SBPF v2, so roughly 440 CU per
+/// order. It also stopped them crowding fills out of the capped transaction
+/// log, see `tests/cases/logs.rs`.
+///
+/// What reports the orders that rested is the batch update's return data,
+/// which the runtime also writes to the transaction log as a `Program return:`
+/// line. Read that rather than `meta.returnData`, which holds only whatever
+/// invocation ran last. See the note on `process_batch_update_core`.
+///
+/// The type is kept so that clients decoding historical transactions, and the
+/// generated clients and IDL, keep working. Nothing emits it.
 #[repr(C)]
 #[derive(Clone, Copy, Zeroable, Pod, ShankAccount)]
 pub struct PlaceOrderLog {
@@ -117,6 +143,8 @@ pub struct PlaceOrderLogV2 {
     pub _padding: [u8; 6],
 }
 
+/// No longer emitted, see [`PlaceOrderLog`]. Kept for clients decoding
+/// historical transactions.
 #[repr(C)]
 #[derive(Clone, Copy, Zeroable, Pod, ShankAccount)]
 pub struct CancelOrderLog {
