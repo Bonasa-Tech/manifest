@@ -5,6 +5,19 @@
  * See: https://github.com/metaplex-foundation/solita
  */
 
+/**
+ * Historical. The program stopped emitting this event when batch update
+ * stopped logging the orders it places and cancels; it is kept so that
+ * transactions from before that can still be decoded. Nothing emits it on new
+ * transactions.
+ *
+ * To learn which orders rested, read the `Program return:` line of the batch
+ * update instruction rather than watching for this event. Fills are still
+ * emitted as `FillLog`, and swap still emits `PlaceOrderLogV2`, which is a
+ * different event.
+ *
+ * @deprecated No longer emitted by the program.
+ */
 import * as web3 from '@solana/web3.js';
 import * as beet from '@metaplex-foundation/beet';
 import * as beetSolana from '@metaplex-foundation/beet-solana';

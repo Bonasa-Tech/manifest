@@ -9,6 +9,7 @@ pub mod exploit_global_reduce;
 pub mod global;
 pub mod global_address;
 pub mod loaders;
+pub mod logs;
 pub mod matching;
 pub mod place_order;
 pub mod reverse;
