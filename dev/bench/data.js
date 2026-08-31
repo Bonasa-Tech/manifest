@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1785508493065,
+  "lastUpdate": 1788192002478,
   "repoUrl": "https://github.com/Bonasa-Tech/manifest",
   "entries": {
     "CU Benchmark": [
@@ -12569,6 +12569,72 @@ window.BENCHMARK_DATA = {
           {
             "name": "MFX_99",
             "value": 12932,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "cyrbritt@gmail.com",
+            "name": "Britt Cyr",
+            "username": "brittcyr"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "6fa45c6734a48023cac00e26a60ded62bc066046",
+          "message": "Benchmark shallow fetch fix (#689)\n\n* Resurrect the CU benchmark action\n\nThe workflow was disabled and its checkout of the private benchmarking\nharness no longer worked, so no CU numbers have been produced for a\nwhile. Rewrite it to:\n\n* pin the private harness to a full commit SHA taken from the\n  MANIFEST_PRIVATE_BENCHMARK_SHA repository variable, rejecting mutable\n  refs so that only a reviewed revision of it can run against a pull\n  request,\n* populate manifest-private/deps/manifest from the commit being\n  benchmarked rather than the private repository's own submodule\n  pointer, and leave the other private submodules disabled,\n* skip pull requests from forks, which cannot read MANIFEST_PAT,\n* publish results to gh-pages only on main, and compare pull requests\n  against the published main data without storing anything,\n* pin every action to a commit SHA and check the Solana installer\n  against a known digest,\n* validate the harness output and render it in the job summary.\n\nEnabling this needs the MANIFEST_PRIVATE_BENCHMARK_SHA variable set and\nthe workflow re-enabled in the repository settings.\n\n* Fix the benchmark's checkout of the commit under test\n\nThe workflow builds the benchmark against a copy of this repository\nplaced at manifest-private/deps/manifest, fetched out of the checkout\nthis job already has. actions/checkout clones with fetch-depth 1, and\ngit will not serve a fetch from a shallow repository:\n\n  warning: rejected HEAD because shallow roots are not allowed to be updated\n  fatal: git checkout: --detach does not take a path argument 'FETCH_HEAD'\n\nThe second line is a consequence of the first: nothing wrote FETCH_HEAD,\nso git read it as a file name.\n\nTake the full history in the job's checkout, which is what the fetch\nneeds, and keep the copy itself shallow by fetching it with --depth 1.\n\n* Fix the benchmark summary step\n\nThe step rendered the result table with a one-liner python program that\nput escaped double quotes inside an f-string expression:\n\n  print(f\"| {r[\\\"name\\\"]} | {r[\\\"value\\\"]} |\")\n\nA backslash is not allowed inside the expression part of an f-string\nbefore python 3.12, so this is a syntax error and the step exits 1 after\nthe benchmark has already run.\n\nWrite the program as a quoted heredoc instead, which needs no escaping,\nand index the fields with plain single quotes.\n\n* Pin github-action-benchmark to a released commit\n\nThe action was pinned to a commit that carries no built dist directory,\nso both jobs that use it failed immediately:\n\n  Error: File not found: '.../86d8bcf4.../dist/src/index.js'\n\nIts action.yml declares dist/src/index.js as the entry point, and that\nfile only exists on the commits the project tags as releases. Pin to\nv1.22.1, where it is present, keeping the SHA pin so the action cannot\nchange under us.",
+          "timestamp": "2026-08-31T11:46:50-04:00",
+          "tree_id": "f100834aa32a1fa18ac5f5a084f917e7ee885f1c",
+          "url": "https://github.com/Bonasa-Tech/manifest/commit/6fa45c6734a48023cac00e26a60ded62bc066046"
+        },
+        "date": 1788191999512,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "PHX_50",
+            "value": 6897,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "PHX_95",
+            "value": 13208,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "PHX_99",
+            "value": 13902,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_50",
+            "value": 3246,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_95",
+            "value": 5387,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_99",
+            "value": 5586,
             "range": "",
             "unit": "CU",
             "extra": ""
