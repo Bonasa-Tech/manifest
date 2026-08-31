@@ -63,6 +63,10 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
+          # The benchmark's copy of this repository is fetched out of this
+          # checkout below, and git refuses to serve a fetch from a shallow
+          # repository, so take the full history here.
+          fetch-depth: 0
 
       - name: Validate pinned benchmark revision
         shell: bash
@@ -93,7 +97,7 @@ jobs:
           DEP="$GITHUB_WORKSPACE/manifest-private/deps/manifest"
           mkdir -p "$DEP"
           git -C "$DEP" init --quiet
-          git -C "$DEP" fetch --quiet "file://$GITHUB_WORKSPACE" HEAD
+          git -C "$DEP" fetch --quiet --depth 1 "file://$GITHUB_WORKSPACE" HEAD
           git -C "$DEP" checkout --quiet --detach FETCH_HEAD
           test "$(git -C "$DEP" rev-parse HEAD)" = "$GITHUB_SHA"
           echo "Benchmarking manifest commit $(git -C "$DEP" rev-parse HEAD)"
