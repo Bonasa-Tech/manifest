@@ -2708,6 +2708,7 @@ dependencies = [
 name = "manifest-client"
 version = "0.1.0"
 dependencies = [
+ "bytemuck",
  "hypertree",
  "manifest-dex",
  "solana-instruction",

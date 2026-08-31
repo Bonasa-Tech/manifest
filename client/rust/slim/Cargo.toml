@@ -25,6 +25,7 @@ solana-keypair = { workspace = true }
 solana-signer = { workspace = true }
 solana-transaction = { workspace = true }
 manifest-dex = { path = "../../../programs/manifest" }
+bytemuck = { workspace = true }
 spl-token = { workspace = true }
 spl-token-2022 = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
