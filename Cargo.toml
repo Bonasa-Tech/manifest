@@ -60,6 +60,13 @@ arrayref = "0.3.7"
 [profile.release]
 codegen-units = 1
 lto = "fat"
+# Kept on deliberately. Measured 2026-08 on SBPF v2: turning this off saves
+# 0-2.4% CU (about 118 CU on a single-order batch update, 400 on five orders,
+# nothing on deposit/withdraw/swap). In exchange every plain +, - and * that is
+# not explicitly checked (lamport fees, byte offsets, indices) would wrap
+# silently instead of failing the transaction, and the audits and formal
+# verification were done with it on. Prefer targeted wrapping ops with a
+# proof, like the entrypoint does, over flipping this.
 overflow-checks = true
 strip = "debuginfo"
 

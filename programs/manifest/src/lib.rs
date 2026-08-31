@@ -1,6 +1,7 @@
 //! Manifest is a limit order book exchange on the Solana blockchain.
 //!
 
+pub mod entrypoint;
 pub mod logs;
 pub mod program;
 pub mod quantities;
@@ -96,7 +97,7 @@ security_txt! {
 declare_id!("MNFSTqtC93rEfYHB6hF82sKdZpUDFWkViLByLd1k1Ms");
 
 #[cfg(not(feature = "no-entrypoint"))]
-solana_program::entrypoint!(process_instruction);
+crate::entrypoint!(process_instruction);
 
 pub fn process_instruction(
     program_id: &Pubkey,

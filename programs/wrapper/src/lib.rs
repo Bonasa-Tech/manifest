@@ -37,7 +37,7 @@ security_txt! {
 declare_id!("wMNFSTkir3HgyZTsB7uqu3i7FA73grFCptPXgrZjksL");
 
 #[cfg(not(feature = "no-entrypoint"))]
-solana_program::entrypoint!(process_instruction);
+manifest::entrypoint!(process_instruction);
 
 pub fn process_instruction(
     program_id: &Pubkey,
