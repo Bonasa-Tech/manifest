@@ -55,6 +55,13 @@ jobs:
       - name: Run clippy
         run: cargo clippy --workspace --exclude fixed --exclude checked_math -- --no-deps --deny=warnings --allow=clippy::style --allow=clippy::complexity --allow=clippy::manual-retain --allow=clippy::crate-in-macro-def --allow=clippy::result-large-err --allow=clippy::derive_partial_eq_without_eq --allow=clippy::multiple-bound-locations --allow=unexpected-cfgs
 
+      # The prover itself only runs on main (ci-certora.yml), so nothing else
+      # on a pull request compiles the code behind the certora feature, which
+      # swaps in its own quantities and specs. Cheap to keep it building here
+      # rather than finding out after a merge.
+      - name: Build with the certora feature
+        run: cargo check -p manifest-dex --features certora --lib
+
   test:
     name: Test
     runs-on: ubuntu-latest
