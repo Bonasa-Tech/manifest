@@ -150,13 +150,17 @@ jobs:
       - name: Summarize benchmark output
         shell: bash
         run: |
-          {
-            echo '## CU per order'
-            echo
-            echo '| Benchmark | CU |'
-            echo '| --- | ---: |'
-            python3 -c 'import json; [print(f"| {r[\"name\"]} | {r[\"value\"]} |") for r in json.load(open("output.txt"))]'
-          } >> "$GITHUB_STEP_SUMMARY"
+          set -euo pipefail
+          python3 - <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          import json
+
+          print('## CU per order')
+          print()
+          print('| Benchmark | CU |')
+          print('| --- | ---: |')
+          for result in json.load(open('output.txt')):
+              print(f"| {result['name']} | {result['value']} |")
+          PY
 
       - uses: actions/upload-artifact@65462800fd760344b1a7b4382951275a0abb4808 # v4
         with:
