@@ -9,9 +9,9 @@ use crate::{
 };
 use bytemuck::{Pod, Zeroable};
 use hypertree::{
-    get_helper, get_mut_helper, trace, DataIndex, FreeList, FreeListNode, HyperTreeReadOperations,
-    HyperTreeValueIteratorTrait, HyperTreeWriteOperations, RBNode, RedBlackTree,
-    RedBlackTreeReadOnly, NIL,
+    convert_red_black_tree_to_linked_list, get_helper, get_mut_helper, trace, DataIndex, FreeList,
+    FreeListNode, HyperTreeReadOperations, HyperTreeWriteOperations, LinkedList,
+    LinkedListReadOnly, RBNode, RedBlackTree, RedBlackTreeReadOnly, NIL,
 };
 use manifest::{
     program::{batch_update::CancelOrderParams, get_dynamic_account, invoke},
@@ -32,32 +32,58 @@ use solana_program::{
 };
 use static_assertions::const_assert_eq;
 
-// CU note on the wrapper's use of hypertree.
+// Layout note on the wrapper's use of hypertree.
 //
-// The wrapper keeps its per-market open orders (keyed by client order id) and
-// its market infos in red-black trees, the same structure the core uses for a
-// book that can hold thousands of orders. A wrapper holds one trader's orders,
-// typically ten to a few dozen, and at that size the tree is the wrong tool:
-// measured on SBPF v2 with a maker holding 20 open orders, one
-// `OpenOrdersTree::insert` is about 500 CU, one `remove_by_index` about 440
-// CU, and walking the tree costs about 100 CU per order, all of it pointer
-// chasing through 96 byte nodes plus rebalancing. Every batch update walks
-// the open orders, so those costs are paid per open order per transaction,
-// not just per placed order.
+// The market infos are a red-black tree keyed by market, looked up once per
+// instruction (`get_market_info_index_for_market`). A wrapper holds a handful
+// of markets, so that lookup is a few hundred CU and not worth a layout change.
 //
-// A structure without ordering (the orders are only ever walked in full, and
-// cancels are matched during that walk) would make an insert and a remove a
-// couple of link writes and a walk step a single read, which at these sizes
-// is several times cheaper and only loses to the tree at hundreds of open
-// orders per market, more than a wrapper account is meant to hold. That is a
-// wrapper state layout change, so it is left for its own change; it is the
-// largest remaining wrapper-side saving. The same reasoning does not apply to
-// `MarketInfosTree`, which is looked up by key once per instruction and holds
-// a handful of markets.
+// The open orders of one market used to be a red-black tree keyed by client
+// order id as well, which was the wrong tool: a wrapper holds one trader's
+// orders on a market, typically ten to a few dozen, every batch update walks
+// all of them (`sync_fast`) and inserts or removes a few, and nothing looks an
+// order up by id (cancels are matched during the walk). Measured on SBPF v2
+// with 20 open orders, a tree insert was about 500 CU, a remove about 440 CU
+// and a walk about 100 CU per order, all pointer chasing through 96 byte nodes
+// plus rebalancing. They are now a `LinkedList` over the same blocks: an
+// insert or remove is a couple of link writes and a walk step is one link
+// read, a few dozen CU each. The list carries no key order: new orders go on
+// at the head, and a market converted from a tree keeps the order the tree
+// walk produced.
+//
+// Existing wrappers are converted lazily, one market at a time. The market
+// info node's `payload_type` says which layout its orders are in:
+// `ORDERS_LAYOUT_TREE` for market infos written before the list existed (the
+// tree never set the field, so it is zero) and `ORDERS_LAYOUT_LIST` after.
+// `ensure_orders_list` converts a tree in place, from `sync_fast`, which every
+// instruction that reads or writes orders goes through first. Nodes keep their
+// addresses and payloads, so the free list does not change.
+//
+// Converting under a deployed client is safe because of how the list is laid
+// out rather than because clients were updated. `hypertree::LinkedList` keeps
+// the previous node in `parent` and leaves `left` at NIL, so a list is a
+// right-leaning tree spine: every node the right child of the one before it,
+// with parent links that agree. The client's tree parser checks exactly that,
+// plus offsets and cycles, and nothing about key ordering or balance, and the
+// in-order walk of a right spine is the spine itself. So it reads a converted
+// market and returns the same orders in the same sequence, and needs no
+// knowledge of any of this. The client-side test `wrapperLayout.ts` pins that,
+// and `lib/src/linked_list.rs` pins the shape from this side.
+//
+// The compatibility is with that specific parser, not with red-black tree
+// readers in general: `hypertree::validate_red_black_tree` checks the ordering
+// and black-height invariants, which a spine does not satisfy.
 pub type MarketInfosTree<'a> = RedBlackTree<'a, MarketInfo>;
 pub type MarketInfosTreeReadOnly<'a> = RedBlackTreeReadOnly<'a, MarketInfo>;
-pub type OpenOrdersTree<'a> = RedBlackTree<'a, WrapperOpenOrder>;
-pub type OpenOrdersTreeReadOnly<'a> = RedBlackTreeReadOnly<'a, WrapperOpenOrder>;
+pub type OpenOrdersList<'a> = LinkedList<'a, WrapperOpenOrder>;
+pub type OpenOrdersListReadOnly<'a> = LinkedListReadOnly<'a, WrapperOpenOrder>;
+
+/// `payload_type` of a market info node whose open orders are a red-black
+/// tree, the layout before the list. Zero because the tree never set it.
+pub const ORDERS_LAYOUT_TREE: u8 = 0;
+/// `payload_type` of a market info node whose open orders are an
+/// [`OpenOrdersList`].
+pub const ORDERS_LAYOUT_LIST: u8 = 1;
 
 pub const WRAPPER_BLOCK_PAYLOAD_SIZE: usize = 80;
 pub const BLOCK_HEADER_SIZE: usize = 16;
@@ -184,6 +210,42 @@ pub fn expand_wrapper(wrapper_data: &mut [u8]) {
     free_list.add(wrapper_fixed.num_bytes_allocated);
     wrapper_fixed.num_bytes_allocated += WRAPPER_BLOCK_SIZE as u32;
     wrapper_fixed.free_list_head_index = free_list.get_head();
+}
+
+/// Converts the market's open orders from the tree layout to the list in
+/// place if that has not happened yet. Costs one tree walk and two link writes
+/// per open order, once per market: 93 CU per order measured on SBPF v2, so
+/// about 15,000 orders inside a transaction raised to the 1.4M CU limit and
+/// about 2,100 inside the 200,000 an instruction gets by default.
+///
+/// Not a size anyone reaches. Nothing caps a market's open order count, but
+/// each open order is a 96 byte wrapper block and an 80 byte block on the
+/// core, so 15,000 of them is about 10 SOL of rent on the wrapper and another
+/// 8 on the market. Cancelling does not give that back: freed blocks go on a
+/// free list to be reused, neither account ever shrinks, and `collect` leaves
+/// the balance the current size needs. The rent is spent for the life of the
+/// accounts. Well before that it stops working for ordinary reasons: placing
+/// an order leaves the market non-quiet, so the next instruction walks every
+/// open order on it at a comparable cost per order, and a wrapper that large
+/// could not place or cancel anything either. A wrapper stuck there is not
+/// stuck holding funds, the balances and resting orders are on the core and
+/// can be cancelled and withdrawn against directly. See
+/// `migrate_a_large_legacy_tree_test`.
+pub(crate) fn ensure_orders_list(wrapper_dynamic_data: &mut [u8], market_info_index: DataIndex) {
+    let market_info_node: &mut RBNode<MarketInfo> =
+        get_mut_helper::<RBNode<MarketInfo>>(wrapper_dynamic_data, market_info_index);
+    if market_info_node.get_payload_type() == ORDERS_LAYOUT_LIST {
+        return;
+    }
+    let orders_root_index: DataIndex = market_info_node.get_value().orders_root_index;
+    let orders_head_index: DataIndex = convert_red_black_tree_to_linked_list::<WrapperOpenOrder>(
+        wrapper_dynamic_data,
+        orders_root_index,
+    );
+    let market_info_node: &mut RBNode<MarketInfo> =
+        get_mut_helper::<RBNode<MarketInfo>>(wrapper_dynamic_data, market_info_index);
+    market_info_node.get_mut_value().orders_root_index = orders_head_index;
+    market_info_node.set_payload_type(ORDERS_LAYOUT_LIST);
 }
 
 pub(crate) fn sync(
@@ -317,6 +379,10 @@ impl<'a> CancelMatcher<'a> {
 /// When `matcher` is given the walk also matches the cancels, so the orders
 /// are only walked once per batch update; on a skipped walk only the wrapper
 /// nodes and the few orders being cancelled are read.
+///
+/// Also where a market's orders get converted from the tree layout to the
+/// list, since every instruction that touches orders comes through here
+/// first.
 pub(crate) fn sync_fast(
     wrapper_state: &WrapperStateAccountInfo,
     market: &ManifestAccountInfo<MarketFixed>,
@@ -332,6 +398,7 @@ pub(crate) fn sync_fast(
     let mut wrapper_data: RefMut<&mut [u8]> = wrapper_state.info.try_borrow_mut_data()?;
     let (fixed_data, wrapper_dynamic_data) =
         wrapper_data.split_at_mut(size_of::<ManifestWrapperStateFixed>());
+    ensure_orders_list(wrapper_dynamic_data, market_info_index);
 
     let market_info: &mut MarketInfo =
         get_mut_helper::<RBNode<MarketInfo>>(wrapper_dynamic_data, market_info_index)
@@ -347,23 +414,16 @@ pub(crate) fn sync_fast(
     let match_cancels: bool = matcher.as_ref().is_some_and(|m| !m.is_empty());
 
     if orders_root_index != NIL && (read_core || match_cancels) {
-        let orders_tree: OpenOrdersTreeReadOnly =
-            OpenOrdersTreeReadOnly::new(wrapper_dynamic_data, orders_root_index, NIL);
-
-        // Walk the tree once to collect where each open order lives on the
-        // core (the iterator borrows the tree, so nodes cannot be updated
-        // while walking), then handle each order in place.
-        let mut to_remove_indices: Vec<DataIndex> = Vec::with_capacity(EXPECTED_ORDER_BATCH_SIZE);
-        let mut to_update_and_core_indices: Vec<(DataIndex, DataIndex)> =
-            Vec::with_capacity(EXPECTED_ORDER_BATCH_SIZE);
-        for (order_index, order) in orders_tree.iter::<WrapperOpenOrder>() {
-            to_update_and_core_indices.push((order_index, order.get_market_data_index()));
-        }
+        // One pass over the list, updating orders in place, unlinking the
+        // ones the core no longer has and matching the cancels. Only the
+        // unlinked indices are kept, for the free list.
+        let mut orders: OpenOrdersList =
+            OpenOrdersList::new(wrapper_dynamic_data, orders_root_index);
+        let mut to_free_indices: Vec<DataIndex> = Vec::new();
         let mut num_open_global_orders: u32 = 0;
-        for (order_index, core_data_index) in to_update_and_core_indices.iter() {
-            let node: &mut WrapperOpenOrder =
-                get_mut_helper::<RBNode<WrapperOpenOrder>>(wrapper_dynamic_data, *order_index)
-                    .get_mut_value();
+        let mut order_index: DataIndex = orders_root_index;
+        while order_index != NIL {
+            let next_index: DataIndex = orders.get_next_index(order_index);
             // An order this batch is about to cancel is read from the core
             // even when the rest of the walk is being skipped. The cancel
             // carries this entry's index as a hint, the core validates every
@@ -372,49 +432,53 @@ pub(crate) fn sync_fast(
             // instruction. That is also the only way an entry left behind by
             // the gap described above gets cleared, since the batch that
             // would clear it cannot run if it aborts first.
-            let is_cancel_candidate: bool = matcher.as_ref().is_some_and(|m| m.matches(node));
-            if read_core || is_cancel_candidate {
-                let core_resting_order: &RestingOrder =
-                    get_helper::<RBNode<RestingOrder>>(market_ref.dynamic, *core_data_index)
-                        .get_value();
+            let is_cancel_candidate: bool = matcher
+                .as_ref()
+                .is_some_and(|m| m.matches(orders.get_mut_value(order_index)));
+            let gone: bool = (read_core || is_cancel_candidate) && {
+                let order: &mut WrapperOpenOrder = orders.get_mut_value(order_index);
+                let core_resting_order: &RestingOrder = get_helper::<RBNode<RestingOrder>>(
+                    market_ref.dynamic,
+                    order.get_market_data_index(),
+                )
+                .get_value();
                 // Verifies that it is not just zeroed and happens to match
                 // seq num, also check that there are base atoms left.
-                if core_resting_order.get_sequence_number() != node.get_order_sequence_number()
+                if core_resting_order.get_sequence_number() != order.get_order_sequence_number()
                     || core_resting_order.get_num_base_atoms() == BaseAtoms::ZERO
                 {
-                    to_remove_indices.push(*order_index);
-                    continue;
-                }
-                if read_core {
-                    node.update_remaining(core_resting_order.get_num_base_atoms());
-                    node.set_price(core_resting_order.get_price());
-                    if node.get_order_type() == OrderType::Global {
-                        num_open_global_orders += 1;
+                    true
+                } else {
+                    if read_core {
+                        order.update_remaining(core_resting_order.get_num_base_atoms());
+                        order.set_price(core_resting_order.get_price());
+                        if order.get_order_type() == OrderType::Global {
+                            num_open_global_orders += 1;
+                        }
                     }
+                    false
                 }
-            }
-            if is_cancel_candidate {
+            };
+            if gone {
+                orders.remove_by_index(order_index);
+                to_free_indices.push(order_index);
+            } else if is_cancel_candidate {
                 if let Some(matcher) = matcher.as_deref_mut() {
-                    matcher.record(*order_index, node);
+                    matcher.record(order_index, orders.get_mut_value(order_index));
                 }
             }
+            order_index = next_index;
         }
+        orders_root_index = orders.get_root_index();
 
         // Entries can be dropped on either path: the full walk drops
         // everything the core no longer has, and the cheap walk drops a
         // cancel candidate it found stale.
-        if !to_remove_indices.is_empty() {
-            let mut orders_tree: RedBlackTree<WrapperOpenOrder> =
-                RedBlackTree::<WrapperOpenOrder>::new(wrapper_dynamic_data, orders_root_index, NIL);
-            for to_remove_index in to_remove_indices.iter() {
-                orders_tree.remove_by_index(*to_remove_index);
-            }
-            orders_root_index = orders_tree.get_root_index();
-
+        if !to_free_indices.is_empty() {
             let wrapper_fixed: &mut ManifestWrapperStateFixed = get_mut_helper(fixed_data, 0);
             let mut free_list: FreeList<UnusedWrapperFreeListPadding> =
                 FreeList::new(wrapper_dynamic_data, wrapper_fixed.free_list_head_index);
-            for open_order_index in to_remove_indices.iter() {
+            for open_order_index in to_free_indices.iter() {
                 free_list.add(*open_order_index);
             }
             wrapper_fixed.free_list_head_index = free_list.get_head();

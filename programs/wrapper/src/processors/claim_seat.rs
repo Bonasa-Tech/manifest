@@ -4,7 +4,8 @@ use std::{
 };
 
 use hypertree::{
-    get_mut_helper, DataIndex, FreeList, HyperTreeReadOperations, HyperTreeWriteOperations, NIL,
+    get_mut_helper, DataIndex, FreeList, HyperTreeReadOperations, HyperTreeWriteOperations, RBNode,
+    NIL,
 };
 use manifest::{
     program::{claim_seat_instruction, expand_market_instruction, get_dynamic_account, invoke},
@@ -25,7 +26,9 @@ use solana_program::{
     system_program,
 };
 
-use super::shared::{expand_wrapper_if_needed, MarketInfosTree, UnusedWrapperFreeListPadding};
+use super::shared::{
+    expand_wrapper_if_needed, MarketInfosTree, UnusedWrapperFreeListPadding, ORDERS_LAYOUT_LIST,
+};
 
 pub(crate) fn process_claim_seat(
     _program_id: &Pubkey,
@@ -115,6 +118,9 @@ pub(crate) fn process_claim_seat(
     );
     market_infos_tree.insert(free_address, market_info);
     wrapper_fixed.market_infos_root_index = market_infos_tree.get_root_index();
+    // New market infos keep their open orders in the list layout.
+    get_mut_helper::<RBNode<MarketInfo>>(wrapper_dynamic_data, free_address)
+        .set_payload_type(ORDERS_LAYOUT_LIST);
 
     Ok(())
 }

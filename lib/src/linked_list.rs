@@ -39,13 +39,41 @@ use crate::{
 /// The nodes are the same 16 byte header plus payload as [`RBNode`] so that a
 /// red-black tree can be turned into a list in place (see
 /// [`convert_red_black_tree_to_linked_list`]) and the two can share one pool of
-/// free blocks. In the header `left` is the previous node, `right` is the next
-/// node, `parent` is always [`NIL`] and `color` is always black; `payload_type`
-/// is left to the application as for the tree.
+/// free blocks.
 ///
-/// Insert puts the new node at the head, so iteration is newest first. The
-/// `HyperTreeReadOperations` names are kept for the abstraction: "max" is the
-/// head, "next lower" is the next node and "next higher" is the previous one.
+/// In the header `right` is the next node, `parent` is the previous one,
+/// `left` is always [`NIL`] and `color` is always black; `payload_type` is
+/// left to the application as for the tree.
+///
+/// Storing the previous node in `parent` rather than in `left` is what makes
+/// these bytes readable as a tree: a list laid out this way is exactly a
+/// right-leaning spine, every node the right child of the one before it, with
+/// consistent parent links and no left children.
+///
+/// That buys compatibility with one specific reader, and the claim is worth
+/// stating narrowly. The deployed TypeScript client parser walks from the
+/// root and checks only that each child's parent link points back at it, so
+/// it accepts a spine and, since the in-order traversal of a right spine is
+/// the spine itself, hands back the same nodes in the same order the list
+/// walk does. That is what matters here: a structure converted in place under
+/// a released client has to stay legible to clients that have not been
+/// updated. Putting the previous node in `left` would instead present that
+/// parser with a node whose parent link does not match the node that pointed
+/// at it, and it would reject the account.
+///
+/// It is not compatibility with red-black tree readers in general.
+/// [`validate_red_black_tree`](crate::validate_red_black_tree) checks the full
+/// invariants, and a list of more than one node fails them: the key ordering
+/// is not maintained and the black heights of the NIL leaves hanging off the
+/// spine differ. Nor is a tree walk interchangeable with a list walk in this
+/// crate: the tree's iterator is keyed and ordered, while these nodes are
+/// unordered and only the head-to-tail sequence is meaningful, and
+/// `lookup_index` on a list is a linear scan. Use [`validate_linked_list`] and
+/// the list's own iterator for these bytes.
+///
+/// Insert puts the new node at the head. The `HyperTreeReadOperations` names
+/// are kept for the abstraction: "max" is the head, "next lower" is the next
+/// node and "next higher" is the previous one.
 pub struct LinkedList<'a, V: Payload> {
     /// The address within data of the first node.
     head_index: DataIndex,
@@ -140,7 +168,7 @@ fn prev_index<V: Payload>(data: &[u8], index: DataIndex) -> DataIndex {
     if index == NIL {
         return NIL;
     }
-    get_helper::<RBNode<V>>(data, index).left
+    get_helper::<RBNode<V>>(data, index).parent
 }
 
 fn lookup_index<V: Payload>(data: &[u8], head_index: DataIndex, value: &V) -> DataIndex {
@@ -213,7 +241,7 @@ impl<'a, V: Payload> HyperTreeWriteOperations<'a, V> for LinkedList<'a, V> {
             value,
         };
         if old_head_index != NIL {
-            get_mut_helper::<RBNode<V>>(self.data, old_head_index).left = index;
+            get_mut_helper::<RBNode<V>>(self.data, old_head_index).parent = index;
         }
         self.head_index = index;
     }
@@ -229,8 +257,8 @@ impl<'a, V: Payload> HyperTreeWriteOperations<'a, V> for LinkedList<'a, V> {
         }
         let (prev_index, next_index): (DataIndex, DataIndex) = {
             let node: &mut RBNode<V> = get_mut_helper::<RBNode<V>>(self.data, index);
-            let links: (DataIndex, DataIndex) = (node.left, node.right);
-            node.left = NIL;
+            let links: (DataIndex, DataIndex) = (node.parent, node.right);
+            node.parent = NIL;
             node.right = NIL;
             links
         };
@@ -244,7 +272,7 @@ impl<'a, V: Payload> HyperTreeWriteOperations<'a, V> for LinkedList<'a, V> {
             get_mut_helper::<RBNode<V>>(self.data, prev_index).right = next_index;
         }
         if next_index != NIL {
-            get_mut_helper::<RBNode<V>>(self.data, next_index).left = prev_index;
+            get_mut_helper::<RBNode<V>>(self.data, next_index).parent = prev_index;
         }
     }
 }
@@ -271,7 +299,7 @@ impl<'a, V: Payload> HyperTreeWriteOperations<'a, V> for LinkedList<'a, V> {
 /// and writes each node's successor into `right`, which the walk only ever
 /// reads for nodes below the one it is on, and those are all still untouched.
 /// It leaves `left` and `parent` alone, which is what the walk uses to climb.
-/// The second pass follows the chain that pass one just built and fills in
+/// The second pass follows the chain that pass one just built and rewrites
 /// `left`, `parent` and `color`, needing no tree structure at all.
 pub fn convert_red_black_tree_to_linked_list<V: Payload>(
     data: &mut [u8],
@@ -304,8 +332,8 @@ pub fn convert_red_black_tree_to_linked_list<V: Payload>(
     while index != NIL {
         let node: &mut RBNode<V> = get_mut_helper::<RBNode<V>>(data, index);
         let next_index: DataIndex = node.right;
-        node.left = prev_index;
-        node.parent = NIL;
+        node.left = NIL;
+        node.parent = prev_index;
         node.color = Color::Black;
         prev_index = index;
         index = next_index;
@@ -351,11 +379,13 @@ pub fn validate_linked_list<V: Payload>(
         }
         starts.push(start);
         let node: RBNode<V> = crate::read_unaligned::<RBNode<V>>(&data[start..end]);
-        if node.left != prev_index {
+        if node.parent != prev_index {
             return Err("linked list previous link is inconsistent");
         }
-        if node.parent != NIL {
-            return Err("linked list node has a parent");
+        // A list is a right-leaning spine, so no node has a left child. This
+        // is what keeps it readable by a tree parser, see the type docs.
+        if node.left != NIL {
+            return Err("linked list node has a left child");
         }
         prev_index = index;
         index = node.right;
@@ -470,7 +500,7 @@ mod test {
         {
             let removed: &RBNode<TestOrderBid> =
                 get_helper::<RBNode<TestOrderBid>>(list.data, TEST_BLOCK_WIDTH * 3);
-            assert_eq!(removed.left, NIL);
+            assert_eq!(removed.parent, NIL);
             assert_eq!(removed.right, NIL);
         }
 
@@ -569,7 +599,7 @@ mod test {
         for i in 1..=order_ids.len() {
             let node: &RBNode<TestOrderBid> =
                 get_helper::<RBNode<TestOrderBid>>(&data, TEST_BLOCK_WIDTH * i as DataIndex);
-            assert_eq!(node.parent, NIL);
+            assert_eq!(node.left, NIL, "a list node has no left child");
             assert_eq!(node.color, Color::Black);
             assert_eq!(node.payload_type, 0);
         }
@@ -696,14 +726,15 @@ mod test {
     fn test_validate_rejects_overlapping_nodes() {
         let node_size: usize = std::mem::size_of::<RBNode<TestOrderBid>>();
         let mut data: Vec<u8> = vec![0; node_size * 2];
-        // Node at 0, pointing at a node 16 bytes into its own payload.
+        // Node at 0, pointing at a node 16 bytes into its own payload:
+        // left NIL, right 16, parent NIL.
         data[0..4].copy_from_slice(&NIL.to_le_bytes());
         data[4..8].copy_from_slice(&16_u32.to_le_bytes());
         data[8..12].copy_from_slice(&NIL.to_le_bytes());
-        // Node at 16, linking back to it.
-        data[16..20].copy_from_slice(&0_u32.to_le_bytes());
+        // Node at 16, linking back to it: left NIL, right NIL, parent 0.
+        data[16..20].copy_from_slice(&NIL.to_le_bytes());
         data[20..24].copy_from_slice(&NIL.to_le_bytes());
-        data[24..28].copy_from_slice(&NIL.to_le_bytes());
+        data[24..28].copy_from_slice(&0_u32.to_le_bytes());
 
         assert_eq!(
             validate_linked_list::<TestOrderBid>(&data, 0),
@@ -755,6 +786,50 @@ mod test {
         assert_eq!(values(&data, head_index), vec![5, 4, 3, 2, 1]);
     }
 
+    /// The reason the previous node lives in `parent`: a reader that only
+    /// knows red-black trees has to be able to walk these bytes, because the
+    /// conversion happens under clients that have not been updated. Every
+    /// node is the right child of the one before it, no node has a left
+    /// child, and every parent link points at the node that pointed here.
+    #[test]
+    fn test_a_list_is_a_valid_tree_shape() {
+        let mut data: [u8; 100000] = [0; 100000];
+        let head_index: DataIndex = {
+            let mut list: LinkedList<TestOrderBid> = LinkedList::new(&mut data, NIL);
+            for i in 1..=6 {
+                list.insert(TEST_BLOCK_WIDTH * i, TestOrderBid::new(i.into()));
+            }
+            list.get_root_index()
+        };
+
+        // Walk it the way a tree reader would: from the root, down the right
+        // children, checking the parent link on the way.
+        let mut walked: Vec<u64> = Vec::new();
+        let mut expected_parent: DataIndex = NIL;
+        let mut index: DataIndex = head_index;
+        while index != NIL {
+            let node: &RBNode<TestOrderBid> = get_helper::<RBNode<TestOrderBid>>(&data, index);
+            assert_eq!(node.parent, expected_parent, "parent link at {index}");
+            assert_eq!(node.left, NIL, "no left child at {index}");
+            assert!(node.color == Color::Black || node.color == Color::Red);
+            walked.push(node.get_value().order_id());
+            expected_parent = index;
+            index = node.right;
+        }
+        // In-order traversal of a right spine is the spine itself, so a reader
+        // that only walks links yields exactly what the list does.
+        assert_eq!(walked, values(&data, head_index));
+        assert_eq!(walked, vec![6, 5, 4, 3, 2, 1]);
+
+        // That compatibility stops at link-walking readers. The full validator
+        // here checks the ordering and black-height invariants too, which a
+        // spine does not satisfy, so it must reject these same bytes.
+        assert!(
+            crate::validate_red_black_tree::<TestOrderBid>(&data, head_index, NIL).is_err(),
+            "a list is not a valid red-black tree, only a readable shape",
+        );
+    }
+
     #[test]
     fn test_validate_rejects_bad_links() {
         let mut data: [u8; 100000] = [0; 100000];
@@ -783,19 +858,19 @@ mod test {
 
         // A back link that does not match.
         let mut broken: [u8; 100000] = data;
-        get_mut_helper::<RBNode<TestOrderBid>>(&mut broken, TEST_BLOCK_WIDTH * 2).left = NIL;
+        get_mut_helper::<RBNode<TestOrderBid>>(&mut broken, TEST_BLOCK_WIDTH * 2).parent = NIL;
         assert_eq!(
             validate_linked_list::<TestOrderBid>(&broken, head_index),
             Err("linked list previous link is inconsistent")
         );
 
-        // A node that still looks like part of a tree.
+        // A left child, which a spine never has.
         let mut treeish: [u8; 100000] = data;
-        get_mut_helper::<RBNode<TestOrderBid>>(&mut treeish, TEST_BLOCK_WIDTH * 2).parent =
+        get_mut_helper::<RBNode<TestOrderBid>>(&mut treeish, TEST_BLOCK_WIDTH * 2).left =
             head_index;
         assert_eq!(
             validate_linked_list::<TestOrderBid>(&treeish, head_index),
-            Err("linked list node has a parent")
+            Err("linked list node has a left child")
         );
     }
 }
