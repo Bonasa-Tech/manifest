@@ -175,10 +175,15 @@ pub fn is_global_address(key: &Pubkey, mint: &Pubkey, bump: u8) -> bool {
 }
 
 /// Domain separator the runtime appends when hashing program derived address
-/// seeds.
+/// seeds. Only the hand rolled derivation above needs it, and that is not the
+/// one the `certora` build uses.
 #[cfg(not(feature = "certora"))]
 const PDA_MARKER: &[u8; 21] = b"ProgramDerivedAddress";
 
+/// Exhaustive check that the hand rolled derivation agrees with
+/// `create_program_address`. It covers the non certora `is_global_address`,
+/// which is the one the prover never sees, so this is where that path is
+/// pinned down.
 #[cfg(all(test, not(feature = "certora")))]
 mod is_global_address_test {
     use super::*;

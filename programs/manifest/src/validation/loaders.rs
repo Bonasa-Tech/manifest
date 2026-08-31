@@ -711,7 +711,20 @@ fn verify_market_global<'a, 'info>(
     Ok(())
 }
 
-/// Formal verification models `find_program_address`, so it keeps deriving.
+/// Formal verification derives the address every time instead of reading the
+/// cache, for two reasons. The cached fields do not exist in that build:
+/// `MarketFixed` is 256 bytes either way, and under `certora` the same 64
+/// bytes hold the informational atom totals the specs reason about. And the
+/// prover models `create_program_address`, so deriving is what lets it state
+/// the property directly, that the account is the canonical global for this
+/// mint.
+///
+/// That splits the coverage: the prover checks the property, and the tests
+/// check that the fast path implements it. `is_global_address` is compared
+/// against `create_program_address` for every bump in `manifest_checker`, and
+/// `tests/cases/global_address.rs` covers the cache being filled in on an old
+/// market, a global for the wrong mint, and a forged account that copies a
+/// real global but does not sit at the derived address.
 #[cfg(feature = "certora")]
 fn verify_market_global<'a, 'info>(
     _market: &ManifestAccountInfo<'a, 'info, MarketFixed>,

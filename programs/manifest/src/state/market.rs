@@ -206,6 +206,14 @@ pub struct MarketFixed {
     /// search. All zero on markets created before this field existed (it was
     /// padding) until their first global batch update or swap derives and
     /// stores it.
+    ///
+    /// Neither this nor `quote_global` exists in the `certora` build. This
+    /// struct is 256 bytes either way, and that build already spends these
+    /// same 64 bytes on the informational atom totals below, which the specs
+    /// reason about. Verification therefore derives the address on every
+    /// check rather than reading a cache, which is also what lets the prover
+    /// state the property directly; see `verify_market_global`. Everything
+    /// else that touches these two fields is gated for the same reason.
     #[cfg(not(feature = "certora"))]
     base_global: Pubkey,
     /// Canonical global account for the quote mint, see `base_global`.
@@ -296,6 +304,9 @@ impl MarketFixed {
             free_list_head_index: 0,
             _padding2: [0; 1],
             quote_volume: QuoteAtoms::ZERO,
+            // The global cache does not exist under certora, see the field
+            // definitions; that build fills the same bytes with the totals
+            // below instead.
             #[cfg(not(feature = "certora"))]
             base_global: Pubkey::default(),
             #[cfg(not(feature = "certora"))]
@@ -356,6 +367,9 @@ impl MarketFixed {
     }
     /// Cached canonical global account for the base mint, or the default
     /// pubkey if it has not been derived for this market yet.
+    ///
+    /// These four accessors are gated only because the fields they read are:
+    /// the `certora` build has no global cache, see `base_global`.
     #[cfg(not(feature = "certora"))]
     pub fn get_base_global(&self) -> &Pubkey {
         &self.base_global
