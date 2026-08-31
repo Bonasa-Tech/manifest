@@ -116,6 +116,48 @@ fn mint_keypair_with_first_bump_globals() -> Keypair {
     }
 }
 
+/// Creates and initializes a mint whose global PDAs derive on the first bump,
+/// with the payer as its mint authority. Measurements that touch a global
+/// account use these so the derivation is a single attempt.
+async fn create_first_bump_globals_mint(
+    test_fixture: &TestFixture,
+    decimals: u8,
+) -> anyhow::Result<Pubkey> {
+    let payer: Pubkey = test_fixture.payer();
+    let payer_keypair: Keypair = test_fixture.payer_keypair();
+    let mint_keypair: Keypair = mint_keypair_with_first_bump_globals();
+    let mint: Pubkey = mint_keypair.pubkey();
+    let rent: Rent = test_fixture
+        .context
+        .borrow_mut()
+        .banks_client
+        .get_rent()
+        .await?;
+    send_tx_with_retry(
+        Rc::clone(&test_fixture.context),
+        &[
+            system_instruction::create_account(
+                &payer,
+                &mint,
+                rent.minimum_balance(spl_token::state::Mint::LEN),
+                spl_token::state::Mint::LEN as u64,
+                &spl_token::id(),
+            ),
+            spl_token::instruction::initialize_mint(
+                &spl_token::id(),
+                &mint,
+                &payer,
+                None,
+                decimals,
+            )?,
+        ],
+        Some(&payer),
+        &[&payer_keypair, &mint_keypair],
+    )
+    .await?;
+    Ok(mint)
+}
+
 /// Creates a market on the fixture's SOL/USDC mints whose vault PDAs derive on
 /// the first bump, returning its key.
 async fn create_market_with_first_bump_vaults(
@@ -186,17 +228,16 @@ async fn cu_create_market_test() -> anyhow::Result<()> {
     let test_fixture: TestFixture = TestFixture::new().await;
     let payer: Pubkey = test_fixture.payer();
     let payer_keypair: Keypair = test_fixture.payer_keypair();
-    let market_keypair: Keypair = market_keypair_with_first_bump_vaults(
-        &test_fixture.sol_mint_fixture.key,
-        &test_fixture.usdc_mint_fixture.key,
-    );
+    // Creating a market derives both vault PDAs and caches both global
+    // addresses, so the mints and the market key are all chosen to derive on
+    // the first bump; otherwise this number moves by about 1,500 CU per extra
+    // attempt from run to run.
+    let base_mint: Pubkey = create_first_bump_globals_mint(&test_fixture, 9).await?;
+    let quote_mint: Pubkey = create_first_bump_globals_mint(&test_fixture, 6).await?;
+    let market_keypair: Keypair = market_keypair_with_first_bump_vaults(&base_mint, &quote_mint);
 
-    let create_market_ixs: Vec<Instruction> = create_market_instructions(
-        &market_keypair.pubkey(),
-        &test_fixture.sol_mint_fixture.key,
-        &test_fixture.usdc_mint_fixture.key,
-        &payer,
-    )?;
+    let create_market_ixs: Vec<Instruction> =
+        create_market_instructions(&market_keypair.pubkey(), &base_mint, &quote_mint, &payer)?;
     // Includes the system program create account instruction.
     measure_and_send(
         &test_fixture,
@@ -506,30 +547,7 @@ async fn cu_global_test() -> anyhow::Result<()> {
 
     // A mint whose global PDAs derive on the first bump, with the payer as its
     // mint authority, and a token account for the payer.
-    let mint_keypair: Keypair = mint_keypair_with_first_bump_globals();
-    let mint: Pubkey = mint_keypair.pubkey();
-    let rent: Rent = test_fixture
-        .context
-        .borrow_mut()
-        .banks_client
-        .get_rent()
-        .await?;
-    send_tx_with_retry(
-        Rc::clone(&test_fixture.context),
-        &[
-            system_instruction::create_account(
-                &payer,
-                &mint,
-                rent.minimum_balance(spl_token::state::Mint::LEN),
-                spl_token::state::Mint::LEN as u64,
-                &spl_token::id(),
-            ),
-            spl_token::instruction::initialize_mint(&spl_token::id(), &mint, &payer, None, 6)?,
-        ],
-        Some(&payer),
-        &[&payer_keypair, &mint_keypair],
-    )
-    .await?;
+    let mint: Pubkey = create_first_bump_globals_mint(&test_fixture, 6).await?;
     let token_account: TokenAccountFixture =
         TokenAccountFixture::new(Rc::clone(&test_fixture.context), &mint, &payer).await;
     send_tx_with_retry(
@@ -592,19 +610,72 @@ async fn cu_global_test() -> anyhow::Result<()> {
 
 /// Batch update carrying the global accounts for both sides. The first call
 /// is on a market whose cached global addresses were cleared, so it derives
-/// and stores them (its cost depends on how many bumps the search tries for
-/// the fixture's random mints); the second call takes the cached path.
+/// and stores them; the second takes the cached path. Both mints and the
+/// market key derive on the first bump so the uncached number is a single
+/// derivation attempt per side rather than however many the fixture's random
+/// mints happen to need.
 #[tokio::test]
 async fn cu_batch_update_with_globals_test() -> anyhow::Result<()> {
-    let mut test_fixture: TestFixture = TestFixture::new().await;
-    test_fixture.claim_seat().await?;
-    test_fixture.global_add_trader().await?;
-    test_fixture.global_deposit(10 * USDC_UNIT_SIZE).await?;
+    let test_fixture: TestFixture = TestFixture::new().await;
     let payer: Pubkey = test_fixture.payer();
     let payer_keypair: Keypair = test_fixture.payer_keypair();
-    let market: Pubkey = test_fixture.market_fixture.key;
+    let amount_atoms: u64 = 10 * USDC_UNIT_SIZE;
 
-    // Clear the cache to behave like a market from before it existed.
+    let base_mint: Pubkey = create_first_bump_globals_mint(&test_fixture, 9).await?;
+    let quote_mint: Pubkey = create_first_bump_globals_mint(&test_fixture, 6).await?;
+    let market_keypair: Keypair = market_keypair_with_first_bump_vaults(&base_mint, &quote_mint);
+    let market: Pubkey = market_keypair.pubkey();
+    send_tx_with_retry(
+        Rc::clone(&test_fixture.context),
+        &create_market_instructions(&market, &base_mint, &quote_mint, &payer)?[..],
+        Some(&payer),
+        &[&payer_keypair, &market_keypair],
+    )
+    .await?;
+
+    // A seat on the market, both globals, and quote tokens on the global to
+    // back the global bid placed below.
+    let quote_token_account: TokenAccountFixture =
+        TokenAccountFixture::new(Rc::clone(&test_fixture.context), &quote_mint, &payer).await;
+    send_tx_with_retry(
+        Rc::clone(&test_fixture.context),
+        &[
+            claim_seat_instruction(&market, &payer),
+            create_global_instruction(&base_mint, &payer, &spl_token::id()),
+            create_global_instruction(&quote_mint, &payer, &spl_token::id()),
+            spl_token::instruction::mint_to(
+                &spl_token::id(),
+                &quote_mint,
+                &quote_token_account.key,
+                &payer,
+                &[&payer],
+                amount_atoms,
+            )?,
+        ],
+        Some(&payer),
+        &[&payer_keypair],
+    )
+    .await?;
+    let (quote_global, _) = get_global_address(&quote_mint);
+    send_tx_with_retry(
+        Rc::clone(&test_fixture.context),
+        &[
+            global_add_trader_instruction(&quote_global, &payer),
+            global_deposit_instruction(
+                &quote_mint,
+                &payer,
+                &quote_token_account.key,
+                &spl_token::id(),
+                amount_atoms,
+            ),
+        ],
+        Some(&payer),
+        &[&payer_keypair],
+    )
+    .await?;
+
+    // Creating the market cached both addresses, so clear them to behave like
+    // a market from before the cache existed.
     let mut market_account: Account = test_fixture
         .context
         .borrow_mut()
@@ -632,9 +703,9 @@ async fn cu_batch_update_with_globals_test() -> anyhow::Result<()> {
                 OrderType::Global,
                 NO_EXPIRATION_LAST_VALID_SLOT,
             )],
-            Some(test_fixture.sol_mint_fixture.key),
+            Some(base_mint),
             None,
-            Some(test_fixture.usdc_mint_fixture.key),
+            Some(quote_mint),
             None,
         );
         measure_and_send(
