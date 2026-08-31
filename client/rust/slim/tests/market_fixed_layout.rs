@@ -11,8 +11,7 @@
 //! distinguishable and reading it back through the slim definition.
 
 use bytemuck::Zeroable;
-use manifest::quantities::WrapperU64;
-use manifest::state::MarketFixed as CoreMarketFixed;
+use manifest::{quantities::WrapperU64, state::MarketFixed as CoreMarketFixed};
 use manifest_client::{MarketFixed as SlimMarketFixed, MARKET_FIXED_DISCRIMINANT};
 use solana_pubkey::Pubkey;
 
