@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1788303547535,
+  "lastUpdate": 1788303996518,
   "repoUrl": "https://github.com/Bonasa-Tech/manifest",
   "entries": {
     "CU Benchmark": [
@@ -13097,6 +13097,72 @@ window.BENCHMARK_DATA = {
           {
             "name": "MFX_99",
             "value": 3389,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "cyrbritt@gmail.com",
+            "name": "Britt Cyr",
+            "username": "brittcyr"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "df471dc649055b2d8c5d6f1864fad280772e896f",
+          "message": "Address security scan findings (#697)\n\n* Address security scan findings\n\n* types\n\n* Address security review regressions\n\n* Address second security review\n\n* Address third security review\n\n* Address fourth security review\n\n* Address fifth security review\n\n* Address sixth security review\n\n* Address seventh security review\n\n* Fix multi-transaction cancel-all completion",
+          "timestamp": "2026-09-01T19:00:19-04:00",
+          "tree_id": "076c7974d57e297bad0209c65c55be7c7e6d2f39",
+          "url": "https://github.com/Bonasa-Tech/manifest/commit/df471dc649055b2d8c5d6f1864fad280772e896f"
+        },
+        "date": 1788303993863,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "PHX_50",
+            "value": 6897,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "PHX_95",
+            "value": 13208,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "PHX_99",
+            "value": 13902,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_50",
+            "value": 1711,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_95",
+            "value": 4318,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_99",
+            "value": 5103,
             "range": "",
             "unit": "CU",
             "extra": ""
