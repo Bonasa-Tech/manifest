@@ -79,6 +79,17 @@ export class TvlMonitor {
     return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
+  private hasSameIncompleteMarkets(
+    left: readonly string[],
+    right: readonly string[],
+  ): boolean {
+    if (left.length !== right.length) {
+      return false;
+    }
+    const rightMarkets: Set<string> = new Set(right);
+    return left.every((market: string): boolean => rightMarkets.has(market));
+  }
+
   /**
    * Fetch current TVL for all monitored mints from market vaults and global accounts
    */
@@ -158,6 +169,7 @@ export class TvlMonitor {
               const accounts: RpcResponseAndContext<
                 (AccountInfo<Buffer | ParsedAccountData> | null)[]
               > = await this.connection.getMultipleParsedAccounts(vaultPubkeys);
+              const marketBalances: Map<string, bigint> = new Map();
 
               for (let j: number = 0; j < vaultsToFetch.length; j++) {
                 const accountInfo: AccountInfo<
@@ -170,10 +182,28 @@ export class TvlMonitor {
                 }
                 const parsedData: ParsedAccountData =
                   accountInfo.data as ParsedAccountData;
-                const amountStr: string =
-                  parsedData.parsed?.info?.tokenAmount?.amount ?? '0';
+                const amountValue: unknown =
+                  parsedData.parsed?.info?.tokenAmount?.amount;
+                if (
+                  typeof amountValue !== 'string' ||
+                  !/^\d+$/.test(amountValue)
+                ) {
+                  throw new Error(
+                    `Vault ${vaultsToFetch[j].vault.toBase58()} did not contain a parsed token amount`,
+                  );
+                }
+                const amountStr: string = amountValue;
                 const amount: bigint = BigInt(amountStr);
                 const mintKey: string = vaultsToFetch[j].mint.toBase58();
+                const currentMarketBalance: bigint =
+                  marketBalances.get(mintKey) ?? BigInt(0);
+                marketBalances.set(mintKey, currentMarketBalance + amount);
+              }
+
+              // Merge only after every requested vault for this market was
+              // readable, so an excluded market never contributes a partial
+              // balance to otherwise comparable degraded snapshots.
+              for (const [mintKey, amount] of marketBalances) {
                 const current: bigint = tvlByMint.get(mintKey) ?? BigInt(0);
                 tvlByMint.set(mintKey, current + amount);
               }
@@ -230,13 +260,29 @@ export class TvlMonitor {
   async checkAndAlert(): Promise<void> {
     const currentSnapshot: TvlSnapshot = await this.fetchCurrentTvl();
     if (currentSnapshot.incompleteMarkets.length > 0) {
-      console.error(
-        `TVL snapshot incomplete for ${currentSnapshot.incompleteMarkets.length} market(s); preserving the last complete baseline`,
+      console.warn(
+        `TVL snapshot excludes ${currentSnapshot.incompleteMarkets.length} unreadable market(s); comparing against baselines with the same exclusions`,
       );
-      return;
     }
 
     if (this.previousSnapshot) {
+      if (
+        !this.hasSameIncompleteMarkets(
+          this.previousSnapshot.incompleteMarkets,
+          currentSnapshot.incompleteMarkets,
+        )
+      ) {
+        // A changing exclusion set changes the aggregate independently of
+        // actual vault flows. Establish a new comparable baseline, but do not
+        // let one permanently unreadable market disable monitoring forever.
+        console.warn(
+          'TVL unreadable-market set changed; resetting the comparison baseline',
+        );
+        this.pendingAlerts.clear();
+        this.previousSnapshot = currentSnapshot;
+        return;
+      }
+
       const entries: [string, string][] = Object.entries(MONITORED_MINTS);
       for (const [symbol, mint] of entries) {
         const previousTvl: bigint =
@@ -272,7 +318,7 @@ export class TvlMonitor {
       }
 
       // Process pending alerts that need persistence check
-      await this.processPendingAlerts();
+      await this.processPendingAlerts(currentSnapshot.incompleteMarkets);
     }
 
     this.previousSnapshot = currentSnapshot;
@@ -281,7 +327,9 @@ export class TvlMonitor {
   /**
    * Process pending alerts - wait 5 minutes and verify the change persists
    */
-  private async processPendingAlerts(): Promise<void> {
+  private async processPendingAlerts(
+    expectedIncompleteMarkets: readonly string[],
+  ): Promise<void> {
     if (this.pendingAlerts.size === 0) {
       return;
     }
@@ -290,10 +338,16 @@ export class TvlMonitor {
 
     // Fetch fresh TVL data
     const verificationSnapshot: TvlSnapshot = await this.fetchCurrentTvl();
-    if (verificationSnapshot.incompleteMarkets.length > 0) {
-      console.error(
-        `TVL verification incomplete for ${verificationSnapshot.incompleteMarkets.length} market(s); retaining pending alerts for the next complete check`,
+    if (
+      !this.hasSameIncompleteMarkets(
+        expectedIncompleteMarkets,
+        verificationSnapshot.incompleteMarkets,
+      )
+    ) {
+      console.warn(
+        'TVL unreadable-market set changed during verification; discarding incomparable pending alerts',
       );
+      this.pendingAlerts.clear();
       return;
     }
 
@@ -330,6 +384,11 @@ export class TvlMonitor {
           `Previous: ${this.formatAtoms(previousTvl, symbol)} ${symbol}`,
           `Current: ${this.formatAtoms(verificationTvl, symbol)} ${symbol}`,
           `Change: ${currentPercentChange > 0 ? '+' : ''}${(currentPercentChange * 100).toFixed(2)}%`,
+          ...(expectedIncompleteMarkets.length > 0
+            ? [
+                `Degraded snapshot: excludes ${expectedIncompleteMarkets.length} consistently unreadable market(s)`,
+              ]
+            : []),
         ].join('\n');
 
         if (this.discordWebhookUrl) {
@@ -344,9 +403,6 @@ export class TvlMonitor {
 
     // Clear pending alerts after processing
     this.pendingAlerts.clear();
-
-    // Update previous snapshot to the verification snapshot
-    this.previousSnapshot = verificationSnapshot;
   }
 
   /**

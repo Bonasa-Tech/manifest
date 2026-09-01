@@ -1641,11 +1641,13 @@ export class ManifestClient {
   }
 
   /**
-   * CancelAll instruction. Cancels all orders on a market. This is discouraged
-   * outside of circuit breaker usage because it is less efficient and does not
-   * cancel global cleanly. Use batchUpdate instead. This also does not cancel
-   * any orders not placed through the wrapper, which includes reverse orders
-   * that were reversed.
+   * CancelAll instruction. Cancels wrapper-tracked orders and searches a
+   * bounded portion of the core market for orders placed outside the wrapper.
+   * Very large markets can require repeated calls because both traversal and
+   * the core cancellation batch are bounded. For a snapshot-based list of
+   * instructions covering every currently visible core order, reload the
+   * market and use cancelAllOnCoreIx(). Global cancellation can abandon its gas
+   * prepayment.
    *
    * @returns TransactionInstruction
    */
@@ -1674,8 +1676,28 @@ export class ManifestClient {
   }
 
   /**
-   * CancelAllOnCore instruction. Cancels all orders on a market directly on the core program,
-   * including reverse orders and global orders with rent prepayment.
+   * Whether the most recently confirmed cancelAllIx() completed a full scan of
+   * the core market account. Call reload() after confirming the transaction
+   * before reading this value. A false result means another cancelAllIx() pass
+   * is required to cover orders placed outside the wrapper.
+   */
+  public isCancelAllScanComplete(): boolean {
+    if (!this.wrapper) {
+      throw new Error('Read only');
+    }
+    const marketInfo: WrapperMarketInfo | null =
+      this.wrapper.marketInfoForMarket(this.market.address);
+    if (marketInfo === null) {
+      throw new Error('Wrapper has no market info for this market');
+    }
+    return marketInfo.lastUpdatedSlot === 0;
+  }
+
+  /**
+   * CancelAllOnCore instruction. Cancels all orders visible in the currently
+   * loaded market snapshot directly on the core program, including reverse
+   * orders and global orders with rent prepayment. Reload the market first when
+   * completeness matters.
    *
    * @returns TransactionInstruction[]
    */

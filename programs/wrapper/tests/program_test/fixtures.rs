@@ -13,8 +13,8 @@ use solana_account::Account;
 use solana_instruction::Instruction;
 use solana_keypair::Keypair;
 use solana_program::{
-    account_info::AccountInfo, hash::Hash, program_pack::Pack, pubkey::Pubkey, rent::Rent,
-    system_instruction::create_account,
+    account_info::AccountInfo, clock::Clock, hash::Hash, program_pack::Pack, pubkey::Pubkey,
+    rent::Rent, system_instruction::create_account,
 };
 use solana_program_test::{processor, BanksClientError, ProgramTest, ProgramTestContext};
 use solana_signer::Signer;
@@ -174,6 +174,19 @@ impl TestFixture {
 
     pub fn payer_keypair(&self) -> Keypair {
         self.context.borrow().payer.insecure_clone()
+    }
+
+    pub async fn advance_time_seconds(&self, seconds: i64) {
+        let mut clock: Clock = self
+            .context
+            .borrow_mut()
+            .banks_client
+            .get_sysvar()
+            .await
+            .unwrap();
+        clock.unix_timestamp += seconds;
+        clock.slot += (seconds as u64) / 2;
+        self.context.borrow_mut().set_sysvar(&clock);
     }
 
     pub async fn claim_seat(&self) -> anyhow::Result<(), BanksClientError> {

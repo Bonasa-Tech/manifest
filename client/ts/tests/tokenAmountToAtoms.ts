@@ -7,6 +7,8 @@ describe('tokenAmountToAtoms', () => {
     expect(tokenAmountToAtoms(1.000001, 6)).to.equal(1_000_001);
     expect(tokenAmountToAtoms(1e-6, 6)).to.equal(1);
     expect(tokenAmountToAtoms(3 * 0.1, 6)).to.equal(300_000);
+    expect(tokenAmountToAtoms(260.337344506, 9)).to.equal(260_337_344_506);
+    expect(tokenAmountToAtoms(8545.518514384, 9)).to.equal(8_545_518_514_384);
   });
 
   it('rejects excess precision and unsafe atom values', () => {

@@ -534,7 +534,7 @@ async fn wrapper_batch_update_cancel_all_test() -> anyhow::Result<()> {
 }
 
 #[tokio::test]
-async fn wrapper_cancel_all_cursor_progresses_past_unrelated_trader_orders() -> anyhow::Result<()> {
+async fn wrapper_cancel_all_scans_past_unrelated_trader_orders() -> anyhow::Result<()> {
     let mut test_fixture: TestFixture = TestFixture::new().await;
     test_fixture.claim_seat().await?;
     test_fixture.deposit(Token::SOL, SOL_UNIT_SIZE).await?;
@@ -565,7 +565,8 @@ async fn wrapper_cancel_all_cursor_progresses_past_unrelated_trader_orders() -> 
         )
         .await?;
 
-    // Allocate more unrelated resting orders than one physical scan quota.
+    // Allocate enough unrelated resting orders to verify that cancellation is
+    // not bounded by the 16-entry core cancel batch size.
     for batch_start in (0_u64..40).step_by(8) {
         let orders: Vec<WrapperPlaceOrderParams> = (batch_start..batch_start + 8)
             .map(|client_order_id: u64| {
@@ -597,8 +598,7 @@ async fn wrapper_cancel_all_cursor_progresses_past_unrelated_trader_orders() -> 
         .await?;
     }
 
-    // Put the victim's untracked direct-core order after those physical
-    // blocks so the first bounded scan cannot reach it.
+    // Put the victim's untracked direct-core order after those physical blocks.
     let victim_direct_order_ix: Instruction = manifest_batch_update_instruction(
         &test_fixture.market.key,
         &payer,
@@ -635,25 +635,6 @@ async fn wrapper_cancel_all_cursor_progresses_past_unrelated_trader_orders() -> 
     );
     send_tx_with_retry(
         Rc::clone(&test_fixture.context),
-        &[cancel_all_ix.clone()],
-        Some(&payer),
-        &[&payer_keypair],
-    )
-    .await?;
-    test_fixture.market.reload().await;
-    assert_eq!(
-        test_fixture
-            .market
-            .market
-            .get_asks()
-            .iter::<RestingOrder>()
-            .count(),
-        41,
-        "The first bounded scan stops before the victim's physical block",
-    );
-
-    send_tx_with_retry(
-        Rc::clone(&test_fixture.context),
         &[cancel_all_ix],
         Some(&payer),
         &[&payer_keypair],
@@ -668,7 +649,7 @@ async fn wrapper_cancel_all_cursor_progresses_past_unrelated_trader_orders() -> 
             .iter::<RestingOrder>()
             .count(),
         40,
-        "The persistent cursor reaches and cancels the victim's untracked order",
+        "The bounded physical scan reaches the victim past another trader's orders",
     );
 
     Ok(())
@@ -745,6 +726,127 @@ async fn wrapper_ignore_post_only() -> anyhow::Result<()> {
             .iter::<RestingOrder>()
             .count(),
         1
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn wrapper_forwards_post_only_after_bounded_expired_scan() -> anyhow::Result<()> {
+    let mut test_fixture: TestFixture = TestFixture::new().await;
+    test_fixture.claim_seat().await?;
+    test_fixture
+        .deposit(Token::USDC, 200_000 * USDC_UNIT_SIZE)
+        .await?;
+
+    let payer: Pubkey = test_fixture.payer();
+    let payer_keypair: Keypair = test_fixture.payer_keypair().insecure_clone();
+    let expired_order_trader: Keypair = test_fixture.second_keypair.insecure_clone();
+    let expired_order_wrapper: Keypair = Keypair::new();
+
+    let create_expired_order_wrapper_ixs: Vec<Instruction> = create_wrapper_instructions(
+        &expired_order_trader.pubkey(),
+        &expired_order_wrapper.pubkey(),
+    )?;
+    send_tx_with_retry(
+        Rc::clone(&test_fixture.context),
+        &create_expired_order_wrapper_ixs,
+        Some(&expired_order_trader.pubkey()),
+        &[&expired_order_trader, &expired_order_wrapper],
+    )
+    .await?;
+    test_fixture
+        .claim_seat_for_keypair_with_wrapper(&expired_order_trader, &expired_order_wrapper.pubkey())
+        .await?;
+    test_fixture
+        .deposit_for_keypair_with_wrapper(
+            Token::SOL,
+            40 * SOL_UNIT_SIZE,
+            &expired_order_trader,
+            &expired_order_wrapper.pubkey(),
+        )
+        .await?;
+
+    // More expired asks than the wrapper's advisory price-discovery quota.
+    for batch_start in (0_u64..40).step_by(8) {
+        let orders: Vec<WrapperPlaceOrderParams> = (batch_start..batch_start + 8)
+            .map(|client_order_id: u64| {
+                WrapperPlaceOrderParams::new(
+                    client_order_id,
+                    SOL_UNIT_SIZE,
+                    client_order_id as u32 + 10,
+                    0,
+                    false,
+                    1_000,
+                    OrderType::Limit,
+                )
+            })
+            .collect();
+        let place_expiring_asks_ix: Instruction = batch_update_instruction(
+            &test_fixture.market.key,
+            &expired_order_trader.pubkey(),
+            &expired_order_wrapper.pubkey(),
+            vec![],
+            false,
+            orders,
+        );
+        send_tx_with_retry(
+            Rc::clone(&test_fixture.context),
+            &[place_expiring_asks_ix],
+            Some(&expired_order_trader.pubkey()),
+            &[&expired_order_trader],
+        )
+        .await?;
+    }
+    test_fixture.advance_time_seconds(10_000).await;
+
+    // The wrapper cannot establish the opposite price within 32 steps. It
+    // must forward this order so the core can prune the expired prefix and
+    // make the authoritative PostOnly decision.
+    let post_only_bid_ix: Instruction = batch_update_instruction(
+        &test_fixture.market.key,
+        &payer,
+        &test_fixture.wrapper.key,
+        vec![],
+        false,
+        vec![WrapperPlaceOrderParams::new(
+            1,
+            SOL_UNIT_SIZE,
+            100,
+            0,
+            true,
+            NO_EXPIRATION_LAST_VALID_SLOT,
+            OrderType::PostOnly,
+        )],
+    );
+    send_tx_with_retry(
+        Rc::clone(&test_fixture.context),
+        &[post_only_bid_ix],
+        Some(&payer),
+        &[&payer_keypair],
+    )
+    .await?;
+
+    test_fixture.market.reload().await;
+    assert_eq!(
+        test_fixture
+            .market
+            .market
+            .get_bids()
+            .iter::<RestingOrder>()
+            .count(),
+        1,
+        "PostOnly order is forwarded instead of silently dropped",
+    );
+    assert_eq!(
+        test_fixture
+            .market
+            .market
+            .get_asks()
+            .iter::<RestingOrder>()
+            .count(),
+        0,
+        "The core prunes the expired prefix",
     );
 
     Ok(())

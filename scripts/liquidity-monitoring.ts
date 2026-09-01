@@ -82,6 +82,18 @@ interface MarketInfo {
   quoteDecimals: number;
 }
 
+interface TickerResponse {
+  ticker_id: string;
+  target_currency: string;
+  target_volume?: number;
+  last_price?: number;
+}
+
+interface SolPriceResult {
+  priceUsd: number;
+  warning: string | null;
+}
+
 export class LiquidityMonitor {
   private connection: Connection;
   public pool: Pool;
@@ -91,6 +103,10 @@ export class LiquidityMonitor {
   private isMonitoring = false;
   private lastSuccessfulMonitoringAtMs: number | null = null;
   private lastMonitoringError: string | null = null;
+  private lastMonitoringWarning: string | null = null;
+  private lastFailedMarkets: string[] = [];
+  private lastMarketVolumes: Map<string, number> = new Map();
+  private lastSolPriceUsd: number = 0;
   private marketStatsCache: { expiresAtMs: number; rows: any[] } | undefined;
 
   constructor() {
@@ -199,20 +215,21 @@ export class LiquidityMonitor {
       if (!response.ok) {
         throw new Error(`Ticker request failed with HTTP ${response.status}`);
       }
-      const tickers = await response.json();
+      const tickers: TickerResponse[] =
+        (await response.json()) as TickerResponse[];
 
       const volumeMap = new Map<string, number>();
 
       // Get SOL price from SOL/USDC market
       const solUsdcTicker = tickers.find(
-        (t: any) =>
+        (t: TickerResponse) =>
           t.ticker_id === 'ENhU8LsaR7vDD2G1CsWcsuSGNrih9Cv5WZEk7q9kPapQ',
       );
       const solPrice = solUsdcTicker?.last_price || 0;
 
       // Get CBBTC price from CBBTC/USDC market
       const cbbtcUsdcTicker = tickers.find(
-        (t: any) => t.ticker_id === CBBTC_USDC_MARKET,
+        (t: TickerResponse) => t.ticker_id === CBBTC_USDC_MARKET,
       );
       const cbbtcPrice = cbbtcUsdcTicker?.last_price || 0;
 
@@ -247,10 +264,50 @@ export class LiquidityMonitor {
       console.log(
         `Fetched volumes: ${volumeMap.size} markets, SOL price: $${solPrice}, CBBTC price: $${cbbtcPrice}`,
       );
+      this.lastMarketVolumes = new Map(volumeMap);
+      if (solPrice > 0) {
+        this.lastSolPriceUsd = solPrice;
+      }
       return volumeMap;
     } catch (error) {
       console.error('Error fetching market volumes:', error);
+      if (this.lastMarketVolumes.size > 0) {
+        console.warn('Using the last successfully fetched market volumes');
+        return new Map(this.lastMarketVolumes);
+      }
       throw error;
+    }
+  }
+
+  private async fetchSolPriceUsd(): Promise<SolPriceResult> {
+    try {
+      const response: Response = await fetch(
+        'https://mfx-stats-mainnet.fly.dev/tickers',
+      );
+      if (!response.ok) {
+        throw new Error(`Ticker request failed with HTTP ${response.status}`);
+      }
+      const tickers: TickerResponse[] =
+        (await response.json()) as TickerResponse[];
+      const solUsdcTicker: TickerResponse | undefined = tickers.find(
+        (ticker: TickerResponse): boolean =>
+          ticker.ticker_id === 'ENhU8LsaR7vDD2G1CsWcsuSGNrih9Cv5WZEk7q9kPapQ',
+      );
+      const priceUsd: number = solUsdcTicker?.last_price ?? 0;
+      if (!Number.isFinite(priceUsd) || priceUsd <= 0) {
+        throw new Error('Ticker response did not contain a valid SOL price');
+      }
+      this.lastSolPriceUsd = priceUsd;
+      return { priceUsd, warning: null };
+    } catch (error: unknown) {
+      const reason: string =
+        error instanceof Error ? error.message : String(error);
+      const warning: string =
+        this.lastSolPriceUsd > 0
+          ? `Ticker refresh failed; using cached SOL price: ${reason}`
+          : `Ticker refresh failed; SOL-denominated depth is unpriced: ${reason}`;
+      console.warn(warning);
+      return { priceUsd: this.lastSolPriceUsd, warning };
     }
   }
 
@@ -451,17 +508,11 @@ export class LiquidityMonitor {
       const cycleTimestamp = new Date();
       console.log('Starting market monitoring cycle...', cycleTimestamp);
 
-      // Get current SOL price for USD conversion
-      const response = await fetch('https://mfx-stats-mainnet.fly.dev/tickers');
-      if (!response.ok) {
-        throw new Error(`Ticker request failed with HTTP ${response.status}`);
-      }
-      const tickers = await response.json();
-      const solUsdcTicker = tickers.find(
-        (t: any) =>
-          t.ticker_id === 'ENhU8LsaR7vDD2G1CsWcsuSGNrih9Cv5WZEk7q9kPapQ',
-      );
-      const solPriceUsd = solUsdcTicker?.last_price || 0;
+      // A transient ticker outage must not discard the whole monitoring
+      // cycle. Reuse the last good price (or zero when none exists yet) and
+      // expose the reduced fidelity as degraded health metadata.
+      const solPriceResult: SolPriceResult = await this.fetchSolPriceUsd();
+      const solPriceUsd: number = solPriceResult.priceUsd;
 
       console.log(`Using SOL price: $${solPriceUsd} for depth calculations`);
 
@@ -552,17 +603,23 @@ export class LiquidityMonitor {
       // Update summary statistics
       await this.updatePrometheusMetrics();
 
-      if (failedMarkets.length > 0) {
-        throw new Error(
-          `Monitoring cycle persisted healthy results but was incomplete for ${failedMarkets.length} market(s): ${failedMarkets.join(', ')}`,
-        );
-      }
-
       console.log(
         `Monitoring cycle complete. Processed ${uniqueStats.length} market maker entries.`,
       );
       this.lastSuccessfulMonitoringAtMs = Date.now();
       this.lastMonitoringError = null;
+      this.lastFailedMarkets = failedMarkets;
+      const warnings: string[] = [];
+      if (solPriceResult.warning !== null) {
+        warnings.push(solPriceResult.warning);
+      }
+      if (failedMarkets.length > 0) {
+        warnings.push(
+          `Incomplete for ${failedMarkets.length} market(s): ${failedMarkets.join(', ')}`,
+        );
+      }
+      this.lastMonitoringWarning =
+        warnings.length === 0 ? null : warnings.join('; ');
     } catch (error) {
       this.lastMonitoringError =
         error instanceof Error ? error.message : String(error);
@@ -712,20 +769,29 @@ export class LiquidityMonitor {
 
   getHealthStatus(): {
     healthy: boolean;
+    degraded: boolean;
     lastSuccessfulMonitoringAt: string | null;
     error: string | null;
+    warning: string | null;
+    failedMarkets: string[];
   } {
-    const staleAfterMs = MONITORING_INTERVAL_MS * 2;
-    const healthy =
-      this.lastMonitoringError === null &&
+    const staleAfterMs: number = MONITORING_INTERVAL_MS * 2;
+    const healthy: boolean =
       this.lastSuccessfulMonitoringAtMs !== null &&
       Date.now() - this.lastSuccessfulMonitoringAtMs <= staleAfterMs;
+    const degraded: boolean =
+      healthy &&
+      (this.lastMonitoringWarning !== null ||
+        this.lastMonitoringError !== null);
     return {
       healthy,
+      degraded,
       lastSuccessfulMonitoringAt: this.lastSuccessfulMonitoringAtMs
         ? new Date(this.lastSuccessfulMonitoringAtMs).toISOString()
         : null,
       error: this.lastMonitoringError,
+      warning: this.lastMonitoringWarning,
+      failedMarkets: [...this.lastFailedMarkets],
     };
   }
 
@@ -1164,10 +1230,16 @@ const setupAPI = (monitor: LiquidityMonitor) => {
   app.get('/health', (req, res) => {
     const health = monitor.getHealthStatus();
     res.status(health.healthy ? 200 : 503).json({
-      status: health.healthy ? 'healthy' : 'unhealthy',
+      status: !health.healthy
+        ? 'unhealthy'
+        : health.degraded
+          ? 'degraded'
+          : 'healthy',
       timestamp: new Date(),
       last_successful_monitoring_at: health.lastSuccessfulMonitoringAt,
       error: health.error,
+      warning: health.warning,
+      failed_markets: health.failedMarkets,
     });
   });
 

@@ -47,7 +47,10 @@ use super::shared::{
 // shared-book traversal strictly bounded so placement preprocessing cannot
 // consume the transaction before already-requested cancellations execute.
 const MAX_PRICE_DISCOVERY_STEPS_PER_SIDE: usize = 32;
-const MAX_CANCEL_ALL_SCAN_STEPS: usize = 32;
+// Physical-block inspection is substantially cheaper than tree traversal. A
+// 1,024-block quota covers 80 KiB of market state per call (about 13 calls for
+// a 1 MiB market) while preserving a hard instruction-level CU bound.
+const MAX_CANCEL_ALL_SCAN_STEPS: usize = 1_024;
 
 #[derive(BorshDeserialize, BorshSerialize, Clone)]
 pub struct WrapperPlaceOrderParams {
@@ -213,8 +216,6 @@ fn prepare_orders(
         get_dynamic_account::<MarketFixed>(&market_data);
     let mut best_ask_index: DataIndex = market_ref.get_asks().get_max_index();
     let mut best_bid_index: DataIndex = market_ref.get_bids().get_max_index();
-    let mut ask_scan_exhausted: bool = false;
-    let mut bid_scan_exhausted: bool = false;
 
     // Walk the tree until you find a non-expired order since those can be
     // trivially ignored. Does not prevent unbacked global orders, but that
@@ -246,7 +247,9 @@ fn prepare_orders(
         .get_value()
         .is_expired(now_slot)
     {
-        ask_scan_exhausted = true;
+        // The bounded advisory scan did not find a trustworthy price. Leave
+        // the side unknown and forward PostOnly orders to the authoritative
+        // core instead of silently deleting them in the wrapper.
         best_ask_index = NIL;
     }
 
@@ -273,7 +276,8 @@ fn prepare_orders(
         .get_value()
         .is_expired(now_slot)
     {
-        bid_scan_exhausted = true;
+        // See the ask-side case above. The core may accept the PostOnly order
+        // after pruning, or return PostOnlyCrosses explicitly to the caller.
         best_bid_index = NIL;
     }
 
@@ -308,15 +312,7 @@ fn prepare_orders(
         )
         .unwrap();
         if order.order_type != OrderType::Global {
-            if order.order_type == OrderType::PostOnly
-                && ((order.is_bid && ask_scan_exhausted) || (!order.is_bid && bid_scan_exhausted))
-            {
-                // Without a bounded opposite-side price, forwarding PostOnly
-                // could make the core reject after pruning the expired prefix,
-                // rolling back otherwise valid cancellations in this batch.
-                solana_program::msg!("Removing post only order after bounded price scan");
-                num_base_atoms = 0;
-            } else if order.is_bid {
+            if order.is_bid {
                 if price > best_ask_price && order.order_type == OrderType::PostOnly {
                     solana_program::msg!("Removing post only bid that would cross");
                     num_base_atoms = 0;

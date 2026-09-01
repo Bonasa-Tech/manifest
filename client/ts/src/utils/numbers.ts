@@ -48,10 +48,50 @@ export function tokenAmountToAtoms(
     throw new RangeError('Mint decimals must be an integer between 0 and 255');
   }
 
+  // Prefer the number's canonical decimal representation. This avoids
+  // introducing an error by multiplying valid literals such as
+  // 260.337344506 by 10**9 in binary floating point.
+  const decimalMatch: RegExpMatchArray | null = amountTokens
+    .toString()
+    .match(/^(\d+)(?:\.(\d+))?(?:e([+-]?\d+))?$/i);
+  if (decimalMatch === null) {
+    throw new RangeError('Token amount could not be represented as decimal');
+  }
+  const fraction: string = decimalMatch[2] ?? '';
+  const decimalExponent: number = Number(decimalMatch[3] ?? '0');
+  const digits: bigint = BigInt(`${decimalMatch[1]}${fraction}`);
+  const atomExponent: number = decimals + decimalExponent - fraction.length;
+  let exactAtoms: bigint | undefined;
+  if (atomExponent >= 0) {
+    exactAtoms = digits * 10n ** BigInt(atomExponent);
+  } else {
+    const divisor: bigint = 10n ** BigInt(-atomExponent);
+    if (digits % divisor === 0n) {
+      exactAtoms = digits / divisor;
+    }
+  }
+  if (exactAtoms !== undefined) {
+    if (exactAtoms > BigInt(Number.MAX_SAFE_INTEGER)) {
+      throw new RangeError(
+        'Token amount exceeds JavaScript safe-integer atom precision',
+      );
+    }
+    return Number(exactAtoms);
+  }
+
+  // Computed values can stringify with a tiny tail (3 * 0.1 becomes
+  // 0.30000000000000004). Permit a few ULPs of multiplication noise, but cap
+  // the allowance below half an atom so a meaningful fractional atom can
+  // never be rounded into a signed instruction.
   const scaledAtoms: number = amountTokens * 10 ** decimals;
   const roundedAtoms: number = Math.round(scaledAtoms);
   const subAtomError: number = Math.abs(scaledAtoms - roundedAtoms);
-  const maxFloatingPointNoiseAtoms: number = 1e-6;
+  const relativeFloatingPointNoiseAtoms: number =
+    Math.abs(scaledAtoms) * Number.EPSILON * 4;
+  const maxFloatingPointNoiseAtoms: number = Math.min(
+    0.25,
+    Math.max(1e-6, relativeFloatingPointNoiseAtoms),
+  );
   if (subAtomError > maxFloatingPointNoiseAtoms) {
     throw new RangeError(
       `Token amount has more than ${decimals} decimal places`,

@@ -195,7 +195,7 @@ export class Wrapper {
   /**
    * Print all information loaded about the wrapper in a human readable format.
    */
-  public prettyPrint() {
+  public prettyPrint(): void {
     console.log('');
     console.log(`Wrapper: ${this.address.toBase58()}`);
     console.log(`========================`);
@@ -203,7 +203,7 @@ export class Wrapper {
     this.data.marketInfos.forEach((marketInfo: WrapperMarketInfo) => {
       console.log(`------------------------`);
       console.log(`Market: ${marketInfo.market}`);
-      console.log(`Last updated slot: ${marketInfo.lastUpdatedSlot}`);
+      console.log(`Cancel-all scan cursor: ${marketInfo.lastUpdatedSlot}`);
       console.log(
         `BaseAtoms: ${marketInfo.baseBalanceAtoms} QuoteAtoms: ${marketInfo.quoteBalanceAtoms}`,
       );
