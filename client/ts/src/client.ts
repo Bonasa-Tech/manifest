@@ -48,7 +48,7 @@ import { getVaultAddress } from './utils/market';
 import { genAccDiscriminator } from './utils/discriminator';
 import { getGlobalAddress, getGlobalVaultAddress } from './utils/global';
 import { Global } from './global';
-import { tokenAmountToAtoms } from './utils/numbers';
+import { toBigInt, tokenAmountToAtoms } from './utils/numbers';
 
 export interface SetupData {
   setupNeeded: boolean;
@@ -866,6 +866,20 @@ export class ManifestClient {
     mint: PublicKey,
     amountTokens: number,
   ): TransactionInstruction {
+    const mintDecimals: number =
+      this.market.quoteMint().toBase58() === mint.toBase58()
+        ? this.market.quoteDecimals()
+        : this.market.baseDecimals();
+    const amountAtoms: number = tokenAmountToAtoms(amountTokens, mintDecimals);
+    return this.depositAtomsIx(payer, mint, amountAtoms);
+  }
+
+  /** Build a deposit from an exact integer atom amount. */
+  public depositAtomsIx(
+    payer: PublicKey,
+    mint: PublicKey,
+    amountAtoms: bignum,
+  ): TransactionInstruction {
     if (!this.wrapper || !this.payer) {
       throw new Error('Read only');
     }
@@ -879,12 +893,6 @@ export class ManifestClient {
       true,
       is22 ? TOKEN_2022_PROGRAM_ID : TOKEN_PROGRAM_ID,
     );
-    const mintDecimals =
-      this.market.quoteMint().toBase58() === mint.toBase58()
-        ? this.market.quoteDecimals()
-        : this.market.baseDecimals();
-    const amountAtoms = tokenAmountToAtoms(amountTokens, mintDecimals);
-
     return createDepositInstruction(
       {
         market: this.market.address,
@@ -918,6 +926,20 @@ export class ManifestClient {
     mint: PublicKey,
     amountTokens: number,
   ): TransactionInstruction {
+    const mintDecimals: number =
+      this.market.quoteMint().toBase58() === mint.toBase58()
+        ? this.market.quoteDecimals()
+        : this.market.baseDecimals();
+    const amountAtoms: number = tokenAmountToAtoms(amountTokens, mintDecimals);
+    return this.withdrawAtomsIx(payer, mint, amountAtoms);
+  }
+
+  /** Build a withdrawal from an exact integer atom amount. */
+  public withdrawAtomsIx(
+    payer: PublicKey,
+    mint: PublicKey,
+    amountAtoms: bignum,
+  ): TransactionInstruction {
     if (!this.wrapper || !this.payer) {
       throw new Error('Read only');
     }
@@ -931,12 +953,6 @@ export class ManifestClient {
       true,
       is22 ? TOKEN_2022_PROGRAM_ID : TOKEN_PROGRAM_ID,
     );
-    const mintDecimals =
-      this.market.quoteMint().toBase58() === mint.toBase58()
-        ? this.market.quoteDecimals()
-        : this.market.baseDecimals();
-    const amountAtoms = tokenAmountToAtoms(amountTokens, mintDecimals);
-
     return createWithdrawInstruction(
       {
         market: this.market.address,
@@ -967,28 +983,28 @@ export class ManifestClient {
     }
     const withdrawInstructions: TransactionInstruction[] = [];
 
-    const baseBalance = this.market.getWithdrawableBalanceTokens(
+    const baseBalanceAtoms: bignum = this.market.getWithdrawableBalanceAtoms(
       this.payer,
       true,
     );
-    if (baseBalance > 0) {
-      const baseWithdrawIx = this.withdrawIx(
+    if (toBigInt(baseBalanceAtoms) > 0n) {
+      const baseWithdrawIx: TransactionInstruction = this.withdrawAtomsIx(
         this.payer,
         this.market.baseMint(),
-        baseBalance,
+        baseBalanceAtoms,
       );
       withdrawInstructions.push(baseWithdrawIx);
     }
 
-    const quoteBalance = this.market.getWithdrawableBalanceTokens(
+    const quoteBalanceAtoms: bignum = this.market.getWithdrawableBalanceAtoms(
       this.payer,
       false,
     );
-    if (quoteBalance > 0) {
-      const quoteWithdrawIx = this.withdrawIx(
+    if (toBigInt(quoteBalanceAtoms) > 0n) {
+      const quoteWithdrawIx: TransactionInstruction = this.withdrawAtomsIx(
         this.payer,
         this.market.quoteMint(),
-        quoteBalance,
+        quoteBalanceAtoms,
       );
       withdrawInstructions.push(quoteWithdrawIx);
     }

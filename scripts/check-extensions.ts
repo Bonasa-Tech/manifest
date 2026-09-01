@@ -1,4 +1,4 @@
-import { Connection, PublicKey } from '@solana/web3.js';
+import { AccountInfo, Connection, PublicKey } from '@solana/web3.js';
 import { ManifestClient } from '../client/ts/src/client';
 import { Market } from '../client/ts/src/market';
 
@@ -193,9 +193,9 @@ async function sendDiscordMessage(
   }
 }
 
-async function main() {
-  const rpcUrl = process.env.RPC_URL || process.argv[2];
-  const discordWebhookUrl = process.env.DISCORD_WEBHOOK_URL;
+async function main(): Promise<void> {
+  const rpcUrl: string | undefined = process.env.RPC_URL || process.argv[2];
+  const discordWebhookUrl: string | undefined = process.env.DISCORD_WEBHOOK_URL;
 
   if (!rpcUrl) {
     console.error(
@@ -237,19 +237,14 @@ async function main() {
       unparsedMarkets.push(account.pubkey.toBase58());
     }
   }
-  if (unparsedMarkets.length > 0) {
-    throw new Error(
-      `Extension check incomplete: failed to parse ${unparsedMarkets.length} market(s): ${unparsedMarkets.join(', ')}`,
-    );
-  }
   console.log(
     `Found ${mints.size} unique mints across ${marketMintInfo.length} markets`,
   );
 
   // Batch using getMultipleAccountsInfo for efficiency
   const mintList = [...mints];
-  const BATCH_SIZE = 100;
-  const accountMap = new Map<string, any>();
+  const BATCH_SIZE: number = 100;
+  const accountMap: Map<string, AccountInfo<Buffer> | null> = new Map();
 
   console.log(`Fetching account data in batches of ${BATCH_SIZE}...`);
   for (let i = 0; i < mintList.length; i += BATCH_SIZE) {
@@ -266,8 +261,10 @@ async function main() {
 
   // Analyze each mint
   const results: ExtensionInfo[] = [];
+  const missingMints: string[] = [];
   for (const mint of mintList) {
-    const accountInfo = accountMap.get(mint);
+    const accountInfo: AccountInfo<Buffer> | null | undefined =
+      accountMap.get(mint);
     const info: ExtensionInfo = {
       mint,
       isToken2022: false,
@@ -295,9 +292,9 @@ async function main() {
     };
 
     if (!accountInfo) {
-      throw new Error(
-        `Extension check incomplete: mint account ${mint} was not returned by RPC`,
-      );
+      console.error(`Mint account ${mint} was not returned by RPC`);
+      missingMints.push(mint);
+      continue;
     }
 
     if (accountInfo.owner.equals(TOKEN_2022_PROGRAM_ID)) {
@@ -370,6 +367,17 @@ async function main() {
   console.log(
     `RESULTS: ${token2022Mints.length} Token-2022 mints, ${splTokenMints.length} SPL Token mints`,
   );
+  if (unparsedMarkets.length > 0 || missingMints.length > 0) {
+    console.error(
+      `INCOMPLETE: ${unparsedMarkets.length} unparseable market(s), ${missingMints.length} missing mint account(s)`,
+    );
+    for (const market of unparsedMarkets) {
+      console.error(`  Unparseable market: ${market}`);
+    }
+    for (const mint of missingMints) {
+      console.error(`  Missing mint: ${mint}`);
+    }
+  }
   console.log(`${'='.repeat(120)}\n`);
 
   // Print Token-2022 mints table
@@ -469,6 +477,10 @@ async function main() {
     message += `- Token-2022 mints: ${token2022Mints.length}\n`;
     message += `- SPL Token mints: ${splTokenMints.length}\n\n`;
 
+    if (unparsedMarkets.length > 0 || missingMints.length > 0) {
+      message += `**INCOMPLETE REPORT:** ${unparsedMarkets.length} market(s) could not be parsed and ${missingMints.length} mint account(s) were unavailable.\n\n`;
+    }
+
     if (withFees.length > 0) {
       message += `**Mints with non-zero transfer fees (${withFees.length}):**\n`;
       for (const r of withFees) {
@@ -512,6 +524,13 @@ async function main() {
 
     await sendDiscordMessage(discordWebhookUrl, message);
     console.log('Discord notification sent');
+  }
+
+  // Permissionlessly created malformed accounts must not hide findings for all
+  // healthy markets. Finish the report, then leave a failing exit status so
+  // automation cannot mistake a partial scan for a clean scan.
+  if (unparsedMarkets.length > 0 || missingMints.length > 0) {
+    process.exitCode = 1;
   }
 }
 

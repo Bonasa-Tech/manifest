@@ -32,8 +32,10 @@ export function toBigInt(n: bignum): bigint {
 
 /**
  * Convert a UI token amount to atoms without silently rounding a value that
- * JavaScript cannot represent exactly. Callers needing larger u64 quantities
- * should construct instructions from integer atoms with a bigint/BN API.
+ * JavaScript cannot represent exactly. Tiny sub-atom errors introduced by
+ * ordinary floating-point arithmetic are rounded; meaningful fractional atoms
+ * are rejected. Callers needing larger u64 quantities should use an SDK method
+ * that accepts integer atom amounts as beet.bignum/BN.
  */
 export function tokenAmountToAtoms(
   amountTokens: number,
@@ -46,39 +48,21 @@ export function tokenAmountToAtoms(
     throw new RangeError('Mint decimals must be an integer between 0 and 255');
   }
 
-  // Parse the number's canonical decimal representation rather than doing a
-  // binary floating-point multiplication. This keeps values such as 0.29
-  // exact and makes excess decimal precision an explicit error.
-  const match: RegExpMatchArray | null = amountTokens
-    .toString()
-    .match(/^(\d+)(?:\.(\d+))?(?:e([+-]?\d+))?$/i);
-  if (!match) {
-    throw new RangeError('Token amount could not be represented as decimal');
+  const scaledAtoms: number = amountTokens * 10 ** decimals;
+  const roundedAtoms: number = Math.round(scaledAtoms);
+  const subAtomError: number = Math.abs(scaledAtoms - roundedAtoms);
+  const maxFloatingPointNoiseAtoms: number = 1e-6;
+  if (subAtomError > maxFloatingPointNoiseAtoms) {
+    throw new RangeError(
+      `Token amount has more than ${decimals} decimal places`,
+    );
   }
-  const fraction: string = match[2] ?? '';
-  const decimalExponent: number = Number(match[3] ?? '0');
-  const digits: bigint = BigInt(`${match[1]}${fraction}`);
-  const atomExponent: number = decimals + decimalExponent - fraction.length;
-
-  let atoms: bigint;
-  if (atomExponent >= 0) {
-    atoms = digits * 10n ** BigInt(atomExponent);
-  } else {
-    const divisor: bigint = 10n ** BigInt(-atomExponent);
-    if (digits % divisor !== 0n) {
-      throw new RangeError(
-        `Token amount has more than ${decimals} decimal places`,
-      );
-    }
-    atoms = digits / divisor;
-  }
-
-  if (atoms > BigInt(Number.MAX_SAFE_INTEGER)) {
+  if (!Number.isSafeInteger(roundedAtoms)) {
     throw new RangeError(
       'Token amount exceeds JavaScript safe-integer atom precision',
     );
   }
-  return Number(atoms);
+  return roundedAtoms;
 }
 
 type BNInstance = InstanceType<typeof BN>;

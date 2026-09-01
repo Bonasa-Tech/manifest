@@ -28,7 +28,8 @@ pub struct MarketInfo {
     /// Quote volume traded over lifetime, can overflow.
     pub quote_volume: QuoteAtoms,
 
-    /// Last slot that a sync was called on.
+    /// Persistent physical-block cursor for bounded cancel-all scans. This was
+    /// historically the last sync slot; keeping the field preserves layout.
     pub last_updated_slot: u32,
     /// Open orders of type Global on this market that the wrapper tracks.
     /// Those can be removed by global clean and evict without any order being

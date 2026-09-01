@@ -490,7 +490,7 @@ const setupAPI = (monitor: MarketMakerLeaderboard) => {
         fallback: number,
         maximum: number,
         name: string,
-      ) => {
+      ): number => {
         if (value === undefined) return fallback;
         const parsed = Number(value);
         if (!Number.isSafeInteger(parsed) || parsed < 1 || parsed > maximum)
@@ -508,18 +508,27 @@ const setupAPI = (monitor: MarketMakerLeaderboard) => {
           'page is too deep; narrow the time range or request at most 10000 prior snapshots',
         );
       }
-      const startTimestamp: number | undefined = parseOptionalUnixTimestamp(
-        req.query.start,
-        'start',
-      );
-      const endTimestamp: number | undefined = parseOptionalUnixTimestamp(
-        req.query.end,
-        'end',
-      );
+      const requestedStartTimestamp: number | undefined =
+        parseOptionalUnixTimestamp(req.query.start, 'start');
+      const requestedEndTimestamp: number | undefined =
+        parseOptionalUnixTimestamp(req.query.end, 'end');
+      const maximumRangeSeconds: number = 31 * 24 * 60 * 60;
+      const hasExplicitRange: boolean =
+        requestedStartTimestamp !== undefined ||
+        requestedEndTimestamp !== undefined;
+      const implicitEndTimestamp: number = Math.floor(Date.now() / 1000);
+      const endTimestamp: number | undefined = hasExplicitRange
+        ? (requestedEndTimestamp ?? implicitEndTimestamp)
+        : undefined;
+      const startTimestamp: number | undefined =
+        endTimestamp === undefined
+          ? undefined
+          : (requestedStartTimestamp ??
+            Math.max(1, endTimestamp - maximumRangeSeconds));
       validateUnixTimestampRange(
         startTimestamp,
         endTimestamp,
-        31 * 24 * 60 * 60,
+        maximumRangeSeconds,
       );
       const startTime: Date | undefined =
         startTimestamp === undefined

@@ -474,12 +474,20 @@ export class ManifestStatsServer {
 - Time: ${new Date().toISOString()}
 `;
 
-      await sendDiscordNotification(this.discordWebhookUrl, message, {
-        title: '🚨 Database Error Detected',
-        timestamp: true,
-      });
-
-      console.error('Discord alert sent for database error');
+      try {
+        await sendDiscordNotification(this.discordWebhookUrl, message, {
+          title: '🚨 Database Error Detected',
+          timestamp: true,
+        });
+        console.error('Discord alert sent for database error');
+      } catch (notificationError: unknown) {
+        // Error reporting must never mask the database error or interrupt a
+        // transaction rollback owned by the caller.
+        console.error(
+          'Failed to send Discord database alert:',
+          notificationError,
+        );
+      }
     }
   }
 
@@ -1477,7 +1485,7 @@ export class ManifestStatsServer {
     const now: number = Date.now();
     const lastLoadMs: number =
       this.orderbookMarketLastLoadMs.get(marketPk) ?? 0;
-    let market: Market | undefined = this.markets.get(marketPk);
+    const market: Market | undefined = this.markets.get(marketPk);
 
     // Cached and still within the freshness window: serve it as-is.
     if (
@@ -1832,7 +1840,7 @@ export class ManifestStatsServer {
 
   async getVolume() {
     // Get normalized SOL and BTC prices
-    const { solPrice, cbbtcPrice } = this.getSolAndBtcPrices();
+    const { solPrice } = this.getSolAndBtcPrices();
 
     // Serve the cached lifetime volume. It's refreshed in the background on
     // each checkpoint advance; kick off a one-time populate if no refresh has
@@ -2048,12 +2056,18 @@ export class ManifestStatsServer {
     // Apply default slot filter only if no efficient index filter is present.
     const hasEfficientFilter = market || signature || taker || maker;
     let { fromSlot } = options;
+    let currentSlot: number | undefined;
+    const getCurrentSlot = async (): Promise<number> => {
+      if (currentSlot === undefined) {
+        currentSlot = await this.connection.getSlot();
+      }
+      return currentSlot;
+    };
     if (fromSlot === undefined && !hasEfficientFilter) {
       console.log(
         `[completeFills] Query without efficient filter, applying default slot range. Options: ${JSON.stringify(options)}`,
       );
-      const currentSlot = await this.connection.getSlot();
-      fromSlot = Math.max(0, currentSlot - SLOTS_PER_DAY);
+      fromSlot = Math.max(0, (await getCurrentSlot()) - SLOTS_PER_DAY);
     }
 
     // Wallet queries use a taker-or-maker predicate and cannot rely on one
@@ -2061,8 +2075,7 @@ export class ManifestStatsServer {
     // caller supplies explicit slots; intentional archival access belongs in
     // a separate authenticated/export path.
     if (wallet) {
-      const effectiveToSlot: number =
-        toSlot ?? (await this.connection.getSlot());
+      const effectiveToSlot: number = toSlot ?? (await getCurrentSlot());
       if (fromSlot === undefined) {
         fromSlot = Math.max(0, effectiveToSlot - SLOTS_PER_DAY);
       }
@@ -2426,7 +2439,6 @@ export class ManifestStatsServer {
       return checkpointId;
     } catch (error: any) {
       console.error('Error saving checkpoint:', error);
-      await this.sendDatabaseErrorAlert(error);
 
       if (client) {
         try {
@@ -2439,6 +2451,7 @@ export class ManifestStatsServer {
           console.error('Error during checkpoint rollback:', rollbackError);
         }
       }
+      await this.sendDatabaseErrorAlert(error);
       throw error;
     } finally {
       if (client) {
@@ -2522,7 +2535,6 @@ export class ManifestStatsServer {
       console.log('Volume and market data saved successfully');
     } catch (error: any) {
       console.error('Error saving volume and market data:', error);
-      await this.sendDatabaseErrorAlert(error);
 
       if (client) {
         try {
@@ -2535,6 +2547,7 @@ export class ManifestStatsServer {
           console.error('Error during volume data rollback:', rollbackError);
         }
       }
+      await this.sendDatabaseErrorAlert(error);
       throw error;
     } finally {
       if (client) {
@@ -2666,7 +2679,6 @@ export class ManifestStatsServer {
       console.log('Trader data saved successfully');
     } catch (error: any) {
       console.error('Error saving trader data:', error);
-      await this.sendDatabaseErrorAlert(error);
 
       if (client) {
         try {
@@ -2679,6 +2691,7 @@ export class ManifestStatsServer {
           console.error('Error during trader data rollback:', rollbackError);
         }
       }
+      await this.sendDatabaseErrorAlert(error);
       throw error;
     } finally {
       if (client) {
@@ -2744,7 +2757,6 @@ export class ManifestStatsServer {
       console.log('Old checkpoints cleaned up successfully');
     } catch (error: any) {
       console.error('Error cleaning up old checkpoints:', error);
-      await this.sendDatabaseErrorAlert(error);
 
       if (client) {
         try {
@@ -2757,6 +2769,7 @@ export class ManifestStatsServer {
           console.error('Error during cleanup rollback:', rollbackError);
         }
       }
+      await this.sendDatabaseErrorAlert(error);
       throw error;
     } finally {
       if (client) {

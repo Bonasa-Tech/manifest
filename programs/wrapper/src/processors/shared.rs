@@ -63,6 +63,9 @@ pub const WRAPPER_BLOCK_PAYLOAD_SIZE: usize = 80;
 pub const BLOCK_HEADER_SIZE: usize = 16;
 pub const WRAPPER_BLOCK_SIZE: usize = WRAPPER_BLOCK_PAYLOAD_SIZE + BLOCK_HEADER_SIZE;
 
+// This is the maximum number of order ids/cancels assembled for one core CPI;
+// it is not a market traversal budget. Bounded traversals have their own
+// explicit step quotas and persistent progress state.
 pub const EXPECTED_ORDER_BATCH_SIZE: usize = 16;
 
 /// Blocks added per wrapper expansion. Growing costs a system transfer CPI
@@ -322,7 +325,7 @@ pub(crate) fn sync_fast(
     wrapper_state: &WrapperStateAccountInfo,
     market: &ManifestAccountInfo<MarketFixed>,
     market_info_index: DataIndex,
-    now_slot: u32,
+    _now_slot: u32,
     orders_exact: bool,
     mut matcher: Option<&mut CancelMatcher>,
 ) -> ProgramResult {
@@ -441,7 +444,8 @@ pub(crate) fn sync_fast(
     market_info.base_balance = claimed_seat.base_withdrawable_balance;
     market_info.quote_balance = claimed_seat.quote_withdrawable_balance;
     market_info.quote_volume = claimed_seat.quote_volume;
-    market_info.last_updated_slot = now_slot;
+    // `last_updated_slot` is retained in the ABI but now stores the bounded
+    // cancel-all physical-block cursor. Do not overwrite it during sync.
     Ok(())
 }
 

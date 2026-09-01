@@ -576,11 +576,10 @@ const run = async () => {
       while (true) {
         try {
           await tvlMonitor.checkAndAlert();
-          await sleep(ONE_HOUR_SEC * 1_000);
         } catch (error) {
           console.error('Error in TVL monitoring:', error);
-          await sleep(5_000);
         }
+        await sleep(ONE_HOUR_SEC * 1_000);
       }
     })(),
     // Hourly volume monitoring - alerts on 25% volume changes and large fills

@@ -533,12 +533,6 @@ export class LiquidityMonitor {
         }
       }
 
-      if (failedMarkets.length > 0) {
-        throw new Error(
-          `Monitoring cycle incomplete for ${failedMarkets.length} market(s): ${failedMarkets.join(', ')}`,
-        );
-      }
-
       // Remove duplicates before saving
       const uniqueStats = allStats.filter((stat, index, array) => {
         return (
@@ -557,6 +551,12 @@ export class LiquidityMonitor {
 
       // Update summary statistics
       await this.updatePrometheusMetrics();
+
+      if (failedMarkets.length > 0) {
+        throw new Error(
+          `Monitoring cycle persisted healthy results but was incomplete for ${failedMarkets.length} market(s): ${failedMarkets.join(', ')}`,
+        );
+      }
 
       console.log(
         `Monitoring cycle complete. Processed ${uniqueStats.length} market maker entries.`,
@@ -965,13 +965,13 @@ export class LiquidityMonitor {
   async startMonitoring(): Promise<void> {
     console.log('Starting liquidity monitoring...');
 
-    // Initial load
-    await this.loadEligibleMarkets();
-    await this.monitorMarkets();
-
-    // Set up periodic monitoring
+    // Arm retries before the initial dependency calls so a transient startup
+    // failure cannot permanently disarm monitoring.
     setInterval(async () => {
       try {
+        if (this.markets.size === 0) {
+          await this.loadEligibleMarkets();
+        }
         await this.monitorMarkets();
       } catch (error) {
         console.error('Error in monitoring cycle:', error);
@@ -989,6 +989,15 @@ export class LiquidityMonitor {
       },
       60 * 60 * 1000,
     );
+
+    try {
+      await this.loadEligibleMarkets();
+      await this.monitorMarkets();
+    } catch (error) {
+      this.lastMonitoringError =
+        error instanceof Error ? error.message : String(error);
+      console.error('Initial liquidity monitoring cycle failed:', error);
+    }
   }
 }
 

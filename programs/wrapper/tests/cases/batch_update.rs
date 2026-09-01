@@ -534,6 +534,147 @@ async fn wrapper_batch_update_cancel_all_test() -> anyhow::Result<()> {
 }
 
 #[tokio::test]
+async fn wrapper_cancel_all_cursor_progresses_past_unrelated_trader_orders() -> anyhow::Result<()> {
+    let mut test_fixture: TestFixture = TestFixture::new().await;
+    test_fixture.claim_seat().await?;
+    test_fixture.deposit(Token::SOL, SOL_UNIT_SIZE).await?;
+
+    let payer: Pubkey = test_fixture.payer();
+    let payer_keypair: Keypair = test_fixture.payer_keypair().insecure_clone();
+    let unrelated_trader: Keypair = test_fixture.second_keypair.insecure_clone();
+    let unrelated_wrapper: Keypair = Keypair::new();
+
+    let create_unrelated_wrapper_ixs: Vec<Instruction> =
+        create_wrapper_instructions(&unrelated_trader.pubkey(), &unrelated_wrapper.pubkey())?;
+    send_tx_with_retry(
+        Rc::clone(&test_fixture.context),
+        &create_unrelated_wrapper_ixs,
+        Some(&unrelated_trader.pubkey()),
+        &[&unrelated_trader, &unrelated_wrapper],
+    )
+    .await?;
+    test_fixture
+        .claim_seat_for_keypair_with_wrapper(&unrelated_trader, &unrelated_wrapper.pubkey())
+        .await?;
+    test_fixture
+        .deposit_for_keypair_with_wrapper(
+            Token::SOL,
+            40 * SOL_UNIT_SIZE,
+            &unrelated_trader,
+            &unrelated_wrapper.pubkey(),
+        )
+        .await?;
+
+    // Allocate more unrelated resting orders than one physical scan quota.
+    for batch_start in (0_u64..40).step_by(8) {
+        let orders: Vec<WrapperPlaceOrderParams> = (batch_start..batch_start + 8)
+            .map(|client_order_id: u64| {
+                WrapperPlaceOrderParams::new(
+                    client_order_id,
+                    SOL_UNIT_SIZE,
+                    client_order_id as u32 + 10,
+                    0,
+                    false,
+                    NO_EXPIRATION_LAST_VALID_SLOT,
+                    OrderType::Limit,
+                )
+            })
+            .collect();
+        let place_unrelated_ix: Instruction = batch_update_instruction(
+            &test_fixture.market.key,
+            &unrelated_trader.pubkey(),
+            &unrelated_wrapper.pubkey(),
+            vec![],
+            false,
+            orders,
+        );
+        send_tx_with_retry(
+            Rc::clone(&test_fixture.context),
+            &[place_unrelated_ix],
+            Some(&unrelated_trader.pubkey()),
+            &[&unrelated_trader],
+        )
+        .await?;
+    }
+
+    // Put the victim's untracked direct-core order after those physical
+    // blocks so the first bounded scan cannot reach it.
+    let victim_direct_order_ix: Instruction = manifest_batch_update_instruction(
+        &test_fixture.market.key,
+        &payer,
+        None,
+        vec![],
+        vec![ManifestPlaceOrderParams::new(
+            SOL_UNIT_SIZE,
+            1,
+            0,
+            false,
+            OrderType::Limit,
+            NO_EXPIRATION_LAST_VALID_SLOT,
+        )],
+        None,
+        None,
+        None,
+        None,
+    );
+    send_tx_with_retry(
+        Rc::clone(&test_fixture.context),
+        &[victim_direct_order_ix],
+        Some(&payer),
+        &[&payer_keypair],
+    )
+    .await?;
+
+    let cancel_all_ix: Instruction = batch_update_instruction(
+        &test_fixture.market.key,
+        &payer,
+        &test_fixture.wrapper.key,
+        vec![],
+        true,
+        vec![],
+    );
+    send_tx_with_retry(
+        Rc::clone(&test_fixture.context),
+        &[cancel_all_ix.clone()],
+        Some(&payer),
+        &[&payer_keypair],
+    )
+    .await?;
+    test_fixture.market.reload().await;
+    assert_eq!(
+        test_fixture
+            .market
+            .market
+            .get_asks()
+            .iter::<RestingOrder>()
+            .count(),
+        41,
+        "The first bounded scan stops before the victim's physical block",
+    );
+
+    send_tx_with_retry(
+        Rc::clone(&test_fixture.context),
+        &[cancel_all_ix],
+        Some(&payer),
+        &[&payer_keypair],
+    )
+    .await?;
+    test_fixture.market.reload().await;
+    assert_eq!(
+        test_fixture
+            .market
+            .market
+            .get_asks()
+            .iter::<RestingOrder>()
+            .count(),
+        40,
+        "The persistent cursor reaches and cancels the victim's untracked order",
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn wrapper_ignore_post_only() -> anyhow::Result<()> {
     let mut test_fixture: TestFixture = TestFixture::new().await;
     test_fixture.claim_seat().await?;

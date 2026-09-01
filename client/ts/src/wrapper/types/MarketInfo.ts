@@ -15,6 +15,7 @@ export type MarketInfo = {
   baseBalance: beet.bignum;
   quoteBalance: beet.bignum;
   quoteVolume: beet.bignum;
+  /** Legacy field now used as the bounded cancel-all scan cursor. */
   lastUpdatedSlot: number;
   numOpenGlobalOrders: number;
   lastSyncedOrderSequenceNumber: beet.bignum;

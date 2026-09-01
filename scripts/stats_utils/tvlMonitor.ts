@@ -49,6 +49,7 @@ const TOKEN_DECIMALS: TokenDecimalsMap = {
 export interface TvlSnapshot {
   timestamp: number;
   tvlByMint: Map<string, bigint>; // mint -> atoms
+  incompleteMarkets: string[];
 }
 
 interface PendingAlert {
@@ -91,7 +92,8 @@ export class TvlMonitor {
     }
 
     // Fetch all market vault balances
-    await this.fetchMarketVaultBalances(tvlByMint);
+    const incompleteMarkets: string[] =
+      await this.fetchMarketVaultBalances(tvlByMint);
 
     // Fetch all global vault balances
     await this.fetchGlobalVaultBalances(tvlByMint);
@@ -99,6 +101,7 @@ export class TvlMonitor {
     const snapshot: TvlSnapshot = {
       timestamp: Date.now(),
       tvlByMint,
+      incompleteMarkets,
     };
 
     return snapshot;
@@ -109,7 +112,7 @@ export class TvlMonitor {
    */
   private async fetchMarketVaultBalances(
     tvlByMint: Map<string, bigint>,
-  ): Promise<void> {
+  ): Promise<string[]> {
     const monitoredMintSet: Set<string> = new Set(
       Object.values(MONITORED_MINTS),
     );
@@ -117,66 +120,75 @@ export class TvlMonitor {
     const marketPks: PublicKey[] = await ManifestClient.listMarketPublicKeys(
       this.connection,
     );
+    const incompleteMarkets: string[] = [];
 
-    // Process in batches to avoid rate limiting. Any failed market rejects the
-    // whole snapshot so an incomplete zero cannot replace the last good value.
+    // Process in batches to avoid rate limiting. Individual failures are
+    // recorded so permissionless malformed markets cannot abort collection,
+    // while callers can refuse to use an incomplete snapshot as a baseline.
     const batchSize: number = 10;
     for (let i: number = 0; i < marketPks.length; i += batchSize) {
       const batch: PublicKey[] = marketPks.slice(i, i + batchSize);
       await Promise.all(
         batch.map(async (marketPk: PublicKey): Promise<void> => {
-          const client: ManifestClient = await ManifestClient.getClientReadOnly(
-            this.connection,
-            marketPk,
-          );
-          const baseMint: PublicKey = client.market.baseMint();
-          const quoteMint: PublicKey = client.market.quoteMint();
+          try {
+            const client: ManifestClient =
+              await ManifestClient.getClientReadOnly(this.connection, marketPk);
+            const baseMint: PublicKey = client.market.baseMint();
+            const quoteMint: PublicKey = client.market.quoteMint();
 
-          const vaultsToFetch: VaultFetchInfo[] = [];
+            const vaultsToFetch: VaultFetchInfo[] = [];
 
-          if (monitoredMintSet.has(baseMint.toBase58())) {
-            vaultsToFetch.push({
-              mint: baseMint,
-              vault: getVaultAddress(marketPk, baseMint),
-            });
-          }
-          if (monitoredMintSet.has(quoteMint.toBase58())) {
-            vaultsToFetch.push({
-              mint: quoteMint,
-              vault: getVaultAddress(marketPk, quoteMint),
-            });
-          }
-
-          if (vaultsToFetch.length > 0) {
-            const vaultPubkeys: PublicKey[] = vaultsToFetch.map(
-              (v: VaultFetchInfo): PublicKey => v.vault,
-            );
-            const accounts: RpcResponseAndContext<
-              (AccountInfo<Buffer | ParsedAccountData> | null)[]
-            > = await this.connection.getMultipleParsedAccounts(vaultPubkeys);
-
-            for (let j: number = 0; j < vaultsToFetch.length; j++) {
-              const accountInfo: AccountInfo<
-                Buffer | ParsedAccountData
-              > | null = accounts.value[j];
-              if (!accountInfo?.data) {
-                throw new Error(
-                  `Vault ${vaultsToFetch[j].vault.toBase58()} was not returned by RPC`,
-                );
-              }
-              const parsedData: ParsedAccountData =
-                accountInfo.data as ParsedAccountData;
-              const amountStr: string =
-                parsedData.parsed?.info?.tokenAmount?.amount ?? '0';
-              const amount: bigint = BigInt(amountStr);
-              const mintKey: string = vaultsToFetch[j].mint.toBase58();
-              const current: bigint = tvlByMint.get(mintKey) ?? BigInt(0);
-              tvlByMint.set(mintKey, current + amount);
+            if (monitoredMintSet.has(baseMint.toBase58())) {
+              vaultsToFetch.push({
+                mint: baseMint,
+                vault: getVaultAddress(marketPk, baseMint),
+              });
             }
+            if (monitoredMintSet.has(quoteMint.toBase58())) {
+              vaultsToFetch.push({
+                mint: quoteMint,
+                vault: getVaultAddress(marketPk, quoteMint),
+              });
+            }
+
+            if (vaultsToFetch.length > 0) {
+              const vaultPubkeys: PublicKey[] = vaultsToFetch.map(
+                (v: VaultFetchInfo): PublicKey => v.vault,
+              );
+              const accounts: RpcResponseAndContext<
+                (AccountInfo<Buffer | ParsedAccountData> | null)[]
+              > = await this.connection.getMultipleParsedAccounts(vaultPubkeys);
+
+              for (let j: number = 0; j < vaultsToFetch.length; j++) {
+                const accountInfo: AccountInfo<
+                  Buffer | ParsedAccountData
+                > | null = accounts.value[j];
+                if (!accountInfo?.data) {
+                  throw new Error(
+                    `Vault ${vaultsToFetch[j].vault.toBase58()} was not returned by RPC`,
+                  );
+                }
+                const parsedData: ParsedAccountData =
+                  accountInfo.data as ParsedAccountData;
+                const amountStr: string =
+                  parsedData.parsed?.info?.tokenAmount?.amount ?? '0';
+                const amount: bigint = BigInt(amountStr);
+                const mintKey: string = vaultsToFetch[j].mint.toBase58();
+                const current: bigint = tvlByMint.get(mintKey) ?? BigInt(0);
+                tvlByMint.set(mintKey, current + amount);
+              }
+            }
+          } catch (error: unknown) {
+            console.error(
+              `TVL collection skipped market ${marketPk.toBase58()}:`,
+              error,
+            );
+            incompleteMarkets.push(marketPk.toBase58());
           }
         }),
       );
     }
+    return incompleteMarkets;
   }
 
   /**
@@ -217,6 +229,12 @@ export class TvlMonitor {
    */
   async checkAndAlert(): Promise<void> {
     const currentSnapshot: TvlSnapshot = await this.fetchCurrentTvl();
+    if (currentSnapshot.incompleteMarkets.length > 0) {
+      console.error(
+        `TVL snapshot incomplete for ${currentSnapshot.incompleteMarkets.length} market(s); preserving the last complete baseline`,
+      );
+      return;
+    }
 
     if (this.previousSnapshot) {
       const entries: [string, string][] = Object.entries(MONITORED_MINTS);
@@ -272,6 +290,12 @@ export class TvlMonitor {
 
     // Fetch fresh TVL data
     const verificationSnapshot: TvlSnapshot = await this.fetchCurrentTvl();
+    if (verificationSnapshot.incompleteMarkets.length > 0) {
+      console.error(
+        `TVL verification incomplete for ${verificationSnapshot.incompleteMarkets.length} market(s); retaining pending alerts for the next complete check`,
+      );
+      return;
+    }
 
     for (const [mint, pendingAlert] of this.pendingAlerts) {
       const { symbol, previousTvl, percentChange } = pendingAlert;
