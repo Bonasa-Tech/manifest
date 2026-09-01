@@ -47,4 +47,5 @@ solana-keypair = { workspace = true }
 solana-signer = { workspace = true }
 solana-transaction = { workspace = true }
 solana-instruction = { workspace = true }
+solana-compute-budget-interface = { workspace = true }
 tokio = { workspace = true }

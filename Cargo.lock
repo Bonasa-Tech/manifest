@@ -9465,6 +9465,7 @@ dependencies = [
  "num_enum 0.5.11",
  "shank",
  "solana-account",
+ "solana-compute-budget-interface",
  "solana-instruction",
  "solana-invoke",
  "solana-keypair",

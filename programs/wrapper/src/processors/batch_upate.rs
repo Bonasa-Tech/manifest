@@ -39,7 +39,7 @@ use crate::{
 };
 
 use super::shared::{
-    ensure_free_slots, get_market_info_index_for_market, sync_fast, CancelMatcher, OpenOrdersTree,
+    ensure_free_slots, get_market_info_index_for_market, sync_fast, CancelMatcher, OpenOrdersList,
     UnusedWrapperFreeListPadding, EXPECTED_ORDER_BATCH_SIZE,
 };
 
@@ -341,12 +341,12 @@ fn process_cancels(
         }
     }
     let orders_root_index: DataIndex = {
-        let mut open_orders_tree: OpenOrdersTree =
-            OpenOrdersTree::new(wrapper.dynamic, orders_root_index, NIL);
+        let mut open_orders: OpenOrdersList =
+            OpenOrdersList::new(wrapper.dynamic, orders_root_index);
         for order_wrapper_index in cancel_indices {
-            open_orders_tree.remove_by_index(*order_wrapper_index);
+            open_orders.remove_by_index(*order_wrapper_index);
         }
-        open_orders_tree.get_root_index()
+        open_orders.get_root_index()
     };
     let market_info: &mut MarketInfo =
         get_mut_helper::<RBNode<MarketInfo>>(wrapper.dynamic, market_info_index).get_mut_value();
@@ -441,10 +441,10 @@ fn process_orders<'a, 'info>(
             num_open_global_orders += 1;
         }
 
-        let mut open_orders_tree: OpenOrdersTree =
-            OpenOrdersTree::new(wrapper.dynamic, orders_root_index, NIL);
-        open_orders_tree.insert(wrapper_new_order_index, order);
-        orders_root_index = open_orders_tree.get_root_index();
+        let mut open_orders: OpenOrdersList =
+            OpenOrdersList::new(wrapper.dynamic, orders_root_index);
+        open_orders.insert(wrapper_new_order_index, order);
+        orders_root_index = open_orders.get_root_index();
     }
     wrapper.fixed.free_list_head_index = free_list_head_index;
     let market_info: &mut MarketInfo =
