@@ -14,7 +14,7 @@ export const PRICE_MAX_EXP = 8;
  * repo. When the cluster's slot duration changes, update this one constant and
  * nothing else. Do not hardcode a slot duration anywhere else.
  */
-export const SLOT_DURATION_MS: number = 350;
+export const SLOT_DURATION_MS: number = 300;
 /** Slots the cluster produces in a day, at SLOT_DURATION_MS. */
 export const SLOTS_PER_DAY: number = Math.round(
   (24 * 60 * 60 * 1_000) / SLOT_DURATION_MS,
