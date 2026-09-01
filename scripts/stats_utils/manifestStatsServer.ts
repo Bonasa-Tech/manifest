@@ -2056,8 +2056,11 @@ export class ManifestStatsServer {
     }
 
     // Apply default slot filter only if no efficient index filter is present.
+    const hasNonWalletEfficientFilter: boolean = Boolean(
+      market || signature || taker || maker,
+    );
     const hasEfficientFilter: boolean = Boolean(
-      market || signature || taker || maker || wallet,
+      hasNonWalletEfficientFilter || wallet,
     );
     let { fromSlot } = options;
     let currentSlot: number | undefined;
@@ -2078,7 +2081,7 @@ export class ManifestStatsServer {
     // Wallet-only queries default to one day ending at the caller's toSlot (or
     // the current slot). Explicit ranges remain available for historical
     // pagination and use the split taker/maker index scans below.
-    if (wallet) {
+    if (wallet && !hasNonWalletEfficientFilter) {
       effectiveToSlot ??= await getCurrentSlot();
       if (fromSlot === undefined) {
         fromSlot = Math.max(0, effectiveToSlot - SLOTS_PER_DAY);

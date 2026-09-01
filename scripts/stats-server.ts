@@ -574,12 +574,18 @@ const run = async () => {
     (async () => {
       // eslint-disable-next-line no-constant-condition
       while (true) {
+        let retryDelayMs: number = ONE_HOUR_SEC * 1_000;
         try {
-          await tvlMonitor.checkAndAlert();
+          const hasComparableBaseline: boolean =
+            await tvlMonitor.checkAndAlert();
+          if (!hasComparableBaseline) {
+            retryDelayMs = 5_000;
+          }
         } catch (error) {
           console.error('Error in TVL monitoring:', error);
+          retryDelayMs = 5_000;
         }
-        await sleep(ONE_HOUR_SEC * 1_000);
+        await sleep(retryDelayMs);
       }
     })(),
     // Hourly volume monitoring - alerts on 25% volume changes and large fills

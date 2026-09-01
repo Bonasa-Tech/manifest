@@ -33,6 +33,17 @@ async function sendDiscordMessage(content: string): Promise<void> {
   }
 }
 
+async function sendDiscordMessageBestEffort(
+  content: string,
+  description: string,
+): Promise<void> {
+  try {
+    await sendDiscordMessage(content);
+  } catch (error) {
+    console.error(`Failed to send ${description}:`, error);
+  }
+}
+
 const run = async (): Promise<void> => {
   const connection: Connection = new Connection(RPC_URL);
   const marketPks: PublicKey[] =
@@ -229,30 +240,37 @@ const run = async (): Promise<void> => {
 
   const hasMismatch: boolean =
     mismatchedMarkets.length > 0 || mismatchedGlobals.length > 0;
+  const mismatchDetails: string[] = [];
+  if (mismatchedMarkets.length > 0) {
+    mismatchDetails.push(`Markets: ${mismatchedMarkets.join(', ')}`);
+  }
+  if (mismatchedGlobals.length > 0) {
+    mismatchDetails.push(`Globals: ${mismatchedGlobals.join(', ')}`);
+  }
+  const detailsStr: string = mismatchDetails.join('; ');
   if (hasMismatch) {
-    const details: string[] = [];
-    if (mismatchedMarkets.length > 0) {
-      details.push(`Markets: ${mismatchedMarkets.join(', ')}`);
-    }
-    if (mismatchedGlobals.length > 0) {
-      details.push(`Globals: ${mismatchedGlobals.join(', ')}`);
-    }
-    const detailsStr = details.join('; ');
-    await sendDiscordMessage(
+    console.error(`Balance mismatch detected! ${detailsStr}`);
+    await sendDiscordMessageBestEffort(
       `**Balance Checker Alert**\nBalance mismatch detected! ${detailsStr}`,
+      'balance-mismatch alert',
     );
   }
 
   if (uncheckedGlobals.length > 0) {
-    await sendDiscordMessage(
+    const uncheckedDetails: string = uncheckedGlobals.join(', ');
+    console.error(
+      `Balance verification incomplete for globals: ${uncheckedDetails}`,
+    );
+    await sendDiscordMessageBestEffort(
       `**Balance Checker Incomplete**\nCould not verify ${uncheckedGlobals.length} global account(s): ${uncheckedGlobals.join(', ')}`,
+      'incomplete-scan alert',
     );
   }
 
   if (hasMismatch || uncheckedGlobals.length > 0) {
     const failures: string[] = [];
     if (hasMismatch) {
-      failures.push('balance mismatch detected');
+      failures.push(`balance mismatch detected (${detailsStr})`);
     }
     if (uncheckedGlobals.length > 0) {
       failures.push(

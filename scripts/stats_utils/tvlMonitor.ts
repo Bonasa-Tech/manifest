@@ -63,9 +63,10 @@ interface PendingAlert {
 }
 
 export class TvlMonitor {
+  private static readonly MAX_COMPARISON_BASELINES: number = 32;
   private readonly connection: Connection;
   private readonly discordWebhookUrl: string | undefined;
-  private previousSnapshot: TvlSnapshot | null = null;
+  private comparisonBaselines: Map<string, TvlSnapshot> = new Map();
   private pendingAlerts: Map<string, PendingAlert> = new Map();
 
   constructor(connection: Connection, discordWebhookUrl?: string) {
@@ -89,6 +90,30 @@ export class TvlMonitor {
     }
     const rightMarkets: Set<string> = new Set(right);
     return left.every((market: string): boolean => rightMarkets.has(market));
+  }
+
+  private getComparisonKey(incompleteMarkets: readonly string[]): string {
+    return [...incompleteMarkets].sort().join(',');
+  }
+
+  private rememberComparisonBaseline(
+    comparisonKey: string,
+    snapshot: TvlSnapshot,
+  ): void {
+    // Refresh insertion order so the bounded map evicts the least recently
+    // used exclusion set. Keeping separate baselines prevents a transient RPC
+    // failure from replacing the last complete aggregate, while a persistently
+    // unreadable permissionless market can still be monitored on later runs.
+    this.comparisonBaselines.delete(comparisonKey);
+    this.comparisonBaselines.set(comparisonKey, snapshot);
+    if (this.comparisonBaselines.size > TvlMonitor.MAX_COMPARISON_BASELINES) {
+      const oldestKey: string | undefined = this.comparisonBaselines
+        .keys()
+        .next().value;
+      if (oldestKey !== undefined) {
+        this.comparisonBaselines.delete(oldestKey);
+      }
+    }
   }
 
   /**
@@ -286,36 +311,24 @@ export class TvlMonitor {
   /**
    * Check TVL changes and send alerts if threshold exceeded AND persists after 5 minutes
    */
-  async checkAndAlert(): Promise<void> {
+  async checkAndAlert(): Promise<boolean> {
     const currentSnapshot: TvlSnapshot = await this.fetchCurrentTvl();
+    const comparisonKey: string = this.getComparisonKey(
+      currentSnapshot.incompleteMarkets,
+    );
+    const previousSnapshot: TvlSnapshot | undefined =
+      this.comparisonBaselines.get(comparisonKey);
     if (currentSnapshot.incompleteMarkets.length > 0) {
       console.warn(
         `TVL snapshot excludes ${currentSnapshot.incompleteMarkets.length} unreadable market(s); comparing against baselines with the same exclusions`,
       );
     }
 
-    if (this.previousSnapshot) {
-      if (
-        !this.hasSameIncompleteMarkets(
-          this.previousSnapshot.incompleteMarkets,
-          currentSnapshot.incompleteMarkets,
-        )
-      ) {
-        // A changing exclusion set changes the aggregate independently of
-        // actual vault flows. Establish a new comparable baseline, but do not
-        // let one permanently unreadable market disable monitoring forever.
-        console.warn(
-          'TVL unreadable-market set changed; resetting the comparison baseline',
-        );
-        this.pendingAlerts.clear();
-        this.previousSnapshot = currentSnapshot;
-        return;
-      }
-
+    if (previousSnapshot) {
       const entries: [string, string][] = Object.entries(MONITORED_MINTS);
       for (const [symbol, mint] of entries) {
         const previousTvl: bigint =
-          this.previousSnapshot.tvlByMint.get(mint) ?? BigInt(0);
+          previousSnapshot.tvlByMint.get(mint) ?? BigInt(0);
         const currentTvl: bigint =
           currentSnapshot.tvlByMint.get(mint) ?? BigInt(0);
 
@@ -350,7 +363,13 @@ export class TvlMonitor {
       await this.processPendingAlerts(currentSnapshot.incompleteMarkets);
     }
 
-    this.previousSnapshot = currentSnapshot;
+    this.rememberComparisonBaseline(comparisonKey, currentSnapshot);
+
+    // Ask the scheduler for a short retry when an exclusion set is first
+    // observed. If it was transient, the complete baseline is still intact;
+    // if it persists, the new set has a baseline on the retry and monitoring
+    // can continue without a hot loop.
+    return previousSnapshot !== undefined || comparisonKey.length === 0;
   }
 
   /**

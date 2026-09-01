@@ -210,7 +210,11 @@ fn prepare_orders(
     // The wrapper deliberately does not inspect the shared book to predict
     // PostOnly crossing. The core prunes expired makers before its
     // authoritative PostOnly check, so wrapper-side discovery can only add an
-    // attacker-controlled traversal or silently disagree with the core.
+    // attacker-controlled traversal or silently disagree with the core. A
+    // crossing PostOnly order therefore fails the entire atomic batch,
+    // including cancels and cancel-all cursor progress; callers that need
+    // cancellation progress independent of replacement quotes must split the
+    // operations into separate transactions.
 
     let mut result: Vec<PlaceOrderParams> = Vec::with_capacity(orders.len());
     let mut original_indices: Vec<usize> = Vec::with_capacity(orders.len());
