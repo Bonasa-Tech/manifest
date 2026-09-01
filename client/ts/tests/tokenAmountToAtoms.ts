@@ -11,12 +11,19 @@ describe('tokenAmountToAtoms', () => {
     expect(tokenAmountToAtoms(8545.518514384, 9)).to.equal(8_545_518_514_384);
   });
 
-  it('rejects excess precision and unsafe atom values', () => {
+  it('rejects excess precision and values outside u64', () => {
     expect(() => tokenAmountToAtoms(0.0000001, 6)).to.throw(RangeError);
     expect(() => tokenAmountToAtoms(0.5, 0)).to.throw(RangeError);
-    expect(() =>
-      tokenAmountToAtoms(Number.MAX_SAFE_INTEGER / 100 + 1, 2),
-    ).to.throw(RangeError);
+    expect(() => tokenAmountToAtoms(20_000_000_000, 9)).to.throw(RangeError);
+  });
+
+  it('returns exact BN atoms above JavaScript safe-integer precision', () => {
+    expect(tokenAmountToAtoms(20_000_000, 9).toString()).to.equal(
+      '20000000000000000',
+    );
+    expect(tokenAmountToAtoms(20_000_000.1, 9, 'floor').toString()).to.equal(
+      '20000000100000000',
+    );
   });
 
   it('requires callers to choose how meaningful fractional atoms round', () => {

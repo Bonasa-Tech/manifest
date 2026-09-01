@@ -252,6 +252,16 @@ fn prepare_orders(
         )
         .get_value()
         .is_expired(now_slot);
+    let ask_scan_frontier_price: QuoteAtomsPerBaseAtom = if ask_scan_exhausted {
+        get_helper::<RBNode<RestingOrder>>(
+            &market_data,
+            best_ask_index + (MARKET_FIXED_SIZE as DataIndex),
+        )
+        .get_value()
+        .get_price()
+    } else {
+        QuoteAtomsPerBaseAtom::MAX
+    };
     if ask_scan_exhausted {
         // The bounded advisory scan did not find a trustworthy price. Leave
         // the side unknown. Placement-only PostOnly orders go to the core;
@@ -281,6 +291,16 @@ fn prepare_orders(
         )
         .get_value()
         .is_expired(now_slot);
+    let bid_scan_frontier_price: QuoteAtomsPerBaseAtom = if bid_scan_exhausted {
+        get_helper::<RBNode<RestingOrder>>(
+            &market_data,
+            best_bid_index + (MARKET_FIXED_SIZE as DataIndex),
+        )
+        .get_value()
+        .get_price()
+    } else {
+        QuoteAtomsPerBaseAtom::MIN
+    };
     if bid_scan_exhausted {
         // See the ask-side case above. The core may accept the PostOnly order
         // after pruning, or return PostOnlyCrosses explicitly to the caller.
@@ -322,13 +342,15 @@ fn prepare_orders(
                 if order.order_type == OrderType::PostOnly
                     && ask_scan_exhausted
                     && preserve_cancellation_progress
+                    && price > ask_scan_frontier_price
                 {
                     // The wrapper cannot determine whether this PostOnly bid
                     // crosses without exceeding its traversal bound. Do not
                     // forward it in a mixed cancel/place batch: a core
                     // PostOnlyCrosses error would roll back valid cancels in
-                    // the same transaction. A placement-only batch is still
-                    // forwarded so the core can make the authoritative call.
+                    // the same transaction. Bids at or below the expired scan
+                    // frontier are provably outside every unseen ask and can
+                    // still be forwarded, as can any placement-only batch.
                     solana_program::msg!(
                         "Skipping post only bid to preserve cancellation progress"
                     );
@@ -355,6 +377,7 @@ fn prepare_orders(
                 if order.order_type == OrderType::PostOnly
                     && bid_scan_exhausted
                     && preserve_cancellation_progress
+                    && price < bid_scan_frontier_price
                 {
                     // See the bid-side case above.
                     solana_program::msg!(

@@ -33,7 +33,7 @@ async function sendDiscordMessage(content: string): Promise<void> {
   }
 }
 
-const run = async () => {
+const run = async (): Promise<void> => {
   const connection: Connection = new Connection(RPC_URL);
   const marketPks: PublicKey[] =
     await ManifestClient.listMarketPublicKeys(connection);
@@ -227,11 +227,9 @@ const run = async () => {
     }
   }
 
-  if (
-    mismatchedMarkets.length > 0 ||
-    mismatchedGlobals.length > 0 ||
-    uncheckedGlobals.length > 0
-  ) {
+  const hasMismatch: boolean =
+    mismatchedMarkets.length > 0 || mismatchedGlobals.length > 0;
+  if (hasMismatch) {
     const details: string[] = [];
     if (mismatchedMarkets.length > 0) {
       details.push(`Markets: ${mismatchedMarkets.join(', ')}`);
@@ -239,14 +237,29 @@ const run = async () => {
     if (mismatchedGlobals.length > 0) {
       details.push(`Globals: ${mismatchedGlobals.join(', ')}`);
     }
-    if (uncheckedGlobals.length > 0) {
-      details.push(`Unchecked globals: ${uncheckedGlobals.join(', ')}`);
-    }
     const detailsStr = details.join('; ');
     await sendDiscordMessage(
       `**Balance Checker Alert**\nBalance mismatch detected! ${detailsStr}`,
     );
-    throw new Error(`Balance mismatch detected: ${detailsStr}`);
+  }
+
+  if (uncheckedGlobals.length > 0) {
+    await sendDiscordMessage(
+      `**Balance Checker Incomplete**\nCould not verify ${uncheckedGlobals.length} global account(s): ${uncheckedGlobals.join(', ')}`,
+    );
+  }
+
+  if (hasMismatch || uncheckedGlobals.length > 0) {
+    const failures: string[] = [];
+    if (hasMismatch) {
+      failures.push('balance mismatch detected');
+    }
+    if (uncheckedGlobals.length > 0) {
+      failures.push(
+        `${uncheckedGlobals.length} global account(s) could not be checked`,
+      );
+    }
+    throw new Error(`Balance verification failed: ${failures.join('; ')}`);
   }
 
   await sendDiscordMessage(

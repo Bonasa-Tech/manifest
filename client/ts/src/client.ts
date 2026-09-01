@@ -252,13 +252,16 @@ export class ManifestClient {
    * Get all market program accounts. This is expensive RPC load..
    *
    * @param connection Connection
+   * @param dataSlice Optional account-data slice for fixed-field consumers.
    * @returns GetProgramAccountsResponse
    */
   public static async getMarketProgramAccounts(
     connection: Connection,
+    dataSlice?: { offset: number; length: number },
   ): Promise<GetProgramAccountsResponse> {
     const accounts: GetProgramAccountsResponse =
       await connection.getProgramAccounts(PROGRAM_ID, {
+        ...(dataSlice === undefined ? {} : { dataSlice }),
         filters: [
           {
             memcmp: {
@@ -872,7 +875,7 @@ export class ManifestClient {
       this.market.quoteMint().toBase58() === mint.toBase58()
         ? this.market.quoteDecimals()
         : this.market.baseDecimals();
-    const amountAtoms: number = tokenAmountToAtoms(
+    const amountAtoms: bignum = tokenAmountToAtoms(
       amountTokens,
       mintDecimals,
       'round',
@@ -937,7 +940,7 @@ export class ManifestClient {
       this.market.quoteMint().toBase58() === mint.toBase58()
         ? this.market.quoteDecimals()
         : this.market.baseDecimals();
-    const amountAtoms: number = tokenAmountToAtoms(
+    const amountAtoms: bignum = tokenAmountToAtoms(
       amountTokens,
       mintDecimals,
       'floor',
@@ -2067,7 +2070,7 @@ export class ManifestClient {
       is22 ? TOKEN_2022_PROGRAM_ID : TOKEN_PROGRAM_ID,
     );
     const mintDecimals: number = mint.decimals;
-    const amountAtoms: number = tokenAmountToAtoms(
+    const amountAtoms: bignum = tokenAmountToAtoms(
       amountTokens,
       mintDecimals,
       'round',
@@ -2124,7 +2127,7 @@ export class ManifestClient {
       is22 ? TOKEN_2022_PROGRAM_ID : TOKEN_PROGRAM_ID,
     );
     const mintDecimals: number = mint.decimals;
-    const amountAtoms: number = tokenAmountToAtoms(
+    const amountAtoms: bignum = tokenAmountToAtoms(
       amountTokens,
       mintDecimals,
       'round',

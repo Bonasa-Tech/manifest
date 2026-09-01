@@ -4,6 +4,7 @@ import {
   ParsedAccountData,
   RpcResponseAndContext,
   AccountInfo,
+  GetProgramAccountsResponse,
 } from '@solana/web3.js';
 import { ManifestClient } from '../../client/ts/src/client';
 import { getVaultAddress } from '../../client/ts/src/utils/market';
@@ -128,24 +129,43 @@ export class TvlMonitor {
       Object.values(MONITORED_MINTS),
     );
 
-    const marketPks: PublicKey[] = await ManifestClient.listMarketPublicKeys(
-      this.connection,
-    );
+    const marketAccounts: GetProgramAccountsResponse =
+      await ManifestClient.getMarketProgramAccounts(this.connection, {
+        offset: 0,
+        length: 80,
+      });
     const incompleteMarkets: string[] = [];
 
-    // Process in batches to avoid rate limiting. Individual failures are
-    // recorded so permissionless malformed markets cannot abort collection,
-    // while callers can refuse to use an incomplete snapshot as a baseline.
+    // Process in batches to avoid rate limiting. Only vault failures for a
+    // market known to contain a monitored mint affect snapshot completeness.
     const batchSize: number = 10;
-    for (let i: number = 0; i < marketPks.length; i += batchSize) {
-      const batch: PublicKey[] = marketPks.slice(i, i + batchSize);
+    for (let i: number = 0; i < marketAccounts.length; i += batchSize) {
+      const batch: GetProgramAccountsResponse = marketAccounts.slice(
+        i,
+        i + batchSize,
+      );
       await Promise.all(
-        batch.map(async (marketPk: PublicKey): Promise<void> => {
-          try {
-            const client: ManifestClient =
-              await ManifestClient.getClientReadOnly(this.connection, marketPk);
-            const baseMint: PublicKey = client.market.baseMint();
-            const quoteMint: PublicKey = client.market.quoteMint();
+        batch.map(
+          async (
+            marketAccount: GetProgramAccountsResponse[number],
+          ): Promise<void> => {
+            const marketPk: PublicKey = marketAccount.pubkey;
+            const marketData: Buffer = marketAccount.account.data;
+            // MarketFixed stores baseMint at bytes 16..48 and quoteMint at
+            // 48..80. Reading only these fixed fields avoids a second RPC and
+            // classifies relevance before any fallible vault lookup.
+            if (marketData.length < 80) {
+              console.error(
+                `TVL collection could not classify truncated market ${marketPk.toBase58()}`,
+              );
+              return;
+            }
+            const baseMint: PublicKey = new PublicKey(
+              marketData.subarray(16, 48),
+            );
+            const quoteMint: PublicKey = new PublicKey(
+              marketData.subarray(48, 80),
+            );
 
             const vaultsToFetch: VaultFetchInfo[] = [];
 
@@ -162,7 +182,12 @@ export class TvlMonitor {
               });
             }
 
-            if (vaultsToFetch.length > 0) {
+            // Failures for irrelevant markets cannot change any monitored TVL.
+            if (vaultsToFetch.length === 0) {
+              return;
+            }
+
+            try {
               const vaultPubkeys: PublicKey[] = vaultsToFetch.map(
                 (v: VaultFetchInfo): PublicKey => v.vault,
               );
@@ -207,15 +232,15 @@ export class TvlMonitor {
                 const current: bigint = tvlByMint.get(mintKey) ?? BigInt(0);
                 tvlByMint.set(mintKey, current + amount);
               }
+            } catch (error: unknown) {
+              console.error(
+                `TVL collection skipped market ${marketPk.toBase58()}:`,
+                error,
+              );
+              incompleteMarkets.push(marketPk.toBase58());
             }
-          } catch (error: unknown) {
-            console.error(
-              `TVL collection skipped market ${marketPk.toBase58()}:`,
-              error,
-            );
-            incompleteMarkets.push(marketPk.toBase58());
-          }
-        }),
+          },
+        ),
       );
     }
     return incompleteMarkets;

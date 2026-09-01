@@ -1009,15 +1009,26 @@ async fn wrapper_preserves_cancels_when_post_only_price_is_unknown() -> anyhow::
         &test_fixture.wrapper.key,
         vec![WrapperCancelOrderParams::new(7)],
         false,
-        vec![WrapperPlaceOrderParams::new(
-            8,
-            SOL_UNIT_SIZE,
-            100,
-            0,
-            true,
-            NO_EXPIRATION_LAST_VALID_SLOT,
-            OrderType::PostOnly,
-        )],
+        vec![
+            WrapperPlaceOrderParams::new(
+                8,
+                SOL_UNIT_SIZE,
+                100,
+                0,
+                true,
+                NO_EXPIRATION_LAST_VALID_SLOT,
+                OrderType::PostOnly,
+            ),
+            WrapperPlaceOrderParams::new(
+                9,
+                SOL_UNIT_SIZE,
+                2,
+                0,
+                true,
+                NO_EXPIRATION_LAST_VALID_SLOT,
+                OrderType::PostOnly,
+            ),
+        ],
     );
     send_tx_with_retry(
         Rc::clone(&test_fixture.context),
@@ -1035,8 +1046,8 @@ async fn wrapper_preserves_cancels_when_post_only_price_is_unknown() -> anyhow::
             .get_bids()
             .iter::<RestingOrder>()
             .count(),
-        0,
-        "The existing bid cancellation lands",
+        1,
+        "The cancel lands and the provably non-crossing replacement rests",
     );
     assert_eq!(
         test_fixture
@@ -1045,8 +1056,8 @@ async fn wrapper_preserves_cancels_when_post_only_price_is_unknown() -> anyhow::
             .get_asks()
             .iter::<RestingOrder>()
             .count(),
-        41,
-        "Uncertain PostOnly placement is not forwarded to roll back the cancel",
+        1,
+        "The unsafe PostOnly is suppressed while the safe one prunes expired asks",
     );
 
     Ok(())

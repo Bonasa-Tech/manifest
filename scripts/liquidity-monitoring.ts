@@ -620,8 +620,18 @@ export class LiquidityMonitor {
         completedMarkets,
       );
 
-      // Update summary statistics
-      await this.updatePrometheusMetrics();
+      const warnings: string[] = [];
+
+      // Collection and durable persistence define a successful monitoring
+      // cycle. Prometheus refresh is best-effort and should degrade health
+      // metadata rather than make an orchestrator restart a healthy process.
+      try {
+        await this.updatePrometheusMetrics();
+      } catch (error: unknown) {
+        const reason: string =
+          error instanceof Error ? error.message : String(error);
+        warnings.push(`Prometheus refresh failed: ${reason}`);
+      }
 
       console.log(
         `Monitoring cycle complete. Processed ${uniqueStats.length} market maker entries.`,
@@ -629,7 +639,6 @@ export class LiquidityMonitor {
       this.lastSuccessfulMonitoringAtMs = Date.now();
       this.lastMonitoringError = null;
       this.lastFailedMarkets = failedMarkets;
-      const warnings: string[] = [];
       if (solPriceResult.warning !== null) {
         warnings.push(solPriceResult.warning);
       }

@@ -36,8 +36,8 @@ export function toBigInt(n: bignum): bigint {
  * ordinary floating-point arithmetic are rounded; meaningful fractional atoms
  * are rejected by default. Callers that intentionally accept UI amounts
  * between atom boundaries must select an explicit rounding mode. Callers
- * needing larger u64 quantities should use an SDK method that accepts integer
- * atom amounts as beet.bignum/BN.
+ * receive a number when the atom value is a safe integer and a BN otherwise,
+ * so valid u64 instruction amounts never pass through an imprecise number.
  */
 export type TokenAmountRoundingMode = 'reject' | 'floor' | 'round';
 
@@ -45,7 +45,7 @@ export function tokenAmountToAtoms(
   amountTokens: number,
   decimals: number,
   roundingMode: TokenAmountRoundingMode = 'reject',
-): number {
+): bignum {
   if (!Number.isFinite(amountTokens) || amountTokens < 0) {
     throw new RangeError('Token amount must be a finite non-negative number');
   }
@@ -76,12 +76,7 @@ export function tokenAmountToAtoms(
     }
   }
   if (exactAtoms !== undefined) {
-    if (exactAtoms > BigInt(Number.MAX_SAFE_INTEGER)) {
-      throw new RangeError(
-        'Token amount exceeds JavaScript safe-integer atom precision',
-      );
-    }
-    return Number(exactAtoms);
+    return atomsBigIntToBignum(exactAtoms);
   }
 
   if (roundingMode !== 'reject') {
@@ -95,12 +90,7 @@ export function tokenAmountToAtoms(
       roundingMode === 'round' && remainder * 2n >= divisor
         ? wholeAtoms + 1n
         : wholeAtoms;
-    if (roundedAtoms > BigInt(Number.MAX_SAFE_INTEGER)) {
-      throw new RangeError(
-        'Token amount exceeds JavaScript safe-integer atom precision',
-      );
-    }
-    return Number(roundedAtoms);
+    return atomsBigIntToBignum(roundedAtoms);
   }
 
   // Computed values can stringify with a tiny tail (3 * 0.1 becomes
@@ -121,15 +111,21 @@ export function tokenAmountToAtoms(
       `Token amount has more than ${decimals} decimal places`,
     );
   }
-  if (!Number.isSafeInteger(roundedAtoms)) {
-    throw new RangeError(
-      'Token amount exceeds JavaScript safe-integer atom precision',
-    );
-  }
-  return roundedAtoms;
+  return atomsBigIntToBignum(BigInt(roundedAtoms));
 }
 
 type BNInstance = InstanceType<typeof BN>;
+
+const U64_MAX: bigint = (1n << 64n) - 1n;
+
+function atomsBigIntToBignum(atoms: bigint): bignum {
+  if (atoms > U64_MAX) {
+    throw new RangeError('Token amount exceeds unsigned 64-bit atom range');
+  }
+  return atoms <= BigInt(Number.MAX_SAFE_INTEGER)
+    ? Number(atoms)
+    : new BN(atoms.toString());
+}
 
 const BN_NUMBER_MAX: BNInstance = new BN(2 ** 48 - 1);
 const BN_10: BNInstance = new BN(10);

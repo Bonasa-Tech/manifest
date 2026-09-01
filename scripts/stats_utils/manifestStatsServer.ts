@@ -2012,7 +2012,9 @@ export class ManifestStatsServer {
   /**
    * Get array of recent fills.
    */
-  getRecentFills(market: string) {
+  getRecentFills(market: string): {
+    [market: string]: FillLogResult[] | undefined;
+  } {
     return { [market]: this.fillLogResults.get(market) };
   }
 
@@ -2054,7 +2056,9 @@ export class ManifestStatsServer {
     }
 
     // Apply default slot filter only if no efficient index filter is present.
-    const hasEfficientFilter = market || signature || taker || maker;
+    const hasEfficientFilter: boolean = Boolean(
+      market || signature || taker || maker || wallet,
+    );
     let { fromSlot } = options;
     let currentSlot: number | undefined;
     const getCurrentSlot = async (): Promise<number> => {
@@ -2070,10 +2074,9 @@ export class ManifestStatsServer {
       fromSlot = Math.max(0, (await getCurrentSlot()) - SLOTS_PER_DAY);
     }
 
-    // Wallet queries use a taker-or-maker predicate and cannot rely on one
-    // ordered composite index. Keep their history window bounded even when a
-    // caller supplies explicit slots; intentional archival access belongs in
-    // a separate authenticated/export path.
+    // Wallet-only queries default to one day ending at the caller's toSlot (or
+    // the current slot). Explicit ranges remain available for historical
+    // pagination and use the split taker/maker index scans below.
     if (wallet) {
       const effectiveToSlot: number = toSlot ?? (await getCurrentSlot());
       if (fromSlot === undefined) {
@@ -2081,12 +2084,6 @@ export class ManifestStatsServer {
       }
       if (fromSlot > effectiveToSlot) {
         throw new RangeError('fromSlot must be less than or equal to toSlot');
-      }
-      const maxWalletSlotRange: number = SLOTS_PER_DAY * 31;
-      if (effectiveToSlot - fromSlot > maxWalletSlotRange) {
-        throw new RangeError(
-          `wallet slot range must not exceed ${maxWalletSlotRange} slots`,
-        );
       }
     }
 
@@ -2110,9 +2107,11 @@ export class ManifestStatsServer {
         params.push(maker);
       }
 
-      // wallet matches either taker OR maker
+      // Wallet uses two independently bounded index scans below rather than a
+      // single OR predicate that would require sorting the full match set.
+      let walletParamIndex: number | undefined;
       if (wallet) {
-        conditions.push(`(taker = $${paramIndex} OR maker = $${paramIndex})`);
+        walletParamIndex = paramIndex;
         params.push(wallet);
         paramIndex++;
       }
@@ -2154,8 +2153,8 @@ export class ManifestStatsServer {
       //   market -> idx_fills_complete_market_slot (market, slot DESC)
       // For very common filter values the planner instead walks idx_fills_complete_slot
       // (slot) backward and filters — also cheap, since the first LIMIT rows match quickly.
-      // For wallet (taker OR maker), signature-only, or no filter there is no pre-sorted
-      // index, so a sort is unavoidable regardless of the column chosen.
+      // Wallet scans the maker and taker indexes separately, bounds each side
+      // to LIMIT+OFFSET, then merges those small result sets.
       //
       // We deliberately do NOT order by timestamp: it is the row's insert time, not the
       // on-chain time, so backfilled rows land out of chronological order. slot is
@@ -2163,14 +2162,48 @@ export class ManifestStatsServer {
       // across all filter types. (A timestamp ordering would also only be index-backed for
       // the market filter, via idx_fills_complete_market_timestamp, and force a sort for
       // maker/taker.)
-      const dataQuery = `
-      ${queries.SELECT_FILLS_COMPLETE_DATA_BASE}
-      ${whereClause}
-      ORDER BY slot DESC
-      LIMIT $${paramIndex++} OFFSET $${paramIndex++}
-    `;
-
-      params.push(limit, offset);
+      let dataQuery: string;
+      if (walletParamIndex !== undefined) {
+        const sharedConditions: string =
+          conditions.length > 0 ? `AND ${conditions.join(' AND ')}` : '';
+        const branchLimitParamIndex: number = paramIndex++;
+        const limitParamIndex: number = paramIndex++;
+        const offsetParamIndex: number = paramIndex++;
+        dataQuery = `
+          WITH wallet_fills AS (
+            (
+              SELECT fill_data, slot
+              FROM fills_complete
+              WHERE taker = $${walletParamIndex} ${sharedConditions}
+              ORDER BY slot DESC
+              LIMIT $${branchLimitParamIndex}
+            )
+            UNION ALL
+            (
+              SELECT fill_data, slot
+              FROM fills_complete
+              WHERE maker = $${walletParamIndex}
+                AND taker <> $${walletParamIndex}
+                ${sharedConditions}
+              ORDER BY slot DESC
+              LIMIT $${branchLimitParamIndex}
+            )
+          )
+          SELECT fill_data
+          FROM wallet_fills
+          ORDER BY slot DESC
+          LIMIT $${limitParamIndex} OFFSET $${offsetParamIndex}
+        `;
+        params.push(limit + offset, limit, offset);
+      } else {
+        dataQuery = `
+          ${queries.SELECT_FILLS_COMPLETE_DATA_BASE}
+          ${whereClause}
+          ORDER BY slot DESC
+          LIMIT $${paramIndex++} OFFSET $${paramIndex++}
+        `;
+        params.push(limit, offset);
+      }
       const dataResult = await this.executeQueryWithMetrics(
         'SELECT_FILLS_DATA',
         async () => this.pool.query(dataQuery, params),
