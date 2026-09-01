@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1788214351514,
+  "lastUpdate": 1788271634287,
   "repoUrl": "https://github.com/Bonasa-Tech/manifest",
   "entries": {
     "CU Benchmark": [
@@ -12899,6 +12899,72 @@ window.BENCHMARK_DATA = {
           {
             "name": "MFX_99",
             "value": 5078,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "cyrbritt@gmail.com",
+            "name": "Britt Cyr",
+            "username": "brittcyr"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "4f4f00cd9c369c8916c321502d82f10796192334",
+          "message": "Sync the wrapper's open orders once per batch update (#694)\n\nA batch update walked the trader's open orders twice, once to refresh\nthem against the core and once to match the cancels, and the cancel\nmatching built a HashSet even when the batch cancelled nothing. It also\npriced every cancelled bid in u128, read the clock more than once, and\ngrew the wrapper account once per new order, each growth costing a\nsystem transfer CPI and a realloc.\n\nNow the opening sync walks the orders once and matches the cancels in\nthe same pass, prices freed funds only when a new order needs the\nbalance, reads the clock once, and grows the account once per batch.\n\nThat walk is skipped when the wrapper's view cannot have gone stale: the\nmarket's order sequence number is unchanged, which covers every fill,\nexpiry pruning and reverse order because each comes with a placement;\nthe seat's balances are unchanged, which covers cancels and withdrawals\nmade outside this wrapper; and no global orders are open, since global\nclean and evict can remove those with no placement at all.\n\nTwo things are read from the core even on that cheap path.\n\nAn order the batch is about to cancel, because the cancel carries this\nwrapper's stored index as a hint and the core validates every cancel in\na batch before it processes any placement, so a single hint pointing at\nan order that is no longer there fails the whole instruction. That is\nalso the only way an entry stranded by the gap below is ever cleared,\nsince the batch that would clear it aborts first. It costs one read per\norder being cancelled rather than a walk of them all.\n\nAnd after the CPI, all of them, whenever the batch placed anything.\nPlacing is what runs the core's matching loop, and that loop both fills\nthis trader's other orders and removes any it finds expired on its way\ndown the book. Seat quote volume was tried as a cheaper signal for this\nand is not sound: the matching loop removes an expired maker without\nrecording any volume, and a fill of a small amount at a low price rounds\ndown to zero quote atoms. Worse, the orders a batch places are recorded\nwith a placeholder size that only that re-read fills in, so skipping it\nmade a cancel and replace at an exact balance drop the replacement while\nthe transaction succeeded.\n\nThe gap that remains is a cancel made directly on the core followed by a\nwithdrawal of exactly the refund, which moves neither thing the cheap\npath looks at. It costs nothing until that entry is cancelled or the\nmarket is traded again, and both of those now clear it.\n\nMarketInfo's padding becomes num_open_global_orders and\nlast_synced_order_sequence_number.\n\nMeasured on SBPF v2, five cancels and five placements against a wrapper\nholding twenty open orders, same test against both programs: 38,490 CU\nto 29,473, stable across three runs each.\n\ntests/cases/sync.rs covers a cancel made directly on the core, two\nconsecutive batches on a quiet market, growing in batches, the funds\npre-check, cancel and replace at an exact balance, cancelling a stranded\nentry, cancel_all over one, and a stranded entry cleared by the next\nplacement.",
+          "timestamp": "2026-09-01T10:01:38-04:00",
+          "tree_id": "9f14fde9d544d5f870d6c8d3762e89b00f469f3e",
+          "url": "https://github.com/Bonasa-Tech/manifest/commit/4f4f00cd9c369c8916c321502d82f10796192334"
+        },
+        "date": 1788271631539,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "PHX_50",
+            "value": 6897,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "PHX_95",
+            "value": 13208,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "PHX_99",
+            "value": 13902,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_50",
+            "value": 2437,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_95",
+            "value": 4097,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_99",
+            "value": 4354,
             "range": "",
             "unit": "CU",
             "extra": ""
