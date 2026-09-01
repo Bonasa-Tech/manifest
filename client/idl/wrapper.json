@@ -656,6 +656,9 @@
           },
           {
             "name": "lastUpdatedSlot",
+            "docs": [
+              "Legacy ABI name: bounded cancel-all byte cursor, or u32::MAX after a complete scan; no longer a slot."
+            ],
             "type": "u32"
           },
           {

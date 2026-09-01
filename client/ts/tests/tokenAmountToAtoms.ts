@@ -13,8 +13,18 @@ describe('tokenAmountToAtoms', () => {
 
   it('rejects excess precision and unsafe atom values', () => {
     expect(() => tokenAmountToAtoms(0.0000001, 6)).to.throw(RangeError);
+    expect(() => tokenAmountToAtoms(0.5, 0)).to.throw(RangeError);
     expect(() =>
       tokenAmountToAtoms(Number.MAX_SAFE_INTEGER / 100 + 1, 2),
     ).to.throw(RangeError);
+  });
+
+  it('requires callers to choose how meaningful fractional atoms round', () => {
+    expect(tokenAmountToAtoms(0.3333333333333333, 6, 'floor')).to.equal(
+      333_333,
+    );
+    expect(tokenAmountToAtoms(1.9, 0, 'floor')).to.equal(1);
+    expect(tokenAmountToAtoms(1.4, 0, 'round')).to.equal(1);
+    expect(tokenAmountToAtoms(1.5, 0, 'round')).to.equal(2);
   });
 });

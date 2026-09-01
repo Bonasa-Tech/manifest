@@ -140,7 +140,7 @@ fn prepare_cancel_all(
         .try_into()
         .unwrap();
     if dynamic_len == 0 {
-        return 0;
+        return NIL;
     }
     let mut cursor: DataIndex =
         if scan_cursor < dynamic_len && scan_cursor % (MARKET_BLOCK_SIZE as DataIndex) == 0 {
@@ -156,6 +156,9 @@ fn prepare_cancel_all(
     };
 
     for _ in 0..MAX_CANCEL_ALL_SCAN_STEPS {
+        // The wrapper sync can consume the entire 16-cancel core batch before
+        // this scan starts. Preserve the current cursor in that case: no
+        // physical block was inspected, so the scan is not complete.
         if remaining_cancel_all_cancels == 0 {
             break;
         }
@@ -188,7 +191,9 @@ fn prepare_cancel_all(
             cursor = 0;
         }
         if cursor == starting_cursor {
-            return 0;
+            // NIL is the only completion marker. Zero is a valid cursor and
+            // cannot distinguish a never-started scan from a wrapped quota.
+            return NIL;
         }
     }
 
@@ -203,6 +208,7 @@ fn prepare_orders(
     mut remaining_quote_atoms: QuoteAtoms,
     market: &ManifestAccountInfo<MarketFixed>,
     now_slot: u32,
+    preserve_cancellation_progress: bool,
 ) -> (Vec<PlaceOrderParams>, Vec<usize>) {
     // Cancellation-only batches do not need price discovery. In particular,
     // they must not walk an attacker-controlled prefix of expired makers
@@ -239,17 +245,17 @@ fn prepare_orders(
             .get_asks()
             .get_next_lower_index::<RestingOrder>(best_ask_index);
     }
-    if best_ask_index != NIL
+    let ask_scan_exhausted: bool = best_ask_index != NIL
         && get_helper::<RBNode<RestingOrder>>(
             &market_data,
             best_ask_index + (MARKET_FIXED_SIZE as DataIndex),
         )
         .get_value()
-        .is_expired(now_slot)
-    {
+        .is_expired(now_slot);
+    if ask_scan_exhausted {
         // The bounded advisory scan did not find a trustworthy price. Leave
-        // the side unknown and forward PostOnly orders to the authoritative
-        // core instead of silently deleting them in the wrapper.
+        // the side unknown. Placement-only PostOnly orders go to the core;
+        // mixed cancel/place batches suppress them below to protect cancels.
         best_ask_index = NIL;
     }
 
@@ -268,14 +274,14 @@ fn prepare_orders(
             .get_bids()
             .get_next_lower_index::<RestingOrder>(best_bid_index);
     }
-    if best_bid_index != NIL
+    let bid_scan_exhausted: bool = best_bid_index != NIL
         && get_helper::<RBNode<RestingOrder>>(
             &market_data,
             best_bid_index + (MARKET_FIXED_SIZE as DataIndex),
         )
         .get_value()
-        .is_expired(now_slot)
-    {
+        .is_expired(now_slot);
+    if bid_scan_exhausted {
         // See the ask-side case above. The core may accept the PostOnly order
         // after pruning, or return PostOnlyCrosses explicitly to the caller.
         best_bid_index = NIL;
@@ -313,7 +319,21 @@ fn prepare_orders(
         .unwrap();
         if order.order_type != OrderType::Global {
             if order.is_bid {
-                if price > best_ask_price && order.order_type == OrderType::PostOnly {
+                if order.order_type == OrderType::PostOnly
+                    && ask_scan_exhausted
+                    && preserve_cancellation_progress
+                {
+                    // The wrapper cannot determine whether this PostOnly bid
+                    // crosses without exceeding its traversal bound. Do not
+                    // forward it in a mixed cancel/place batch: a core
+                    // PostOnlyCrosses error would roll back valid cancels in
+                    // the same transaction. A placement-only batch is still
+                    // forwarded so the core can make the authoritative call.
+                    solana_program::msg!(
+                        "Skipping post only bid to preserve cancellation progress"
+                    );
+                    num_base_atoms = 0;
+                } else if price > best_ask_price && order.order_type == OrderType::PostOnly {
                     solana_program::msg!("Removing post only bid that would cross");
                     num_base_atoms = 0;
                 } else {
@@ -332,7 +352,16 @@ fn prepare_orders(
                 }
             } else {
                 let desired: BaseAtoms = BaseAtoms::new(order.base_atoms);
-                if price < best_bid_price && order.order_type == OrderType::PostOnly {
+                if order.order_type == OrderType::PostOnly
+                    && bid_scan_exhausted
+                    && preserve_cancellation_progress
+                {
+                    // See the bid-side case above.
+                    solana_program::msg!(
+                        "Skipping post only ask to preserve cancellation progress"
+                    );
+                    num_base_atoms = 0;
+                } else if price < best_bid_price && order.order_type == OrderType::PostOnly {
                     solana_program::msg!("Removing post only ask that would cross");
                     num_base_atoms = 0;
                 } else {
@@ -650,6 +679,7 @@ pub(crate) fn process_batch_update(
         core_cancels,
         ..
     } = matcher;
+    let preserve_cancellation_progress: bool = !core_cancels.is_empty();
 
     // A cancellation-only batch has no price-dependent work. In particular,
     // do not let an expired or adversarial book prefix spend any of its CU.
@@ -662,6 +692,7 @@ pub(crate) fn process_batch_update(
             remaining_quote_atoms,
             &market,
             now_slot,
+            preserve_cancellation_progress,
         )
     };
 

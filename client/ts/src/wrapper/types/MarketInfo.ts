@@ -15,7 +15,10 @@ export type MarketInfo = {
   baseBalance: beet.bignum;
   quoteBalance: beet.bignum;
   quoteVolume: beet.bignum;
-  /** Legacy field now used as the bounded cancel-all scan cursor. */
+  /**
+   * Legacy ABI name. This is a bounded cancel-all byte cursor, or u32::MAX
+   * after a complete scan; it no longer represents a slot.
+   */
   lastUpdatedSlot: number;
   numOpenGlobalOrders: number;
   lastSyncedOrderSequenceNumber: beet.bignum;

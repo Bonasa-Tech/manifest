@@ -34,12 +34,17 @@ export function toBigInt(n: bignum): bigint {
  * Convert a UI token amount to atoms without silently rounding a value that
  * JavaScript cannot represent exactly. Tiny sub-atom errors introduced by
  * ordinary floating-point arithmetic are rounded; meaningful fractional atoms
- * are rejected. Callers needing larger u64 quantities should use an SDK method
- * that accepts integer atom amounts as beet.bignum/BN.
+ * are rejected by default. Callers that intentionally accept UI amounts
+ * between atom boundaries must select an explicit rounding mode. Callers
+ * needing larger u64 quantities should use an SDK method that accepts integer
+ * atom amounts as beet.bignum/BN.
  */
+export type TokenAmountRoundingMode = 'reject' | 'floor' | 'round';
+
 export function tokenAmountToAtoms(
   amountTokens: number,
   decimals: number,
+  roundingMode: TokenAmountRoundingMode = 'reject',
 ): number {
   if (!Number.isFinite(amountTokens) || amountTokens < 0) {
     throw new RangeError('Token amount must be a finite non-negative number');
@@ -77,6 +82,25 @@ export function tokenAmountToAtoms(
       );
     }
     return Number(exactAtoms);
+  }
+
+  if (roundingMode !== 'reject') {
+    // atomExponent is negative here because non-negative exponents are exact.
+    // Round the number's canonical decimal value with integer arithmetic so
+    // the result does not depend on a second binary floating-point operation.
+    const divisor: bigint = 10n ** BigInt(-atomExponent);
+    const wholeAtoms: bigint = digits / divisor;
+    const remainder: bigint = digits % divisor;
+    const roundedAtoms: bigint =
+      roundingMode === 'round' && remainder * 2n >= divisor
+        ? wholeAtoms + 1n
+        : wholeAtoms;
+    if (roundedAtoms > BigInt(Number.MAX_SAFE_INTEGER)) {
+      throw new RangeError(
+        'Token amount exceeds JavaScript safe-integer atom precision',
+      );
+    }
+    return Number(roundedAtoms);
   }
 
   // Computed values can stringify with a tiny tail (3 * 0.1 becomes

@@ -518,9 +518,18 @@ export class LiquidityMonitor {
 
       const allStats: MarketMakerStats[] = [];
       const failedMarkets: string[] = [];
+      const completedMarkets: Set<string> = new Set();
 
       for (const [marketPk, market] of this.markets) {
         try {
+          const configuredMarket: MarketInfo | undefined =
+            this.marketInfo.get(marketPk);
+          if (configuredMarket?.quoteMint === SOL_MINT && solPriceUsd <= 0) {
+            throw new Error(
+              'No valid SOL/USD price is available; refusing to persist unpriced USD depth',
+            );
+          }
+
           // Reload market data
           await market.reload(this.connection);
 
@@ -578,10 +587,17 @@ export class LiquidityMonitor {
           console.log(
             `Processed ${marketStats.length} market makers for market ${marketPk}`,
           );
+          completedMarkets.add(marketPk);
         } catch (error) {
           console.error(`Error monitoring market ${marketPk}:`, error);
           failedMarkets.push(marketPk);
         }
+      }
+
+      if (this.markets.size > 0 && completedMarkets.size === 0) {
+        throw new Error(
+          'Monitoring cycle did not complete any eligible market',
+        );
       }
 
       // Remove duplicates before saving
@@ -598,7 +614,11 @@ export class LiquidityMonitor {
       });
 
       // Save stats to database
-      await this.saveStatsToDatabase(uniqueStats, cycleTimestamp);
+      await this.saveStatsToDatabase(
+        uniqueStats,
+        cycleTimestamp,
+        completedMarkets,
+      );
 
       // Update summary statistics
       await this.updatePrometheusMetrics();
@@ -635,6 +655,7 @@ export class LiquidityMonitor {
   async saveStatsToDatabase(
     stats: MarketMakerStats[],
     timestamp: Date,
+    completedMarkets: ReadonlySet<string> = new Set(this.marketInfo.keys()),
   ): Promise<void> {
     if (stats.length === 0) return;
 
@@ -697,12 +718,21 @@ export class LiquidityMonitor {
       }
 
       // Save market info snapshots
-      const marketInfoValues = Array.from(this.marketInfo.values()).flatMap(
-        (info) => [info.address, timestamp, info.volume24hUsd, info.lastPrice],
+      const completedMarketInfos: MarketInfo[] = Array.from(
+        this.marketInfo.values(),
+      ).filter((info: MarketInfo): boolean =>
+        completedMarkets.has(info.address),
       );
+      const marketInfoValues: (string | number | Date)[] =
+        completedMarketInfos.flatMap((info: MarketInfo) => [
+          info.address,
+          timestamp,
+          info.volume24hUsd,
+          info.lastPrice,
+        ]);
 
       if (marketInfoValues.length > 0) {
-        const marketInfoPlaceholders = Array.from(this.marketInfo.values())
+        const marketInfoPlaceholders: string = completedMarketInfos
           .map((_, index) => {
             const offset = index * 4;
             return `($${offset + 1}, $${offset + 2}, $${offset + 3}, $${offset + 4})`;

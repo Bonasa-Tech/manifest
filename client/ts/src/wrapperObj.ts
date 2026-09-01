@@ -45,7 +45,13 @@ export interface WrapperMarketInfo {
   quoteVolumeAtoms: bignum;
   /** Open orders. */
   orders: WrapperOpenOrder[];
-  /** Last update slot number. */
+  /** Persistent physical-block cursor for bounded cancel-all scans. */
+  cancelAllScanCursor: number;
+  /**
+   * Legacy name for cancelAllScanCursor. This has not represented a slot since
+   * the bounded cancel-all scan was introduced.
+   * @deprecated Use cancelAllScanCursor.
+   */
   lastUpdatedSlot: number;
 }
 
@@ -203,7 +209,7 @@ export class Wrapper {
     this.data.marketInfos.forEach((marketInfo: WrapperMarketInfo) => {
       console.log(`------------------------`);
       console.log(`Market: ${marketInfo.market}`);
-      console.log(`Cancel-all scan cursor: ${marketInfo.lastUpdatedSlot}`);
+      console.log(`Cancel-all scan cursor: ${marketInfo.cancelAllScanCursor}`);
       console.log(
         `BaseAtoms: ${marketInfo.baseBalanceAtoms} QuoteAtoms: ${marketInfo.quoteBalanceAtoms}`,
       );
@@ -295,6 +301,7 @@ export class Wrapper {
           quoteBalanceAtoms: marketInfoRaw.quoteBalance,
           quoteVolumeAtoms: marketInfoRaw.quoteVolume,
           orders: parsedOpenOrdersWithPrice,
+          cancelAllScanCursor: marketInfoRaw.lastUpdatedSlot,
           lastUpdatedSlot: marketInfoRaw.lastUpdatedSlot,
         };
       },

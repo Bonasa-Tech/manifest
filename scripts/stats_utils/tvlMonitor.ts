@@ -392,11 +392,18 @@ export class TvlMonitor {
         ].join('\n');
 
         if (this.discordWebhookUrl) {
-          await sendDiscordNotification(this.discordWebhookUrl, message, {
-            title: `${emoji} TVL Alert: ${symbol}`,
-            color: currentPercentChange > 0 ? 0x00ff00 : 0xff0000,
-            timestamp: true,
-          });
+          try {
+            await sendDiscordNotification(this.discordWebhookUrl, message, {
+              title: `${emoji} TVL Alert: ${symbol}`,
+              color: currentPercentChange > 0 ? 0x00ff00 : 0xff0000,
+              timestamp: true,
+            });
+          } catch (error: unknown) {
+            // Alert delivery is best-effort. A webhook outage must not retain
+            // the old comparison baseline or replay the same TVL movement on
+            // every later cycle.
+            console.error(`Failed to send ${symbol} TVL alert:`, error);
+          }
         }
       }
     }

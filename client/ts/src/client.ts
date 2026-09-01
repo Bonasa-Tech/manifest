@@ -43,7 +43,7 @@ import {
   createDepositInstruction,
   createWithdrawInstruction,
 } from './wrapper';
-import { FIXED_WRAPPER_HEADER_SIZE } from './constants';
+import { FIXED_WRAPPER_HEADER_SIZE, NIL } from './constants';
 import { getVaultAddress } from './utils/market';
 import { genAccDiscriminator } from './utils/discriminator';
 import { getGlobalAddress, getGlobalVaultAddress } from './utils/global';
@@ -857,7 +857,9 @@ export class ManifestClient {
    *
    * @param payer PublicKey of the trader
    * @param mint PublicKey for deposit mint. Must be either the base or quote
-   * @param amountTokens Number of tokens to deposit.
+   * @param amountTokens Number of tokens to deposit. Values between atom
+   * boundaries are rounded to the nearest atom; use depositAtomsIx for exact
+   * integer sizing.
    *
    * @returns TransactionInstruction
    */
@@ -870,7 +872,11 @@ export class ManifestClient {
       this.market.quoteMint().toBase58() === mint.toBase58()
         ? this.market.quoteDecimals()
         : this.market.baseDecimals();
-    const amountAtoms: number = tokenAmountToAtoms(amountTokens, mintDecimals);
+    const amountAtoms: number = tokenAmountToAtoms(
+      amountTokens,
+      mintDecimals,
+      'round',
+    );
     return this.depositAtomsIx(payer, mint, amountAtoms);
   }
 
@@ -917,7 +923,8 @@ export class ManifestClient {
    *
    * @param payer PublicKey of the trader
    * @param mint PublicKey for withdraw mint. Must be either the base or quote
-   * @param amountTokens Number of tokens to withdraw.
+   * @param amountTokens Number of tokens to withdraw. Values between atom
+   * boundaries are rounded down; use withdrawAtomsIx for exact integer sizing.
    *
    * @returns TransactionInstruction
    */
@@ -930,7 +937,11 @@ export class ManifestClient {
       this.market.quoteMint().toBase58() === mint.toBase58()
         ? this.market.quoteDecimals()
         : this.market.baseDecimals();
-    const amountAtoms: number = tokenAmountToAtoms(amountTokens, mintDecimals);
+    const amountAtoms: number = tokenAmountToAtoms(
+      amountTokens,
+      mintDecimals,
+      'floor',
+    );
     return this.withdrawAtomsIx(payer, mint, amountAtoms);
   }
 
@@ -1678,8 +1689,9 @@ export class ManifestClient {
   /**
    * Whether the most recently confirmed cancelAllIx() completed a full scan of
    * the core market account. Call reload() after confirming the transaction
-   * before reading this value. A false result means another cancelAllIx() pass
-   * is required to cover orders placed outside the wrapper.
+   * before reading this value. A newly created market info and a pass whose 16
+   * cancellation slots were consumed before scanning both report false. Keep
+   * submitting and reloading until this returns true.
    */
   public isCancelAllScanComplete(): boolean {
     if (!this.wrapper) {
@@ -1690,7 +1702,7 @@ export class ManifestClient {
     if (marketInfo === null) {
       throw new Error('Wrapper has no market info for this market');
     }
-    return marketInfo.lastUpdatedSlot === 0;
+    return marketInfo.cancelAllScanCursor === NIL;
   }
 
   /**
@@ -2027,7 +2039,8 @@ export class ManifestClient {
    * @param connection Connection to pull mint info
    * @param payer PublicKey of the trader
    * @param globalMint PublicKey for global mint deposit.
-   * @param amountTokens Number of tokens to deposit.
+   * @param amountTokens Number of tokens to deposit. Values between atom
+   * boundaries are rounded to the nearest atom.
    *
    * @returns Promise<TransactionInstruction>
    */
@@ -2053,8 +2066,12 @@ export class ManifestClient {
       true,
       is22 ? TOKEN_2022_PROGRAM_ID : TOKEN_PROGRAM_ID,
     );
-    const mintDecimals = mint.decimals;
-    const amountAtoms = tokenAmountToAtoms(amountTokens, mintDecimals);
+    const mintDecimals: number = mint.decimals;
+    const amountAtoms: number = tokenAmountToAtoms(
+      amountTokens,
+      mintDecimals,
+      'round',
+    );
 
     return createGlobalDepositInstruction(
       {
@@ -2079,7 +2096,8 @@ export class ManifestClient {
    * @param connection Connection to pull mint info
    * @param payer PublicKey of the trader
    * @param globalMint PublicKey for global mint withdraw.
-   * @param amountTokens Number of tokens to withdraw.
+   * @param amountTokens Number of tokens to withdraw. Values between atom
+   * boundaries are rounded to the nearest atom.
    *
    * @returns Promise<TransactionInstruction>
    */
@@ -2105,8 +2123,12 @@ export class ManifestClient {
       true,
       is22 ? TOKEN_2022_PROGRAM_ID : TOKEN_PROGRAM_ID,
     );
-    const mintDecimals = mint.decimals;
-    const amountAtoms = tokenAmountToAtoms(amountTokens, mintDecimals);
+    const mintDecimals: number = mint.decimals;
+    const amountAtoms: number = tokenAmountToAtoms(
+      amountTokens,
+      mintDecimals,
+      'round',
+    );
 
     return createGlobalWithdrawInstruction(
       {
@@ -2207,9 +2229,13 @@ function toWrapperPlaceOrderParams(
     priceQuoteAtomsPerBaseAtoms,
     maxExponent,
   );
+  // Preserve the SDK's historical order-sizing behavior explicitly: a UI
+  // amount between atom boundaries sizes down rather than placing more base
+  // than the caller's budget-derived value requested.
   const numBaseAtoms: bignum = tokenAmountToAtoms(
     wrapperPlaceOrderParamsExternal.numBaseTokens,
     market.baseDecimals(),
+    'floor',
   );
 
   return {
