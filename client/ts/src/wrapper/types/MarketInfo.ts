@@ -15,7 +15,8 @@ export type MarketInfo = {
   baseBalance: beet.bignum;
   quoteBalance: beet.bignum;
   quoteVolume: beet.bignum;
-  lastUpdatedSlot: number;
+  /** Bounded cancel-all byte cursor, or u32::MAX after a complete pass. */
+  cancelAllScanCursor: number;
   numOpenGlobalOrders: number;
   lastSyncedOrderSequenceNumber: beet.bignum;
 };
@@ -32,7 +33,7 @@ export const marketInfoBeet = new beet.BeetArgsStruct<MarketInfo>(
     ['baseBalance', beet.u64],
     ['quoteBalance', beet.u64],
     ['quoteVolume', beet.u64],
-    ['lastUpdatedSlot', beet.u32],
+    ['cancelAllScanCursor', beet.u32],
     ['numOpenGlobalOrders', beet.u32],
     ['lastSyncedOrderSequenceNumber', beet.u64],
   ],

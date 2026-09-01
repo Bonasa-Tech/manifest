@@ -254,9 +254,11 @@ pub(crate) fn process_swap_core(
         }
     };
 
-    // Note that in the case of fully exhausting the book, exact in/out will not
-    // be respected. It should be treated as a desired in/out. This pushes the
-    // burden of checking the results onto the caller program.
+    // Accepted risk: in the case of fully exhausting the book, exact in/out
+    // will not be respected. It should be treated as a desired in/out. This
+    // pushes the burden of checking the results onto the caller program.
+    // Production integrations use exact-in; direct exact-out is intentionally
+    // unsupported unless a composing program validates the returned amounts.
 
     // Example case is exact quote in. User wants exact quote in of 1_000_000
     // and min base out of 1_000. Suppose they fully exhaust the book and get

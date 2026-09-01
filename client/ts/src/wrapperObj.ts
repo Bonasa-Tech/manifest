@@ -45,8 +45,8 @@ export interface WrapperMarketInfo {
   quoteVolumeAtoms: bignum;
   /** Open orders, in no particular order. */
   orders: WrapperOpenOrder[];
-  /** Last update slot number. */
-  lastUpdatedSlot: number;
+  /** Persistent physical-block cursor for bounded cancel-all scans. */
+  cancelAllScanCursor: number;
 }
 
 /**
@@ -201,7 +201,7 @@ export class Wrapper {
   /**
    * Print all information loaded about the wrapper in a human readable format.
    */
-  public prettyPrint() {
+  public prettyPrint(): void {
     console.log('');
     console.log(`Wrapper: ${this.address.toBase58()}`);
     console.log(`========================`);
@@ -209,7 +209,7 @@ export class Wrapper {
     this.data.marketInfos.forEach((marketInfo: WrapperMarketInfo) => {
       console.log(`------------------------`);
       console.log(`Market: ${marketInfo.market}`);
-      console.log(`Last updated slot: ${marketInfo.lastUpdatedSlot}`);
+      console.log(`Cancel-all scan cursor: ${marketInfo.cancelAllScanCursor}`);
       console.log(
         `BaseAtoms: ${marketInfo.baseBalanceAtoms} QuoteAtoms: ${marketInfo.quoteBalanceAtoms}`,
       );
@@ -301,7 +301,7 @@ export class Wrapper {
           quoteBalanceAtoms: marketInfoRaw.quoteBalance,
           quoteVolumeAtoms: marketInfoRaw.quoteVolume,
           orders: parsedOpenOrdersWithPrice,
-          lastUpdatedSlot: marketInfoRaw.lastUpdatedSlot,
+          cancelAllScanCursor: marketInfoRaw.cancelAllScanCursor,
         };
       },
     );

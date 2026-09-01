@@ -34,4 +34,9 @@ export interface CompleteFillsQueryResult {
   total: number;
   /** Whether there are more results available */
   hasMore: boolean;
+  /** Slot bounds actually applied to this query; null means unbounded. */
+  effectiveSlotRange: {
+    fromSlot: number | null;
+    toSlot: number | null;
+  };
 }

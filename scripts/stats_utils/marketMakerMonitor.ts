@@ -60,16 +60,20 @@ export class MarketMakerMonitor {
       return;
     }
 
-    // Check for new market makers crossing thresholds
-    await this.checkMarketMakerMilestones(currentVolumes);
+    try {
+      // Check for new market makers crossing thresholds
+      await this.checkMarketMakerMilestones(currentVolumes);
 
-    // Check for large volume changes in existing market makers
-    await this.checkVolumeChanges(
-      this.previousSnapshot.volumeByTrader,
-      currentVolumes,
-    );
-
-    this.previousSnapshot = currentSnapshot;
+      // Check for large volume changes in existing market makers
+      await this.checkVolumeChanges(
+        this.previousSnapshot.volumeByTrader,
+        currentVolumes,
+      );
+    } finally {
+      // Alert delivery must not make the next hourly delta span multiple
+      // cycles. Failed milestone deliveries remain unacknowledged and retry.
+      this.previousSnapshot = currentSnapshot;
+    }
   }
 
   /**
@@ -82,16 +86,30 @@ export class MarketMakerMonitor {
       // Check $100k threshold (new market maker)
       if (volume >= NEW_MARKET_MAKER_THRESHOLD_USDC) {
         if (!this.alertedNewMarketMakers.has(trader)) {
-          this.alertedNewMarketMakers.add(trader);
-          await this.sendNewMarketMakerAlert(trader, volume);
+          try {
+            await this.sendNewMarketMakerAlert(trader, volume);
+            this.alertedNewMarketMakers.add(trader);
+          } catch (error: unknown) {
+            console.error(
+              `Failed to deliver new-market-maker alert for ${trader}:`,
+              error,
+            );
+          }
         }
       }
 
       // Check $1M threshold (million maker milestone)
       if (volume >= MILLION_MAKER_THRESHOLD_USDC) {
         if (!this.alertedMillionMakers.has(trader)) {
-          this.alertedMillionMakers.add(trader);
-          await this.sendMillionMakerAlert(trader, volume);
+          try {
+            await this.sendMillionMakerAlert(trader, volume);
+            this.alertedMillionMakers.add(trader);
+          } catch (error: unknown) {
+            console.error(
+              `Failed to deliver million-maker alert for ${trader}:`,
+              error,
+            );
+          }
         }
       }
     }
@@ -105,38 +123,45 @@ export class MarketMakerMonitor {
     currentVolumes: Map<string, number>,
   ): Promise<void> {
     for (const [trader, currentVolume] of currentVolumes) {
-      const previousVolume: number = previousVolumes.get(trader) ?? 0;
+      try {
+        const previousVolume: number = previousVolumes.get(trader) ?? 0;
 
-      // Calculate hourly volume (delta)
-      const hourlyVolume: number = currentVolume - previousVolume;
+        // Calculate hourly volume (delta)
+        const hourlyVolume: number = currentVolume - previousVolume;
 
-      // Skip if no activity this hour
-      if (hourlyVolume <= 0) {
-        continue;
-      }
+        // Skip if no activity this hour
+        if (hourlyVolume <= 0) {
+          continue;
+        }
 
-      // Alert if hourly volume exceeds $1 million threshold
-      if (hourlyVolume >= MAKER_HOURLY_VOLUME_THRESHOLD_USDC) {
-        await this.sendLargeHourlyVolumeAlert(
-          trader,
-          currentVolume,
-          hourlyVolume,
-        );
-        continue; // Don't also send percentage alert for same trader
-      }
+        // Alert if hourly volume exceeds $1 million threshold
+        if (hourlyVolume >= MAKER_HOURLY_VOLUME_THRESHOLD_USDC) {
+          await this.sendLargeHourlyVolumeAlert(
+            trader,
+            currentVolume,
+            hourlyVolume,
+          );
+          continue; // Don't also send percentage alert for same trader
+        }
 
-      // Alert if hourly volume is 50%+ of previous total (for traders with $50k+ volume)
-      if (
-        previousVolume >= MIN_VOLUME_FOR_PERCENT_ALERT_USDC &&
-        hourlyVolume / previousVolume >= MAKER_VOLUME_CHANGE_PERCENT_THRESHOLD
-      ) {
-        const percentChange: number = hourlyVolume / previousVolume;
-        await this.sendPercentChangeAlert(
-          trader,
-          previousVolume,
-          currentVolume,
-          hourlyVolume,
-          percentChange,
+        // Alert if hourly volume is 50%+ of previous total (for traders with $50k+ volume)
+        if (
+          previousVolume >= MIN_VOLUME_FOR_PERCENT_ALERT_USDC &&
+          hourlyVolume / previousVolume >= MAKER_VOLUME_CHANGE_PERCENT_THRESHOLD
+        ) {
+          const percentChange: number = hourlyVolume / previousVolume;
+          await this.sendPercentChangeAlert(
+            trader,
+            previousVolume,
+            currentVolume,
+            hourlyVolume,
+            percentChange,
+          );
+        }
+      } catch (error: unknown) {
+        console.error(
+          `Failed to deliver hourly maker alert for ${trader}:`,
+          error,
         );
       }
     }

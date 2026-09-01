@@ -256,6 +256,24 @@ export class Market {
   }
 
   /**
+   * Get the exact withdrawable atom balance without converting through a
+   * JavaScript number. This is the appropriate path for large u64 balances.
+   */
+  public getWithdrawableBalanceAtoms(
+    trader: PublicKey,
+    isBase: boolean,
+  ): bignum {
+    const seat: ClaimedSeat | undefined = this.data.claimedSeats.find(
+      (claimedSeat: ClaimedSeat): boolean =>
+        claimedSeat.publicKey.equals(trader),
+    );
+    if (seat === undefined) {
+      return 0;
+    }
+    return isBase ? seat.baseBalance : seat.quoteBalance;
+  }
+
+  /**
    * Get the total amount in atoms of balance that is deposited on this market, split
    * by base, quote, and whether in orders or not for the whole market.
    *

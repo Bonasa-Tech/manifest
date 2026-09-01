@@ -75,8 +75,10 @@ pub(crate) fn remove_from_global(
     global_trade_accounts_opt: &Option<GlobalTradeAccounts>,
 ) -> ProgramResult {
     if global_trade_accounts_opt.is_none() {
-        // Payer is forfeiting the right to claim the gas prepayment. This
-        // results in a stranded gas prepayment on the global account.
+        // Expected behavior: omitting the refund-capable global account bundle
+        // forfeits the payer's right to the cleanup gas prepayment. Removing
+        // the order still succeeds and strands the prepayment in the global
+        // account; callers that require a refund must supply the full bundle.
         return Ok(());
     }
     let global_trade_accounts: &GlobalTradeAccounts = &global_trade_accounts_opt.as_ref().unwrap();

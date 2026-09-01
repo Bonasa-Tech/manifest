@@ -6,17 +6,19 @@ use std::{
 use borsh::{BorshDeserialize, BorshSerialize};
 use hypertree::{
     get_helper, get_mut_helper, DataIndex, FreeList, HyperTreeReadOperations,
-    HyperTreeValueIteratorTrait, HyperTreeWriteOperations, RBNode, NIL,
+    HyperTreeWriteOperations, RBNode, NIL,
 };
 use manifest::{
     program::{
-        batch_update::{BatchUpdateParams, CancelOrderParams, PlaceOrderParams},
+        batch_update::{
+            BatchUpdateParams, CancelOrderParams, MarketDataTreeNodeType, PlaceOrderParams,
+        },
         get_dynamic_account, get_mut_dynamic_account, invoke, ManifestInstruction,
     },
     quantities::{BaseAtoms, QuoteAtoms, QuoteAtomsPerBaseAtom, WrapperU64},
     state::{
         utils::get_now_slot, DynamicAccount, MarketFixed, OrderType, RestingOrder,
-        MARKET_FIXED_SIZE, NO_EXPIRATION_LAST_VALID_SLOT,
+        MARKET_BLOCK_SIZE, NO_EXPIRATION_LAST_VALID_SLOT,
     },
     validation::{ManifestAccountInfo, Program, Signer},
 };
@@ -40,6 +42,11 @@ use super::shared::{
     ensure_free_slots, get_market_info_index_for_market, sync_fast, CancelMatcher, OpenOrdersList,
     UnusedWrapperFreeListPadding, EXPECTED_ORDER_BATCH_SIZE,
 };
+
+// Physical-block inspection is substantially cheaper than tree traversal. A
+// 1,024-block quota covers 80 KiB of market state per call (about 13 calls for
+// a 1 MiB market) while preserving a hard instruction-level CU bound.
+const MAX_CANCEL_ALL_SCAN_STEPS: usize = 1_024;
 
 #[derive(BorshDeserialize, BorshSerialize, Clone)]
 pub struct WrapperPlaceOrderParams {
@@ -115,54 +122,83 @@ fn prepare_cancel_all(
     matcher: &mut CancelMatcher,
     market: &ManifestAccountInfo<MarketFixed>,
     trader_index: DataIndex,
-) {
-    let mut remaining_cancel_all_scans: usize =
+    scan_cursor: DataIndex,
+) -> DataIndex {
+    // Scan physical market blocks rather than walking either price tree. The
+    // fixed scan quota bounds CU, while the per-market cursor makes retries
+    // progress regardless of how unrelated orders are priced. Completion is
+    // per pass, not a stable assertion that the trader has no orders: between
+    // transactions, a freed block already behind the cursor can be reused for
+    // a newly created order.
+    let mut remaining_cancel_all_cancels: usize =
         EXPECTED_ORDER_BATCH_SIZE.saturating_sub(matcher.core_cancels.len());
     let market_data: Ref<&mut [u8]> = market.try_borrow_data().unwrap();
     let market_ref: DynamicAccount<&MarketFixed, &[u8]> =
         get_dynamic_account::<MarketFixed>(&market_data);
+    let dynamic_len: DataIndex = (market_ref.dynamic.len() / MARKET_BLOCK_SIZE * MARKET_BLOCK_SIZE)
+        .try_into()
+        .unwrap();
+    if dynamic_len == 0 {
+        return NIL;
+    }
+    let mut cursor: DataIndex =
+        if scan_cursor < dynamic_len && scan_cursor % (MARKET_BLOCK_SIZE as DataIndex) == 0 {
+            scan_cursor
+        } else {
+            0
+        };
     let is_known = |order_sequence_number: u64, core_cancels: &Vec<CancelOrderParams>| {
         core_cancels.iter().any(|cancel: &CancelOrderParams| {
             cancel.order_sequence_number() == order_sequence_number
         })
     };
-    for (index, resting_order) in market_ref.get_bids().iter::<RestingOrder>() {
-        if remaining_cancel_all_scans == 0 {
+
+    for _ in 0..MAX_CANCEL_ALL_SCAN_STEPS {
+        // The wrapper sync can consume the entire 16-cancel core batch before
+        // this scan starts. Preserve the current cursor in that case: no
+        // physical block was inspected, so the scan is not complete.
+        if remaining_cancel_all_cancels == 0 {
             break;
         }
-        remaining_cancel_all_scans -= 1;
-        if resting_order.get_trader_index() == trader_index
-            && !is_known(resting_order.get_sequence_number(), &matcher.core_cancels)
-        {
-            matcher.core_cancels.push(CancelOrderParams::new_with_hint(
-                resting_order.get_sequence_number(),
-                Some(index),
-            ));
-            if matcher.needs_quote {
-                matcher.freed_quote_atoms += resting_order
-                    .get_price()
-                    .checked_quote_for_base(resting_order.get_num_base_atoms(), true)
-                    .unwrap();
+
+        let resting_order_node: &RBNode<RestingOrder> =
+            get_helper::<RBNode<RestingOrder>>(market_ref.dynamic, cursor);
+        if resting_order_node.get_payload_type() == MarketDataTreeNodeType::RestingOrder as u8 {
+            let resting_order: &RestingOrder = resting_order_node.get_value();
+            if resting_order.get_trader_index() == trader_index
+                && !is_known(resting_order.get_sequence_number(), &matcher.core_cancels)
+            {
+                matcher.core_cancels.push(CancelOrderParams::new_with_hint(
+                    resting_order.get_sequence_number(),
+                    Some(cursor),
+                ));
+                if resting_order.get_is_bid() && matcher.needs_quote {
+                    matcher.freed_quote_atoms += resting_order
+                        .get_price()
+                        .checked_quote_for_base(resting_order.get_num_base_atoms(), true)
+                        .unwrap();
+                } else if !resting_order.get_is_bid() && matcher.needs_base {
+                    matcher.freed_base_atoms += resting_order.get_num_base_atoms();
+                }
+                remaining_cancel_all_cancels -= 1;
             }
         }
-    }
-    for (index, resting_order) in market_ref.get_asks().iter::<RestingOrder>() {
-        if remaining_cancel_all_scans == 0 {
-            break;
+
+        cursor += MARKET_BLOCK_SIZE as DataIndex;
+        if cursor >= dynamic_len {
+            cursor = 0;
         }
-        remaining_cancel_all_scans -= 1;
-        if resting_order.get_trader_index() == trader_index
-            && !is_known(resting_order.get_sequence_number(), &matcher.core_cancels)
-        {
-            matcher.core_cancels.push(CancelOrderParams::new_with_hint(
-                resting_order.get_sequence_number(),
-                Some(index),
-            ));
-            if matcher.needs_base {
-                matcher.freed_base_atoms += resting_order.get_num_base_atoms();
-            }
+        if cursor == 0 {
+            // Byte offset zero is the fixed origin of every pass. A pass may
+            // span many instructions, so completion occurs when the persisted
+            // cursor wraps to zero, not when one instruction returns to its
+            // own starting cursor. NIL remains the external completion marker
+            // because zero is also the valid first cursor of a new pass.
+            return NIL;
         }
     }
+
+    cursor
 }
 
 /// Possibly update orders due to insufficient funds. Reduce the quantity of the
@@ -171,67 +207,16 @@ fn prepare_orders(
     orders: &[WrapperPlaceOrderParams],
     mut remaining_base_atoms: BaseAtoms,
     mut remaining_quote_atoms: QuoteAtoms,
-    market: &ManifestAccountInfo<MarketFixed>,
     now_slot: u32,
 ) -> (Vec<PlaceOrderParams>, Vec<usize>) {
-    let market_data: Ref<'_, &mut [u8]> = market.try_borrow_data().unwrap();
-    let market_ref: DynamicAccount<&MarketFixed, &[u8]> =
-        get_dynamic_account::<MarketFixed>(&market_data);
-    let mut best_ask_index: DataIndex = market_ref.get_asks().get_max_index();
-    let mut best_bid_index: DataIndex = market_ref.get_bids().get_max_index();
-
-    // Walk the tree until you find a non-expired order since those can be
-    // trivially ignored. Does not prevent unbacked global orders, but that
-    // would require global accounts and be too complicated to do here because
-    // this is only best-effort.
-    // Also, changes orders with last_valid_slot < 1_000_000 to now +
-    // last_valid_slot.
-
-    while best_ask_index != NIL
-        && get_helper::<RBNode<RestingOrder>>(
-            &market_data,
-            best_ask_index + (MARKET_FIXED_SIZE as DataIndex),
-        )
-        .get_value()
-        .is_expired(now_slot)
-    {
-        best_ask_index = market_ref
-            .get_asks()
-            .get_next_lower_index::<RestingOrder>(best_ask_index);
-    }
-    while best_bid_index != NIL
-        && get_helper::<RBNode<RestingOrder>>(
-            &market_data,
-            best_bid_index + (MARKET_FIXED_SIZE as DataIndex),
-        )
-        .get_value()
-        .is_expired(now_slot)
-    {
-        best_bid_index = market_ref
-            .get_bids()
-            .get_next_lower_index::<RestingOrder>(best_bid_index);
-    }
-
-    let best_ask_price: QuoteAtomsPerBaseAtom = if best_ask_index != NIL {
-        get_helper::<RBNode<RestingOrder>>(
-            &market_data,
-            best_ask_index + (MARKET_FIXED_SIZE as DataIndex),
-        )
-        .get_value()
-        .get_price()
-    } else {
-        QuoteAtomsPerBaseAtom::MAX
-    };
-    let best_bid_price: QuoteAtomsPerBaseAtom = if best_bid_index != NIL {
-        get_helper::<RBNode<RestingOrder>>(
-            &market_data,
-            best_bid_index + (MARKET_FIXED_SIZE as DataIndex),
-        )
-        .get_value()
-        .get_price()
-    } else {
-        QuoteAtomsPerBaseAtom::MIN
-    };
+    // The wrapper deliberately does not inspect the shared book to predict
+    // PostOnly crossing. The core prunes expired makers before its
+    // authoritative PostOnly check, so wrapper-side discovery can only add an
+    // attacker-controlled traversal or silently disagree with the core. A
+    // crossing PostOnly order therefore fails the entire atomic batch,
+    // including cancels and cancel-all cursor progress; callers that need
+    // cancellation progress independent of replacement quotes must split the
+    // operations into separate transactions.
 
     let mut result: Vec<PlaceOrderParams> = Vec::with_capacity(orders.len());
     let mut original_indices: Vec<usize> = Vec::with_capacity(orders.len());
@@ -244,35 +229,25 @@ fn prepare_orders(
         .unwrap();
         if order.order_type != OrderType::Global {
             if order.is_bid {
-                if price > best_ask_price && order.order_type == OrderType::PostOnly {
-                    solana_program::msg!("Removing post only bid that would cross");
+                // Exact, like the core: a bid sized to the whole balance must
+                // pass. The division is the reciprocal fast path in
+                // quantities.
+                let desired: QuoteAtoms = BaseAtoms::new(order.base_atoms)
+                    .checked_mul(price, true)
+                    .unwrap();
+                if desired > remaining_quote_atoms {
+                    solana_program::msg!("Removing bid for insufficient funds");
                     num_base_atoms = 0;
                 } else {
-                    // Exact, like the core: a bid sized to the whole balance
-                    // must pass. The division is the reciprocal fast path in
-                    // quantities.
-                    let desired: QuoteAtoms = BaseAtoms::new(order.base_atoms)
-                        .checked_mul(price, true)
-                        .unwrap();
-                    if desired > remaining_quote_atoms {
-                        solana_program::msg!("Removing bid for insufficient funds");
-                        num_base_atoms = 0;
-                    } else {
-                        remaining_quote_atoms -= desired;
-                    }
+                    remaining_quote_atoms -= desired;
                 }
             } else {
                 let desired: BaseAtoms = BaseAtoms::new(order.base_atoms);
-                if price < best_bid_price && order.order_type == OrderType::PostOnly {
-                    solana_program::msg!("Removing post only ask that would cross");
+                if desired > remaining_base_atoms {
+                    solana_program::msg!("Removing ask for insufficient funds");
                     num_base_atoms = 0;
                 } else {
-                    if desired > remaining_base_atoms {
-                        solana_program::msg!("Removing ask for insufficient funds");
-                        num_base_atoms = 0;
-                    } else {
-                        remaining_base_atoms -= desired;
-                    }
+                    remaining_base_atoms -= desired;
                 }
             }
         }
@@ -561,7 +536,18 @@ pub(crate) fn process_batch_update(
     };
     let trader_index_hint: Option<DataIndex> = Some(market_info.trader_index);
     if cancel_all {
-        prepare_cancel_all(&mut matcher, &market, market_info.trader_index);
+        let next_cancel_all_cursor: DataIndex = prepare_cancel_all(
+            &mut matcher,
+            &market,
+            market_info.trader_index,
+            market_info.cancel_all_scan_cursor,
+        );
+        let mut wrapper_data: RefMut<&mut [u8]> = wrapper_state.info.try_borrow_mut_data()?;
+        let (_fixed_data, wrapper_dynamic_data) =
+            wrapper_data.split_at_mut(size_of::<ManifestWrapperStateFixed>());
+        get_mut_helper::<RBNode<MarketInfo>>(wrapper_dynamic_data, market_info_index)
+            .get_mut_value()
+            .cancel_all_scan_cursor = next_cancel_all_cursor;
     }
     let remaining_base_atoms: BaseAtoms = market_info.base_balance + matcher.freed_base_atoms;
     let remaining_quote_atoms: QuoteAtoms = market_info.quote_balance + matcher.freed_quote_atoms;
@@ -571,13 +557,18 @@ pub(crate) fn process_batch_update(
         ..
     } = matcher;
 
-    let (core_orders, original_indices) = prepare_orders(
-        &orders,
-        remaining_base_atoms,
-        remaining_quote_atoms,
-        &market,
-        now_slot,
-    );
+    // A cancellation-only batch has no price-dependent work. In particular,
+    // do not let an expired or adversarial book prefix spend any of its CU.
+    let (core_orders, original_indices) = if orders.is_empty() {
+        (Vec::new(), Vec::new())
+    } else {
+        prepare_orders(
+            &orders,
+            remaining_base_atoms,
+            remaining_quote_atoms,
+            now_slot,
+        )
+    };
 
     // Whether the core ran its matching loop, which is the only thing in a
     // batch update that can touch orders other than the ones named in it.

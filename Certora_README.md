@@ -201,7 +201,7 @@ to be artifacts rather than bugs:
 
 # Requirements for compilation from Rust to SBF ##
 
-1. Instal Certora CLI
+1. Install Certora CLI
 
 ```
 pip install certora-cli
@@ -209,8 +209,12 @@ pip install certora-cli
 
 2. Solana CLI: 2.2.12
 
-```
-sh -c "$(curl -sSfL https://release.anza.xyz/v2.2.12/install)"
+```shell
+curl --fail --silent --show-error --location \
+  --output solana-install.sh https://release.anza.xyz/v2.2.12/install
+echo '4caed81545b20ddcbc06d65ca8ef8dc69fc9e68fe93a868f5b508309021b49af  solana-install.sh' \
+  | sha256sum --check --strict
+sh solana-install.sh
 ```
 
 3. Install Certora version of platform-tools 1.41

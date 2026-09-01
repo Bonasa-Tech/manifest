@@ -283,7 +283,7 @@ impl SwapParams {
 /// Create a Swap instruction.
 ///
 /// # Accounts
-/// 0. `[signer]` payer - Payer for potential expansion
+/// 0. `[writable, signer]` payer - Payer for potential market expansion
 /// 1. `[writable]` market - The market account
 /// 2. `[]` system_program - System program
 /// 3. `[writable]` trader_base - Trader's base token account
@@ -294,6 +294,8 @@ impl SwapParams {
 /// 8. `[]` base_mint (optional, for token-2022)
 /// 9. `[]` token_program_quote (optional, if different from base)
 /// 10. `[]` quote_mint (optional, for token-2022)
+/// 11. `[writable]` global (optional) - Global account for the output mint
+/// 12. `[writable]` global_vault (optional) - Global vault for the output mint
 pub fn swap_instruction(
     payer: Pubkey,
     market: Pubkey,
@@ -306,12 +308,13 @@ pub fn swap_instruction(
     include_base_mint: bool,
     include_quote_mint: bool,
     params: SwapParams,
+    include_global: bool,
 ) -> Instruction {
     let (base_vault, _) = get_vault_address(&market, &base_mint);
     let (quote_vault, _) = get_vault_address(&market, &quote_mint);
 
     let mut accounts = vec![
-        AccountMeta::new_readonly(payer, true),
+        AccountMeta::new(payer, true),
         AccountMeta::new(market, false),
         AccountMeta::new_readonly(SYSTEM_PROGRAM_ID, false),
         AccountMeta::new(trader_base, false),
@@ -334,10 +337,64 @@ pub fn swap_instruction(
         accounts.push(AccountMeta::new_readonly(quote_mint, false));
     }
 
+    if include_global {
+        let output_mint = if params.is_base_in {
+            quote_mint
+        } else {
+            base_mint
+        };
+        let (global, _) = get_global_address(&output_mint);
+        let (global_vault, _) = get_global_vault_address(&output_mint);
+        accounts.push(AccountMeta::new(global, false));
+        accounts.push(AccountMeta::new(global_vault, false));
+    }
+
     let mut data = vec![ManifestInstruction::Swap as u8];
     data.extend_from_slice(&params.serialize());
 
     Instruction::new_with_bytes(MANIFEST_PROGRAM_ID, &data, accounts)
+}
+
+#[cfg(test)]
+mod swap_instruction_tests {
+    use super::*;
+
+    #[test]
+    fn payer_is_writable_and_global_accounts_follow_the_output_mint() {
+        let payer = Pubkey::new_unique();
+        let market = Pubkey::new_unique();
+        let trader_base = Pubkey::new_unique();
+        let trader_quote = Pubkey::new_unique();
+        let base_mint = Pubkey::new_unique();
+        let quote_mint = Pubkey::new_unique();
+        let instruction = swap_instruction(
+            payer,
+            market,
+            trader_base,
+            trader_quote,
+            base_mint,
+            quote_mint,
+            TOKEN_PROGRAM_ID,
+            None,
+            false,
+            false,
+            SwapParams::new(1, 0, false, true),
+            true,
+        );
+
+        assert!(instruction.accounts[0].is_signer);
+        assert!(instruction.accounts[0].is_writable);
+        assert_eq!(
+            instruction.accounts[8].pubkey,
+            get_global_address(&base_mint).0
+        );
+        assert_eq!(
+            instruction.accounts[9].pubkey,
+            get_global_vault_address(&base_mint).0
+        );
+        assert!(instruction.accounts[8].is_writable);
+        assert!(instruction.accounts[9].is_writable);
+    }
 }
 
 /// Parameters for placing a single order.

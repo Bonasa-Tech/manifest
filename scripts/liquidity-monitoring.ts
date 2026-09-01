@@ -45,6 +45,11 @@ const marketMakerDepth = new promClient.Gauge({
   labelNames: ['market', 'trader', 'side', 'spread_bps'] as const,
 });
 
+// Accepted operational tradeoff: trader pubkeys are permissionless labels and
+// historical rows are append-only. Cardinality/storage exhaustion is
+// theoretically possible through funded identity churn, but current scale is
+// nowhere near operational limits. If growth becomes material, cap exported
+// identities, remove stale label sets, and partition/expire snapshot history.
 const marketMakerUptime = new promClient.Gauge({
   name: 'market_maker_uptime',
   help: 'Market maker uptime percentage',
@@ -77,6 +82,18 @@ interface MarketInfo {
   quoteDecimals: number;
 }
 
+interface TickerResponse {
+  ticker_id: string;
+  target_currency: string;
+  target_volume?: number;
+  last_price?: number;
+}
+
+interface SolPriceResult {
+  priceUsd: number;
+  warning: string | null;
+}
+
 export class LiquidityMonitor {
   private connection: Connection;
   public pool: Pool;
@@ -84,6 +101,14 @@ export class LiquidityMonitor {
   private marketInfo: Map<string, MarketInfo> = new Map();
 
   private isMonitoring = false;
+  private monitoringStartedAtMs: number | null = null;
+  private lastSuccessfulMonitoringAtMs: number | null = null;
+  private lastMonitoringError: string | null = null;
+  private lastMonitoringWarning: string | null = null;
+  private lastFailedMarkets: string[] = [];
+  private lastMarketVolumes: Map<string, number> = new Map();
+  private lastSolPriceUsd: number = 0;
+  private marketStatsCache: { expiresAtMs: number; rows: any[] } | undefined;
 
   constructor() {
     this.connection = new Connection(RPC_URL!);
@@ -188,20 +213,24 @@ export class LiquidityMonitor {
   async fetchMarketVolumes(): Promise<Map<string, number>> {
     try {
       const response = await fetch('https://mfx-stats-mainnet.fly.dev/tickers');
-      const tickers = await response.json();
+      if (!response.ok) {
+        throw new Error(`Ticker request failed with HTTP ${response.status}`);
+      }
+      const tickers: TickerResponse[] =
+        (await response.json()) as TickerResponse[];
 
       const volumeMap = new Map<string, number>();
 
       // Get SOL price from SOL/USDC market
       const solUsdcTicker = tickers.find(
-        (t: any) =>
+        (t: TickerResponse) =>
           t.ticker_id === 'ENhU8LsaR7vDD2G1CsWcsuSGNrih9Cv5WZEk7q9kPapQ',
       );
       const solPrice = solUsdcTicker?.last_price || 0;
 
       // Get CBBTC price from CBBTC/USDC market
       const cbbtcUsdcTicker = tickers.find(
-        (t: any) => t.ticker_id === CBBTC_USDC_MARKET,
+        (t: TickerResponse) => t.ticker_id === CBBTC_USDC_MARKET,
       );
       const cbbtcPrice = cbbtcUsdcTicker?.last_price || 0;
 
@@ -236,10 +265,50 @@ export class LiquidityMonitor {
       console.log(
         `Fetched volumes: ${volumeMap.size} markets, SOL price: $${solPrice}, CBBTC price: $${cbbtcPrice}`,
       );
+      this.lastMarketVolumes = new Map(volumeMap);
+      if (solPrice > 0) {
+        this.lastSolPriceUsd = solPrice;
+      }
       return volumeMap;
     } catch (error) {
       console.error('Error fetching market volumes:', error);
-      return new Map();
+      if (this.lastMarketVolumes.size > 0) {
+        console.warn('Using the last successfully fetched market volumes');
+        return new Map(this.lastMarketVolumes);
+      }
+      throw error;
+    }
+  }
+
+  private async fetchSolPriceUsd(): Promise<SolPriceResult> {
+    try {
+      const response: Response = await fetch(
+        'https://mfx-stats-mainnet.fly.dev/tickers',
+      );
+      if (!response.ok) {
+        throw new Error(`Ticker request failed with HTTP ${response.status}`);
+      }
+      const tickers: TickerResponse[] =
+        (await response.json()) as TickerResponse[];
+      const solUsdcTicker: TickerResponse | undefined = tickers.find(
+        (ticker: TickerResponse): boolean =>
+          ticker.ticker_id === 'ENhU8LsaR7vDD2G1CsWcsuSGNrih9Cv5WZEk7q9kPapQ',
+      );
+      const priceUsd: number = solUsdcTicker?.last_price ?? 0;
+      if (!Number.isFinite(priceUsd) || priceUsd <= 0) {
+        throw new Error('Ticker response did not contain a valid SOL price');
+      }
+      this.lastSolPriceUsd = priceUsd;
+      return { priceUsd, warning: null };
+    } catch (error: unknown) {
+      const reason: string =
+        error instanceof Error ? error.message : String(error);
+      const warning: string =
+        this.lastSolPriceUsd > 0
+          ? `Ticker refresh failed; using cached SOL price: ${reason}`
+          : `Ticker refresh failed; SOL-denominated depth is unpriced: ${reason}`;
+      console.warn(warning);
+      return { priceUsd: this.lastSolPriceUsd, warning };
     }
   }
 
@@ -347,7 +416,10 @@ export class LiquidityMonitor {
       `Market ${market.address.toBase58()}: bestBid=${bestBid}, bestAsk=${bestAsk}, midPrice=${midPrice}`,
     );
 
-    const ordersByTrader: Map<string, { bids: typeof bids; asks: typeof asks }> = new Map();
+    const ordersByTrader: Map<
+      string,
+      { bids: typeof bids; asks: typeof asks }
+    > = new Map();
     for (const order of bids) {
       const trader: string = order.trader.toBase58();
       const grouped = ordersByTrader.get(trader) ?? { bids: [], asks: [] };
@@ -437,21 +509,28 @@ export class LiquidityMonitor {
       const cycleTimestamp = new Date();
       console.log('Starting market monitoring cycle...', cycleTimestamp);
 
-      // Get current SOL price for USD conversion
-      const response = await fetch('https://mfx-stats-mainnet.fly.dev/tickers');
-      const tickers = await response.json();
-      const solUsdcTicker = tickers.find(
-        (t: any) =>
-          t.ticker_id === 'ENhU8LsaR7vDD2G1CsWcsuSGNrih9Cv5WZEk7q9kPapQ',
-      );
-      const solPriceUsd = solUsdcTicker?.last_price || 0;
+      // A transient ticker outage must not discard the whole monitoring
+      // cycle. Reuse the last good price (or zero when none exists yet) and
+      // expose the reduced fidelity as degraded health metadata.
+      const solPriceResult: SolPriceResult = await this.fetchSolPriceUsd();
+      const solPriceUsd: number = solPriceResult.priceUsd;
 
       console.log(`Using SOL price: $${solPriceUsd} for depth calculations`);
 
       const allStats: MarketMakerStats[] = [];
+      const failedMarkets: string[] = [];
+      const completedMarkets: Set<string> = new Set();
 
       for (const [marketPk, market] of this.markets) {
         try {
+          const configuredMarket: MarketInfo | undefined =
+            this.marketInfo.get(marketPk);
+          if (configuredMarket?.quoteMint === SOL_MINT && solPriceUsd <= 0) {
+            throw new Error(
+              'No valid SOL/USD price is available; refusing to persist unpriced USD depth',
+            );
+          }
+
           // Reload market data
           await market.reload(this.connection);
 
@@ -509,9 +588,17 @@ export class LiquidityMonitor {
           console.log(
             `Processed ${marketStats.length} market makers for market ${marketPk}`,
           );
+          completedMarkets.add(marketPk);
         } catch (error) {
           console.error(`Error monitoring market ${marketPk}:`, error);
+          failedMarkets.push(marketPk);
         }
+      }
+
+      if (this.markets.size > 0 && completedMarkets.size === 0) {
+        throw new Error(
+          'Monitoring cycle did not complete any eligible market',
+        );
       }
 
       // Remove duplicates before saving
@@ -528,14 +615,45 @@ export class LiquidityMonitor {
       });
 
       // Save stats to database
-      await this.saveStatsToDatabase(uniqueStats, cycleTimestamp);
+      await this.saveStatsToDatabase(
+        uniqueStats,
+        cycleTimestamp,
+        completedMarkets,
+      );
 
-      // Update summary statistics
-      await this.updatePrometheusMetrics();
+      const warnings: string[] = [];
+
+      // Collection and durable persistence define a successful monitoring
+      // cycle. Prometheus refresh is best-effort and should degrade health
+      // metadata rather than make an orchestrator restart a healthy process.
+      try {
+        await this.updatePrometheusMetrics();
+      } catch (error: unknown) {
+        const reason: string =
+          error instanceof Error ? error.message : String(error);
+        warnings.push(`Prometheus refresh failed: ${reason}`);
+      }
 
       console.log(
         `Monitoring cycle complete. Processed ${uniqueStats.length} market maker entries.`,
       );
+      this.lastSuccessfulMonitoringAtMs = Date.now();
+      this.lastMonitoringError = null;
+      this.lastFailedMarkets = failedMarkets;
+      if (solPriceResult.warning !== null) {
+        warnings.push(solPriceResult.warning);
+      }
+      if (failedMarkets.length > 0) {
+        warnings.push(
+          `Incomplete for ${failedMarkets.length} market(s): ${failedMarkets.join(', ')}`,
+        );
+      }
+      this.lastMonitoringWarning =
+        warnings.length === 0 ? null : warnings.join('; ');
+    } catch (error) {
+      this.lastMonitoringError =
+        error instanceof Error ? error.message : String(error);
+      throw error;
     } finally {
       this.isMonitoring = false;
     }
@@ -547,6 +665,7 @@ export class LiquidityMonitor {
   async saveStatsToDatabase(
     stats: MarketMakerStats[],
     timestamp: Date,
+    completedMarkets: ReadonlySet<string> = new Set(this.marketInfo.keys()),
   ): Promise<void> {
     if (stats.length === 0) return;
 
@@ -609,12 +728,21 @@ export class LiquidityMonitor {
       }
 
       // Save market info snapshots
-      const marketInfoValues = Array.from(this.marketInfo.values()).flatMap(
-        (info) => [info.address, timestamp, info.volume24hUsd, info.lastPrice],
+      const completedMarketInfos: MarketInfo[] = Array.from(
+        this.marketInfo.values(),
+      ).filter((info: MarketInfo): boolean =>
+        completedMarkets.has(info.address),
       );
+      const marketInfoValues: (string | number | Date)[] =
+        completedMarketInfos.flatMap((info: MarketInfo) => [
+          info.address,
+          timestamp,
+          info.volume24hUsd,
+          info.lastPrice,
+        ]);
 
       if (marketInfoValues.length > 0) {
-        const marketInfoPlaceholders = Array.from(this.marketInfo.values())
+        const marketInfoPlaceholders: string = completedMarketInfos
           .map((_, index) => {
             const offset = index * 4;
             return `($${offset + 1}, $${offset + 2}, $${offset + 3}, $${offset + 4})`;
@@ -632,6 +760,7 @@ export class LiquidityMonitor {
       console.log('Successfully saved stats to database');
     } catch (error) {
       console.error('Error saving stats to database:', error);
+      throw error;
     }
   }
 
@@ -674,7 +803,44 @@ export class LiquidityMonitor {
       console.log('Successfully updated Prometheus metrics');
     } catch (error) {
       console.error('Error updating Prometheus metrics:', error);
+      throw error;
     }
+  }
+
+  getHealthStatus(): {
+    healthy: boolean;
+    starting: boolean;
+    degraded: boolean;
+    lastSuccessfulMonitoringAt: string | null;
+    error: string | null;
+    warning: string | null;
+    failedMarkets: string[];
+  } {
+    const staleAfterMs: number = MONITORING_INTERVAL_MS * 2;
+    const nowMs: number = Date.now();
+    const starting: boolean =
+      this.lastSuccessfulMonitoringAtMs === null &&
+      this.monitoringStartedAtMs !== null &&
+      nowMs - this.monitoringStartedAtMs <= staleAfterMs;
+    const completedRecently: boolean =
+      this.lastSuccessfulMonitoringAtMs !== null &&
+      nowMs - this.lastSuccessfulMonitoringAtMs <= staleAfterMs;
+    const healthy: boolean = starting || completedRecently;
+    const degraded: boolean =
+      completedRecently &&
+      (this.lastMonitoringWarning !== null ||
+        this.lastMonitoringError !== null);
+    return {
+      healthy,
+      starting,
+      degraded,
+      lastSuccessfulMonitoringAt: this.lastSuccessfulMonitoringAtMs
+        ? new Date(this.lastSuccessfulMonitoringAtMs).toISOString()
+        : null,
+      error: this.lastMonitoringError,
+      warning: this.lastMonitoringWarning,
+      failedMarkets: [...this.lastFailedMarkets],
+    };
   }
 
   /**
@@ -856,33 +1022,54 @@ export class LiquidityMonitor {
    * Get market statistics
    */
   async getMarketStats(): Promise<any[]> {
+    const nowMs: number = Date.now();
+    if (this.marketStatsCache && this.marketStatsCache.expiresAtMs > nowMs) {
+      return this.marketStatsCache.rows;
+    }
+
     try {
       const query = `
-        SELECT DISTINCT ON (mis.market)
-          mis.market,
-          mis.volume_24h_usd,
-          mis.last_price,
-          mis.timestamp,
-          COUNT(DISTINCT mms.trader) as unique_makers_24h,
-          -- Get current stats (last hour)
-          COUNT(DISTINCT mms_current.trader) as unique_makers_current
-        FROM market_info_snapshots mis
-        LEFT JOIN market_maker_stats mms ON mis.market = mms.market 
-          AND mms.timestamp > NOW() - INTERVAL '24 hours'
-          AND mms.total_notional_usd >= ${MIN_NOTIONAL_USD}
-        LEFT JOIN market_maker_stats mms_current ON mis.market = mms_current.market 
-          AND mms_current.timestamp > NOW() - INTERVAL '1 hour'
-          AND mms_current.total_notional_usd >= ${MIN_NOTIONAL_USD}
-        WHERE mis.timestamp > NOW() - INTERVAL '1 hour'
-        GROUP BY mis.market, mis.volume_24h_usd, mis.last_price, mis.timestamp
-        ORDER BY mis.market, mis.timestamp DESC
+        WITH latest_snapshots AS (
+          SELECT DISTINCT ON (market)
+            market, volume_24h_usd, last_price, timestamp
+          FROM market_info_snapshots
+          WHERE timestamp > NOW() - INTERVAL '1 hour'
+          ORDER BY market, timestamp DESC
+        ), makers_24h AS (
+          SELECT market, COUNT(DISTINCT trader) AS unique_makers_24h
+          FROM market_maker_stats
+          WHERE timestamp > NOW() - INTERVAL '24 hours'
+            AND total_notional_usd >= ${MIN_NOTIONAL_USD}
+          GROUP BY market
+        ), makers_current AS (
+          SELECT market, COUNT(DISTINCT trader) AS unique_makers_current
+          FROM market_maker_stats
+          WHERE timestamp > NOW() - INTERVAL '1 hour'
+            AND total_notional_usd >= ${MIN_NOTIONAL_USD}
+          GROUP BY market
+        )
+        SELECT
+          latest.market,
+          latest.volume_24h_usd,
+          latest.last_price,
+          latest.timestamp,
+          COALESCE(day.unique_makers_24h, 0) AS unique_makers_24h,
+          COALESCE(current.unique_makers_current, 0) AS unique_makers_current
+        FROM latest_snapshots latest
+        LEFT JOIN makers_24h day ON day.market = latest.market
+        LEFT JOIN makers_current current ON current.market = latest.market
+        ORDER BY latest.market
       `;
 
       const result = await this.pool.query(query);
+      this.marketStatsCache = {
+        expiresAtMs: nowMs + 30_000,
+        rows: result.rows,
+      };
       return result.rows;
     } catch (error) {
       console.error('Error getting market stats:', error);
-      return [];
+      throw error;
     }
   }
 
@@ -891,14 +1078,15 @@ export class LiquidityMonitor {
    */
   async startMonitoring(): Promise<void> {
     console.log('Starting liquidity monitoring...');
+    this.monitoringStartedAtMs = Date.now();
 
-    // Initial load
-    await this.loadEligibleMarkets();
-    await this.monitorMarkets();
-
-    // Set up periodic monitoring
+    // Arm retries before the initial dependency calls so a transient startup
+    // failure cannot permanently disarm monitoring.
     setInterval(async () => {
       try {
+        if (this.markets.size === 0) {
+          await this.loadEligibleMarkets();
+        }
         await this.monitorMarkets();
       } catch (error) {
         console.error('Error in monitoring cycle:', error);
@@ -916,6 +1104,15 @@ export class LiquidityMonitor {
       },
       60 * 60 * 1000,
     );
+
+    try {
+      await this.loadEligibleMarkets();
+      await this.monitorMarkets();
+    } catch (error) {
+      this.lastMonitoringError =
+        error instanceof Error ? error.message : String(error);
+      console.error('Initial liquidity monitoring cycle failed:', error);
+    }
   }
 }
 
@@ -1080,7 +1277,21 @@ const setupAPI = (monitor: LiquidityMonitor) => {
 
   // Health check
   app.get('/health', (req, res) => {
-    res.status(200).json({ status: 'healthy', timestamp: new Date() });
+    const health = monitor.getHealthStatus();
+    res.status(health.healthy ? 200 : 503).json({
+      status: health.starting
+        ? 'starting'
+        : !health.healthy
+          ? 'unhealthy'
+          : health.degraded
+            ? 'degraded'
+            : 'healthy',
+      timestamp: new Date(),
+      last_successful_monitoring_at: health.lastSuccessfulMonitoringAt,
+      error: health.error,
+      warning: health.warning,
+      failed_markets: health.failedMarkets,
+    });
   });
 
   return app;

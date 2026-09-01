@@ -99,39 +99,35 @@ export async function sendDiscordNotification(
     timestamp?: boolean;
   } = {},
 ): Promise<void> {
-  try {
-    const embed: any = {
-      description: message,
-      color: options.color || 15158332, // Red color for alerts
-    };
+  const embed: any = {
+    description: message,
+    color: options.color || 15158332, // Red color for alerts
+  };
 
-    if (options.title) {
-      embed.title = options.title;
-    }
+  if (options.title) {
+    embed.title = options.title;
+  }
 
-    if (options.timestamp) {
-      embed.timestamp = new Date().toISOString();
-    }
+  if (options.timestamp) {
+    embed.timestamp = new Date().toISOString();
+  }
 
-    const payload = {
-      embeds: [embed],
-    };
+  const payload = {
+    embeds: [embed],
+  };
 
-    const response = await fetch(webhookUrl, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(payload),
-    });
+  const response = await fetch(webhookUrl, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(payload),
+  });
 
-    if (!response.ok) {
-      console.error(
-        `Failed to send Discord notification: ${response.status} ${response.statusText}`,
-      );
-    }
-  } catch (error) {
-    console.error('Error sending Discord notification:', error);
+  if (!response.ok) {
+    throw new Error(
+      `Failed to send Discord notification: ${response.status} ${response.statusText}`,
+    );
   }
 }
 
