@@ -43,7 +43,7 @@ export interface WrapperMarketInfo {
   quoteBalanceAtoms: bignum;
   /** Quote volume in atoms. */
   quoteVolumeAtoms: bignum;
-  /** Open orders. */
+  /** Open orders, in no particular order. */
   orders: WrapperOpenOrder[];
   /** Last update slot number. */
   lastUpdatedSlot: number;
@@ -172,6 +172,12 @@ export class Wrapper {
 
   /**
    * Get the open orders from the wrapper.
+   *
+   * The order of the result is unspecified and callers that care about one
+   * should sort. It has never been a sort the caller could rely on, and it is
+   * not stable across a market's lifetime: the program keeps these orders in
+   * a structure it converts in place the first time it touches a market that
+   * predates the conversion, and the sequence before and after that differ.
    *
    * @param marketPk PublicKey for the market
    *
