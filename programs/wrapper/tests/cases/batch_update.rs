@@ -690,12 +690,12 @@ async fn wrapper_cancel_all_scans_past_unrelated_trader_orders() -> anyhow::Resu
 }
 
 #[tokio::test]
-async fn wrapper_ignore_post_only() -> anyhow::Result<()> {
+async fn wrapper_returns_error_for_crossing_post_only() -> anyhow::Result<()> {
     let mut test_fixture: TestFixture = TestFixture::new().await;
     test_fixture.claim_seat().await?;
     test_fixture.deposit(Token::SOL, 2 * SOL_UNIT_SIZE).await?;
     test_fixture
-        .deposit(Token::USDC, 2 * USDC_UNIT_SIZE)
+        .deposit(Token::USDC, 2_000 * USDC_UNIT_SIZE)
         .await?;
 
     let payer: Pubkey = test_fixture.payer();
@@ -742,16 +742,20 @@ async fn wrapper_ignore_post_only() -> anyhow::Result<()> {
             OrderType::PostOnly,
         )],
     );
-    send_tx_with_retry(
-        Rc::clone(&test_fixture.context),
-        &[batch_update_ix],
-        Some(&payer),
-        &[&payer_keypair],
-    )
-    .await?;
+    assert!(
+        send_tx_with_retry(
+            Rc::clone(&test_fixture.context),
+            &[batch_update_ix],
+            Some(&payer),
+            &[&payer_keypair],
+        )
+        .await
+        .is_err(),
+        "The authoritative core reports PostOnlyCrosses",
+    );
 
     test_fixture.market.reload().await;
-    // There is just one ask and did not match due to post only.
+    // The failed PostOnly transaction leaves the original ask unchanged.
     assert_eq!(
         test_fixture
             .market
@@ -766,7 +770,7 @@ async fn wrapper_ignore_post_only() -> anyhow::Result<()> {
 }
 
 #[tokio::test]
-async fn wrapper_forwards_post_only_after_bounded_expired_scan() -> anyhow::Result<()> {
+async fn wrapper_reports_crossing_post_only_after_expired_prefix() -> anyhow::Result<()> {
     let mut test_fixture: TestFixture = TestFixture::new().await;
     test_fixture.claim_seat().await?;
     test_fixture
@@ -795,13 +799,13 @@ async fn wrapper_forwards_post_only_after_bounded_expired_scan() -> anyhow::Resu
     test_fixture
         .deposit_for_keypair_with_wrapper(
             Token::SOL,
-            40 * SOL_UNIT_SIZE,
+            41 * SOL_UNIT_SIZE,
             &expired_order_trader,
             &expired_order_wrapper.pubkey(),
         )
         .await?;
 
-    // More expired asks than the wrapper's advisory price-discovery quota.
+    // A large expired prefix ahead of one live ask.
     for batch_start in (0_u64..40).step_by(8) {
         let orders: Vec<WrapperPlaceOrderParams> = (batch_start..batch_start + 8)
             .map(|client_order_id: u64| {
@@ -832,11 +836,33 @@ async fn wrapper_forwards_post_only_after_bounded_expired_scan() -> anyhow::Resu
         )
         .await?;
     }
+    let place_live_ask_ix: Instruction = batch_update_instruction(
+        &test_fixture.market.key,
+        &expired_order_trader.pubkey(),
+        &expired_order_wrapper.pubkey(),
+        vec![],
+        false,
+        vec![WrapperPlaceOrderParams::new(
+            100,
+            SOL_UNIT_SIZE,
+            60,
+            0,
+            false,
+            NO_EXPIRATION_LAST_VALID_SLOT,
+            OrderType::Limit,
+        )],
+    );
+    send_tx_with_retry(
+        Rc::clone(&test_fixture.context),
+        &[place_live_ask_ix],
+        Some(&expired_order_trader.pubkey()),
+        &[&expired_order_trader],
+    )
+    .await?;
     test_fixture.advance_time_seconds(10_000).await;
 
-    // The wrapper cannot establish the opposite price within 32 steps. It
-    // must forward this order so the core can prune the expired prefix and
-    // make the authoritative PostOnly decision.
+    // The wrapper forwards without trying to classify the expired prefix. The
+    // core prunes it, finds the live ask, and reports the real crossing order.
     let post_only_bid_ix: Instruction = batch_update_instruction(
         &test_fixture.market.key,
         &payer,
@@ -853,13 +879,17 @@ async fn wrapper_forwards_post_only_after_bounded_expired_scan() -> anyhow::Resu
             OrderType::PostOnly,
         )],
     );
-    send_tx_with_retry(
-        Rc::clone(&test_fixture.context),
-        &[post_only_bid_ix],
-        Some(&payer),
-        &[&payer_keypair],
-    )
-    .await?;
+    assert!(
+        send_tx_with_retry(
+            Rc::clone(&test_fixture.context),
+            &[post_only_bid_ix],
+            Some(&payer),
+            &[&payer_keypair],
+        )
+        .await
+        .is_err(),
+        "The live crossing ask behind the expired prefix is reported",
+    );
 
     test_fixture.market.reload().await;
     assert_eq!(
@@ -869,8 +899,8 @@ async fn wrapper_forwards_post_only_after_bounded_expired_scan() -> anyhow::Resu
             .get_bids()
             .iter::<RestingOrder>()
             .count(),
-        1,
-        "PostOnly order is forwarded instead of silently dropped",
+        0,
+        "Crossing PostOnly order does not rest",
     );
     assert_eq!(
         test_fixture
@@ -879,15 +909,15 @@ async fn wrapper_forwards_post_only_after_bounded_expired_scan() -> anyhow::Resu
             .get_asks()
             .iter::<RestingOrder>()
             .count(),
-        0,
-        "The core prunes the expired prefix",
+        41,
+        "The failed transaction rolls back expired-order pruning",
     );
 
     Ok(())
 }
 
 #[tokio::test]
-async fn wrapper_preserves_cancels_when_post_only_price_is_unknown() -> anyhow::Result<()> {
+async fn wrapper_forwards_cancel_replace_after_expired_prefix() -> anyhow::Result<()> {
     let mut test_fixture: TestFixture = TestFixture::new().await;
     test_fixture.claim_seat().await?;
     test_fixture
@@ -939,15 +969,15 @@ async fn wrapper_preserves_cancels_when_post_only_price_is_unknown() -> anyhow::
     test_fixture
         .deposit_for_keypair_with_wrapper(
             Token::SOL,
-            41 * SOL_UNIT_SIZE,
+            40 * SOL_UNIT_SIZE,
             &maker,
             &maker_wrapper.pubkey(),
         )
         .await?;
 
-    // Put forty soon-expired asks ahead of a live crossing ask. The wrapper's
-    // 32-step advisory scan cannot see the live maker, but the core would find
-    // it after pruning and reject the PostOnly bid, rolling back the cancel.
+    // Put forty soon-expired asks ahead of the replacement. The wrapper must
+    // not silently suppress the PostOnly order merely because this is the
+    // canonical cancel-and-replace workflow.
     for batch_start in (0_u64..40).step_by(8) {
         let orders: Vec<WrapperPlaceOrderParams> = (batch_start..batch_start + 8)
             .map(|client_order_id: u64| {
@@ -978,29 +1008,6 @@ async fn wrapper_preserves_cancels_when_post_only_price_is_unknown() -> anyhow::
         )
         .await?;
     }
-    let place_live_ask_ix: Instruction = batch_update_instruction(
-        &test_fixture.market.key,
-        &maker.pubkey(),
-        &maker_wrapper.pubkey(),
-        vec![],
-        false,
-        vec![WrapperPlaceOrderParams::new(
-            100,
-            SOL_UNIT_SIZE,
-            60,
-            0,
-            false,
-            NO_EXPIRATION_LAST_VALID_SLOT,
-            OrderType::Limit,
-        )],
-    );
-    send_tx_with_retry(
-        Rc::clone(&test_fixture.context),
-        &[place_live_ask_ix],
-        Some(&maker.pubkey()),
-        &[&maker],
-    )
-    .await?;
     test_fixture.advance_time_seconds(10_000).await;
 
     let mixed_batch_ix: Instruction = batch_update_instruction(
@@ -1009,26 +1016,15 @@ async fn wrapper_preserves_cancels_when_post_only_price_is_unknown() -> anyhow::
         &test_fixture.wrapper.key,
         vec![WrapperCancelOrderParams::new(7)],
         false,
-        vec![
-            WrapperPlaceOrderParams::new(
-                8,
-                SOL_UNIT_SIZE,
-                100,
-                0,
-                true,
-                NO_EXPIRATION_LAST_VALID_SLOT,
-                OrderType::PostOnly,
-            ),
-            WrapperPlaceOrderParams::new(
-                9,
-                SOL_UNIT_SIZE,
-                2,
-                0,
-                true,
-                NO_EXPIRATION_LAST_VALID_SLOT,
-                OrderType::PostOnly,
-            ),
-        ],
+        vec![WrapperPlaceOrderParams::new(
+            8,
+            SOL_UNIT_SIZE,
+            100,
+            0,
+            true,
+            NO_EXPIRATION_LAST_VALID_SLOT,
+            OrderType::PostOnly,
+        )],
     );
     send_tx_with_retry(
         Rc::clone(&test_fixture.context),
@@ -1047,7 +1043,7 @@ async fn wrapper_preserves_cancels_when_post_only_price_is_unknown() -> anyhow::
             .iter::<RestingOrder>()
             .count(),
         1,
-        "The cancel lands and the provably non-crossing replacement rests",
+        "The cancel lands and the replacement rests instead of being silently dropped",
     );
     assert_eq!(
         test_fixture
@@ -1056,8 +1052,8 @@ async fn wrapper_preserves_cancels_when_post_only_price_is_unknown() -> anyhow::
             .get_asks()
             .iter::<RestingOrder>()
             .count(),
-        1,
-        "The unsafe PostOnly is suppressed while the safe one prunes expired asks",
+        0,
+        "The core prunes the expired prefix before accepting the replacement",
     );
 
     Ok(())

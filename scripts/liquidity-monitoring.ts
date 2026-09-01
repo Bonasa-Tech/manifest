@@ -101,6 +101,7 @@ export class LiquidityMonitor {
   private marketInfo: Map<string, MarketInfo> = new Map();
 
   private isMonitoring = false;
+  private monitoringStartedAtMs: number | null = null;
   private lastSuccessfulMonitoringAtMs: number | null = null;
   private lastMonitoringError: string | null = null;
   private lastMonitoringWarning: string | null = null;
@@ -808,6 +809,7 @@ export class LiquidityMonitor {
 
   getHealthStatus(): {
     healthy: boolean;
+    starting: boolean;
     degraded: boolean;
     lastSuccessfulMonitoringAt: string | null;
     error: string | null;
@@ -815,15 +817,22 @@ export class LiquidityMonitor {
     failedMarkets: string[];
   } {
     const staleAfterMs: number = MONITORING_INTERVAL_MS * 2;
-    const healthy: boolean =
+    const nowMs: number = Date.now();
+    const starting: boolean =
+      this.lastSuccessfulMonitoringAtMs === null &&
+      this.monitoringStartedAtMs !== null &&
+      nowMs - this.monitoringStartedAtMs <= staleAfterMs;
+    const completedRecently: boolean =
       this.lastSuccessfulMonitoringAtMs !== null &&
-      Date.now() - this.lastSuccessfulMonitoringAtMs <= staleAfterMs;
+      nowMs - this.lastSuccessfulMonitoringAtMs <= staleAfterMs;
+    const healthy: boolean = starting || completedRecently;
     const degraded: boolean =
-      healthy &&
+      completedRecently &&
       (this.lastMonitoringWarning !== null ||
         this.lastMonitoringError !== null);
     return {
       healthy,
+      starting,
       degraded,
       lastSuccessfulMonitoringAt: this.lastSuccessfulMonitoringAtMs
         ? new Date(this.lastSuccessfulMonitoringAtMs).toISOString()
@@ -1069,6 +1078,7 @@ export class LiquidityMonitor {
    */
   async startMonitoring(): Promise<void> {
     console.log('Starting liquidity monitoring...');
+    this.monitoringStartedAtMs = Date.now();
 
     // Arm retries before the initial dependency calls so a transient startup
     // failure cannot permanently disarm monitoring.
@@ -1269,11 +1279,13 @@ const setupAPI = (monitor: LiquidityMonitor) => {
   app.get('/health', (req, res) => {
     const health = monitor.getHealthStatus();
     res.status(health.healthy ? 200 : 503).json({
-      status: !health.healthy
-        ? 'unhealthy'
-        : health.degraded
-          ? 'degraded'
-          : 'healthy',
+      status: health.starting
+        ? 'starting'
+        : !health.healthy
+          ? 'unhealthy'
+          : health.degraded
+            ? 'degraded'
+            : 'healthy',
       timestamp: new Date(),
       last_successful_monitoring_at: health.lastSuccessfulMonitoringAt,
       error: health.error,

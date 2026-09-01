@@ -158,6 +158,10 @@ export class TvlMonitor {
               console.error(
                 `TVL collection could not classify truncated market ${marketPk.toBase58()}`,
               );
+              // Without both mint fields we cannot prove that this market is
+              // irrelevant. Exclude it explicitly so a missing vault cannot
+              // masquerade as a comparable TVL decrease.
+              incompleteMarkets.push(marketPk.toBase58());
               return;
             }
             const baseMint: PublicKey = new PublicKey(
