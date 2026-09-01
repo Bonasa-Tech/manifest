@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1788303996518,
+  "lastUpdate": 1788306555522,
   "repoUrl": "https://github.com/Bonasa-Tech/manifest",
   "entries": {
     "CU Benchmark": [
@@ -13163,6 +13163,72 @@ window.BENCHMARK_DATA = {
           {
             "name": "MFX_99",
             "value": 5103,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "cyrbritt@gmail.com",
+            "name": "Britt Cyr",
+            "username": "brittcyr"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "962829dba324ea4b5493feec8fefa2fc58761a45",
+          "message": "speed up cancel all on wrapper (#699)",
+          "timestamp": "2026-09-01T19:42:57-04:00",
+          "tree_id": "3c3abd36de1432d41429dbcc233ea7548805c9b5",
+          "url": "https://github.com/Bonasa-Tech/manifest/commit/962829dba324ea4b5493feec8fefa2fc58761a45"
+        },
+        "date": 1788306552409,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "PHX_50",
+            "value": 6897,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "PHX_95",
+            "value": 13208,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "PHX_99",
+            "value": 13902,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_50",
+            "value": 1711,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_95",
+            "value": 2903,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_99",
+            "value": 3351,
             "range": "",
             "unit": "CU",
             "extra": ""
