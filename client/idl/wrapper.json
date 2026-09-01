@@ -657,7 +657,7 @@
           {
             "name": "cancelAllScanCursor",
             "docs": [
-              "Bounded cancel-all byte cursor, or u32::MAX after a complete pass."
+              "Reserved for on-chain byte-layout compatibility."
             ],
             "type": "u32"
           },

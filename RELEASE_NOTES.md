@@ -7,18 +7,17 @@
 - PostOnly crossing validation is now exclusively authoritative in the core
   program. If any PostOnly order crosses when a wrapper batch lands, the core
   returns `PostOnlyCrosses` and the entire transaction rolls back, including
-  cancellations, other replacement orders, and any `cancel_all` scan-cursor
-  progress in that batch. During a fast market move this can leave stale
+  cancellations and other replacement orders in that batch. During a fast
+  market move this can leave stale
   quotes resting. Market makers that require cancellations to make progress
   independently of replacement quotes should submit cancellation-only and
   placement transactions separately.
-- The wrapper market-info property formerly exposed as `lastUpdatedSlot` is
-  now `cancelAllScanCursor`. This release repurposes the field from the last
-  sync slot to a bounded cancel-all cursor without changing its on-chain byte
-  layout. Pre-upgrade slot values fail cursor validation and safely restart at
-  byte offset zero. Removing the old source-level name makes stale
-  integrations fail at compile time instead of silently interpreting the new
-  byte offset as a slot.
+- `cancel_all` only cancels orders tracked by the wrapper. It deliberately does
+  not scan the entire shared market for orders placed directly through the core
+  program; that fallback caused a large tail-compute regression. Direct orders
+  remain cancellable by sequence number/index or with `cancelAllOnCoreIx()`.
+  The `cancelAllScanCursor` market-info field remains reserved solely to retain
+  the existing on-chain byte layout.
 
 ### Stats API behavior changes
 

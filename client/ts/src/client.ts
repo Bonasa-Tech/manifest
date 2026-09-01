@@ -43,7 +43,7 @@ import {
   createDepositInstruction,
   createWithdrawInstruction,
 } from './wrapper';
-import { FIXED_WRAPPER_HEADER_SIZE, NIL } from './constants';
+import { FIXED_WRAPPER_HEADER_SIZE } from './constants';
 import { getVaultAddress } from './utils/market';
 import { genAccDiscriminator } from './utils/discriminator';
 import { getGlobalAddress, getGlobalVaultAddress } from './utils/global';
@@ -1655,13 +1655,12 @@ export class ManifestClient {
   }
 
   /**
-   * CancelAll instruction. Cancels wrapper-tracked orders and searches a
-   * bounded portion of the core market for orders placed outside the wrapper.
-   * Very large markets can require repeated calls because both traversal and
-   * the core cancellation batch are bounded. For a snapshot-based list of
-   * instructions covering every currently visible core order, reload the
-   * market and use cancelAllOnCoreIx(). Global cancellation can abandon its gas
-   * prepayment.
+   * CancelAll instruction. Cancels up to one core batch of wrapper-tracked
+   * orders. Repeat until the wrapper has no open orders when more than one
+   * batch is present. Orders placed directly through the Manifest program are
+   * intentionally not searched for; cancel them by sequence number/index or
+   * reload the market and use cancelAllOnCoreIx(). Global cancellation can
+   * abandon its gas prepayment.
    *
    * @returns TransactionInstruction
    */
@@ -1690,17 +1689,11 @@ export class ManifestClient {
   }
 
   /**
-   * Whether the most recently confirmed cancelAllIx() completed one full
-   * physical-block scan pass. Call reload() after confirming the transaction
-   * before reading this value. A newly created market info and a pass whose 16
-   * cancellation slots were consumed before scanning both report false.
+   * Whether the wrapper's latest reloaded view has no tracked orders left for
+   * this market. Despite its legacy name, this does not inspect or make any
+   * claim about orders placed directly through the Manifest program.
    *
-   * This is a progress marker, not a guarantee that no orders remain. Across
-   * the transactions in a large-market pass, a freed block already behind the
-   * cursor can be reused for a new or reverse order. Callers that require an
-   * empty seat must start another pass and/or reload the market and use
-   * cancelAllOnCoreIx(), repeating until their own freshness requirement is
-   * satisfied.
+   * Call reload() after confirming cancelAllIx() before reading this value.
    */
   public isCancelAllScanComplete(): boolean {
     if (!this.wrapper) {
@@ -1711,7 +1704,7 @@ export class ManifestClient {
     if (marketInfo === null) {
       throw new Error('Wrapper has no market info for this market');
     }
-    return marketInfo.cancelAllScanCursor === NIL;
+    return marketInfo.orders.length === 0;
   }
 
   /**

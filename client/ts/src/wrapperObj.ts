@@ -45,7 +45,7 @@ export interface WrapperMarketInfo {
   quoteVolumeAtoms: bignum;
   /** Open orders, in no particular order. */
   orders: WrapperOpenOrder[];
-  /** Persistent physical-block cursor for bounded cancel-all scans. */
+  /** Reserved legacy field; do not interpret this value. */
   cancelAllScanCursor: number;
 }
 
@@ -209,7 +209,6 @@ export class Wrapper {
     this.data.marketInfos.forEach((marketInfo: WrapperMarketInfo) => {
       console.log(`------------------------`);
       console.log(`Market: ${marketInfo.market}`);
-      console.log(`Cancel-all scan cursor: ${marketInfo.cancelAllScanCursor}`);
       console.log(
         `BaseAtoms: ${marketInfo.baseBalanceAtoms} QuoteAtoms: ${marketInfo.quoteBalanceAtoms}`,
       );
