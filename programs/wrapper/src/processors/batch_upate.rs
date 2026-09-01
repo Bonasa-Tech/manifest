@@ -126,7 +126,10 @@ fn prepare_cancel_all(
 ) -> DataIndex {
     // Scan physical market blocks rather than walking either price tree. The
     // fixed scan quota bounds CU, while the per-market cursor makes retries
-    // progress regardless of how unrelated orders are priced.
+    // progress regardless of how unrelated orders are priced. Completion is
+    // per pass, not a stable assertion that the trader has no orders: between
+    // transactions, a freed block already behind the cursor can be reused for
+    // a newly created order.
     let mut remaining_cancel_all_cancels: usize =
         EXPECTED_ORDER_BATCH_SIZE.saturating_sub(matcher.core_cancels.len());
     let market_data: Ref<&mut [u8]> = market.try_borrow_data().unwrap();
@@ -531,14 +534,14 @@ pub(crate) fn process_batch_update(
             &mut matcher,
             &market,
             market_info.trader_index,
-            market_info.last_updated_slot,
+            market_info.cancel_all_scan_cursor,
         );
         let mut wrapper_data: RefMut<&mut [u8]> = wrapper_state.info.try_borrow_mut_data()?;
         let (_fixed_data, wrapper_dynamic_data) =
             wrapper_data.split_at_mut(size_of::<ManifestWrapperStateFixed>());
         get_mut_helper::<RBNode<MarketInfo>>(wrapper_dynamic_data, market_info_index)
             .get_mut_value()
-            .last_updated_slot = next_cancel_all_cursor;
+            .cancel_all_scan_cursor = next_cancel_all_cursor;
     }
     let remaining_base_atoms: BaseAtoms = market_info.base_balance + matcher.freed_base_atoms;
     let remaining_quote_atoms: QuoteAtoms = market_info.quote_balance + matcher.freed_quote_atoms;

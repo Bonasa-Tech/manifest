@@ -494,7 +494,7 @@ const setupAPI = (monitor: MarketMakerLeaderboard) => {
         if (value === undefined) return fallback;
         const parsed = Number(value);
         if (!Number.isSafeInteger(parsed) || parsed < 1 || parsed > maximum)
-          throw new Error(
+          throw new RangeError(
             `${name} must be an integer between 1 and ${maximum}`,
           );
         return parsed;

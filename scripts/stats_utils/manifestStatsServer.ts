@@ -2067,6 +2067,7 @@ export class ManifestStatsServer {
       }
       return currentSlot;
     };
+    let effectiveToSlot: number | undefined = toSlot;
     if (fromSlot === undefined && !hasEfficientFilter) {
       console.log(
         `[completeFills] Query without efficient filter, applying default slot range. Options: ${JSON.stringify(options)}`,
@@ -2078,7 +2079,7 @@ export class ManifestStatsServer {
     // the current slot). Explicit ranges remain available for historical
     // pagination and use the split taker/maker index scans below.
     if (wallet) {
-      const effectiveToSlot: number = toSlot ?? (await getCurrentSlot());
+      effectiveToSlot ??= await getCurrentSlot();
       if (fromSlot === undefined) {
         fromSlot = Math.max(0, effectiveToSlot - SLOTS_PER_DAY);
       }
@@ -2126,9 +2127,9 @@ export class ManifestStatsServer {
         params.push(fromSlot);
       }
 
-      if (toSlot !== undefined) {
+      if (effectiveToSlot !== undefined) {
         conditions.push(`slot <= $${paramIndex++}`);
-        params.push(toSlot);
+        params.push(effectiveToSlot);
       }
 
       const whereClause =
@@ -2217,6 +2218,10 @@ export class ManifestStatsServer {
         fills,
         total: 0,
         hasMore: true,
+        effectiveSlotRange: {
+          fromSlot: fromSlot ?? null,
+          toSlot: effectiveToSlot ?? null,
+        },
       };
     } catch (error) {
       console.error('Error querying complete fills:', error);

@@ -1690,11 +1690,17 @@ export class ManifestClient {
   }
 
   /**
-   * Whether the most recently confirmed cancelAllIx() completed a full scan of
-   * the core market account. Call reload() after confirming the transaction
+   * Whether the most recently confirmed cancelAllIx() completed one full
+   * physical-block scan pass. Call reload() after confirming the transaction
    * before reading this value. A newly created market info and a pass whose 16
-   * cancellation slots were consumed before scanning both report false. Keep
-   * submitting and reloading until this returns true.
+   * cancellation slots were consumed before scanning both report false.
+   *
+   * This is a progress marker, not a guarantee that no orders remain. Across
+   * the transactions in a large-market pass, a freed block already behind the
+   * cursor can be reused for a new or reverse order. Callers that require an
+   * empty seat must start another pass and/or reload the market and use
+   * cancelAllOnCoreIx(), repeating until their own freshness requirement is
+   * satisfied.
    */
   public isCancelAllScanComplete(): boolean {
     if (!this.wrapper) {

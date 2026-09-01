@@ -47,12 +47,6 @@ export interface WrapperMarketInfo {
   orders: WrapperOpenOrder[];
   /** Persistent physical-block cursor for bounded cancel-all scans. */
   cancelAllScanCursor: number;
-  /**
-   * Legacy name for cancelAllScanCursor. This has not represented a slot since
-   * the bounded cancel-all scan was introduced.
-   * @deprecated Use cancelAllScanCursor.
-   */
-  lastUpdatedSlot: number;
 }
 
 /**
@@ -301,8 +295,7 @@ export class Wrapper {
           quoteBalanceAtoms: marketInfoRaw.quoteBalance,
           quoteVolumeAtoms: marketInfoRaw.quoteVolume,
           orders: parsedOpenOrdersWithPrice,
-          cancelAllScanCursor: marketInfoRaw.lastUpdatedSlot,
-          lastUpdatedSlot: marketInfoRaw.lastUpdatedSlot,
+          cancelAllScanCursor: marketInfoRaw.cancelAllScanCursor,
         };
       },
     );

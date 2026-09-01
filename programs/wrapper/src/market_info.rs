@@ -30,10 +30,9 @@ pub struct MarketInfo {
 
     /// Persistent physical-block cursor for bounded cancel-all scans. `NIL`
     /// means the most recent cancel-all pass completed a full scan; zero is a
-    /// valid start cursor and does not mean complete. This was historically
-    /// the last sync slot; keeping the field name preserves the public ABI and
-    /// layout, but off-chain consumers must not interpret it as a slot.
-    pub last_updated_slot: u32,
+    /// valid start cursor and does not mean complete. This occupied the last
+    /// sync slot field historically; the byte layout is unchanged.
+    pub cancel_all_scan_cursor: u32,
     /// Open orders of type Global on this market that the wrapper tracks.
     /// Those can be removed by global clean and evict without any order being
     /// placed, so while it is non zero the opening sync always walks the
@@ -53,7 +52,7 @@ pub struct MarketInfo {
 // 8 +  // base_balance
 // 8 +  // quote_balance
 // 8 +  // quote_volume
-// 4 +  // last_updated_slot
+// 4 +  // cancel_all_scan_cursor
 // 4 +  // num_open_global_orders
 // 8    // last_synced_order_sequence_number
 // = 80

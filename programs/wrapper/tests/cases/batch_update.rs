@@ -492,7 +492,7 @@ async fn wrapper_batch_update_cancel_all_test() -> anyhow::Result<()> {
         market_info_index_after_first_pass,
     )
     .get_value();
-    assert_eq!(market_info_after_first_pass.last_updated_slot, 0);
+    assert_eq!(market_info_after_first_pass.cancel_all_scan_cursor, 0);
 
     let batch_update_ix: Instruction = batch_update_instruction(
         &test_fixture.market.key,
@@ -537,7 +537,7 @@ async fn wrapper_batch_update_cancel_all_test() -> anyhow::Result<()> {
     let orders_root_index: DataIndex = market_info.orders_root_index;
     assert_eq!(orders_root_index, NIL, "Deleted all orders in cancel all");
     assert_eq!(
-        market_info.last_updated_slot, NIL,
+        market_info.cancel_all_scan_cursor, NIL,
         "NIL exclusively marks a completed physical scan",
     );
 

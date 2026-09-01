@@ -444,9 +444,8 @@ pub(crate) fn sync_fast(
     market_info.base_balance = claimed_seat.base_withdrawable_balance;
     market_info.quote_balance = claimed_seat.quote_withdrawable_balance;
     market_info.quote_volume = claimed_seat.quote_volume;
-    // `last_updated_slot` is retained in the ABI but now stores the bounded
-    // cancel-all physical-block cursor (NIL means a completed full scan). It
-    // is not a staleness slot and must not be overwritten during sync.
+    // The cancel-all cursor is independent of sync freshness and must not be
+    // overwritten here.
     Ok(())
 }
 
