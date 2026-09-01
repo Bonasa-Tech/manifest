@@ -15,7 +15,7 @@ export type MarketInfo = {
   baseBalance: beet.bignum;
   quoteBalance: beet.bignum;
   quoteVolume: beet.bignum;
-  /** Bounded cancel-all byte cursor, or u32::MAX after a complete pass. */
+  /** Reserved for on-chain byte-layout compatibility. */
   cancelAllScanCursor: number;
   numOpenGlobalOrders: number;
   lastSyncedOrderSequenceNumber: beet.bignum;

@@ -10,15 +10,12 @@ use hypertree::{
 };
 use manifest::{
     program::{
-        batch_update::{
-            BatchUpdateParams, CancelOrderParams, MarketDataTreeNodeType, PlaceOrderParams,
-        },
-        get_dynamic_account, get_mut_dynamic_account, invoke, ManifestInstruction,
+        batch_update::{BatchUpdateParams, CancelOrderParams, PlaceOrderParams},
+        get_mut_dynamic_account, invoke, ManifestInstruction,
     },
     quantities::{BaseAtoms, QuoteAtoms, QuoteAtomsPerBaseAtom, WrapperU64},
     state::{
-        utils::get_now_slot, DynamicAccount, MarketFixed, OrderType, RestingOrder,
-        MARKET_BLOCK_SIZE, NO_EXPIRATION_LAST_VALID_SLOT,
+        utils::get_now_slot, DynamicAccount, MarketFixed, OrderType, NO_EXPIRATION_LAST_VALID_SLOT,
     },
     validation::{ManifestAccountInfo, Program, Signer},
 };
@@ -40,13 +37,8 @@ use crate::{
 
 use super::shared::{
     ensure_free_slots, get_market_info_index_for_market, sync_fast, CancelMatcher, OpenOrdersList,
-    UnusedWrapperFreeListPadding, EXPECTED_ORDER_BATCH_SIZE,
+    UnusedWrapperFreeListPadding,
 };
-
-// Physical-block inspection is substantially cheaper than tree traversal. A
-// 1,024-block quota covers 80 KiB of market state per call (about 13 calls for
-// a 1 MiB market) while preserving a hard instruction-level CU bound.
-const MAX_CANCEL_ALL_SCAN_STEPS: usize = 1_024;
 
 #[derive(BorshDeserialize, BorshSerialize, Clone)]
 pub struct WrapperPlaceOrderParams {
@@ -113,92 +105,6 @@ impl WrapperBatchUpdateParams {
             orders,
         }
     }
-}
-
-/// For `cancel_all`, also cancels orders on the market's seat that the
-/// wrapper does not track (e.g. placed directly via the manifest program).
-/// The wrapper's own open orders were already matched while syncing.
-fn prepare_cancel_all(
-    matcher: &mut CancelMatcher,
-    market: &ManifestAccountInfo<MarketFixed>,
-    trader_index: DataIndex,
-    scan_cursor: DataIndex,
-) -> DataIndex {
-    // Scan physical market blocks rather than walking either price tree. The
-    // fixed scan quota bounds CU, while the per-market cursor makes retries
-    // progress regardless of how unrelated orders are priced. Completion is
-    // per pass, not a stable assertion that the trader has no orders: between
-    // transactions, a freed block already behind the cursor can be reused for
-    // a newly created order.
-    let mut remaining_cancel_all_cancels: usize =
-        EXPECTED_ORDER_BATCH_SIZE.saturating_sub(matcher.core_cancels.len());
-    let market_data: Ref<&mut [u8]> = market.try_borrow_data().unwrap();
-    let market_ref: DynamicAccount<&MarketFixed, &[u8]> =
-        get_dynamic_account::<MarketFixed>(&market_data);
-    let dynamic_len: DataIndex = (market_ref.dynamic.len() / MARKET_BLOCK_SIZE * MARKET_BLOCK_SIZE)
-        .try_into()
-        .unwrap();
-    if dynamic_len == 0 {
-        return NIL;
-    }
-    let mut cursor: DataIndex =
-        if scan_cursor < dynamic_len && scan_cursor % (MARKET_BLOCK_SIZE as DataIndex) == 0 {
-            scan_cursor
-        } else {
-            0
-        };
-    let is_known = |order_sequence_number: u64, core_cancels: &Vec<CancelOrderParams>| {
-        core_cancels.iter().any(|cancel: &CancelOrderParams| {
-            cancel.order_sequence_number() == order_sequence_number
-        })
-    };
-
-    for _ in 0..MAX_CANCEL_ALL_SCAN_STEPS {
-        // The wrapper sync can consume the entire 16-cancel core batch before
-        // this scan starts. Preserve the current cursor in that case: no
-        // physical block was inspected, so the scan is not complete.
-        if remaining_cancel_all_cancels == 0 {
-            break;
-        }
-
-        let resting_order_node: &RBNode<RestingOrder> =
-            get_helper::<RBNode<RestingOrder>>(market_ref.dynamic, cursor);
-        if resting_order_node.get_payload_type() == MarketDataTreeNodeType::RestingOrder as u8 {
-            let resting_order: &RestingOrder = resting_order_node.get_value();
-            if resting_order.get_trader_index() == trader_index
-                && !is_known(resting_order.get_sequence_number(), &matcher.core_cancels)
-            {
-                matcher.core_cancels.push(CancelOrderParams::new_with_hint(
-                    resting_order.get_sequence_number(),
-                    Some(cursor),
-                ));
-                if resting_order.get_is_bid() && matcher.needs_quote {
-                    matcher.freed_quote_atoms += resting_order
-                        .get_price()
-                        .checked_quote_for_base(resting_order.get_num_base_atoms(), true)
-                        .unwrap();
-                } else if !resting_order.get_is_bid() && matcher.needs_base {
-                    matcher.freed_base_atoms += resting_order.get_num_base_atoms();
-                }
-                remaining_cancel_all_cancels -= 1;
-            }
-        }
-
-        cursor += MARKET_BLOCK_SIZE as DataIndex;
-        if cursor >= dynamic_len {
-            cursor = 0;
-        }
-        if cursor == 0 {
-            // Byte offset zero is the fixed origin of every pass. A pass may
-            // span many instructions, so completion occurs when the persisted
-            // cursor wraps to zero, not when one instruction returns to its
-            // own starting cursor. NIL remains the external completion marker
-            // because zero is also the valid first cursor of a new pass.
-            return NIL;
-        }
-    }
-
-    cursor
 }
 
 /// Possibly update orders due to insufficient funds. Reduce the quantity of the
@@ -535,20 +441,6 @@ pub(crate) fn process_batch_update(
         *get_helper::<RBNode<MarketInfo>>(wrapper_dynamic_data, market_info_index).get_value()
     };
     let trader_index_hint: Option<DataIndex> = Some(market_info.trader_index);
-    if cancel_all {
-        let next_cancel_all_cursor: DataIndex = prepare_cancel_all(
-            &mut matcher,
-            &market,
-            market_info.trader_index,
-            market_info.cancel_all_scan_cursor,
-        );
-        let mut wrapper_data: RefMut<&mut [u8]> = wrapper_state.info.try_borrow_mut_data()?;
-        let (_fixed_data, wrapper_dynamic_data) =
-            wrapper_data.split_at_mut(size_of::<ManifestWrapperStateFixed>());
-        get_mut_helper::<RBNode<MarketInfo>>(wrapper_dynamic_data, market_info_index)
-            .get_mut_value()
-            .cancel_all_scan_cursor = next_cancel_all_cursor;
-    }
     let remaining_base_atoms: BaseAtoms = market_info.base_balance + matcher.freed_base_atoms;
     let remaining_quote_atoms: QuoteAtoms = market_info.quote_balance + matcher.freed_quote_atoms;
     let CancelMatcher {
