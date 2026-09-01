@@ -49,22 +49,22 @@ export function tokenAmountToAtoms(
   // Parse the number's canonical decimal representation rather than doing a
   // binary floating-point multiplication. This keeps values such as 0.29
   // exact and makes excess decimal precision an explicit error.
-  const match = amountTokens
+  const match: RegExpMatchArray | null = amountTokens
     .toString()
     .match(/^(\d+)(?:\.(\d+))?(?:e([+-]?\d+))?$/i);
   if (!match) {
     throw new RangeError('Token amount could not be represented as decimal');
   }
-  const fraction = match[2] ?? '';
-  const decimalExponent = Number(match[3] ?? '0');
-  const digits = BigInt(`${match[1]}${fraction}`);
-  const atomExponent = decimals + decimalExponent - fraction.length;
+  const fraction: string = match[2] ?? '';
+  const decimalExponent: number = Number(match[3] ?? '0');
+  const digits: bigint = BigInt(`${match[1]}${fraction}`);
+  const atomExponent: number = decimals + decimalExponent - fraction.length;
 
   let atoms: bigint;
   if (atomExponent >= 0) {
     atoms = digits * 10n ** BigInt(atomExponent);
   } else {
-    const divisor = 10n ** BigInt(-atomExponent);
+    const divisor: bigint = 10n ** BigInt(-atomExponent);
     if (digits % divisor !== 0n) {
       throw new RangeError(
         `Token amount has more than ${decimals} decimal places`,
@@ -81,8 +81,10 @@ export function tokenAmountToAtoms(
   return Number(atoms);
 }
 
-const BN_NUMBER_MAX = new BN(2 ** 48 - 1);
-const BN_10 = new BN(10);
+type BNInstance = InstanceType<typeof BN>;
+
+const BN_NUMBER_MAX: BNInstance = new BN(2 ** 48 - 1);
+const BN_10: BNInstance = new BN(10);
 
 /**
  * Converts a beet.bignum to a number after dividing by 10**18
@@ -94,8 +96,8 @@ export function convertU128(n: bignum): number {
     return n;
   }
 
-  let mantissa = n.clone();
-  for (let exponent = -18; exponent < 20; exponent += 1) {
+  let mantissa: BNInstance = n.clone();
+  for (let exponent: number = -18; exponent < 20; exponent += 1) {
     if (mantissa.lte(BN_NUMBER_MAX)) {
       return mantissa.toNumber() * 10 ** exponent;
     }
