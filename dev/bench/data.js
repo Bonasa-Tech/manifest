@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1788271634287,
+  "lastUpdate": 1788294184468,
   "repoUrl": "https://github.com/Bonasa-Tech/manifest",
   "entries": {
     "CU Benchmark": [
@@ -12965,6 +12965,72 @@ window.BENCHMARK_DATA = {
           {
             "name": "MFX_99",
             "value": 4354,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "cyrbritt@gmail.com",
+            "name": "Britt Cyr",
+            "username": "brittcyr"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "4e647fce4802318a9d3a4a2dfc4cf2d148b1c67a",
+          "message": "Keep the wrapper's open orders in a linked list (#696)\n\nThe open orders of one market were a red-black tree keyed by client\norder id, which is the wrong structure for them: a wrapper holds one\ntrader's orders on a market, typically ten to a few dozen, every batch\nupdate walks all of them and inserts or removes a few, and nothing looks\nan order up by id because cancels are matched during that walk. With 20\nopen orders a tree insert was about 500 CU, a remove about 440 and a\nwalk about 100 per order; a hypertree LinkedList over the same blocks\nmakes an insert or remove a couple of link writes and a walk step one\nlink read.\n\nExisting wrappers convert lazily, one market at a time, in\nensure_orders_list from sync_fast, which every instruction that touches\norders goes through first. The market info node's payload_type says\nwhich layout that market is in, so the conversion happens once and the\nnodes keep their addresses and payloads.\n\nThe conversion has to fit in the instruction that triggers it, since\nevery later instruction retries it, and nothing caps a market's open\norder count, so the ceiling is measured rather than assumed: 93 CU per\norder on SBPF v2, about 15,000 orders in a transaction raised to the\n1.4M CU limit and about 2,100 in the 200,000 an instruction gets by\ndefault. Nobody reaches that. An open order is a 96 byte wrapper block\nand an 80 byte block on the core, so 15,000 of them is about 10 SOL of\nrent on the wrapper and another 8 on the market, and cancelling them\ndoes not give it back: freed blocks are reused through a free list,\nneither account shrinks, and collect leaves what the current size needs,\nso that rent is spent for the life of the accounts. It also stops\nworking earlier for ordinary reasons:\nplacing an order leaves the market non-quiet, so the next instruction\nwalks every open order on it at a comparable cost per order, and a\nwrapper that large could not place or cancel anything either. Nor is one\nstuck there stuck holding funds, since the balances and resting orders\nare on the core and can be cancelled and withdrawn against directly.\nmigrate_a_large_legacy_tree_test converts 1,000 and 4,000 orders and\npins both the per-order cost and what it implies.\n\nNo client has to know. The list keeps the previous node in `parent` and\nleaves `left` at NIL, which makes it a right-leaning tree spine: every\nnode the right child of the one before it, with parent links that agree.\nThe client's tree parser checks exactly that, plus offsets and cycles,\nand nothing about key ordering or balance, and the in-order walk of a\nright spine is the spine itself. So it reads a converted market and\nreturns the same orders in the same sequence, and clients already\nreleased keep working with no change at all. Storing the previous node\nin `left` instead would have presented them with a node whose parent\nlink does not match the node that pointed at it; on the released parser,\nwhich has no cycle guard, that does not even fail cleanly, it runs the\nclient out of memory. The compatibility is pinned against a client that\nwas actually released rather than against this repository's parser:\nwrapperLayout.ts parses a converted wrapper with SDK 0.2.25, resolved as\nmanifest-sdk-old, and the hypertree side pins the shape.\n\nIt is compatibility with that parser specifically and not with red-black\ntree readers in general: hypertree's own validator checks the ordering\nand black-height invariants, which a spine does not satisfy, and a test\npins that it rejects one.\n\nConversion does change the sequence a market's open orders come back in,\nwhich was never a sort a caller could rely on. openOrdersForMarket says\nso now and tells callers who care to sort.\n\nThis also revises hypertree's LinkedList, which stored the previous node\nin `left` when it was added and had no reader depending on that yet.\n\nMeasured with a maker holding twenty open orders on a 1 MB market: five\ncancels and five placements 33,277 CU to 27,347, ten placements 41,381\nto 33,475, ten cancels 26,771 to 20,747. Replaying recorded mainnet\norder flow, CU per order p50 1,965 to 1,616, p95 3,371 to 2,906, p99\n3,640 to 3,103.\n\nThe benchmarking harness in the private repository builds wrapper open\norders directly, as the tree a wrapper starts in, so a replay measures\nthe conversion and then the layout it produces.",
+          "timestamp": "2026-09-01T16:17:57-04:00",
+          "tree_id": "bbdee3e86adce2813fb759e724d59ff4ac190071",
+          "url": "https://github.com/Bonasa-Tech/manifest/commit/4e647fce4802318a9d3a4a2dfc4cf2d148b1c67a"
+        },
+        "date": 1788294182464,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "PHX_50",
+            "value": 6897,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "PHX_95",
+            "value": 13208,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "PHX_99",
+            "value": 13902,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_50",
+            "value": 2093,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_95",
+            "value": 3534,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_99",
+            "value": 3756,
             "range": "",
             "unit": "CU",
             "extra": ""
