@@ -181,19 +181,15 @@ async function sendDiscordMessage(
   webhookUrl: string,
   content: string,
 ): Promise<void> {
-  try {
-    const response = await fetch(webhookUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ content }),
-    });
-    if (!response.ok) {
-      console.error(
-        `Failed to send Discord message: ${response.status} ${response.statusText}`,
-      );
-    }
-  } catch (error) {
-    console.error('Error sending Discord message:', error);
+  const response = await fetch(webhookUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ content }),
+  });
+  if (!response.ok) {
+    throw new Error(
+      `Failed to send Discord message: ${response.status} ${response.statusText}`,
+    );
   }
 }
 
@@ -219,6 +215,7 @@ async function main() {
   // Extract unique mints from all markets
   const mints = new Set<string>();
   const marketMintInfo: MarketMintInfo[] = [];
+  const unparsedMarkets: string[] = [];
 
   for (const account of marketAccounts) {
     try {
@@ -237,7 +234,13 @@ async function main() {
       });
     } catch (e) {
       console.error(`Failed to parse market ${account.pubkey.toBase58()}`);
+      unparsedMarkets.push(account.pubkey.toBase58());
     }
+  }
+  if (unparsedMarkets.length > 0) {
+    throw new Error(
+      `Extension check incomplete: failed to parse ${unparsedMarkets.length} market(s): ${unparsedMarkets.join(', ')}`,
+    );
   }
   console.log(
     `Found ${mints.size} unique mints across ${marketMintInfo.length} markets`,
@@ -292,8 +295,9 @@ async function main() {
     };
 
     if (!accountInfo) {
-      results.push(info);
-      continue;
+      throw new Error(
+        `Extension check incomplete: mint account ${mint} was not returned by RPC`,
+      );
     }
 
     if (accountInfo.owner.equals(TOKEN_2022_PROGRAM_ID)) {
@@ -511,4 +515,7 @@ async function main() {
   }
 }
 
-main().catch(console.error);
+main().catch((error) => {
+  console.error(error);
+  process.exitCode = 1;
+});

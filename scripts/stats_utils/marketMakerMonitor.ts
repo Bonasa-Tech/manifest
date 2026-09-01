@@ -82,16 +82,16 @@ export class MarketMakerMonitor {
       // Check $100k threshold (new market maker)
       if (volume >= NEW_MARKET_MAKER_THRESHOLD_USDC) {
         if (!this.alertedNewMarketMakers.has(trader)) {
-          this.alertedNewMarketMakers.add(trader);
           await this.sendNewMarketMakerAlert(trader, volume);
+          this.alertedNewMarketMakers.add(trader);
         }
       }
 
       // Check $1M threshold (million maker milestone)
       if (volume >= MILLION_MAKER_THRESHOLD_USDC) {
         if (!this.alertedMillionMakers.has(trader)) {
-          this.alertedMillionMakers.add(trader);
           await this.sendMillionMakerAlert(trader, volume);
+          this.alertedMillionMakers.add(trader);
         }
       }
     }

@@ -107,6 +107,7 @@ let ix = swap_instruction(
         false,        // is_base_in
         true,         // is_exact_in
     ),
+    false,  // include_global output-mint liquidity
 );
 ```
 

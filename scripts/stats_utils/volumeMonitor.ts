@@ -92,7 +92,10 @@ export class VolumeMonitor {
       return;
     }
 
-    // Finalize any old transactions before processing new fill
+    // Accepted operational tradeoff: finalization is driven by later fills.
+    // Production markets trade continuously, so an isolated final transaction
+    // is not expected to remain buffered for a meaningful period. Add a timer
+    // and shutdown flush if this monitor is ever used on an illiquid market.
     await this.finalizeOldTransactions();
 
     // Buffer this fill by transaction signature

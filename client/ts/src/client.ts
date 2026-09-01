@@ -48,6 +48,7 @@ import { getVaultAddress } from './utils/market';
 import { genAccDiscriminator } from './utils/discriminator';
 import { getGlobalAddress, getGlobalVaultAddress } from './utils/global';
 import { Global } from './global';
+import { tokenAmountToAtoms } from './utils/numbers';
 
 export interface SetupData {
   setupNeeded: boolean;
@@ -814,21 +815,9 @@ export class ManifestClient {
    */
   public async reload(): Promise<void> {
     await Promise.all([
-      () => {
-        if (this.wrapper) {
-          return this.wrapper.reload(this.connection);
-        }
-      },
-      () => {
-        if (this.baseGlobal) {
-          return this.baseGlobal.reload(this.connection);
-        }
-      },
-      () => {
-        if (this.quoteGlobal) {
-          return this.quoteGlobal.reload(this.connection);
-        }
-      },
+      this.wrapper?.reload(this.connection),
+      this.baseGlobal?.reload(this.connection),
+      this.quoteGlobal?.reload(this.connection),
       this.market.reload(this.connection),
     ]);
   }
@@ -894,7 +883,7 @@ export class ManifestClient {
       this.market.quoteMint().toBase58() === mint.toBase58()
         ? this.market.quoteDecimals()
         : this.market.baseDecimals();
-    const amountAtoms = Math.round(amountTokens * 10 ** mintDecimals);
+    const amountAtoms = tokenAmountToAtoms(amountTokens, mintDecimals);
 
     return createDepositInstruction(
       {
@@ -946,7 +935,7 @@ export class ManifestClient {
       this.market.quoteMint().toBase58() === mint.toBase58()
         ? this.market.quoteDecimals()
         : this.market.baseDecimals();
-    const amountAtoms = Math.floor(amountTokens * 10 ** mintDecimals);
+    const amountAtoms = tokenAmountToAtoms(amountTokens, mintDecimals);
 
     return createWithdrawInstruction(
       {
@@ -2027,7 +2016,7 @@ export class ManifestClient {
       is22 ? TOKEN_2022_PROGRAM_ID : TOKEN_PROGRAM_ID,
     );
     const mintDecimals = mint.decimals;
-    const amountAtoms = Math.round(amountTokens * 10 ** mintDecimals);
+    const amountAtoms = tokenAmountToAtoms(amountTokens, mintDecimals);
 
     return createGlobalDepositInstruction(
       {
@@ -2079,7 +2068,7 @@ export class ManifestClient {
       is22 ? TOKEN_2022_PROGRAM_ID : TOKEN_PROGRAM_ID,
     );
     const mintDecimals = mint.decimals;
-    const amountAtoms = Math.round(amountTokens * 10 ** mintDecimals);
+    const amountAtoms = tokenAmountToAtoms(amountTokens, mintDecimals);
 
     return createGlobalWithdrawInstruction(
       {
@@ -2180,8 +2169,9 @@ function toWrapperPlaceOrderParams(
     priceQuoteAtomsPerBaseAtoms,
     maxExponent,
   );
-  const numBaseAtoms: bignum = Math.floor(
-    wrapperPlaceOrderParamsExternal.numBaseTokens * baseAtomsPerToken,
+  const numBaseAtoms: bignum = tokenAmountToAtoms(
+    wrapperPlaceOrderParamsExternal.numBaseTokens,
+    market.baseDecimals(),
   );
 
   return {

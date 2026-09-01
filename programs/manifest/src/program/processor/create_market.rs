@@ -66,9 +66,12 @@ pub(crate) fn process_create_market(
                     );
                 }
             }
-            // Permanent delegates can steal your tokens. This will break all
-            // accounting in the market, so there is no assertion of security
-            // against loss of funds on these markets.
+            // Accepted risk: permissionless Token-2022 support means we cannot
+            // prevent a mint authority from choosing PermanentDelegate without
+            // excluding those mints entirely. A delegate can debit this
+            // market's vault behind Manifest's accounting. The direct-market
+            // damage is isolated to the market being created; users must not
+            // treat other markets as collateral for it.
             if let Ok(extension) = pool_mint.get_extension::<PermanentDelegate>() {
                 let permanent_delegate: Option<Pubkey> = extension.delegate.into();
                 if permanent_delegate.is_some() {

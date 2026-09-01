@@ -744,6 +744,7 @@ mod integration_tests {
                 false,       // is_base_in (we're swapping quote in)
                 true,        // is_exact_in
             ),
+            false, // do not consume global orders
         );
 
         let tx = Transaction::new_signed_with_payer(

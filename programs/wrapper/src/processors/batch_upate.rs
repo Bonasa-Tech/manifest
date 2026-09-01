@@ -41,6 +41,11 @@ use super::shared::{
     UnusedWrapperFreeListPadding, EXPECTED_ORDER_BATCH_SIZE,
 };
 
+// Price discovery is advisory; the core remains authoritative. Keep this
+// shared-book traversal strictly bounded so placement preprocessing cannot
+// consume the transaction before already-requested cancellations execute.
+const MAX_PRICE_DISCOVERY_STEPS_PER_SIDE: usize = 32;
+
 #[derive(BorshDeserialize, BorshSerialize, Clone)]
 pub struct WrapperPlaceOrderParams {
     client_order_id: u64,
@@ -116,7 +121,10 @@ fn prepare_cancel_all(
     market: &ManifestAccountInfo<MarketFixed>,
     trader_index: DataIndex,
 ) {
-    let mut remaining_cancel_all_scans: usize =
+    // EXPECTED_ORDER_BATCH_SIZE is a cap on cancellations forwarded in one
+    // CPI, not a scan budget. Spending it on unrelated book entries made a
+    // persistent prefix of other traders' orders starve this trader forever.
+    let mut remaining_cancel_all_cancels: usize =
         EXPECTED_ORDER_BATCH_SIZE.saturating_sub(matcher.core_cancels.len());
     let market_data: Ref<&mut [u8]> = market.try_borrow_data().unwrap();
     let market_ref: DynamicAccount<&MarketFixed, &[u8]> =
@@ -127,10 +135,9 @@ fn prepare_cancel_all(
         })
     };
     for (index, resting_order) in market_ref.get_bids().iter::<RestingOrder>() {
-        if remaining_cancel_all_scans == 0 {
+        if remaining_cancel_all_cancels == 0 {
             break;
         }
-        remaining_cancel_all_scans -= 1;
         if resting_order.get_trader_index() == trader_index
             && !is_known(resting_order.get_sequence_number(), &matcher.core_cancels)
         {
@@ -144,13 +151,13 @@ fn prepare_cancel_all(
                     .checked_quote_for_base(resting_order.get_num_base_atoms(), true)
                     .unwrap();
             }
+            remaining_cancel_all_cancels -= 1;
         }
     }
     for (index, resting_order) in market_ref.get_asks().iter::<RestingOrder>() {
-        if remaining_cancel_all_scans == 0 {
+        if remaining_cancel_all_cancels == 0 {
             break;
         }
-        remaining_cancel_all_scans -= 1;
         if resting_order.get_trader_index() == trader_index
             && !is_known(resting_order.get_sequence_number(), &matcher.core_cancels)
         {
@@ -161,6 +168,7 @@ fn prepare_cancel_all(
             if matcher.needs_base {
                 matcher.freed_base_atoms += resting_order.get_num_base_atoms();
             }
+            remaining_cancel_all_cancels -= 1;
         }
     }
 }
@@ -174,6 +182,13 @@ fn prepare_orders(
     market: &ManifestAccountInfo<MarketFixed>,
     now_slot: u32,
 ) -> (Vec<PlaceOrderParams>, Vec<usize>) {
+    // Cancellation-only batches do not need price discovery. In particular,
+    // they must not walk an attacker-controlled prefix of expired makers
+    // before the requested cancellations reach the core.
+    if orders.is_empty() {
+        return (Vec::new(), Vec::new());
+    }
+
     let market_data: Ref<'_, &mut [u8]> = market.try_borrow_data().unwrap();
     let market_ref: DynamicAccount<&MarketFixed, &[u8]> =
         get_dynamic_account::<MarketFixed>(&market_data);
@@ -187,7 +202,22 @@ fn prepare_orders(
     // Also, changes orders with last_valid_slot < 1_000_000 to now +
     // last_valid_slot.
 
-    while best_ask_index != NIL
+    for _ in 0..MAX_PRICE_DISCOVERY_STEPS_PER_SIDE {
+        if best_ask_index == NIL
+            || !get_helper::<RBNode<RestingOrder>>(
+                &market_data,
+                best_ask_index + (MARKET_FIXED_SIZE as DataIndex),
+            )
+            .get_value()
+            .is_expired(now_slot)
+        {
+            break;
+        }
+        best_ask_index = market_ref
+            .get_asks()
+            .get_next_lower_index::<RestingOrder>(best_ask_index);
+    }
+    if best_ask_index != NIL
         && get_helper::<RBNode<RestingOrder>>(
             &market_data,
             best_ask_index + (MARKET_FIXED_SIZE as DataIndex),
@@ -195,11 +225,27 @@ fn prepare_orders(
         .get_value()
         .is_expired(now_slot)
     {
-        best_ask_index = market_ref
-            .get_asks()
-            .get_next_lower_index::<RestingOrder>(best_ask_index);
+        // The bounded window contained no usable price. Omitting the advisory
+        // wrapper check is safe because the core enforces order semantics.
+        best_ask_index = NIL;
     }
-    while best_bid_index != NIL
+
+    for _ in 0..MAX_PRICE_DISCOVERY_STEPS_PER_SIDE {
+        if best_bid_index == NIL
+            || !get_helper::<RBNode<RestingOrder>>(
+                &market_data,
+                best_bid_index + (MARKET_FIXED_SIZE as DataIndex),
+            )
+            .get_value()
+            .is_expired(now_slot)
+        {
+            break;
+        }
+        best_bid_index = market_ref
+            .get_bids()
+            .get_next_lower_index::<RestingOrder>(best_bid_index);
+    }
+    if best_bid_index != NIL
         && get_helper::<RBNode<RestingOrder>>(
             &market_data,
             best_bid_index + (MARKET_FIXED_SIZE as DataIndex),
@@ -207,9 +253,7 @@ fn prepare_orders(
         .get_value()
         .is_expired(now_slot)
     {
-        best_bid_index = market_ref
-            .get_bids()
-            .get_next_lower_index::<RestingOrder>(best_bid_index);
+        best_bid_index = NIL;
     }
 
     let best_ask_price: QuoteAtomsPerBaseAtom = if best_ask_index != NIL {

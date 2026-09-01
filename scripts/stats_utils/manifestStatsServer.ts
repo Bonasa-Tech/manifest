@@ -385,7 +385,8 @@ export class ManifestStatsServer {
 
     // Get current acquisition value
     const currentValue = acquisitionValues.get(baseMint) || 0;
-    const usdcValue = safeAtomsToNumber(quoteAtoms) / 10 ** market.quoteDecimals();
+    const usdcValue =
+      safeAtomsToNumber(quoteAtoms) / 10 ** market.quoteDecimals();
 
     if (baseAtomsDelta > 0) {
       acquisitionValues.set(baseMint, currentValue + usdcValue);
@@ -794,7 +795,9 @@ export class ManifestStatsServer {
       this.updateTraderPosition(
         actualTaker,
         baseMint,
-        takerIsBuy ? safeAtomsToNumber(baseAtoms) : -safeAtomsToNumber(baseAtoms),
+        takerIsBuy
+          ? safeAtomsToNumber(baseAtoms)
+          : -safeAtomsToNumber(baseAtoms),
         safeAtomsToNumber(quoteAtoms),
         marketObject,
       );
@@ -802,7 +805,9 @@ export class ManifestStatsServer {
       this.updateTraderPosition(
         maker,
         baseMint,
-        takerIsBuy ? -safeAtomsToNumber(baseAtoms) : safeAtomsToNumber(baseAtoms),
+        takerIsBuy
+          ? -safeAtomsToNumber(baseAtoms)
+          : safeAtomsToNumber(baseAtoms),
         safeAtomsToNumber(quoteAtoms),
         marketObject,
       );
@@ -810,7 +815,8 @@ export class ManifestStatsServer {
       const { solPrice } = this.getSolAndBtcPrices();
       if (solPrice > 0) {
         const notionalVolume =
-          (safeAtomsToNumber(quoteAtoms) / 10 ** marketObject.quoteDecimals()) * solPrice;
+          (safeAtomsToNumber(quoteAtoms) / 10 ** marketObject.quoteDecimals()) *
+          solPrice;
 
         this.addTraderNotionalVolume(actualTaker, 'taker', notionalVolume);
         this.addTraderNotionalVolume(maker, 'maker', notionalVolume);
@@ -846,7 +852,10 @@ export class ManifestStatsServer {
       onMessage: async (message: unknown) => {
         const fill: FillLogResult = message as FillLogResult;
         await this.fillMutex.runExclusive(async () => {
-          // Track slot for database persistence
+          // Accepted recovery model: live persistence can fail after this
+          // cursor advances, but the scheduled trade-verification job compares
+          // chain history with fills_complete and backfills missing signatures.
+          // Keep that job enabled whenever live ingestion is enabled.
           this.lastFillSlot = Math.max(this.lastFillSlot, fill.slot);
 
           // Immediately save to recent fill
@@ -2020,7 +2029,23 @@ export class ManifestStatsServer {
       throw new RangeError('offset must be an integer between 0 and 10000');
     }
 
-    // Apply default slot filter only if no efficient index filter is present
+    for (const [name, value] of [
+      ['fromSlot', options.fromSlot],
+      ['toSlot', toSlot],
+    ] as const) {
+      if (value !== undefined && (!Number.isSafeInteger(value) || value < 0)) {
+        throw new RangeError(`${name} must be a non-negative safe integer`);
+      }
+    }
+    if (
+      options.fromSlot !== undefined &&
+      toSlot !== undefined &&
+      options.fromSlot > toSlot
+    ) {
+      throw new RangeError('fromSlot must be less than or equal to toSlot');
+    }
+
+    // Apply default slot filter only if no efficient index filter is present.
     const hasEfficientFilter = market || signature || taker || maker;
     let { fromSlot } = options;
     if (fromSlot === undefined && !hasEfficientFilter) {
@@ -2029,6 +2054,27 @@ export class ManifestStatsServer {
       );
       const currentSlot = await this.connection.getSlot();
       fromSlot = Math.max(0, currentSlot - SLOTS_PER_DAY);
+    }
+
+    // Wallet queries use a taker-or-maker predicate and cannot rely on one
+    // ordered composite index. Keep their history window bounded even when a
+    // caller supplies explicit slots; intentional archival access belongs in
+    // a separate authenticated/export path.
+    if (wallet) {
+      const effectiveToSlot: number =
+        toSlot ?? (await this.connection.getSlot());
+      if (fromSlot === undefined) {
+        fromSlot = Math.max(0, effectiveToSlot - SLOTS_PER_DAY);
+      }
+      if (fromSlot > effectiveToSlot) {
+        throw new RangeError('fromSlot must be less than or equal to toSlot');
+      }
+      const maxWalletSlotRange: number = SLOTS_PER_DAY * 31;
+      if (effectiveToSlot - fromSlot > maxWalletSlotRange) {
+        throw new RangeError(
+          `wallet slot range must not exceed ${maxWalletSlotRange} slots`,
+        );
+      }
     }
 
     try {
@@ -2053,10 +2099,6 @@ export class ManifestStatsServer {
 
       // wallet matches either taker OR maker
       if (wallet) {
-        // Explicit fromSlot values intentionally support complete wallet
-        // history. If this becomes expensive at larger retention, split this
-        // into indexed taker and maker scans and merge their ordered results
-        // instead of changing the API's all-history semantics.
         conditions.push(`(taker = $${paramIndex} OR maker = $${paramIndex})`);
         params.push(wallet);
         paramIndex++;
@@ -2067,12 +2109,12 @@ export class ManifestStatsServer {
         params.push(signature);
       }
 
-      if (fromSlot) {
+      if (fromSlot !== undefined) {
         conditions.push(`slot >= $${paramIndex++}`);
         params.push(fromSlot);
       }
 
-      if (toSlot) {
+      if (toSlot !== undefined) {
         conditions.push(`slot <= $${paramIndex++}`);
         params.push(toSlot);
       }

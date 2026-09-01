@@ -21,19 +21,15 @@ if (!RPC_URL) {
 async function sendDiscordMessage(content: string): Promise<void> {
   if (!DISCORD_WEBHOOK_URL) return;
 
-  try {
-    const response = await fetch(DISCORD_WEBHOOK_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ content }),
-    });
-    if (!response.ok) {
-      console.error(
-        `Failed to send Discord message: ${response.status} ${response.statusText}`,
-      );
-    }
-  } catch (error) {
-    console.error('Error sending Discord message:', error);
+  const response = await fetch(DISCORD_WEBHOOK_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ content }),
+  });
+  if (!response.ok) {
+    throw new Error(
+      `Failed to send Discord message: ${response.status} ${response.statusText}`,
+    );
   }
 }
 
@@ -153,6 +149,7 @@ const run = async () => {
   console.log(`Found ${globalPublicKeys.length} global accounts`);
 
   const mismatchedGlobals: string[] = [];
+  const uncheckedGlobals: string[] = [];
   // Check global account balances
   for (const globalAccount of globalAccounts) {
     try {
@@ -223,19 +220,27 @@ const run = async () => {
         mismatchedGlobals.push(mint.toBase58());
       }
     } catch (error) {
-      console.log(
+      console.error(
         `Error checking global ${globalAccount.pubkey.toBase58()}: ${error}`,
       );
+      uncheckedGlobals.push(globalAccount.pubkey.toBase58());
     }
   }
 
-  if (mismatchedMarkets.length > 0 || mismatchedGlobals.length > 0) {
+  if (
+    mismatchedMarkets.length > 0 ||
+    mismatchedGlobals.length > 0 ||
+    uncheckedGlobals.length > 0
+  ) {
     const details: string[] = [];
     if (mismatchedMarkets.length > 0) {
       details.push(`Markets: ${mismatchedMarkets.join(', ')}`);
     }
     if (mismatchedGlobals.length > 0) {
       details.push(`Globals: ${mismatchedGlobals.join(', ')}`);
+    }
+    if (uncheckedGlobals.length > 0) {
+      details.push(`Unchecked globals: ${uncheckedGlobals.join(', ')}`);
     }
     const detailsStr = details.join('; ');
     await sendDiscordMessage(
@@ -251,8 +256,12 @@ const run = async () => {
 
 run().catch(async (e) => {
   console.error('fatal error', e);
-  await sendDiscordMessage(
-    `**Balance Checker Error**\nFatal error occurred: ${e.message || e}`,
-  );
+  try {
+    await sendDiscordMessage(
+      `**Balance Checker Error**\nFatal error occurred: ${e.message || e}`,
+    );
+  } catch (notificationError) {
+    console.error('Failed to send fatal-error notification', notificationError);
+  }
   throw e;
 });

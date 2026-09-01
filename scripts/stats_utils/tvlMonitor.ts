@@ -114,76 +114,68 @@ export class TvlMonitor {
       Object.values(MONITORED_MINTS),
     );
 
-    try {
-      const marketPks: PublicKey[] = await ManifestClient.listMarketPublicKeys(
-        this.connection,
-      );
+    const marketPks: PublicKey[] = await ManifestClient.listMarketPublicKeys(
+      this.connection,
+    );
 
-      // Process in batches to avoid rate limiting
-      const batchSize: number = 10;
-      for (let i: number = 0; i < marketPks.length; i += batchSize) {
-        const batch: PublicKey[] = marketPks.slice(i, i + batchSize);
-        await Promise.all(
-          batch.map(async (marketPk: PublicKey): Promise<void> => {
-            try {
-              const client: ManifestClient =
-                await ManifestClient.getClientReadOnly(
-                  this.connection,
-                  marketPk,
+    // Process in batches to avoid rate limiting. Any failed market rejects the
+    // whole snapshot so an incomplete zero cannot replace the last good value.
+    const batchSize: number = 10;
+    for (let i: number = 0; i < marketPks.length; i += batchSize) {
+      const batch: PublicKey[] = marketPks.slice(i, i + batchSize);
+      await Promise.all(
+        batch.map(async (marketPk: PublicKey): Promise<void> => {
+          const client: ManifestClient = await ManifestClient.getClientReadOnly(
+            this.connection,
+            marketPk,
+          );
+          const baseMint: PublicKey = client.market.baseMint();
+          const quoteMint: PublicKey = client.market.quoteMint();
+
+          const vaultsToFetch: VaultFetchInfo[] = [];
+
+          if (monitoredMintSet.has(baseMint.toBase58())) {
+            vaultsToFetch.push({
+              mint: baseMint,
+              vault: getVaultAddress(marketPk, baseMint),
+            });
+          }
+          if (monitoredMintSet.has(quoteMint.toBase58())) {
+            vaultsToFetch.push({
+              mint: quoteMint,
+              vault: getVaultAddress(marketPk, quoteMint),
+            });
+          }
+
+          if (vaultsToFetch.length > 0) {
+            const vaultPubkeys: PublicKey[] = vaultsToFetch.map(
+              (v: VaultFetchInfo): PublicKey => v.vault,
+            );
+            const accounts: RpcResponseAndContext<
+              (AccountInfo<Buffer | ParsedAccountData> | null)[]
+            > = await this.connection.getMultipleParsedAccounts(vaultPubkeys);
+
+            for (let j: number = 0; j < vaultsToFetch.length; j++) {
+              const accountInfo: AccountInfo<
+                Buffer | ParsedAccountData
+              > | null = accounts.value[j];
+              if (!accountInfo?.data) {
+                throw new Error(
+                  `Vault ${vaultsToFetch[j].vault.toBase58()} was not returned by RPC`,
                 );
-              const baseMint: PublicKey = client.market.baseMint();
-              const quoteMint: PublicKey = client.market.quoteMint();
-
-              const vaultsToFetch: VaultFetchInfo[] = [];
-
-              if (monitoredMintSet.has(baseMint.toBase58())) {
-                vaultsToFetch.push({
-                  mint: baseMint,
-                  vault: getVaultAddress(marketPk, baseMint),
-                });
               }
-              if (monitoredMintSet.has(quoteMint.toBase58())) {
-                vaultsToFetch.push({
-                  mint: quoteMint,
-                  vault: getVaultAddress(marketPk, quoteMint),
-                });
-              }
-
-              if (vaultsToFetch.length > 0) {
-                const vaultPubkeys: PublicKey[] = vaultsToFetch.map(
-                  (v: VaultFetchInfo): PublicKey => v.vault,
-                );
-                const accounts: RpcResponseAndContext<
-                  (AccountInfo<Buffer | ParsedAccountData> | null)[]
-                > = await this.connection.getMultipleParsedAccounts(vaultPubkeys);
-
-                for (let j: number = 0; j < vaultsToFetch.length; j++) {
-                  const accountInfo: AccountInfo<
-                    Buffer | ParsedAccountData
-                  > | null = accounts.value[j];
-                  if (accountInfo?.data) {
-                    const parsedData: ParsedAccountData =
-                      accountInfo.data as ParsedAccountData;
-                    const amountStr: string =
-                      parsedData.parsed?.info?.tokenAmount?.amount ?? '0';
-                    const amount: bigint = BigInt(amountStr);
-                    const mintKey: string = vaultsToFetch[j].mint.toBase58();
-                    const current: bigint = tvlByMint.get(mintKey) ?? BigInt(0);
-                    tvlByMint.set(mintKey, current + amount);
-                  }
-                }
-              }
-            } catch (error: unknown) {
-              console.error(
-                `Error fetching market vault for ${marketPk.toBase58()}:`,
-                error,
-              );
+              const parsedData: ParsedAccountData =
+                accountInfo.data as ParsedAccountData;
+              const amountStr: string =
+                parsedData.parsed?.info?.tokenAmount?.amount ?? '0';
+              const amount: bigint = BigInt(amountStr);
+              const mintKey: string = vaultsToFetch[j].mint.toBase58();
+              const current: bigint = tvlByMint.get(mintKey) ?? BigInt(0);
+              tvlByMint.set(mintKey, current + amount);
             }
-          }),
-        );
-      }
-    } catch (error: unknown) {
-      console.error('Error fetching market vaults:', error);
+          }
+        }),
+      );
     }
   }
 
@@ -193,33 +185,30 @@ export class TvlMonitor {
   private async fetchGlobalVaultBalances(
     tvlByMint: Map<string, bigint>,
   ): Promise<void> {
-    try {
-      // For each monitored mint, fetch its global vault
-      const monitoredMints: string[] = Object.values(MONITORED_MINTS);
-      const vaultAddresses: PublicKey[] = monitoredMints.map(
-        (mint: string): PublicKey => getGlobalVaultAddress(new PublicKey(mint)),
-      );
+    // For each monitored mint, fetch its global vault. A missing account is a
+    // legitimate zero balance; RPC or parsing failures still reject the cycle.
+    const monitoredMints: string[] = Object.values(MONITORED_MINTS);
+    const vaultAddresses: PublicKey[] = monitoredMints.map(
+      (mint: string): PublicKey => getGlobalVaultAddress(new PublicKey(mint)),
+    );
 
-      const vaultAccounts: RpcResponseAndContext<
-        (AccountInfo<Buffer | ParsedAccountData> | null)[]
-      > = await this.connection.getMultipleParsedAccounts(vaultAddresses);
+    const vaultAccounts: RpcResponseAndContext<
+      (AccountInfo<Buffer | ParsedAccountData> | null)[]
+    > = await this.connection.getMultipleParsedAccounts(vaultAddresses);
 
-      for (let i: number = 0; i < monitoredMints.length; i++) {
-        const accountInfo: AccountInfo<Buffer | ParsedAccountData> | null =
-          vaultAccounts.value[i];
-        if (accountInfo?.data) {
-          const parsedData: ParsedAccountData =
-            accountInfo.data as ParsedAccountData;
-          const amountStr: string =
-            parsedData.parsed?.info?.tokenAmount?.amount ?? '0';
-          const amount: bigint = BigInt(amountStr);
-          const mintKey: string = monitoredMints[i];
-          const current: bigint = tvlByMint.get(mintKey) ?? BigInt(0);
-          tvlByMint.set(mintKey, current + amount);
-        }
+    for (let i: number = 0; i < monitoredMints.length; i++) {
+      const accountInfo: AccountInfo<Buffer | ParsedAccountData> | null =
+        vaultAccounts.value[i];
+      if (accountInfo?.data) {
+        const parsedData: ParsedAccountData =
+          accountInfo.data as ParsedAccountData;
+        const amountStr: string =
+          parsedData.parsed?.info?.tokenAmount?.amount ?? '0';
+        const amount: bigint = BigInt(amountStr);
+        const mintKey: string = monitoredMints[i];
+        const current: bigint = tvlByMint.get(mintKey) ?? BigInt(0);
+        tvlByMint.set(mintKey, current + amount);
       }
-    } catch (error: unknown) {
-      console.error('Error fetching global vaults:', error);
     }
   }
 

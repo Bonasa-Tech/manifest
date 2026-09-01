@@ -260,12 +260,26 @@ const run = async () => {
           10_000,
           'offset',
         ),
-        fromSlot: req.query.fromSlot
-          ? parseInt(req.query.fromSlot as string)
-          : undefined,
-        toSlot: req.query.toSlot
-          ? parseInt(req.query.toSlot as string)
-          : undefined,
+        fromSlot:
+          req.query.fromSlot === undefined
+            ? undefined
+            : parseBoundedQueryInteger(
+                req.query.fromSlot,
+                0,
+                0,
+                Number.MAX_SAFE_INTEGER,
+                'fromSlot',
+              ),
+        toSlot:
+          req.query.toSlot === undefined
+            ? undefined
+            : parseBoundedQueryInteger(
+                req.query.toSlot,
+                0,
+                0,
+                Number.MAX_SAFE_INTEGER,
+                'toSlot',
+              ),
       };
 
       const result = await statsServer.getCompleteFillsFromDatabase(options);

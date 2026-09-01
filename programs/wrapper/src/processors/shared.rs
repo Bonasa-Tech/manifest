@@ -244,8 +244,9 @@ impl<'a> CancelMatcher<'a> {
     ///
     /// A batch is a handful of ids, so comparing each open order against all
     /// of them costs a few CU per order, where hashing cost hundreds.
-    /// cancel_all is bounded to EXPECTED_ORDER_BATCH_SIZE cancels per
-    /// transaction so its cost stays bounded, the rest is left for a retry.
+    /// cancel_all is bounded to EXPECTED_ORDER_BATCH_SIZE *owned cancels* per
+    /// transaction so its CPI work stays bounded; unrelated market orders do
+    /// not consume this allowance. The rest is left for a retry.
     fn matches(&self, order: &WrapperOpenOrder) -> bool {
         if self.cancel_all {
             self.core_cancels.len() < EXPECTED_ORDER_BATCH_SIZE

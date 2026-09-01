@@ -368,7 +368,7 @@ async fn wrapper_batch_update_cancel_all_test() -> anyhow::Result<()> {
     )
     .await?;
 
-    // Add enough wrapper orders to exceed the per-call cancel_all work bound.
+    // Add enough wrapper orders to exceed the per-call owned-cancellation cap.
     for client_order_id in 1..=16 {
         let batch_update_ix = batch_update_instruction(
             &test_fixture.market.key,
@@ -435,7 +435,7 @@ async fn wrapper_batch_update_cancel_all_test() -> anyhow::Result<()> {
         "Wrapper and direct asks before cancel_all"
     );
 
-    // cancel_all is bounded to 16 inspected orders per transaction.
+    // cancel_all is bounded to 16 owned cancellations per transaction.
     let batch_update_ix: Instruction = batch_update_instruction(
         &test_fixture.market.key,
         &payer,

@@ -128,6 +128,12 @@ pub(crate) fn process_global_create(
                     PodStateWithExtensions::<PodMint>::unpack(&mint_data).unwrap();
                 let mint_extensions: Vec<ExtensionType> =
                     mint_with_extension.get_extension_types()?;
+                // Accepted risk: a PermanentDelegate can debit this vault
+                // outside Manifest's accounting. Unlike a market vault, a
+                // global vault is shared by every market using this mint, so
+                // its blast radius is the mint-wide global pool. This remains
+                // supported for backwards compatibility with permissionless
+                // Token-2022 mints and must be treated as unsafe custody.
                 let required_extensions: Vec<ExtensionType> =
                     ExtensionType::get_required_init_account_extensions(&mint_extensions);
                 let space: usize =

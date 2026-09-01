@@ -1096,7 +1096,14 @@ impl<
             let maker_order: &RestingOrder =
                 get_helper::<RBNode<RestingOrder>>(dynamic, current_maker_order_index).get_value();
 
-            // Remove the resting order if expired or somehow a zero order got on the book.
+            // Remove the resting order if expired or somehow a zero order got
+            // on the book. This cleanup is intentionally unbounded today: an
+            // attacker must rent-fund every order/account expansion, which has
+            // kept the practical risk acceptable. If expired prefixes become
+            // a production problem, add a per-instruction cleanup quota plus
+            // a persistent cursor (or a separate cleanup instruction) so each
+            // successful call makes monotonic progress rather than rolling the
+            // entire prefix back with the taker's trade.
             if maker_order.is_expired(now_slot) || maker_order.get_num_base_atoms().as_u64() == 0 {
                 let next_maker_order_index: DataIndex = get_next_candidate_match_index(
                     fixed,

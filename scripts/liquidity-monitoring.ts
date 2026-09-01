@@ -45,6 +45,11 @@ const marketMakerDepth = new promClient.Gauge({
   labelNames: ['market', 'trader', 'side', 'spread_bps'] as const,
 });
 
+// Accepted operational tradeoff: trader pubkeys are permissionless labels and
+// historical rows are append-only. Cardinality/storage exhaustion is
+// theoretically possible through funded identity churn, but current scale is
+// nowhere near operational limits. If growth becomes material, cap exported
+// identities, remove stale label sets, and partition/expire snapshot history.
 const marketMakerUptime = new promClient.Gauge({
   name: 'market_maker_uptime',
   help: 'Market maker uptime percentage',
@@ -84,6 +89,9 @@ export class LiquidityMonitor {
   private marketInfo: Map<string, MarketInfo> = new Map();
 
   private isMonitoring = false;
+  private lastSuccessfulMonitoringAtMs: number | null = null;
+  private lastMonitoringError: string | null = null;
+  private marketStatsCache: { expiresAtMs: number; rows: any[] } | undefined;
 
   constructor() {
     this.connection = new Connection(RPC_URL!);
@@ -188,6 +196,9 @@ export class LiquidityMonitor {
   async fetchMarketVolumes(): Promise<Map<string, number>> {
     try {
       const response = await fetch('https://mfx-stats-mainnet.fly.dev/tickers');
+      if (!response.ok) {
+        throw new Error(`Ticker request failed with HTTP ${response.status}`);
+      }
       const tickers = await response.json();
 
       const volumeMap = new Map<string, number>();
@@ -239,7 +250,7 @@ export class LiquidityMonitor {
       return volumeMap;
     } catch (error) {
       console.error('Error fetching market volumes:', error);
-      return new Map();
+      throw error;
     }
   }
 
@@ -347,7 +358,10 @@ export class LiquidityMonitor {
       `Market ${market.address.toBase58()}: bestBid=${bestBid}, bestAsk=${bestAsk}, midPrice=${midPrice}`,
     );
 
-    const ordersByTrader: Map<string, { bids: typeof bids; asks: typeof asks }> = new Map();
+    const ordersByTrader: Map<
+      string,
+      { bids: typeof bids; asks: typeof asks }
+    > = new Map();
     for (const order of bids) {
       const trader: string = order.trader.toBase58();
       const grouped = ordersByTrader.get(trader) ?? { bids: [], asks: [] };
@@ -439,6 +453,9 @@ export class LiquidityMonitor {
 
       // Get current SOL price for USD conversion
       const response = await fetch('https://mfx-stats-mainnet.fly.dev/tickers');
+      if (!response.ok) {
+        throw new Error(`Ticker request failed with HTTP ${response.status}`);
+      }
       const tickers = await response.json();
       const solUsdcTicker = tickers.find(
         (t: any) =>
@@ -449,6 +466,7 @@ export class LiquidityMonitor {
       console.log(`Using SOL price: $${solPriceUsd} for depth calculations`);
 
       const allStats: MarketMakerStats[] = [];
+      const failedMarkets: string[] = [];
 
       for (const [marketPk, market] of this.markets) {
         try {
@@ -511,7 +529,14 @@ export class LiquidityMonitor {
           );
         } catch (error) {
           console.error(`Error monitoring market ${marketPk}:`, error);
+          failedMarkets.push(marketPk);
         }
+      }
+
+      if (failedMarkets.length > 0) {
+        throw new Error(
+          `Monitoring cycle incomplete for ${failedMarkets.length} market(s): ${failedMarkets.join(', ')}`,
+        );
       }
 
       // Remove duplicates before saving
@@ -536,6 +561,12 @@ export class LiquidityMonitor {
       console.log(
         `Monitoring cycle complete. Processed ${uniqueStats.length} market maker entries.`,
       );
+      this.lastSuccessfulMonitoringAtMs = Date.now();
+      this.lastMonitoringError = null;
+    } catch (error) {
+      this.lastMonitoringError =
+        error instanceof Error ? error.message : String(error);
+      throw error;
     } finally {
       this.isMonitoring = false;
     }
@@ -632,6 +663,7 @@ export class LiquidityMonitor {
       console.log('Successfully saved stats to database');
     } catch (error) {
       console.error('Error saving stats to database:', error);
+      throw error;
     }
   }
 
@@ -674,7 +706,27 @@ export class LiquidityMonitor {
       console.log('Successfully updated Prometheus metrics');
     } catch (error) {
       console.error('Error updating Prometheus metrics:', error);
+      throw error;
     }
+  }
+
+  getHealthStatus(): {
+    healthy: boolean;
+    lastSuccessfulMonitoringAt: string | null;
+    error: string | null;
+  } {
+    const staleAfterMs = MONITORING_INTERVAL_MS * 2;
+    const healthy =
+      this.lastMonitoringError === null &&
+      this.lastSuccessfulMonitoringAtMs !== null &&
+      Date.now() - this.lastSuccessfulMonitoringAtMs <= staleAfterMs;
+    return {
+      healthy,
+      lastSuccessfulMonitoringAt: this.lastSuccessfulMonitoringAtMs
+        ? new Date(this.lastSuccessfulMonitoringAtMs).toISOString()
+        : null,
+      error: this.lastMonitoringError,
+    };
   }
 
   /**
@@ -856,33 +908,54 @@ export class LiquidityMonitor {
    * Get market statistics
    */
   async getMarketStats(): Promise<any[]> {
+    const nowMs: number = Date.now();
+    if (this.marketStatsCache && this.marketStatsCache.expiresAtMs > nowMs) {
+      return this.marketStatsCache.rows;
+    }
+
     try {
       const query = `
-        SELECT DISTINCT ON (mis.market)
-          mis.market,
-          mis.volume_24h_usd,
-          mis.last_price,
-          mis.timestamp,
-          COUNT(DISTINCT mms.trader) as unique_makers_24h,
-          -- Get current stats (last hour)
-          COUNT(DISTINCT mms_current.trader) as unique_makers_current
-        FROM market_info_snapshots mis
-        LEFT JOIN market_maker_stats mms ON mis.market = mms.market 
-          AND mms.timestamp > NOW() - INTERVAL '24 hours'
-          AND mms.total_notional_usd >= ${MIN_NOTIONAL_USD}
-        LEFT JOIN market_maker_stats mms_current ON mis.market = mms_current.market 
-          AND mms_current.timestamp > NOW() - INTERVAL '1 hour'
-          AND mms_current.total_notional_usd >= ${MIN_NOTIONAL_USD}
-        WHERE mis.timestamp > NOW() - INTERVAL '1 hour'
-        GROUP BY mis.market, mis.volume_24h_usd, mis.last_price, mis.timestamp
-        ORDER BY mis.market, mis.timestamp DESC
+        WITH latest_snapshots AS (
+          SELECT DISTINCT ON (market)
+            market, volume_24h_usd, last_price, timestamp
+          FROM market_info_snapshots
+          WHERE timestamp > NOW() - INTERVAL '1 hour'
+          ORDER BY market, timestamp DESC
+        ), makers_24h AS (
+          SELECT market, COUNT(DISTINCT trader) AS unique_makers_24h
+          FROM market_maker_stats
+          WHERE timestamp > NOW() - INTERVAL '24 hours'
+            AND total_notional_usd >= ${MIN_NOTIONAL_USD}
+          GROUP BY market
+        ), makers_current AS (
+          SELECT market, COUNT(DISTINCT trader) AS unique_makers_current
+          FROM market_maker_stats
+          WHERE timestamp > NOW() - INTERVAL '1 hour'
+            AND total_notional_usd >= ${MIN_NOTIONAL_USD}
+          GROUP BY market
+        )
+        SELECT
+          latest.market,
+          latest.volume_24h_usd,
+          latest.last_price,
+          latest.timestamp,
+          COALESCE(day.unique_makers_24h, 0) AS unique_makers_24h,
+          COALESCE(current.unique_makers_current, 0) AS unique_makers_current
+        FROM latest_snapshots latest
+        LEFT JOIN makers_24h day ON day.market = latest.market
+        LEFT JOIN makers_current current ON current.market = latest.market
+        ORDER BY latest.market
       `;
 
       const result = await this.pool.query(query);
+      this.marketStatsCache = {
+        expiresAtMs: nowMs + 30_000,
+        rows: result.rows,
+      };
       return result.rows;
     } catch (error) {
       console.error('Error getting market stats:', error);
-      return [];
+      throw error;
     }
   }
 
@@ -1080,7 +1153,13 @@ const setupAPI = (monitor: LiquidityMonitor) => {
 
   // Health check
   app.get('/health', (req, res) => {
-    res.status(200).json({ status: 'healthy', timestamp: new Date() });
+    const health = monitor.getHealthStatus();
+    res.status(health.healthy ? 200 : 503).json({
+      status: health.healthy ? 'healthy' : 'unhealthy',
+      timestamp: new Date(),
+      last_successful_monitoring_at: health.lastSuccessfulMonitoringAt,
+      error: health.error,
+    });
   });
 
   return app;
