@@ -7,12 +7,20 @@ use manifest::{
     program::{
         batch_update::PlaceOrderParams as ManifestPlaceOrderParams,
         instruction_builders::batch_update_instruction as manifest_batch_update_instruction,
+        ManifestInstruction,
     },
-    state::{constants::NO_EXPIRATION_LAST_VALID_SLOT, OrderType, RestingOrder},
+    state::{
+        constants::NO_EXPIRATION_LAST_VALID_SLOT, MarketFixed, OrderType, RestingOrder,
+        MARKET_BLOCK_SIZE,
+    },
 };
 use solana_account::Account;
 use solana_keypair::Keypair;
-use solana_program::{instruction::Instruction, pubkey::Pubkey};
+use solana_program::{
+    instruction::{AccountMeta, Instruction},
+    pubkey::Pubkey,
+    system_program,
+};
 use solana_program_test::tokio;
 use solana_signer::Signer;
 use wrapper::{
@@ -562,6 +570,155 @@ async fn wrapper_batch_update_cancel_all_test() -> anyhow::Result<()> {
             .count(),
         0,
         "No bids remaining on market"
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn wrapper_cancel_all_completes_scan_larger_than_one_instruction_quota() -> anyhow::Result<()>
+{
+    let test_fixture: TestFixture = TestFixture::new().await;
+    test_fixture.claim_seat().await?;
+
+    let payer: Pubkey = test_fixture.payer();
+    let payer_keypair: Keypair = test_fixture.payer_keypair().insecure_clone();
+
+    // Grow the market beyond the 1,024-block scan quota without needing to
+    // place a thousand orders. A single instruction may only realloc 10 KiB,
+    // so increase the requested free-block target in bounded steps.
+    let mut free_block_target: u32 = 128;
+    while free_block_target <= 1_024 {
+        let expand_ix: Instruction = Instruction {
+            program_id: manifest::id(),
+            accounts: vec![
+                AccountMeta::new(payer, true),
+                AccountMeta::new(test_fixture.market.key, false),
+                AccountMeta::new_readonly(system_program::id(), false),
+            ],
+            data: [
+                ManifestInstruction::Expand.to_vec(),
+                free_block_target.to_le_bytes().to_vec(),
+            ]
+            .concat(),
+        };
+        send_tx_with_retry(
+            Rc::clone(&test_fixture.context),
+            &[expand_ix],
+            Some(&payer),
+            &[&payer_keypair],
+        )
+        .await?;
+        free_block_target += 128;
+    }
+    let final_expand_ix: Instruction = Instruction {
+        program_id: manifest::id(),
+        accounts: vec![
+            AccountMeta::new(payer, true),
+            AccountMeta::new(test_fixture.market.key, false),
+            AccountMeta::new_readonly(system_program::id(), false),
+        ],
+        data: [
+            ManifestInstruction::Expand.to_vec(),
+            1_100_u32.to_le_bytes().to_vec(),
+        ]
+        .concat(),
+    };
+    send_tx_with_retry(
+        Rc::clone(&test_fixture.context),
+        &[final_expand_ix],
+        Some(&payer),
+        &[&payer_keypair],
+    )
+    .await?;
+
+    let market_account: Account = test_fixture
+        .context
+        .borrow_mut()
+        .banks_client
+        .get_account(test_fixture.market.key)
+        .await
+        .expect("Fetch market")
+        .expect("Market is not none");
+    let dynamic_blocks: usize =
+        (market_account.data.len() - size_of::<MarketFixed>()) / MARKET_BLOCK_SIZE;
+    assert!(dynamic_blocks > 1_024);
+    assert!(dynamic_blocks < 2_048);
+
+    let cancel_all_ix = || {
+        batch_update_instruction(
+            &test_fixture.market.key,
+            &payer,
+            &test_fixture.wrapper.key,
+            vec![],
+            true,
+            vec![],
+        )
+    };
+    send_tx_with_retry(
+        Rc::clone(&test_fixture.context),
+        &[cancel_all_ix()],
+        Some(&payer),
+        &[&payer_keypair],
+    )
+    .await?;
+
+    let cursor_after_first_call: DataIndex = {
+        let mut wrapper_account: Account = test_fixture
+            .context
+            .borrow_mut()
+            .banks_client
+            .get_account(test_fixture.wrapper.key)
+            .await
+            .expect("Fetch wrapper")
+            .expect("Wrapper is not none");
+        let (fixed_data, dynamic_data) = wrapper_account
+            .data
+            .split_at_mut(size_of::<ManifestWrapperStateFixed>());
+        let wrapper_fixed: &ManifestWrapperStateFixed = get_helper(fixed_data, 0);
+        let market_infos: MarketInfosTree =
+            MarketInfosTree::new(dynamic_data, wrapper_fixed.market_infos_root_index, NIL);
+        let market_info_index: DataIndex =
+            market_infos.lookup_index(&MarketInfo::new_empty(test_fixture.market.key, NIL));
+        get_helper::<RBNode<MarketInfo>>(dynamic_data, market_info_index)
+            .get_value()
+            .cancel_all_scan_cursor
+    };
+    assert_eq!(
+        cursor_after_first_call,
+        (1_024 * MARKET_BLOCK_SIZE) as DataIndex,
+        "The first call persists its progress instead of reporting completion",
+    );
+
+    send_tx_with_retry(
+        Rc::clone(&test_fixture.context),
+        &[cancel_all_ix()],
+        Some(&payer),
+        &[&payer_keypair],
+    )
+    .await?;
+
+    let mut wrapper_account: Account = test_fixture
+        .context
+        .borrow_mut()
+        .banks_client
+        .get_account(test_fixture.wrapper.key)
+        .await
+        .expect("Fetch wrapper")
+        .expect("Wrapper is not none");
+    let (fixed_data, dynamic_data) = wrapper_account
+        .data
+        .split_at_mut(size_of::<ManifestWrapperStateFixed>());
+    let wrapper_fixed: &ManifestWrapperStateFixed = get_helper(fixed_data, 0);
+    let market_infos: MarketInfosTree =
+        MarketInfosTree::new(dynamic_data, wrapper_fixed.market_infos_root_index, NIL);
+    let market_info_index: DataIndex =
+        market_infos.lookup_index(&MarketInfo::new_empty(test_fixture.market.key, NIL));
+    let market_info: &MarketInfo =
+        get_helper::<RBNode<MarketInfo>>(dynamic_data, market_info_index).get_value();
+    assert_eq!(
+        market_info.cancel_all_scan_cursor, NIL,
+        "The second call wraps past the fixed pass origin and reports completion",
     );
 
     Ok(())

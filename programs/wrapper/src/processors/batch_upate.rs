@@ -147,7 +147,6 @@ fn prepare_cancel_all(
         } else {
             0
         };
-    let starting_cursor: DataIndex = cursor;
     let is_known = |order_sequence_number: u64, core_cancels: &Vec<CancelOrderParams>| {
         core_cancels.iter().any(|cancel: &CancelOrderParams| {
             cancel.order_sequence_number() == order_sequence_number
@@ -189,9 +188,12 @@ fn prepare_cancel_all(
         if cursor >= dynamic_len {
             cursor = 0;
         }
-        if cursor == starting_cursor {
-            // NIL is the only completion marker. Zero is a valid cursor and
-            // cannot distinguish a never-started scan from a wrapped quota.
+        if cursor == 0 {
+            // Byte offset zero is the fixed origin of every pass. A pass may
+            // span many instructions, so completion occurs when the persisted
+            // cursor wraps to zero, not when one instruction returns to its
+            // own starting cursor. NIL remains the external completion marker
+            // because zero is also the valid first cursor of a new pass.
             return NIL;
         }
     }
