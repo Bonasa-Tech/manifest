@@ -87,6 +87,9 @@ impl WrapperOpenOrder {
     }
 
     /// Get client defined order id for the order.
+    pub fn get_order_type(&self) -> OrderType {
+        self.order_type
+    }
     pub fn get_client_order_id(&self) -> u64 {
         self.client_order_id
     }

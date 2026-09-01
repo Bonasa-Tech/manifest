@@ -16,7 +16,8 @@ export type MarketInfo = {
   quoteBalance: beet.bignum;
   quoteVolume: beet.bignum;
   lastUpdatedSlot: number;
-  padding: number[] /* size: 3 */;
+  numOpenGlobalOrders: number;
+  lastSyncedOrderSequenceNumber: beet.bignum;
 };
 
 /**
@@ -32,7 +33,8 @@ export const marketInfoBeet = new beet.BeetArgsStruct<MarketInfo>(
     ['quoteBalance', beet.u64],
     ['quoteVolume', beet.u64],
     ['lastUpdatedSlot', beet.u32],
-    ['padding', beet.uniformFixedSizeArray(beet.u32, 3)],
+    ['numOpenGlobalOrders', beet.u32],
+    ['lastSyncedOrderSequenceNumber', beet.u64],
   ],
   'MarketInfo',
 );

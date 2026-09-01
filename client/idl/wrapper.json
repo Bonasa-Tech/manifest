@@ -659,13 +659,12 @@
             "type": "u32"
           },
           {
-            "name": "padding",
-            "type": {
-              "array": [
-                "u32",
-                3
-              ]
-            }
+            "name": "numOpenGlobalOrders",
+            "type": "u32"
+          },
+          {
+            "name": "lastSyncedOrderSequenceNumber",
+            "type": "u64"
           }
         ]
       }

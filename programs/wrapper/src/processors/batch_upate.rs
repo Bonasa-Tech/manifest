@@ -1,6 +1,5 @@
 use std::{
     cell::{Ref, RefMut},
-    collections::HashSet,
     mem::size_of,
 };
 
@@ -11,7 +10,7 @@ use hypertree::{
 };
 use manifest::{
     program::{
-        batch_update::{BatchUpdateParams, BatchUpdateReturn, CancelOrderParams, PlaceOrderParams},
+        batch_update::{BatchUpdateParams, CancelOrderParams, PlaceOrderParams},
         get_dynamic_account, get_mut_dynamic_account, invoke, ManifestInstruction,
     },
     quantities::{BaseAtoms, QuoteAtoms, QuoteAtomsPerBaseAtom, WrapperU64},
@@ -26,7 +25,6 @@ use solana_program::{
     entrypoint::ProgramResult,
     instruction::{AccountMeta, Instruction},
     program::get_return_data,
-    program_error::ProgramError,
     pubkey::Pubkey,
     system_program,
 };
@@ -39,8 +37,8 @@ use crate::{
 };
 
 use super::shared::{
-    expand_wrapper_if_needed, get_market_info_index_for_market, sync_fast, OpenOrdersTree,
-    OpenOrdersTreeReadOnly, UnusedWrapperFreeListPadding, EXPECTED_ORDER_BATCH_SIZE,
+    ensure_free_slots, get_market_info_index_for_market, sync_fast, CancelMatcher, OpenOrdersTree,
+    UnusedWrapperFreeListPadding, EXPECTED_ORDER_BATCH_SIZE,
 };
 
 #[derive(BorshDeserialize, BorshSerialize, Clone)]
@@ -85,6 +83,9 @@ impl WrapperCancelOrderParams {
     pub fn new(client_order_id: u64) -> Self {
         WrapperCancelOrderParams { client_order_id }
     }
+    pub fn client_order_id(&self) -> u64 {
+        self.client_order_id
+    }
 }
 
 #[derive(BorshDeserialize, BorshSerialize)]
@@ -107,123 +108,71 @@ impl WrapperBatchUpdateParams {
     }
 }
 
-/// Takes a vector of wrapper cancel params and returns two vectors, one with
-/// the wrapper indices of the orders and the other with the cancel params for
-/// the core. This function is responsible for looking up the order in the core
-/// and converting wrapper cancel params into core cancel params.
-fn prepare_cancels(
-    wrapper_state: &WrapperStateAccountInfo,
-    cancels: &Vec<WrapperCancelOrderParams>,
-    cancel_all: bool,
-    orders_root_index: DataIndex,
-    remaining_base_atoms: &mut BaseAtoms,
-    remaining_quote_atoms: &mut QuoteAtoms,
+/// For `cancel_all`, also cancels orders on the market's seat that the
+/// wrapper does not track (e.g. placed directly via the manifest program).
+/// The wrapper's own open orders were already matched while syncing.
+fn prepare_cancel_all(
+    matcher: &mut CancelMatcher,
     market: &ManifestAccountInfo<MarketFixed>,
     trader_index: DataIndex,
-) -> Result<(Vec<DataIndex>, Vec<CancelOrderParams>), ProgramError> {
-    let wrapper_data: Ref<&mut [u8]> = wrapper_state.info.try_borrow_data().unwrap();
-    let wrapper: DynamicAccount<&ManifestWrapperStateFixed, &[u8]> =
-        get_dynamic_account(&wrapper_data);
-
-    let open_orders_tree: OpenOrdersTreeReadOnly =
-        OpenOrdersTreeReadOnly::new(wrapper.dynamic, orders_root_index, NIL);
-
-    let client_ids_to_cancel: HashSet<u64> = {
-        let mut set: HashSet<u64> = HashSet::<u64>::with_capacity(cancels.len());
-        set.extend(cancels.iter().map(|c| c.client_order_id));
-        set
+) {
+    let mut remaining_cancel_all_scans: usize =
+        EXPECTED_ORDER_BATCH_SIZE.saturating_sub(matcher.core_cancels.len());
+    let market_data: Ref<&mut [u8]> = market.try_borrow_data().unwrap();
+    let market_ref: DynamicAccount<&MarketFixed, &[u8]> =
+        get_dynamic_account::<MarketFixed>(&market_data);
+    let is_known = |order_sequence_number: u64, core_cancels: &Vec<CancelOrderParams>| {
+        core_cancels.iter().any(|cancel: &CancelOrderParams| {
+            cancel.order_sequence_number() == order_sequence_number
+        })
     };
-
-    let mut wrapper_indices: Vec<DataIndex> = Vec::with_capacity(EXPECTED_ORDER_BATCH_SIZE);
-    let mut core_cancels: Vec<CancelOrderParams> = Vec::with_capacity(EXPECTED_ORDER_BATCH_SIZE);
-    // cancel_all is a convenience operation on permissionless shared state.
-    // Bound both inspection and cancellation work so callers can retry it
-    // until their tracked orders are exhausted.
-    let mut remaining_cancel_all_scans = if cancel_all {
-        EXPECTED_ORDER_BATCH_SIZE
-    } else {
-        usize::MAX
-    };
-    for (wrapper_index, open_order) in open_orders_tree.iter::<WrapperOpenOrder>() {
+    for (index, resting_order) in market_ref.get_bids().iter::<RestingOrder>() {
         if remaining_cancel_all_scans == 0 {
             break;
         }
         remaining_cancel_all_scans -= 1;
-        if cancel_all || client_ids_to_cancel.contains(&open_order.get_client_order_id()) {
-            wrapper_indices.push(wrapper_index);
-            core_cancels.push(CancelOrderParams::new_with_hint(
-                open_order.get_order_sequence_number(),
-                Some(open_order.get_market_data_index()),
+        if resting_order.get_trader_index() == trader_index
+            && !is_known(resting_order.get_sequence_number(), &matcher.core_cancels)
+        {
+            matcher.core_cancels.push(CancelOrderParams::new_with_hint(
+                resting_order.get_sequence_number(),
+                Some(index),
             ));
-            if open_order.get_is_bid() {
-                *remaining_quote_atoms += open_order
-                    .get_price()
-                    .checked_quote_for_base(open_order.get_num_base_atoms(), true)
-                    .unwrap();
-            } else {
-                *remaining_base_atoms += open_order.get_num_base_atoms();
-            };
-        }
-    }
-    drop(wrapper_data);
-
-    // When cancel_all is set, also cancel orders on the market's seat that the
-    // wrapper does not track (e.g. placed directly via the manifest program).
-    if cancel_all {
-        let known_sequence_numbers: HashSet<u64> = core_cancels
-            .iter()
-            .map(|c| c.order_sequence_number())
-            .collect();
-
-        let market_data: Ref<&mut [u8]> = market.try_borrow_data().unwrap();
-        let market_ref: DynamicAccount<&MarketFixed, &[u8]> =
-            get_dynamic_account::<MarketFixed>(&market_data);
-
-        for (index, resting_order) in market_ref.get_bids().iter::<RestingOrder>() {
-            if remaining_cancel_all_scans == 0 {
-                break;
-            }
-            remaining_cancel_all_scans -= 1;
-            if resting_order.get_trader_index() == trader_index
-                && !known_sequence_numbers.contains(&resting_order.get_sequence_number())
-            {
-                core_cancels.push(CancelOrderParams::new_with_hint(
-                    resting_order.get_sequence_number(),
-                    Some(index),
-                ));
-                *remaining_quote_atoms += resting_order
+            if matcher.needs_quote {
+                matcher.freed_quote_atoms += resting_order
                     .get_price()
                     .checked_quote_for_base(resting_order.get_num_base_atoms(), true)
                     .unwrap();
             }
         }
-        for (index, resting_order) in market_ref.get_asks().iter::<RestingOrder>() {
-            if remaining_cancel_all_scans == 0 {
-                break;
-            }
-            remaining_cancel_all_scans -= 1;
-            if resting_order.get_trader_index() == trader_index
-                && !known_sequence_numbers.contains(&resting_order.get_sequence_number())
-            {
-                core_cancels.push(CancelOrderParams::new_with_hint(
-                    resting_order.get_sequence_number(),
-                    Some(index),
-                ));
-                *remaining_base_atoms += resting_order.get_num_base_atoms();
+    }
+    for (index, resting_order) in market_ref.get_asks().iter::<RestingOrder>() {
+        if remaining_cancel_all_scans == 0 {
+            break;
+        }
+        remaining_cancel_all_scans -= 1;
+        if resting_order.get_trader_index() == trader_index
+            && !is_known(resting_order.get_sequence_number(), &matcher.core_cancels)
+        {
+            matcher.core_cancels.push(CancelOrderParams::new_with_hint(
+                resting_order.get_sequence_number(),
+                Some(index),
+            ));
+            if matcher.needs_base {
+                matcher.freed_base_atoms += resting_order.get_num_base_atoms();
             }
         }
     }
-
-    Ok((wrapper_indices, core_cancels))
 }
 
 /// Possibly update orders due to insufficient funds. Reduce the quantity of the
 /// last orders in the vector so that they will not fail.
 fn prepare_orders(
-    orders: &Vec<WrapperPlaceOrderParams>,
-    remaining_base_atoms: &mut BaseAtoms,
-    remaining_quote_atoms: &mut QuoteAtoms,
+    orders: &[WrapperPlaceOrderParams],
+    mut remaining_base_atoms: BaseAtoms,
+    mut remaining_quote_atoms: QuoteAtoms,
     market: &ManifestAccountInfo<MarketFixed>,
+    now_slot: u32,
 ) -> (Vec<PlaceOrderParams>, Vec<usize>) {
     let market_data: Ref<'_, &mut [u8]> = market.try_borrow_data().unwrap();
     let market_ref: DynamicAccount<&MarketFixed, &[u8]> =
@@ -237,7 +186,6 @@ fn prepare_orders(
     // this is only best-effort.
     // Also, changes orders with last_valid_slot < 1_000_000 to now +
     // last_valid_slot.
-    let now_slot: u32 = get_now_slot();
 
     while best_ask_index != NIL
         && get_helper::<RBNode<RestingOrder>>(
@@ -300,14 +248,17 @@ fn prepare_orders(
                     solana_program::msg!("Removing post only bid that would cross");
                     num_base_atoms = 0;
                 } else {
+                    // Exact, like the core: a bid sized to the whole balance
+                    // must pass. The division is the reciprocal fast path in
+                    // quantities.
                     let desired: QuoteAtoms = BaseAtoms::new(order.base_atoms)
                         .checked_mul(price, true)
                         .unwrap();
-                    if desired > *remaining_quote_atoms {
+                    if desired > remaining_quote_atoms {
                         solana_program::msg!("Removing bid for insufficient funds");
                         num_base_atoms = 0;
                     } else {
-                        *remaining_quote_atoms -= desired;
+                        remaining_quote_atoms -= desired;
                     }
                 }
             } else {
@@ -316,11 +267,11 @@ fn prepare_orders(
                     solana_program::msg!("Removing post only ask that would cross");
                     num_base_atoms = 0;
                 } else {
-                    if desired > *remaining_base_atoms {
+                    if desired > remaining_base_atoms {
                         solana_program::msg!("Removing ask for insufficient funds");
                         num_base_atoms = 0;
                     } else {
-                        *remaining_base_atoms -= desired;
+                        remaining_base_atoms -= desired;
                     }
                 }
             }
@@ -349,6 +300,15 @@ fn prepare_orders(
     (result, original_indices)
 }
 
+/// Forwards the batch to the core.
+///
+/// CU note: besides the 1,000 CU invoke base cost, the runtime charges every
+/// account passed to a CPI `data_len / 250` CU when it translates the
+/// caller's `AccountInfo`s (`cpi_bytes_per_unit`), whether or not account
+/// data direct mapping is enabled; direct mapping only removes the copy of
+/// the data, not the charge. For the market that is 4 CU per KB per batch
+/// update, e.g. about 4,000 CU on a 1 MB market, and the only ways around it
+/// are smaller markets or not going through a CPI.
 fn execute_cpi(
     accounts: &[AccountInfo],
     trader_index_hint: Option<DataIndex>,
@@ -379,97 +339,119 @@ fn execute_cpi(
     invoke(&ix, &accounts[1..])
 }
 
+/// Removes the cancelled orders from the wrapper's open orders.
 fn process_cancels(
     wrapper_state: &WrapperStateAccountInfo,
-    cancel_indices: &Vec<DataIndex>,
+    cancel_indices: &[DataIndex],
     market_info_index: DataIndex,
 ) {
     let mut wrapper_data: RefMut<&mut [u8]> = wrapper_state.info.try_borrow_mut_data().unwrap();
     let wrapper: DynamicAccount<&mut ManifestWrapperStateFixed, &mut [u8]> =
         get_mut_dynamic_account(&mut wrapper_data);
-
-    // Fetch current root first to not borrow wrapper.dynamic twice.
-    let orders_root_index: DataIndex = {
-        let market_info: &mut MarketInfo =
-            get_mut_helper::<RBNode<MarketInfo>>(wrapper.dynamic, market_info_index)
-                .get_mut_value();
-        market_info.orders_root_index
+    let (orders_root_index, mut num_open_global_orders): (DataIndex, u32) = {
+        let market_info: &MarketInfo =
+            get_helper::<RBNode<MarketInfo>>(wrapper.dynamic, market_info_index).get_value();
+        (
+            market_info.orders_root_index,
+            market_info.num_open_global_orders,
+        )
     };
-
+    for order_wrapper_index in cancel_indices {
+        if get_helper::<RBNode<WrapperOpenOrder>>(wrapper.dynamic, *order_wrapper_index)
+            .get_value()
+            .get_order_type()
+            == OrderType::Global
+        {
+            num_open_global_orders = num_open_global_orders.saturating_sub(1);
+        }
+    }
     let orders_root_index: DataIndex = {
         let mut open_orders_tree: OpenOrdersTree =
             OpenOrdersTree::new(wrapper.dynamic, orders_root_index, NIL);
-
-        // Remove nodes from order tree.
         for order_wrapper_index in cancel_indices {
-            let order_wrapper_index = *order_wrapper_index;
-            open_orders_tree.remove_by_index(order_wrapper_index);
+            open_orders_tree.remove_by_index(*order_wrapper_index);
         }
         open_orders_tree.get_root_index()
     };
-
-    // Save new root.
     let market_info: &mut MarketInfo =
         get_mut_helper::<RBNode<MarketInfo>>(wrapper.dynamic, market_info_index).get_mut_value();
     market_info.orders_root_index = orders_root_index;
+    market_info.num_open_global_orders = num_open_global_orders;
 
-    // Add nodes to FreeList.
     let mut free_list: FreeList<UnusedWrapperFreeListPadding> =
         FreeList::new(wrapper.dynamic, wrapper.fixed.free_list_head_index);
     for order_wrapper_index in cancel_indices {
-        let order_wrapper_index = *order_wrapper_index;
-
-        if order_wrapper_index != NIL {
-            free_list.add(order_wrapper_index);
+        if *order_wrapper_index != NIL {
+            free_list.add(*order_wrapper_index);
         }
     }
-
     // Update free list head.
     wrapper.fixed.free_list_head_index = free_list.get_head();
 }
 
+/// Records the orders that rested on the core in the wrapper's open orders.
 fn process_orders<'a, 'info>(
     payer: &Signer<'a, 'info>,
     system_program: &Program<'a, 'info>,
     wrapper_state: &WrapperStateAccountInfo<'a, 'info>,
-    orders: &Vec<WrapperPlaceOrderParams>,
-    original_indices: &Vec<usize>,
+    orders: &[WrapperPlaceOrderParams],
+    original_indices: &[usize],
     market_info_index: DataIndex,
 ) -> ProgramResult {
-    let cpi_return_data: Option<(Pubkey, Vec<u8>)> = get_return_data();
-    let BatchUpdateReturn {
-        orders: batch_update_orders,
-    } = BatchUpdateReturn::try_from_slice(&cpi_return_data.unwrap().1[..])?;
-    for (index, &(order_sequence_number, order_index)) in batch_update_orders.iter().enumerate() {
-        // Order index is NIL when it did not rest. In that case, do not need to store in wrapper.
+    // The core returns `BatchUpdateReturn`, borsh: a u32 count followed by
+    // (u64 order sequence number, u32 order index) records. Read them in
+    // place instead of deserializing into vectors.
+    let (_, return_data): (Pubkey, Vec<u8>) = get_return_data().unwrap();
+    let num_records: usize = u32::from_le_bytes(return_data[..4].try_into().unwrap()) as usize;
+    let records: &[u8] = &return_data[4..4 + num_records * 12];
+    let record = |index: usize| -> (u64, DataIndex) {
+        let bytes: &[u8] = &records[index * 12..index * 12 + 12];
+        (
+            u64::from_le_bytes(bytes[..8].try_into().unwrap()),
+            u32::from_le_bytes(bytes[8..12].try_into().unwrap()),
+        )
+    };
+
+    // Order index is NIL when it did not rest, those need no slot. Grow the
+    // wrapper once for all the rest instead of checking per order.
+    let num_resting: usize = (0..num_records).filter(|&i| record(i).1 != NIL).count();
+    if num_resting == 0 {
+        return Ok(());
+    }
+    ensure_free_slots(wrapper_state, payer, system_program, num_resting)?;
+
+    let mut wrapper_data: RefMut<&mut [u8]> = wrapper_state.info.try_borrow_mut_data().unwrap();
+    let wrapper: DynamicAccount<&mut ManifestWrapperStateFixed, &mut [u8]> =
+        get_mut_dynamic_account(&mut wrapper_data);
+    let (mut orders_root_index, mut num_open_global_orders): (DataIndex, u32) = {
+        let market_info: &MarketInfo =
+            get_helper::<RBNode<MarketInfo>>(wrapper.dynamic, market_info_index).get_value();
+        (
+            market_info.orders_root_index,
+            market_info.num_open_global_orders,
+        )
+    };
+    let mut free_list_head_index: DataIndex = wrapper.fixed.free_list_head_index;
+    for index in 0..num_records {
+        let (order_sequence_number, order_index): (u64, DataIndex) = record(index);
         if order_index == NIL {
             continue;
         }
-
-        // Does not expand all at once because expand checks if there is no spots available.
-        expand_wrapper_if_needed(wrapper_state, payer, system_program)?;
-
-        let mut wrapper_data: RefMut<&mut [u8]> = wrapper_state.info.try_borrow_mut_data().unwrap();
-        let wrapper: DynamicAccount<&mut ManifestWrapperStateFixed, &mut [u8]> =
-            get_mut_dynamic_account(&mut wrapper_data);
-
-        let orders_root_index: DataIndex = {
-            let market_info: &mut MarketInfo =
-                get_mut_helper::<RBNode<MarketInfo>>(wrapper.dynamic, market_info_index)
-                    .get_mut_value();
-            market_info.orders_root_index
-        };
-
         let wrapper_new_order_index: DataIndex = {
             let mut free_list: FreeList<UnusedWrapperFreeListPadding> =
-                FreeList::new(wrapper.dynamic, wrapper.fixed.free_list_head_index);
+                FreeList::new(wrapper.dynamic, free_list_head_index);
             let new_index: DataIndex = free_list.remove();
-            wrapper.fixed.free_list_head_index = free_list.get_head();
+            free_list_head_index = free_list.get_head();
             new_index
         };
 
         let original_order: &WrapperPlaceOrderParams = &orders[original_indices[index]];
-        // Base atoms & price can be wrong, will be fixed in the sync.
+        // Price and remaining size are left at zero here and filled in by the
+        // sync that follows every placement in `process_batch_update`, which
+        // is the only thing that knows how much of the order actually rested.
+        // That sync is not optional: a zero here would otherwise be read as an
+        // order that frees nothing when it is cancelled, and a later
+        // cancel and replace would drop the replacement for want of funds.
         let order: WrapperOpenOrder = WrapperOpenOrder::new(
             original_order.client_order_id,
             order_sequence_number,
@@ -480,16 +462,20 @@ fn process_orders<'a, 'info>(
             original_order.is_bid,
             original_order.order_type,
         );
+        if original_order.order_type == OrderType::Global {
+            num_open_global_orders += 1;
+        }
 
         let mut open_orders_tree: OpenOrdersTree =
             OpenOrdersTree::new(wrapper.dynamic, orders_root_index, NIL);
         open_orders_tree.insert(wrapper_new_order_index, order);
-        let new_root_index: DataIndex = open_orders_tree.get_root_index();
-        let market_info: &mut MarketInfo =
-            get_mut_helper::<RBNode<MarketInfo>>(wrapper.dynamic, market_info_index)
-                .get_mut_value();
-        market_info.orders_root_index = new_root_index;
+        orders_root_index = open_orders_tree.get_root_index();
     }
+    wrapper.fixed.free_list_head_index = free_list_head_index;
+    let market_info: &mut MarketInfo =
+        get_mut_helper::<RBNode<MarketInfo>>(wrapper.dynamic, market_info_index).get_mut_value();
+    market_info.orders_root_index = orders_root_index;
+    market_info.num_open_global_orders = num_open_global_orders;
     Ok(())
 }
 
@@ -532,9 +518,8 @@ pub(crate) fn process_batch_update(
     check_signer(&wrapper_state, payer.key);
     let market_info_index: DataIndex = get_market_info_index_for_market(&wrapper_state, market.key);
 
-    // Do an initial sync to get all existing orders and balances fresh. This is
-    // needed for modifying user orders for insufficient funds.
-    sync_fast(&wrapper_state, &market, market_info_index)?;
+    // One clock read for the whole instruction.
+    let now_slot: u32 = get_now_slot();
 
     // Cancels are mutable because the user may have mistakenly sent the same
     // one multiple times and the wrapper will take the responsibility for
@@ -545,34 +530,58 @@ pub(crate) fn process_batch_update(
         cancels,
     } = WrapperBatchUpdateParams::try_from_slice(data)?;
 
-    let wrapper_data: Ref<&mut [u8]> = wrapper_state.info.try_borrow_data()?;
-    let (_fixed_data, wrapper_dynamic_data) =
-        wrapper_data.split_at(size_of::<ManifestWrapperStateFixed>());
+    // Only price the funds that cancels free up when a new order needs the
+    // balance check.
+    let needs_base: bool = orders.iter().any(|order: &WrapperPlaceOrderParams| {
+        !order.is_bid && order.order_type != OrderType::Global
+    });
+    let needs_quote: bool = orders.iter().any(|order: &WrapperPlaceOrderParams| {
+        order.is_bid && order.order_type != OrderType::Global
+    });
 
-    let market_info: MarketInfo =
-        *get_helper::<RBNode<MarketInfo>>(wrapper_dynamic_data, market_info_index).get_value();
-
-    let trader_index_hint: Option<DataIndex> = Some(market_info.trader_index);
-    let mut remaining_base_atoms: BaseAtoms = market_info.base_balance;
-    let mut remaining_quote_atoms: QuoteAtoms = market_info.quote_balance;
-    drop(wrapper_data);
-
-    let (cancel_indices, core_cancels) = prepare_cancels(
+    // Sync to get all existing orders and balances fresh (needed for
+    // modifying user orders for insufficient funds), matching the cancels
+    // against the open orders in the same walk.
+    let mut matcher: CancelMatcher =
+        CancelMatcher::new(&cancels, cancel_all, needs_base, needs_quote);
+    sync_fast(
         &wrapper_state,
-        &cancels,
-        cancel_all,
-        market_info.orders_root_index,
-        &mut remaining_base_atoms,
-        &mut remaining_quote_atoms,
         &market,
-        market_info.trader_index,
+        market_info_index,
+        now_slot,
+        false,
+        Some(&mut matcher),
     )?;
+
+    let market_info: MarketInfo = {
+        let wrapper_data: Ref<&mut [u8]> = wrapper_state.info.try_borrow_data()?;
+        let (_fixed_data, wrapper_dynamic_data) =
+            wrapper_data.split_at(size_of::<ManifestWrapperStateFixed>());
+        *get_helper::<RBNode<MarketInfo>>(wrapper_dynamic_data, market_info_index).get_value()
+    };
+    let trader_index_hint: Option<DataIndex> = Some(market_info.trader_index);
+    if cancel_all {
+        prepare_cancel_all(&mut matcher, &market, market_info.trader_index);
+    }
+    let remaining_base_atoms: BaseAtoms = market_info.base_balance + matcher.freed_base_atoms;
+    let remaining_quote_atoms: QuoteAtoms = market_info.quote_balance + matcher.freed_quote_atoms;
+    let CancelMatcher {
+        wrapper_indices: cancel_indices,
+        core_cancels,
+        ..
+    } = matcher;
+
     let (core_orders, original_indices) = prepare_orders(
         &orders,
-        &mut remaining_base_atoms,
-        &mut remaining_quote_atoms,
+        remaining_base_atoms,
+        remaining_quote_atoms,
         &market,
+        now_slot,
     );
+
+    // Whether the core ran its matching loop, which is the only thing in a
+    // batch update that can touch orders other than the ones named in it.
+    let placed_orders: bool = !core_orders.is_empty();
 
     execute_cpi(accounts, trader_index_hint, core_cancels, core_orders)?;
 
@@ -586,8 +595,29 @@ pub(crate) fn process_batch_update(
         market_info_index,
     )?;
 
-    // Sync to get the balance correct and remove any expired orders.
-    sync_fast(&wrapper_state, &market, market_info_index)?;
+    // Forwarding a placement runs the core's matching loop, and that loop can
+    // change this trader's other orders in ways nothing here can predict: it
+    // fills them, and it removes any it finds expired on its way down the
+    // book. So whenever an order was placed, read the orders back rather than
+    // declaring the view exact.
+    //
+    // Seat quote volume was used for this and is not enough. The matching loop
+    // removes an expired maker without recording any volume, and a fill of a
+    // small amount at a low price rounds down to zero quote atoms, so either
+    // can move this trader's orders while the volume stands still.
+    //
+    // A batch that only cancels runs no matching, so nothing can have touched
+    // the orders that this instruction did not touch itself, and the cheap
+    // path still applies. This is also what heals a view that went stale
+    // outside the wrapper, see `sync_fast`: the next placement re-reads.
+    sync_fast(
+        &wrapper_state,
+        &market,
+        market_info_index,
+        now_slot,
+        !placed_orders,
+        None,
+    )?;
 
     // Collect fee.
     collect_fee(&payer, &wrapper_state)?;
