@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1788294184468,
+  "lastUpdate": 1788303547535,
   "repoUrl": "https://github.com/Bonasa-Tech/manifest",
   "entries": {
     "CU Benchmark": [
@@ -13031,6 +13031,72 @@ window.BENCHMARK_DATA = {
           {
             "name": "MFX_99",
             "value": 3756,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "cyrbritt@gmail.com",
+            "name": "Britt Cyr",
+            "username": "brittcyr"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "a9bc7269378996762dd40c15eabf7f72e1128ce5",
+          "message": "Divide by 10^18 with a reciprocal multiply (#698)\n\nchecked_quote_for_base divides a u128 by 10^18, the fixed point scale of\nQuoteAtomsPerBaseAtom, which on SBF is a software routine costing about\n240 CU. It\nruns once per maker order a taker matches against, once for a resting\nbid reserving its quote and once for the cancel that gives it back;\nasks never reach it, their side of the conversion is the multiply.\n\nThe divisor is a compile time constant, so the division is replaced by a\nmultiplication by its precomputed reciprocal (Granlund and Montgomery,\nthe round-up method with N = 128 and l = 60, since 2^59 < 10^18 <= 2^60)\nand a shift, about 110 CU less each time. Measured against the same\nbuild without it: a swap filling one order 9,569 CU to 9,115, a global\nbid placement 12,339 to 12,228, and placing or cancelling a resting ask\nunchanged, since that path never divides.\n\nThe reciprocal is only correct if the magic number and shift are exactly\nright, so it is covered by seven test families: edge values, powers of\ntwo, values around multiples of the divisor, bit lanes, random\ndividends, agreement with a reference implementation, and the rounding\ninvariants the callers rely on.\n\nFormal verification cannot cover it: Certora summarizes __multi3 and\n__udivti3 as typed nondeterministic values, so both the old division and\nthe new multiply-shift are opaque to it. Under the certora feature the\nplain division stays, so the existing rules keep verifying the same\nsemantics, and the comment in quantities.rs explains this at the call\nsite.\n\nThat feature now has a conditional path worth keeping compilable, and\nthe prover only runs on main, so the pull request workflow gains a\ncargo check of the library with it enabled.",
+          "timestamp": "2026-09-01T18:54:18-04:00",
+          "tree_id": "a3ce2c0ffdcf5197355a49961a4e95d83bc011da",
+          "url": "https://github.com/Bonasa-Tech/manifest/commit/a9bc7269378996762dd40c15eabf7f72e1128ce5"
+        },
+        "date": 1788303545550,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "PHX_50",
+            "value": 6897,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "PHX_95",
+            "value": 13208,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "PHX_99",
+            "value": 13902,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_50",
+            "value": 1724,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_95",
+            "value": 2977,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_99",
+            "value": 3389,
             "range": "",
             "unit": "CU",
             "extra": ""
