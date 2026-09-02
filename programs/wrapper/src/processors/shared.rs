@@ -84,6 +84,10 @@ pub const WRAPPER_BLOCK_PAYLOAD_SIZE: usize = 80;
 pub const BLOCK_HEADER_SIZE: usize = 16;
 pub const WRAPPER_BLOCK_SIZE: usize = WRAPPER_BLOCK_PAYLOAD_SIZE + BLOCK_HEADER_SIZE;
 
+// Node reads land on block boundaries and need them aligned; see
+// `hypertree::get_helper`.
+const_assert_eq!(WRAPPER_BLOCK_SIZE % 8, 0);
+
 pub const EXPECTED_ORDER_BATCH_SIZE: usize = 16;
 
 /// Blocks added per wrapper expansion. Growing costs a system transfer CPI

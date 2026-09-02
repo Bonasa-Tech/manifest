@@ -12,10 +12,20 @@ pub type DataIndex = u32;
 pub unsafe trait Get: Copy {}
 
 /// Read a struct of type T in an array of data at a given index.
+///
+/// The alignment this needs is structural rather than something to test for.
+/// Every index into an account's dynamic data is a block boundary, the block
+/// sizes are multiples of eight, the dynamic data starts after a fixed header
+/// whose size is also a multiple of eight, and the runtime hands out account
+/// data aligned to sixteen. The callers that walk a tree or a list read a node
+/// per step, so a check here is paid on every step of every walk: dropping it
+/// is 7% of the compute a batch update spends. The block sizes are asserted
+/// against the alignment where they are defined, and the check remains in
+/// debug builds and therefore in the tests.
 pub fn get_helper<T: Get>(data: &[u8], index: DataIndex) -> &T {
     let index_usize: usize = index as usize;
     let bytes: &[u8] = &data[index_usize..index_usize + size_of::<T>()];
-    assert_eq!((bytes.as_ptr() as usize) % std::mem::align_of::<T>(), 0);
+    debug_assert_eq!((bytes.as_ptr() as usize) % std::mem::align_of::<T>(), 0);
     // SAFETY: `Get` supplies the validity contract and the alignment and range
     // are checked above. The returned reference is tied to `data`.
     unsafe { &*bytes.as_ptr().cast::<T>() }
@@ -25,7 +35,8 @@ pub fn get_helper<T: Get>(data: &[u8], index: DataIndex) -> &T {
 pub fn get_mut_helper<T: Get>(data: &mut [u8], index: DataIndex) -> &mut T {
     let index_usize: usize = index as usize;
     let bytes: &mut [u8] = &mut data[index_usize..index_usize + size_of::<T>()];
-    assert_eq!((bytes.as_ptr() as usize) % std::mem::align_of::<T>(), 0);
+    // Structural, as above.
+    debug_assert_eq!((bytes.as_ptr() as usize) % std::mem::align_of::<T>(), 0);
     // SAFETY: `Get` supplies the validity contract and the alignment and range
     // are checked above. The exclusive reference is tied to `data`.
     unsafe { &mut *bytes.as_mut_ptr().cast::<T>() }
