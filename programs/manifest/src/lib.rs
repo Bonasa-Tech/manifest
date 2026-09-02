@@ -27,10 +27,8 @@ use program::{
     global_withdraw::process_global_withdraw, process_swap, withdraw::process_withdraw,
     ManifestInstruction,
 };
-use solana_program::{
-    account_info::AccountInfo, declare_id, entrypoint::ProgramResult, program_error::ProgramError,
-    pubkey::Pubkey,
-};
+use pinocchio::{account_info::AccountInfo, pubkey::Pubkey as Address, ProgramResult};
+use solana_program::{declare_id, program_error::ProgramError, pubkey::Pubkey};
 
 #[cfg(not(feature = "no-entrypoint"))]
 use solana_security_txt::security_txt;
@@ -97,10 +95,10 @@ security_txt! {
 declare_id!("MNFSTqtC93rEfYHB6hF82sKdZpUDFWkViLByLd1k1Ms");
 
 #[cfg(not(feature = "no-entrypoint"))]
-crate::entrypoint!(process_instruction);
+pinocchio::program_entrypoint!(process_instruction, { crate::entrypoint::MAX_ACCOUNTS });
 
 pub fn process_instruction(
-    program_id: &Pubkey,
+    program_id: &Address,
     accounts: &[AccountInfo],
     instruction_data: &[u8],
 ) -> ProgramResult {

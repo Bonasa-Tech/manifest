@@ -8,12 +8,12 @@ use std::ops::Deref;
 #[derive(Clone)]
 pub struct MintAccountInfo<'a, 'info> {
     pub mint: Mint,
-    pub info: &'a AccountInfo<'info>,
+    pub info: &'a AccountInfo,
 }
 
 impl<'a, 'info> MintAccountInfo<'a, 'info> {
-    pub fn new(info: &'a AccountInfo<'info>) -> Result<MintAccountInfo<'a, 'info>, ProgramError> {
-        check_spl_token_program_account(info.owner)?;
+    pub fn new(info: &'a AccountInfo) -> Result<MintAccountInfo<'a, 'info>, ProgramError> {
+        check_spl_token_program_account(info.owner())?;
 
         let mint: Mint = StateWithExtensions::<Mint>::unpack(&info.data.borrow())?.base;
 
@@ -21,24 +21,24 @@ impl<'a, 'info> MintAccountInfo<'a, 'info> {
     }
 }
 
-impl<'a, 'info> AsRef<AccountInfo<'info>> for MintAccountInfo<'a, 'info> {
-    fn as_ref(&self) -> &AccountInfo<'info> {
+impl<'a, 'info> AsRef<AccountInfo> for MintAccountInfo<'a, 'info> {
+    fn as_ref(&self) -> &AccountInfo {
         self.info
     }
 }
 
 #[derive(Clone)]
 pub struct TokenAccountInfo<'a, 'info> {
-    pub info: &'a AccountInfo<'info>,
+    pub info: &'a AccountInfo,
 }
 
 impl<'a, 'info> TokenAccountInfo<'a, 'info> {
     pub fn new(
-        info: &'a AccountInfo<'info>,
+        info: &'a AccountInfo,
         mint: &Pubkey,
     ) -> Result<TokenAccountInfo<'a, 'info>, ProgramError> {
         require!(
-            info.owner == &spl_token::id() || info.owner == &spl_token_2022::id(),
+            info.owner() == &spl_token::id() || info.owner() == &spl_token_2022::id(),
             ProgramError::IllegalOwner,
             "Token account must be owned by the Token Program",
         )?;
@@ -68,7 +68,7 @@ impl<'a, 'info> TokenAccountInfo<'a, 'info> {
     }
 
     pub fn new_with_owner(
-        info: &'a AccountInfo<'info>,
+        info: &'a AccountInfo,
         mint: &Pubkey,
         owner: &Pubkey,
     ) -> Result<TokenAccountInfo<'a, 'info>, ProgramError> {
@@ -83,29 +83,29 @@ impl<'a, 'info> TokenAccountInfo<'a, 'info> {
     }
 
     pub fn new_with_owner_and_key(
-        info: &'a AccountInfo<'info>,
+        info: &'a AccountInfo,
         mint: &Pubkey,
         owner: &Pubkey,
         key: &Pubkey,
     ) -> Result<TokenAccountInfo<'a, 'info>, ProgramError> {
         require!(
-            info.key == key,
+            info.key() == key,
             ProgramError::InvalidInstructionData,
             "Invalid pubkey for Token Account {:?}",
-            info.key
+            info.key()
         )?;
         Self::new_with_owner(info, mint, owner)
     }
 }
 
-impl<'a, 'info> AsRef<AccountInfo<'info>> for TokenAccountInfo<'a, 'info> {
-    fn as_ref(&self) -> &AccountInfo<'info> {
+impl<'a, 'info> AsRef<AccountInfo> for TokenAccountInfo<'a, 'info> {
+    fn as_ref(&self) -> &AccountInfo {
         self.info
     }
 }
 
 impl<'a, 'info> Deref for TokenAccountInfo<'a, 'info> {
-    type Target = AccountInfo<'info>;
+    type Target = AccountInfo;
 
     fn deref(&self) -> &Self::Target {
         self.info

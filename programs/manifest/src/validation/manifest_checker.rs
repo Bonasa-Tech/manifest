@@ -1,7 +1,8 @@
 use bytemuck::Pod;
 use hypertree::{get_helper, Get};
+use pinocchio::account_info::AccountInfo;
 use solana_program::{
-    account_info::AccountInfo, entrypoint::ProgramResult, program_error::ProgramError,
+    entrypoint::ProgramResult, program_error::ProgramError,
     pubkey::Pubkey,
 };
 use std::{cell::Ref, mem::size_of, ops::Deref};
@@ -11,7 +12,7 @@ use crate::require;
 /// Validation for manifest accounts.
 #[derive(Clone)]
 pub struct ManifestAccountInfo<'a, 'info, T: ManifestAccount + Pod + Clone> {
-    pub info: &'a AccountInfo<'info>,
+    pub info: &'a AccountInfo,
 
     phantom: std::marker::PhantomData<T>,
 }
@@ -22,9 +23,9 @@ impl<'a, 'info, T: ManifestAccount + Get + Pod + Clone> ManifestAccountInfo<'a, 
         early_panic::early_panic
     )]
     pub fn new(
-        info: &'a AccountInfo<'info>,
+        info: &'a AccountInfo,
     ) -> Result<ManifestAccountInfo<'a, 'info, T>, ProgramError> {
-        verify_owned_by_manifest(info.owner)?;
+        verify_owned_by_manifest(info.owner())?;
 
         let bytes: Ref<&mut [u8]> = info.try_borrow_data()?;
         let (header_bytes, _) = bytes.split_at(size_of::<T>());
@@ -38,9 +39,9 @@ impl<'a, 'info, T: ManifestAccount + Get + Pod + Clone> ManifestAccountInfo<'a, 
     }
 
     pub fn new_init(
-        info: &'a AccountInfo<'info>,
+        info: &'a AccountInfo,
     ) -> Result<ManifestAccountInfo<'a, 'info, T>, ProgramError> {
-        verify_owned_by_manifest(info.owner)?;
+        verify_owned_by_manifest(info.owner())?;
         verify_uninitialized::<T>(info)?;
         Ok(Self {
             info,
@@ -57,7 +58,7 @@ impl<'a, 'info, T: ManifestAccount + Get + Pod + Clone> ManifestAccountInfo<'a, 
 }
 
 impl<'a, 'info, T: ManifestAccount + Pod + Clone> Deref for ManifestAccountInfo<'a, 'info, T> {
-    type Target = AccountInfo<'info>;
+    type Target = AccountInfo;
 
     fn deref(&self) -> &Self::Target {
         self.info
