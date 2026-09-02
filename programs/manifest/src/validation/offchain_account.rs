@@ -17,9 +17,7 @@
 
 use std::alloc::{alloc_zeroed, dealloc, Layout};
 
-use pinocchio::account::{
-    AccountView, RuntimeAccount, MAX_PERMITTED_DATA_INCREASE, NOT_BORROWED,
-};
+use pinocchio::account::{AccountView, RuntimeAccount, MAX_PERMITTED_DATA_INCREASE, NOT_BORROWED};
 use solana_program::pubkey::Pubkey;
 
 use crate::validation::as_raw_key;

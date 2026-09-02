@@ -20,10 +20,8 @@ use manifest::{
         loaders::GlobalTradeAccounts, ManifestAccount, ManifestAccountInfo, OwnedAccount,
     },
 };
-use solana_program::{
-    account_info::AccountInfo, instruction::AccountMeta, pubkey::Pubkey, system_program,
-};
 use pinocchio::account::AccountView;
+use solana_program::{instruction::AccountMeta, pubkey::Pubkey, system_program};
 use std::{collections::HashSet, mem::size_of};
 
 /// Lays out an account the way the runtime would, so this quoter can run the
@@ -431,7 +429,7 @@ mod test {
         validation::{MintAccountInfo, Signer},
     };
     use solana_account::Account;
-    use solana_program::{account_info::AccountInfo, pubkey};
+    use solana_program::pubkey;
     use spl_token_2022::state::Mint;
     use std::{cell::RefCell, rc::Rc};
 

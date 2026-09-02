@@ -1,10 +1,5 @@
 use manifest::validation::{next_account_info, AccountViewExt, Program, Signer};
-use pinocchio::{
-    account::{AccountView, RefMut},
-    error::ProgramError,
-    sysvars::Sysvar,
-    ProgramResult,
-};
+use pinocchio::{account::AccountView, error::ProgramError, sysvars::Sysvar, ProgramResult};
 use solana_program::{pubkey, pubkey::Pubkey, system_program};
 
 use crate::loader::WrapperStateAccountInfo;

@@ -7,7 +7,6 @@ use calltrace::cvt_cex_print_u64;
 use cvt::{cvt_assert, cvt_assume};
 use cvt_macros::rule;
 use nondet::nondet;
-use pinocchio::account::RefMut;
 
 use crate::{
     program::get_mut_dynamic_account,
@@ -17,13 +16,13 @@ use crate::{
     },
 };
 use hypertree::{get_mut_helper, is_nil, DataIndex, NIL};
-use solana_program::{account::AccountView, pubkey::Pubkey};
+use solana_program::{account_info::AccountInfo, pubkey::Pubkey};
 
 #[rule]
 pub fn rule_market_empty() {
     init_static();
 
-    let market_info: AccountView = nondet();
+    let market_info: AccountInfo = nondet();
 
     // Create an empty market
     create_empty_market!(market_info);
@@ -39,7 +38,7 @@ pub fn rule_market_empty() {
 pub fn rule_market_claim_seat_once() {
     init_static();
 
-    let market_info: AccountView = nondet();
+    let market_info: AccountInfo = nondet();
 
     // Create an empty market
     create_empty_market!(market_info);
@@ -57,7 +56,7 @@ pub fn rule_market_claim_seat_once() {
 pub fn rule_market_claim_seat_twice_same_trader() {
     init_static();
 
-    let market_info: AccountView = nondet();
+    let market_info: AccountInfo = nondet();
 
     // Create an empty market
     create_empty_market!(market_info);
@@ -80,7 +79,7 @@ pub fn rule_market_claim_seat_twice_same_trader() {
 pub fn rule_market_claim_seat_twice_different_trader() {
     init_static();
 
-    let market_info: AccountView = nondet();
+    let market_info: AccountInfo = nondet();
 
     // Create an empty market
     create_empty_market!(market_info);
@@ -107,7 +106,7 @@ pub fn rule_market_claim_seat_twice_different_trader() {
 pub fn rule_market_deposit() {
     init_static();
 
-    let market_info: AccountView = nondet();
+    let market_info: AccountInfo = nondet();
 
     // Create an empty market
     create_empty_market!(market_info);
@@ -131,7 +130,7 @@ pub fn rule_market_deposit() {
 pub fn rule_market_release_seat() {
     init_static();
 
-    let market_info: AccountView = nondet();
+    let market_info: AccountInfo = nondet();
 
     // Create an empty market
     create_empty_market!(market_info);
@@ -141,7 +140,7 @@ pub fn rule_market_release_seat() {
 
     {
         let market_data: &mut std::cell::RefMut<&mut [u8]> =
-            &mut market_info.try_borrow_mut().unwrap();
+            &mut market_info.try_borrow_mut_data().unwrap();
         let mut dynamic_account: MarketRefMut = get_mut_dynamic_account(market_data);
         dynamic_account.release_seat(&trader_key).unwrap();
     }
