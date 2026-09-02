@@ -1,6 +1,7 @@
 use crate::{require, validation::AccountInfoExt};
+use pinocchio::program_error::ProgramError;
 use pinocchio::account_info::AccountInfo;
-use solana_program::{program_error::ProgramError, pubkey::Pubkey};
+use solana_program::{pubkey::Pubkey};
 use spl_token_2022::{
     check_spl_token_program_account, extension::StateWithExtensions, state::Mint,
 };

@@ -1,4 +1,5 @@
 use cvt::{cvt_assert, cvt_assume};
+use crate::validation::AccountInfoExt;
 use nondet::*;
 
 use crate::{
@@ -75,8 +76,8 @@ pub fn record_all_balances_without_order(
     trader: &AccountInfo,
     maker_trader: &AccountInfo,
 ) -> AllBalances {
-    let (trader_base, trader_quote) = get_trader_balance!(market, trader.key);
-    let (maker_trader_base, maker_trader_quote) = get_trader_balance!(market, maker_trader.key);
+    let (trader_base, trader_quote) = get_trader_balance!(market, trader.pubkey());
+    let (maker_trader_base, maker_trader_quote) = get_trader_balance!(market, maker_trader.pubkey());
 
     let withdrawable_base: u64 = get_withdrawable_base_atoms!(market);
     let withdrawable_quote: u64 = get_withdrawable_quote_atoms!(market);
@@ -134,19 +135,19 @@ pub fn cvt_assume_basic_market_preconditions(
     maker_trader: &AccountInfo,
 ) {
     // -- assume both maker and taker traders have seats
-    state::cvt_assume_main_trader_has_seat(trader.key);
-    cvt_assume_second_trader_has_seat(maker_trader.key);
+    state::cvt_assume_main_trader_has_seat(trader.pubkey());
+    cvt_assume_second_trader_has_seat(maker_trader.pubkey());
 
     // -- assume market has proper base and quote vaults
     let market_base_vault_pk: Pubkey = get_base_vault!(market);
     let market_quote_vault_pk: Pubkey = get_quote_vault!(market);
-    cvt_assume!(vault_base_token.key == &market_base_vault_pk);
-    cvt_assume!(vault_quote_token.key == &market_quote_vault_pk);
+    cvt_assume!(vault_base_token.pubkey() == &market_base_vault_pk);
+    cvt_assume!(vault_quote_token.pubkey() == &market_quote_vault_pk);
     // -- assume base and quote vaults are different
     cvt_assume!(market_base_vault_pk != market_quote_vault_pk);
 
     // -- maker and taker traders are distinct
-    cvt_assume!(trader.key != maker_trader.key);
+    cvt_assume!(trader.pubkey() != maker_trader.pubkey());
 }
 
 /// Basic market pre-conditions. The maker order resting on the book is any
@@ -197,13 +198,13 @@ pub fn cvt_assume_seat_pubkeys(trader: &AccountInfo, maker_trader: &AccountInfo)
         state::get_helper_seat(dynamic, state::main_trader_index())
             .get_value()
             .trader
-            == *trader.key
+            == *trader.pubkey()
     );
     cvt_assume!(
         state::get_helper_seat(dynamic, second_trader_index())
             .get_value()
             .trader
-            == *maker_trader.key
+            == *maker_trader.pubkey()
     );
 }
 
@@ -221,20 +222,20 @@ pub fn cvt_assume_market_preconditions_gen<const IS_BID: bool, const MAKER_IS_GL
 ) -> DataIndex {
     // -- assume both maker and taker traders have seats, and that the seat
     // -- nodes carry their pubkeys
-    crate::state::cvt_assume_main_trader_has_seat(trader.key);
-    crate::state::cvt_assume_second_trader_has_seat(maker_trader.key);
+    crate::state::cvt_assume_main_trader_has_seat(trader.pubkey());
+    crate::state::cvt_assume_second_trader_has_seat(maker_trader.pubkey());
     cvt_assume_seat_pubkeys(trader, maker_trader);
 
     // -- assume market has proper base and quote vaults
     let market_base_vault_pk: Pubkey = get_base_vault!(market);
     let market_quote_vault_pk: Pubkey = get_quote_vault!(market);
-    cvt_assume!(vault_base_token.key == &market_base_vault_pk);
-    cvt_assume!(vault_quote_token.key == &market_quote_vault_pk);
+    cvt_assume!(vault_base_token.pubkey() == &market_base_vault_pk);
+    cvt_assume!(vault_quote_token.pubkey() == &market_quote_vault_pk);
     // -- assume base and quote vaults are different
     cvt_assume!(market_base_vault_pk != market_quote_vault_pk);
 
     // -- maker and taker traders are distinct
-    cvt_assume!(trader.key != maker_trader.key);
+    cvt_assume!(trader.pubkey() != maker_trader.pubkey());
 
     let maker_trader_index: DataIndex = second_trader_index();
 
@@ -306,19 +307,19 @@ pub fn cvt_assume_reverse_coalesce_preconditions<const IS_BID: bool, const IS_TI
 ) -> (DataIndex, DataIndex) {
     // -- assume both maker and taker traders have seats, and that the seat
     // -- nodes carry their pubkeys
-    crate::state::cvt_assume_main_trader_has_seat(trader.key);
-    crate::state::cvt_assume_second_trader_has_seat(maker_trader.key);
+    crate::state::cvt_assume_main_trader_has_seat(trader.pubkey());
+    crate::state::cvt_assume_second_trader_has_seat(maker_trader.pubkey());
     cvt_assume_seat_pubkeys(trader, maker_trader);
 
     // -- assume market has proper base and quote vaults
     let market_base_vault_pk: Pubkey = get_base_vault!(market);
     let market_quote_vault_pk: Pubkey = get_quote_vault!(market);
-    cvt_assume!(vault_base_token.key == &market_base_vault_pk);
-    cvt_assume!(vault_quote_token.key == &market_quote_vault_pk);
+    cvt_assume!(vault_base_token.pubkey() == &market_base_vault_pk);
+    cvt_assume!(vault_quote_token.pubkey() == &market_quote_vault_pk);
     cvt_assume!(market_base_vault_pk != market_quote_vault_pk);
 
     // -- maker and taker traders are distinct
-    cvt_assume!(trader.key != maker_trader.key);
+    cvt_assume!(trader.pubkey() != maker_trader.pubkey());
 
     // -- unlike the plain matching preconditions, BOTH book slots are taken:
     // -- the maker order to match against, and the maker's own order on the
@@ -421,7 +422,7 @@ pub fn record_global_balances(
 ) -> GlobalBalances {
     let global_vault: u64 = spl_token_account_get_amount(global_vault_token);
     let global_deposits: u64 = get_global_deposited_atoms!(global);
-    let maker_deposit: u64 = global_balance_atoms(maker_trader.key);
+    let maker_deposit: u64 = global_balance_atoms(maker_trader.pubkey());
     cvt_assume!(maker_deposit <= nondet::<u64>());
 
     GlobalBalances {
@@ -508,7 +509,7 @@ pub fn cvt_assume_global_trade_accounts_with_gas<'a>(
     system_program: &'a AccountInfo<'static>,
     is_global_base: bool,
 ) -> [Option<GlobalTradeAccounts<'a, 'static>>; 2] {
-    cvt_assume!(system_program.key == &solana_program::system_program::id());
+    cvt_assume!(system_program.pubkey() == &solana_program::system_program::id());
     cvt_assume_global_trade_accounts_gen(
         market,
         trader,
@@ -560,17 +561,17 @@ fn cvt_assume_global_trade_accounts_gen<'a>(
     is_global_base: bool,
 ) -> [Option<GlobalTradeAccounts<'a, 'static>>; 2] {
     // -- the global account is a manifest account holding a GlobalFixed
-    cvt_assume!(global.owner == &crate::id());
+    cvt_assume!(global.owner_pubkey() == &crate::id());
     create_global!(global);
 
     // -- the maker has a seat on the global account, otherwise their global
     // -- order could not have been placed
-    cvt_assume_has_global_seat(maker_trader.key);
+    cvt_assume_has_global_seat(maker_trader.pubkey());
 
     // -- the global vault is a token account of its own, distinct from the
     // -- market vaults, otherwise a transfer between them would be a no-op
-    cvt_assume!(global_vault_token.key != market_vault_token.key);
-    cvt_assume!(global_vault_token.key != global.key);
+    cvt_assume!(global_vault_token.pubkey() != market_vault_token.pubkey());
+    cvt_assume!(global_vault_token.pubkey() != global.pubkey());
 
     let global_trade_accounts: GlobalTradeAccounts<'a, 'static> = GlobalTradeAccounts {
         // Token-2022 extensions are summarized away, so the mint is never read.
@@ -590,7 +591,7 @@ fn cvt_assume_global_trade_accounts_gen<'a>(
         system_program: system_program.map(|info| crate::validation::Program { info }),
         gas_payer_opt: Some(Signer { info: trader }),
         gas_receiver_opt: Some(Signer { info: trader }),
-        market: *market.key,
+        market: *market.pubkey(),
         num_deferred_gas_refunds: std::cell::Cell::new(0),
     };
 

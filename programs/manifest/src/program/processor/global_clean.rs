@@ -1,8 +1,10 @@
-use std::cell::RefMut;
+use pinocchio::account_info::RefMut;
+use crate::validation::AccountInfoExt;
+use pinocchio::ProgramResult;
 
 use borsh::{BorshDeserialize, BorshSerialize};
 use hypertree::{get_helper, trace, DataIndex, RBNode};
-use solana_program::{account_info::AccountInfo, entrypoint::ProgramResult, pubkey::Pubkey};
+use solana_program::{account_info::AccountInfo, pubkey::Pubkey};
 
 use crate::{
     program::{batch_update::MarketDataTreeNodeType, get_mut_dynamic_account},
@@ -48,7 +50,7 @@ pub(crate) fn process_global_clean(
         market_vault_opt: None,
         token_program_opt: None,
         system_program: Some(system_program),
-        market: *market.key,
+        market: *market.pubkey(),
         gas_payer_opt: None,
         gas_receiver_opt: Some(payer),
         num_deferred_gas_refunds: std::cell::Cell::new(0),
@@ -56,10 +58,10 @@ pub(crate) fn process_global_clean(
 
     let GlobalCleanParams { order_index } = GlobalCleanParams::try_from_slice(data)?;
 
-    let market_data: &mut RefMut<&mut [u8]> = &mut market.try_borrow_mut_data()?;
+    let market_data: &mut RefMut<[u8]> = &mut market.try_borrow_mut_data()?;
     let mut market_dynamic_account: MarketRefMut = get_mut_dynamic_account(market_data);
 
-    let global_data: &mut RefMut<&mut [u8]> = &mut global.try_borrow_mut_data()?;
+    let global_data: &mut RefMut<[u8]> = &mut global.try_borrow_mut_data()?;
     let global_dynamic_account: GlobalRefMut = get_mut_dynamic_account(global_data);
 
     // Get the resting order and do some checks to make sure the order index is

@@ -1,4 +1,5 @@
 use super::verification_utils::init_static;
+use crate::validation::AccountInfoExt;
 use crate::{
     certora::spec::no_funds_loss_util::{
         cvt_assert_funds_invariants, cvt_assume_basic_market_preconditions,
@@ -73,10 +74,10 @@ fn rule_swap_check<const IS_BASE: bool, const IS_EXACT: bool>() {
     // we only care about having a pubkey for the maker
     let maker_trader: &AccountInfo = &acc_infos[9];
 
-    cvt_assume!(trader.key != vault_base_token.key);
-    cvt_assume!(trader.key != vault_quote_token.key);
-    cvt_assume!(trader_base_token.key != vault_base_token.key);
-    cvt_assume!(trader_quote_token.key != vault_quote_token.key);
+    cvt_assume!(trader.pubkey() != vault_base_token.pubkey());
+    cvt_assume!(trader.pubkey() != vault_quote_token.pubkey());
+    cvt_assume!(trader_base_token.pubkey() != vault_base_token.pubkey());
+    cvt_assume!(trader_quote_token.pubkey() != vault_quote_token.pubkey());
 
     // -- basic market assumptions
     cvt_assume_basic_market_preconditions(

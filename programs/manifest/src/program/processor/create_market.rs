@@ -1,4 +1,6 @@
 use std::{cell::Ref, mem::size_of};
+use crate::validation::AccountInfoExt;
+use pinocchio::ProgramResult;
 
 #[cfg(not(feature = "certora"))]
 use crate::validation::get_global_address;
@@ -12,7 +14,7 @@ use crate::{
 };
 use hypertree::{get_mut_helper, trace};
 use solana_program::{
-    account_info::AccountInfo, entrypoint::ProgramResult, program_pack::Pack, pubkey::Pubkey,
+    account_info::AccountInfo, program_pack::Pack, pubkey::Pubkey,
     rent::Rent, sysvar::Sysvar,
 };
 use spl_token_2022::{
@@ -47,14 +49,14 @@ pub(crate) fn process_create_market(
     } = create_market_context;
 
     require!(
-        base_mint.info.key != quote_mint.info.key,
+        base_mint.info.pubkey() != quote_mint.info.pubkey(),
         crate::program::ManifestError::InvalidMarketParameters,
         "Base and quote must be different",
     )?;
 
     for mint in [base_mint.as_ref(), quote_mint.as_ref()] {
-        if *mint.owner == spl_token_2022::id() {
-            let mint_data: Ref<'_, &mut [u8]> = mint.data.borrow();
+        if *mint.owner_pubkey() == spl_token_2022::id() {
+            let mint_data: Ref<[u8]> = mint.try_borrow_data()?;
             let pool_mint: StateWithExtensions<'_, Mint> =
                 StateWithExtensions::<Mint>::unpack(&mint_data)?;
             // Closable mints can be replaced with different ones, breaking some saved info on the market.
@@ -88,7 +90,7 @@ pub(crate) fn process_create_market(
             (quote_vault.as_ref(), quote_mint.as_ref(), quote_vault_bump),
         ] {
             // We dont have to deserialize the mint, just check the owner.
-            let is_mint_22: bool = *mint.owner == spl_token_2022::id();
+            let is_mint_22: bool = *mint.owner_pubkey() == spl_token_2022::id();
             let token_program_for_mint: Pubkey = if is_mint_22 {
                 spl_token_2022::id()
             } else {
@@ -97,13 +99,13 @@ pub(crate) fn process_create_market(
 
             let seeds: Vec<Vec<u8>> = vec![
                 b"vault".to_vec(),
-                market.key.as_ref().to_vec(),
-                mint.key.as_ref().to_vec(),
+                market.pubkey().as_ref().to_vec(),
+                mint.pubkey().as_ref().to_vec(),
                 vec![bump],
             ];
 
             if is_mint_22 {
-                let mint_data: Ref<'_, &mut [u8]> = mint.data.borrow();
+                let mint_data: Ref<[u8]> = mint.try_borrow_data()?;
                 let mint_with_extension: PodStateWithExtensions<'_, PodMint> =
                     PodStateWithExtensions::<PodMint>::unpack(&mint_data).unwrap();
                 let mint_extensions: Vec<ExtensionType> =
@@ -124,9 +126,9 @@ pub(crate) fn process_create_market(
                 invoke(
                     &spl_token_2022::instruction::initialize_account3(
                         &token_program_for_mint,
-                        token_account.key,
-                        mint.key,
-                        token_account.key,
+                        token_account.pubkey(),
+                        mint.pubkey(),
+                        token_account.pubkey(),
                     )?,
                     &[
                         payer.as_ref().clone(),
@@ -149,9 +151,9 @@ pub(crate) fn process_create_market(
                 invoke(
                     &spl_token::instruction::initialize_account3(
                         &token_program_for_mint,
-                        token_account.key,
-                        mint.key,
-                        token_account.key,
+                        token_account.pubkey(),
+                        mint.pubkey(),
+                        token_account.pubkey(),
                     )?,
                     &[
                         payer.as_ref().clone(),
@@ -176,17 +178,17 @@ pub(crate) fn process_create_market(
         let mut empty_market_fixed: MarketFixed = MarketFixed::new_empty_with_vaults(
             &base_mint,
             &quote_mint,
-            *base_vault.info.key,
+            *base_vault.info.pubkey(),
             base_vault_bump,
-            *quote_vault.info.key,
+            *quote_vault.info.pubkey(),
             quote_vault_bump,
         );
         // Cache the global account addresses so that global trades on this
         // market never have to derive them.
         #[cfg(not(feature = "certora"))]
         {
-            let (base_global, _) = get_global_address(base_mint.info.key);
-            let (quote_global, _) = get_global_address(quote_mint.info.key);
+            let (base_global, _) = get_global_address(base_mint.info.pubkey());
+            let (quote_global, _) = get_global_address(quote_mint.info.pubkey());
             empty_market_fixed.set_base_global(base_global);
             empty_market_fixed.set_quote_global(quote_global);
         }
@@ -196,10 +198,10 @@ pub(crate) fn process_create_market(
         *get_mut_helper::<MarketFixed>(market_bytes, 0_u32) = empty_market_fixed;
 
         emit_stack(CreateMarketLog {
-            market: *market.key,
-            creator: *payer.key,
-            base_mint: *base_mint.info.key,
-            quote_mint: *quote_mint.info.key,
+            market: *market.pubkey(),
+            creator: *payer.pubkey(),
+            base_mint: *base_mint.info.pubkey(),
+            quote_mint: *quote_mint.info.pubkey(),
         })?;
     }
 

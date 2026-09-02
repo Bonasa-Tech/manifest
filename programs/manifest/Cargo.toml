@@ -51,6 +51,8 @@ hook_macro = { workspace = true, optional = true}
 arrayref = { workspace = true}
 solana-invoke = { workspace = true }
 pinocchio = { workspace = true }
+pinocchio-system = { workspace = true }
+pinocchio-token = { workspace = true }
 solana-curve25519 = { workspace = true }
 cvlr = { version = "0.4", optional = true } 
 

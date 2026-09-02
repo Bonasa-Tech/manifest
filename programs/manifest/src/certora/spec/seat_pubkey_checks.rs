@@ -22,6 +22,7 @@
 //! `remove_from_global`, `try_to_add_to_global`, `transfer_global_tokens`)
 //! are exercised by the preservation induction too.
 use super::verification_utils::init_static;
+use crate::validation::AccountInfoExt;
 use crate::*;
 use cvt::{cvt_assert, cvt_assume};
 use cvt_macros::rule;
@@ -166,8 +167,8 @@ fn seat_pubkey_preserved_by_deposit_or_withdraw_check<const IS_DEPOSIT: bool>() 
     );
 
     let market_base_vault_pk: Pubkey = get_base_vault!(market_info);
-    cvt_assume!(vault_token.key == &market_base_vault_pk);
-    cvt_assume!(trader_token.key != vault_token.key);
+    cvt_assume!(vault_token.pubkey() == &market_base_vault_pk);
+    cvt_assume!(trader_token.pubkey() != vault_token.pubkey());
 
     let old: (Pubkey, Pubkey) = record_seat_pubkeys();
 
@@ -274,7 +275,7 @@ fn seat_pubkey_preserved_by_rest_remaining_check<const IS_BID: bool>() {
     let old: (Pubkey, Pubkey) = record_seat_pubkeys();
 
     let args: AddOrderToMarketArgs = AddOrderToMarketArgs {
-        market: *market_info.key,
+        market: *market_info.pubkey(),
         trader_index: main_trader_index(),
         num_base_atoms: nondet(),
         price: crate::quantities::QuoteAtomsPerBaseAtom::nondet_price_u32(),
@@ -533,7 +534,7 @@ fn seat_pubkey_preserved_by_rest_remaining_global_check<const IS_BID: bool>() {
     let old: (Pubkey, Pubkey) = record_seat_pubkeys();
 
     let args: AddOrderToMarketArgs = AddOrderToMarketArgs {
-        market: *market_info.key,
+        market: *market_info.pubkey(),
         trader_index: main_trader_index(),
         num_base_atoms: nondet(),
         price: crate::quantities::QuoteAtomsPerBaseAtom::nondet_price_u32(),

@@ -1,6 +1,6 @@
 use solana_program::{
-    account_info::AccountInfo, entrypoint::ProgramResult, keccak, program::invoke_signed,
-    program_error::ProgramError, pubkey::Pubkey, rent::Rent, system_instruction,
+    account_info::AccountInfo, keccak, program::invoke_signed,
+    pubkey::Pubkey, rent::Rent, system_instruction,
 };
 
 /// Canonical discriminant of the given struct. It is the hash of program ID and
@@ -16,10 +16,10 @@ pub fn get_discriminant<T>() -> Result<u64, ProgramError> {
 }
 
 /// Send CPI for creating a new account on chain.
-pub fn create_account<'a, 'info>(
-    payer: &'a AccountInfo<'info>,
-    new_account: &'a AccountInfo<'info>,
-    system_program: &'a AccountInfo<'info>,
+pub fn create_account<'a>(
+    payer: &'a AccountInfo,
+    new_account: &'a AccountInfo,
+    system_program: &'a AccountInfo,
     program_owner: &Pubkey,
     rent: &Rent,
     space: u64,
@@ -27,8 +27,8 @@ pub fn create_account<'a, 'info>(
 ) -> ProgramResult {
     invoke_signed(
         &system_instruction::create_account(
-            payer.key,
-            new_account.key,
+            payer.pubkey(),
+            new_account.pubkey(),
             rent.minimum_balance(space as usize),
             space,
             program_owner,

@@ -1,7 +1,9 @@
-use std::cell::RefMut;
+use pinocchio::account_info::RefMut;
+use crate::validation::AccountInfoExt;
+use pinocchio::ProgramResult;
 
 use borsh::{BorshDeserialize, BorshSerialize};
-use solana_program::{account_info::AccountInfo, entrypoint::ProgramResult, pubkey::Pubkey};
+use solana_program::{account_info::AccountInfo, pubkey::Pubkey};
 
 use crate::{
     logs::{emit_stack, GlobalWithdrawLog},
@@ -62,15 +64,15 @@ pub(crate) fn process_global_withdraw_core(
         token_program,
     } = global_withdraw_context;
 
-    let global_data: &mut RefMut<&mut [u8]> = &mut global.try_borrow_mut_data()?;
+    let global_data: &mut RefMut<[u8]> = &mut global.try_borrow_mut_data()?;
     let mut global_dynamic_account: GlobalRefMut = get_mut_dynamic_account(global_data);
-    global_dynamic_account.withdraw_global(payer.key, GlobalAtoms::new(amount_atoms))?;
+    global_dynamic_account.withdraw_global(payer.pubkey(), GlobalAtoms::new(amount_atoms))?;
 
     // Sign with the bump stored at creation instead of searching for it.
     let bump: u8 = global_dynamic_account.fixed.get_vault_bump();
 
     // Do the token transfer
-    if *global_vault.owner == spl_token_2022::id() {
+    if *global_vault.owner_pubkey() == spl_token_2022::id() {
         spl_token_2022_transfer_from_global_vault_to_trader(
             &token_program,
             &mint,
@@ -91,8 +93,8 @@ pub(crate) fn process_global_withdraw_core(
     }
 
     emit_stack(GlobalWithdrawLog {
-        global: *global.key,
-        trader: *payer.key,
+        global: *global.pubkey(),
+        trader: *payer.pubkey(),
         global_atoms: GlobalAtoms::new(amount_atoms),
     })?;
 
@@ -101,20 +103,20 @@ pub(crate) fn process_global_withdraw_core(
 
 /** Transfer from global vault to trader using SPL Token **/
 #[cfg(not(feature = "certora"))]
-fn spl_token_transfer_from_global_vault_to_trader<'a, 'info>(
-    token_program: &TokenProgram<'a, 'info>,
-    mint: &MintAccountInfo<'a, 'info>,
-    global_vault: &TokenAccountInfo<'a, 'info>,
-    trader_token: &TokenAccountInfo<'a, 'info>,
+fn spl_token_transfer_from_global_vault_to_trader<'a>(
+    token_program: &TokenProgram<'a>,
+    mint: &MintAccountInfo<'a>,
+    global_vault: &TokenAccountInfo<'a>,
+    trader_token: &TokenAccountInfo<'a>,
     amount_atoms: u64,
     bump: u8,
 ) -> ProgramResult {
     invoke_signed(
         &spl_token::instruction::transfer(
-            token_program.key,
-            global_vault.key,
-            trader_token.key,
-            global_vault.key,
+            token_program.pubkey(),
+            global_vault.pubkey(),
+            trader_token.pubkey(),
+            global_vault.pubkey(),
             &[],
             amount_atoms,
         )?,
@@ -123,17 +125,17 @@ fn spl_token_transfer_from_global_vault_to_trader<'a, 'info>(
             global_vault.as_ref().clone(),
             trader_token.as_ref().clone(),
         ],
-        global_vault_seeds_with_bump!(mint.info.key, bump),
+        global_vault_seeds_with_bump!(mint.info.pubkey(), bump),
     )
 }
 
 #[cfg(feature = "certora")]
 /** (Summary) Transfer from global vault to trader using SPL Token **/
-fn spl_token_transfer_from_global_vault_to_trader<'a, 'info>(
-    _token_program: &TokenProgram<'a, 'info>,
-    _mint: &MintAccountInfo<'a, 'info>,
-    global_vault: &TokenAccountInfo<'a, 'info>,
-    trader_token: &TokenAccountInfo<'a, 'info>,
+fn spl_token_transfer_from_global_vault_to_trader<'a>(
+    _token_program: &TokenProgram<'a>,
+    _mint: &MintAccountInfo<'a>,
+    global_vault: &TokenAccountInfo<'a>,
+    trader_token: &TokenAccountInfo<'a>,
     amount_atoms: u64,
     _bump: u8,
 ) -> ProgramResult {
@@ -147,21 +149,21 @@ fn spl_token_transfer_from_global_vault_to_trader<'a, 'info>(
 
 /** Transfer from global vault to trader using SPL Token 2022 **/
 #[cfg(not(feature = "certora"))]
-fn spl_token_2022_transfer_from_global_vault_to_trader<'a, 'info>(
-    token_program: &TokenProgram<'a, 'info>,
-    mint: &MintAccountInfo<'a, 'info>,
-    global_vault: &TokenAccountInfo<'a, 'info>,
-    trader_token: &TokenAccountInfo<'a, 'info>,
+fn spl_token_2022_transfer_from_global_vault_to_trader<'a>(
+    token_program: &TokenProgram<'a>,
+    mint: &MintAccountInfo<'a>,
+    global_vault: &TokenAccountInfo<'a>,
+    trader_token: &TokenAccountInfo<'a>,
     amount_atoms: u64,
     bump: u8,
 ) -> ProgramResult {
     invoke_signed(
         &spl_token_2022::instruction::transfer_checked(
-            token_program.key,
-            global_vault.key,
-            mint.info.key,
-            trader_token.key,
-            global_vault.key,
+            token_program.pubkey(),
+            global_vault.pubkey(),
+            mint.info.pubkey(),
+            trader_token.pubkey(),
+            global_vault.pubkey(),
             &[],
             amount_atoms,
             mint.mint.decimals,
@@ -172,17 +174,17 @@ fn spl_token_2022_transfer_from_global_vault_to_trader<'a, 'info>(
             mint.as_ref().clone(),
             global_vault.as_ref().clone(),
         ],
-        global_vault_seeds_with_bump!(mint.info.key, bump),
+        global_vault_seeds_with_bump!(mint.info.pubkey(), bump),
     )
 }
 
 #[cfg(feature = "certora")]
 /** (Summary) Transfer from global vault to trader using SPL Token 2022 **/
-fn spl_token_2022_transfer_from_global_vault_to_trader<'a, 'info>(
-    _token_program: &TokenProgram<'a, 'info>,
-    _mint: &MintAccountInfo<'a, 'info>,
-    global_vault: &TokenAccountInfo<'a, 'info>,
-    trader_token: &TokenAccountInfo<'a, 'info>,
+fn spl_token_2022_transfer_from_global_vault_to_trader<'a>(
+    _token_program: &TokenProgram<'a>,
+    _mint: &MintAccountInfo<'a>,
+    global_vault: &TokenAccountInfo<'a>,
+    trader_token: &TokenAccountInfo<'a>,
     amount_atoms: u64,
     _bump: u8,
 ) -> ProgramResult {

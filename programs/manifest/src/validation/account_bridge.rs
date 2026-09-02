@@ -12,7 +12,7 @@
 //! does that reinterpretation in one place, so call sites keep reading in
 //! terms of `Pubkey` and no bytes are copied to get there.
 
-use pinocchio::{account_info::AccountInfo, pubkey::Pubkey as RawKey};
+use pinocchio::{account_info::AccountInfo, program_error::ProgramError, pubkey::Pubkey as RawKey};
 use solana_program::pubkey::Pubkey;
 
 /// Reinterprets a raw runtime key as a `Pubkey`.
@@ -62,6 +62,24 @@ impl AccountInfoExt for AccountInfo {
     fn owned_by(&self, program: &Pubkey) -> bool {
         self.is_owned_by(as_raw_key(program))
     }
+}
+
+/// A `solana_program` error in pinocchio's terms.
+///
+/// The two crates each define their own `ProgramError` with the same wire
+/// representation, a `u64` the runtime understands, and neither is ours to
+/// implement `From` between. Anything this program calls that still returns
+/// the `solana_program` one, mostly the SPL token account parsing, comes back
+/// through here.
+#[inline(always)]
+pub fn to_program_error(error: solana_program::program_error::ProgramError) -> ProgramError {
+    ProgramError::from(u64::from(error))
+}
+
+/// Borsh and the other `std::io::Error` producers.
+#[inline(always)]
+pub fn io_to_program_error(_error: std::io::Error) -> ProgramError {
+    ProgramError::BorshIoError
 }
 
 #[cfg(test)]

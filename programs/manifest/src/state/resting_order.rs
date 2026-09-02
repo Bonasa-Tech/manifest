@@ -1,4 +1,6 @@
 use std::mem::size_of;
+use pinocchio::ProgramResult;
+use pinocchio::program_error::ProgramError;
 
 use crate::quantities::{BaseAtoms, PriceConversionError, QuoteAtomsPerBaseAtom};
 #[cfg(feature = "certora")]
@@ -7,7 +9,7 @@ use borsh::{BorshDeserialize, BorshSerialize};
 use bytemuck::{Pod, Zeroable};
 use hypertree::{DataIndex, PodBool};
 use shank::ShankType;
-use solana_program::{entrypoint::ProgramResult, program_error::ProgramError};
+use solana_program::{program_error::ProgramError};
 use static_assertions::const_assert_eq;
 use std::cmp::Ordering;
 

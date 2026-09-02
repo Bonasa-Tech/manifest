@@ -17,6 +17,7 @@
 //! instruction. Note that a resting global order contributes nothing to
 //! `orderbook`, which is what makes the two invariants independent.
 use crate::*;
+use crate::validation::AccountInfoExt;
 use cvt::{cvt_assert, cvt_assume};
 use cvt_macros::rule;
 use nondet::*;
@@ -356,7 +357,7 @@ pub fn rest_remaining_global_check<const IS_BID: bool>() {
     cvt_assume_global_funds_invariants(global_old);
 
     let args: AddOrderToMarketArgs = AddOrderToMarketArgs {
-        market: *market_info.key,
+        market: *market_info.pubkey(),
         trader_index: main_trader_index(),
         num_base_atoms: nondet(),
         price: crate::quantities::QuoteAtomsPerBaseAtom::nondet_price_u32(),
@@ -552,8 +553,8 @@ pub fn cancel_global_order_gas_refund_check<const IS_BID: bool>() {
 
     // -- lamports before. The gas prepayment paid when the order was placed
     // -- guarantees the global account can cover the refund.
-    let global_lamports_old: u64 = **global_info.lamports.borrow();
-    let receiver_lamports_old: u64 = **trader.lamports.borrow();
+    let global_lamports_old: u64 = **global_info.lamports();
+    let receiver_lamports_old: u64 = **trader.lamports();
     cvt_assume!(global_lamports_old >= crate::state::GAS_DEPOSIT_LAMPORTS);
     cvt_assume!(receiver_lamports_old <= u64::MAX - crate::state::GAS_DEPOSIT_LAMPORTS);
 
@@ -568,8 +569,8 @@ pub fn cancel_global_order_gas_refund_check<const IS_BID: bool>() {
     cvt_assert_global_funds_unchanged(global_old, global_new);
 
     // -- the refund moved, exactly once and exactly GAS_DEPOSIT_LAMPORTS
-    let global_lamports_new: u64 = **global_info.lamports.borrow();
-    let receiver_lamports_new: u64 = **trader.lamports.borrow();
+    let global_lamports_new: u64 = **global_info.lamports();
+    let receiver_lamports_new: u64 = **trader.lamports();
     cvt_assert!(global_lamports_new == global_lamports_old - crate::state::GAS_DEPOSIT_LAMPORTS);
     cvt_assert!(
         receiver_lamports_new == receiver_lamports_old + crate::state::GAS_DEPOSIT_LAMPORTS
@@ -604,7 +605,7 @@ pub fn rule_global_gas_prepayment() {
     let global_vault_token: &AccountInfo = &acc_infos[11];
     let system_program_info: &AccountInfo = &acc_infos[12];
 
-    crate::state::cvt_assume_main_trader_has_seat(trader.key);
+    crate::state::cvt_assume_main_trader_has_seat(trader.pubkey());
 
     let global_trade_accounts_opts: [Option<GlobalTradeAccounts>; 2] =
         cvt_assume_global_trade_accounts_with_gas(
@@ -618,8 +619,8 @@ pub fn rule_global_gas_prepayment() {
             true, // side does not matter for the lamport accounting
         );
 
-    let payer_lamports_old: u64 = **trader.lamports.borrow();
-    let global_lamports_old: u64 = **global_info.lamports.borrow();
+    let payer_lamports_old: u64 = **trader.lamports();
+    let global_lamports_old: u64 = **global_info.lamports();
 
     let num_orders: u64 = nondet();
     cvt_assume!(num_orders >= 1 && num_orders <= 4);
@@ -629,8 +630,8 @@ pub fn rule_global_gas_prepayment() {
     )
     .unwrap();
 
-    let payer_lamports_new: u64 = **trader.lamports.borrow();
-    let global_lamports_new: u64 = **global_info.lamports.borrow();
+    let payer_lamports_new: u64 = **trader.lamports();
+    let global_lamports_new: u64 = **global_info.lamports();
 
     let expected: u64 = crate::state::GAS_DEPOSIT_LAMPORTS * num_orders;
     cvt_assert!(payer_lamports_new == payer_lamports_old - expected);
@@ -664,7 +665,7 @@ pub fn rule_global_evict() {
     let global_info: &AccountInfo = &acc_infos[10];
     let global_vault_token: &AccountInfo = &acc_infos[11];
 
-    cvt_assume!(global_info.owner == &crate::id());
+    cvt_assume!(global_info.owner_pubkey() == &crate::id());
     create_global!(global_info);
 
     // -- the evictee holds the only seat, the new trader holds none
@@ -741,7 +742,7 @@ pub fn rule_global_evict_processor() {
     let trader_token: &AccountInfo = &used_acc_infos[4];
     let evictee_token: &AccountInfo = &used_acc_infos[5];
 
-    cvt_assume!(global_info.owner == &crate::id());
+    cvt_assume!(global_info.owner_pubkey() == &crate::id());
     create_global!(global_info);
     // create_global! writes an account with zero seats, but eviction is only
     // allowed at capacity: give it an arbitrary seat count so the capacity
@@ -749,19 +750,19 @@ pub fn rule_global_evict_processor() {
     set_nondet_num_seats_claimed(global_info);
 
     // -- the evictee holds the only modeled seat, the evictor holds none
-    cvt_assume!(payer.key == crate::state::main_trader_pk());
+    cvt_assume!(payer.pubkey() == crate::state::main_trader_pk());
     cvt_assume!(
         &evictee_token.try_borrow_data().unwrap()[32..64]
             == crate::state::second_trader_pk().as_ref()
     );
-    cvt_assume!(payer.key != crate::state::second_trader_pk());
+    cvt_assume!(payer.pubkey() != crate::state::second_trader_pk());
     cvt_assume!(crate::state::is_second_global_seat_taken());
     cvt_assume!(crate::state::is_main_global_seat_free());
 
     // -- distinct token accounts
-    cvt_assume!(trader_token.key != global_vault_token.key);
-    cvt_assume!(evictee_token.key != global_vault_token.key);
-    cvt_assume!(evictee_token.key != trader_token.key);
+    cvt_assume!(trader_token.pubkey() != global_vault_token.pubkey());
+    cvt_assume!(evictee_token.pubkey() != global_vault_token.pubkey());
+    cvt_assume!(evictee_token.pubkey() != trader_token.pubkey());
 
     let global_old: GlobalBalances = record_global_balances(global_info, global_vault_token, payer);
     cvt_assume_global_funds_invariants(global_old);
@@ -771,8 +772,8 @@ pub fn rule_global_evict_processor() {
         crate::state::global_balance_atoms(crate::state::second_trader_pk());
     let trader_token_old: u64 = spl_token_account_get_amount(trader_token);
     let evictee_token_old: u64 = spl_token_account_get_amount(evictee_token);
-    let payer_lamports_old: u64 = **payer.lamports.borrow();
-    let global_lamports_old: u64 = **global_info.lamports.borrow();
+    let payer_lamports_old: u64 = **payer.lamports();
+    let global_lamports_old: u64 = **global_info.lamports();
 
     let amount_atoms: u64 = nondet();
     process_global_evict_core(
@@ -785,8 +786,8 @@ pub fn rule_global_evict_processor() {
     let global_new: GlobalBalances = record_global_balances(global_info, global_vault_token, payer);
     let trader_token_new: u64 = spl_token_account_get_amount(trader_token);
     let evictee_token_new: u64 = spl_token_account_get_amount(evictee_token);
-    let payer_lamports_new: u64 = **payer.lamports.borrow();
-    let global_lamports_new: u64 = **global_info.lamports.borrow();
+    let payer_lamports_new: u64 = **payer.lamports();
+    let global_lamports_new: u64 = **global_info.lamports();
 
     // -- the eviction fee moved from the payer to the global account, and
     // nowhere else
@@ -815,11 +816,11 @@ pub fn rule_global_evict_processor() {
     cvt_assert_global_funds_invariants(global_new);
 
     // -- the seat changed hands and the balances ended where they should
-    cvt_assert!(crate::state::has_mock_global_seat(payer.key));
+    cvt_assert!(crate::state::has_mock_global_seat(payer.pubkey()));
     cvt_assert!(!crate::state::has_mock_global_seat(
         crate::state::second_trader_pk()
     ));
-    cvt_assert!(crate::state::global_balance_atoms(payer.key) == amount_atoms);
+    cvt_assert!(crate::state::global_balance_atoms(payer.pubkey()) == amount_atoms);
     cvt_assert!(crate::state::global_balance_atoms(crate::state::second_trader_pk()) == 0);
 
     cvt_vacuity_check!();
@@ -844,7 +845,7 @@ pub fn rule_global_evict_processor_with_fee() {
     let trader_token: &AccountInfo = &used_acc_infos[4];
     let evictee_token: &AccountInfo = &used_acc_infos[5];
 
-    cvt_assume!(global_info.owner == &crate::id());
+    cvt_assume!(global_info.owner_pubkey() == &crate::id());
     create_global!(global_info);
     // create_global! writes an account with zero seats, but eviction is only
     // allowed at capacity: give it an arbitrary seat count so the capacity
@@ -853,23 +854,23 @@ pub fn rule_global_evict_processor_with_fee() {
 
     // -- the vault is a token-2022 account, the only path where a transfer
     // fee exists, and the mint may charge one
-    cvt_assume!(global_vault_token.owner == &spl_token_2022::id());
+    cvt_assume!(global_vault_token.owner_pubkey() == &spl_token_2022::id());
     cvt_enable_transfer_fee();
 
     // -- the evictee holds the only modeled seat, the evictor holds none
-    cvt_assume!(payer.key == crate::state::main_trader_pk());
+    cvt_assume!(payer.pubkey() == crate::state::main_trader_pk());
     cvt_assume!(
         &evictee_token.try_borrow_data().unwrap()[32..64]
             == crate::state::second_trader_pk().as_ref()
     );
-    cvt_assume!(payer.key != crate::state::second_trader_pk());
+    cvt_assume!(payer.pubkey() != crate::state::second_trader_pk());
     cvt_assume!(crate::state::is_second_global_seat_taken());
     cvt_assume!(crate::state::is_main_global_seat_free());
 
     // -- distinct token accounts
-    cvt_assume!(trader_token.key != global_vault_token.key);
-    cvt_assume!(evictee_token.key != global_vault_token.key);
-    cvt_assume!(evictee_token.key != trader_token.key);
+    cvt_assume!(trader_token.pubkey() != global_vault_token.pubkey());
+    cvt_assume!(evictee_token.pubkey() != global_vault_token.pubkey());
+    cvt_assume!(evictee_token.pubkey() != trader_token.pubkey());
 
     let global_old: GlobalBalances = record_global_balances(global_info, global_vault_token, payer);
     cvt_assume_global_funds_invariants(global_old);
@@ -894,7 +895,7 @@ pub fn rule_global_evict_processor_with_fee() {
 
     // The two legs charge one fee each. The evictor's credited balance
     // recovers the deposit-leg fee; the rest was charged on the withdraw leg.
-    let deposited: u64 = crate::state::global_balance_atoms(payer.key);
+    let deposited: u64 = crate::state::global_balance_atoms(payer.pubkey());
     cvt_assert!(deposited <= amount_atoms);
     let deposit_fee: u64 = amount_atoms - deposited;
     let fees: u64 = transfer_fees_charged();
@@ -924,7 +925,7 @@ pub fn rule_global_evict_processor_with_fee() {
     cvt_assert_global_funds_invariants(global_new);
 
     // -- the seat changed hands and the balances ended where they should
-    cvt_assert!(crate::state::has_mock_global_seat(payer.key));
+    cvt_assert!(crate::state::has_mock_global_seat(payer.pubkey()));
     cvt_assert!(!crate::state::has_mock_global_seat(
         crate::state::second_trader_pk()
     ));
@@ -946,11 +947,11 @@ pub fn rule_global_deposit() {
     let global_vault_token: &AccountInfo = &used_acc_infos[3];
     let trader_token: &AccountInfo = &used_acc_infos[4];
 
-    cvt_assume!(global_info.owner == &crate::id());
+    cvt_assume!(global_info.owner_pubkey() == &crate::id());
     create_global!(global_info);
-    crate::state::cvt_assume_main_trader_has_seat(trader.key);
-    crate::state::cvt_assume_has_global_seat(trader.key);
-    cvt_assume!(trader_token.key != global_vault_token.key);
+    crate::state::cvt_assume_main_trader_has_seat(trader.pubkey());
+    crate::state::cvt_assume_has_global_seat(trader.pubkey());
+    cvt_assume!(trader_token.pubkey() != global_vault_token.pubkey());
 
     let global_old: GlobalBalances =
         record_global_balances(global_info, global_vault_token, trader);
@@ -1003,15 +1004,15 @@ pub fn rule_global_deposit_with_fee() {
     let global_vault_token: &AccountInfo = &used_acc_infos[3];
     let trader_token: &AccountInfo = &used_acc_infos[4];
 
-    cvt_assume!(global_info.owner == &crate::id());
+    cvt_assume!(global_info.owner_pubkey() == &crate::id());
     create_global!(global_info);
-    crate::state::cvt_assume_main_trader_has_seat(trader.key);
-    crate::state::cvt_assume_has_global_seat(trader.key);
-    cvt_assume!(trader_token.key != global_vault_token.key);
+    crate::state::cvt_assume_main_trader_has_seat(trader.pubkey());
+    crate::state::cvt_assume_has_global_seat(trader.pubkey());
+    cvt_assume!(trader_token.pubkey() != global_vault_token.pubkey());
 
     // -- the vault is a token-2022 account, the only path where a transfer fee
     // exists, and the mint may charge one
-    cvt_assume!(global_vault_token.owner == &spl_token_2022::id());
+    cvt_assume!(global_vault_token.owner_pubkey() == &spl_token_2022::id());
     cvt_enable_transfer_fee();
 
     let global_old: GlobalBalances =
@@ -1063,11 +1064,11 @@ pub fn rule_global_withdraw() {
     let global_vault_token: &AccountInfo = &used_acc_infos[3];
     let trader_token: &AccountInfo = &used_acc_infos[4];
 
-    cvt_assume!(global_info.owner == &crate::id());
+    cvt_assume!(global_info.owner_pubkey() == &crate::id());
     create_global!(global_info);
-    crate::state::cvt_assume_main_trader_has_seat(trader.key);
-    crate::state::cvt_assume_has_global_seat(trader.key);
-    cvt_assume!(trader_token.key != global_vault_token.key);
+    crate::state::cvt_assume_main_trader_has_seat(trader.pubkey());
+    crate::state::cvt_assume_has_global_seat(trader.pubkey());
+    cvt_assume!(trader_token.pubkey() != global_vault_token.pubkey());
 
     let global_old: GlobalBalances =
         record_global_balances(global_info, global_vault_token, trader);

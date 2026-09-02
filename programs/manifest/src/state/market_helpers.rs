@@ -207,7 +207,7 @@ pub struct AddOrderToMarketInnerResult {
 }
 
 pub struct AddSingleOrderCtx<'a, 'b, 'info> {
-    pub args: AddOrderToMarketArgs<'b, 'info>,
+    pub args: AddOrderToMarketArgs<'b>,
     fixed: &'a mut MarketFixed,
     dynamic: &'a mut [u8],
     pub now_slot: u32,
@@ -223,7 +223,7 @@ pub struct AddSingleOrderCtx<'a, 'b, 'info> {
 
 impl<'a, 'b, 'info> AddSingleOrderCtx<'a, 'b, 'info> {
     pub fn new(
-        args: AddOrderToMarketArgs<'b, 'info>,
+        args: AddOrderToMarketArgs<'b>,
         fixed: &'a mut MarketFixed,
         dynamic: &'a mut [u8],
         remaining_base_atoms: BaseAtoms,

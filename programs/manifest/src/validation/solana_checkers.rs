@@ -1,7 +1,8 @@
 use crate::require;
+use pinocchio::program_error::ProgramError;
 use pinocchio::account_info::AccountInfo;
 use solana_program::{
-    program_error::ProgramError, pubkey::Pubkey, system_program,
+    pubkey::Pubkey, system_program,
 };
 use std::ops::Deref;
 

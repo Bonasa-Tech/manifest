@@ -1,4 +1,5 @@
 use cvt::{cvt_assert, cvt_assume};
+use crate::validation::AccountInfoExt;
 use cvt_macros::rule;
 use nondet::*;
 
@@ -31,18 +32,18 @@ pub fn rule_withdraw_withdraws() {
     let market: &AccountInfo = &used_acc_infos[1];
     let unrelated_trader: &AccountInfo = &acc_infos[7];
 
-    cvt_assume_main_trader_has_seat(trader.key);
+    cvt_assume_main_trader_has_seat(trader.pubkey());
 
     // -- trader and vault have different token accounts
-    cvt_assume!(trader_token.key != vault_token.key);
+    cvt_assume!(trader_token.pubkey() != vault_token.pubkey());
 
-    cvt_assume!(trader.key != unrelated_trader.key);
-    cvt_assume!(unrelated_trader.key == second_trader_pk());
+    cvt_assume!(trader.pubkey() != unrelated_trader.pubkey());
+    cvt_assume!(unrelated_trader.pubkey() == second_trader_pk());
     cvt_assume!(is_second_seat_taken());
 
-    let (trader_base_old, trader_quote_old) = get_trader_balance!(market, trader.key);
+    let (trader_base_old, trader_quote_old) = get_trader_balance!(market, trader.pubkey());
     let (unrelated_trader_base_old, unrelated_trader_quote_old) =
-        get_trader_balance!(market, unrelated_trader.key);
+        get_trader_balance!(market, unrelated_trader.pubkey());
 
     let trader_amount_old: u64 = spl_token_account_get_amount(trader_token);
     let vault_amount_old: u64 = spl_token_account_get_amount(vault_token);
@@ -75,10 +76,10 @@ pub fn rule_withdraw_withdraws() {
     cvt_assert!(trader_diff == amount);
     cvt_assert!(vault_diff == amount);
 
-    let (trader_base, trader_quote) = get_trader_balance!(market, trader.key);
+    let (trader_base, trader_quote) = get_trader_balance!(market, trader.pubkey());
 
     let (unrelated_trader_base, unrelated_trader_quote) =
-        get_trader_balance!(market, unrelated_trader.key);
+        get_trader_balance!(market, unrelated_trader.pubkey());
 
     cvt_assert!(trader_base_old >= trader_base);
     cvt_assert!(trader_quote_old >= trader_quote);
@@ -105,7 +106,7 @@ pub fn rule_withdraw_does_not_revert() {
     let used_acc_infos: &[AccountInfo] = &acc_infos[..6];
     let trader: &AccountInfo = &used_acc_infos[0];
 
-    cvt_assume_main_trader_has_seat(trader.key);
+    cvt_assume_main_trader_has_seat(trader.pubkey());
 
     let amount: u64 = nondet();
     let result: ProgramResult = process_withdraw_core(

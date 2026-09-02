@@ -1,4 +1,5 @@
 use crate::*;
+use crate::validation::AccountInfoExt;
 use cvt::{cvt_assert, cvt_assume};
 use cvt_macros::rule;
 use nondet::*;
@@ -170,9 +171,9 @@ pub fn place_single_order_full_match_balances<const IS_BID: bool>() {
     cvt_assume_maker_not_reversible(maker_order_index);
 
     // -- record trader balances before place_single_order
-    let (trader_base_old, trader_quote_old) = get_trader_balance!(market_info, trader.key);
+    let (trader_base_old, trader_quote_old) = get_trader_balance!(market_info, trader.pubkey());
     let (maker_trader_base_old, maker_trader_quote_old) =
-        get_trader_balance!(market_info, maker_trader.key);
+        get_trader_balance!(market_info, maker_trader.pubkey());
 
     // -- compute base_atoms_traded and quote_atoms_traded
     let dynamic = [0u8; 8];
@@ -197,9 +198,9 @@ pub fn place_single_order_full_match_balances<const IS_BID: bool>() {
     cvt_assume!(res.status == AddOrderStatus::Filled);
 
     // -- record trader balances after place_single_order
-    let (trader_base_new, trader_quote_new) = get_trader_balance!(market_info, trader.key);
+    let (trader_base_new, trader_quote_new) = get_trader_balance!(market_info, trader.pubkey());
     let (maker_trader_base_new, maker_trader_quote_new) =
-        get_trader_balance!(market_info, maker_trader.key);
+        get_trader_balance!(market_info, maker_trader.pubkey());
 
     // -- asserts to establish that trader balances changed as expected
     if IS_BID {
@@ -253,9 +254,9 @@ pub fn place_single_order_partial_match_balances<const IS_BID: bool>() {
     cvt_assume_maker_not_reversible(maker_order_index);
 
     // -- record trader balances before place_single_order
-    let (trader_base_old, trader_quote_old) = get_trader_balance!(market_info, trader.key);
+    let (trader_base_old, trader_quote_old) = get_trader_balance!(market_info, trader.pubkey());
     let (maker_trader_base_old, maker_trader_quote_old) =
-        get_trader_balance!(market_info, maker_trader.key);
+        get_trader_balance!(market_info, maker_trader.pubkey());
 
     let (args, remaining_base_atoms, now_slot) =
         place_single_order_nondet_inputs::<IS_BID>(market_info);
@@ -280,9 +281,9 @@ pub fn place_single_order_partial_match_balances<const IS_BID: bool>() {
     cvt_assume!(res.status == AddOrderStatus::PartialFill);
 
     // -- record trader balances after place_single_order
-    let (trader_base_new, trader_quote_new) = get_trader_balance!(market_info, trader.key);
+    let (trader_base_new, trader_quote_new) = get_trader_balance!(market_info, trader.pubkey());
     let (maker_trader_base_new, maker_trader_quote_new) =
-        get_trader_balance!(market_info, maker_trader.key);
+        get_trader_balance!(market_info, maker_trader.pubkey());
 
     // -- asserts to establish that trader balances changed as expected
     if IS_BID {

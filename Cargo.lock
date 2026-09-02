@@ -2741,7 +2741,9 @@ dependencies = [
  "hypertree",
  "nondet",
  "num_enum 0.5.11",
- "pinocchio",
+ "pinocchio 0.8.4",
+ "pinocchio-system",
+ "pinocchio-token",
  "serde_json",
  "shank",
  "solana-account",
@@ -3331,6 +3333,43 @@ name = "pinocchio"
 version = "0.8.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7c33b58567c11b07749cefbb8320ac023f3387c57807aeb8e3b1262501b6e9f0"
+
+[[package]]
+name = "pinocchio"
+version = "0.9.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b8afe4f39c0e25cc471b35b89963312791a5162d45a86578cbeaad9e5e7d1b3b"
+
+[[package]]
+name = "pinocchio-pubkey"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cb0225638cadcbebae8932cb7f49cb5da7c15c21beb19f048f05a5ca7d93f065"
+dependencies = [
+ "five8_const",
+ "pinocchio 0.9.3",
+ "sha2-const-stable",
+]
+
+[[package]]
+name = "pinocchio-system"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4be2a6dad40b5e75d1486f021619c4bd504c34c1362c9b94ed7fa525b1cc63cc"
+dependencies = [
+ "pinocchio 0.9.3",
+ "pinocchio-pubkey",
+]
+
+[[package]]
+name = "pinocchio-token"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4eb3a10d04ea7a633c01c4fe68eb650b4606cee4a3977bd1a1259cba324abafb"
+dependencies = [
+ "pinocchio 0.9.3",
+ "pinocchio-pubkey",
+]
 
 [[package]]
 name = "pkg-config"
@@ -4289,6 +4328,12 @@ dependencies = [
  "cpufeatures",
  "digest 0.10.7",
 ]
+
+[[package]]
+name = "sha2-const-stable"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5f179d4e11094a893b82fff208f74d448a7512f99f5a0acbd5c679b705f83ed9"
 
 [[package]]
 name = "sha3"

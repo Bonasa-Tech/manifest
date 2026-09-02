@@ -108,7 +108,7 @@ pub fn rule_rotate_left() {
 
     let acc_infos: [AccountInfo; 16] = acc_infos_with_mem_layout!();
     let acc_info = &acc_infos[0];
-    let mut data = acc_info.data.borrow_mut();
+    let mut data = acc_info.try_borrow_mut_data()?;
 
     let gg_index = 0 * TEST_BLOCK_WIDTH;
     let g_index = 1 * TEST_BLOCK_WIDTH;
@@ -213,7 +213,7 @@ pub fn rule_rotate_right() {
 
     let acc_infos: [AccountInfo; 16] = acc_infos_with_mem_layout!();
     let acc_info = &acc_infos[0];
-    let mut data = acc_info.data.borrow_mut();
+    let mut data = acc_info.try_borrow_mut_data()?;
 
     let gg_index = 0 * TEST_BLOCK_WIDTH;
     let g_index = 1 * TEST_BLOCK_WIDTH;
@@ -331,7 +331,7 @@ pub fn rule_insert_preserves_parent_of_left_child() {
 
     let acc_infos: [AccountInfo; 16] = acc_infos_with_mem_layout!();
     let acc_info = &acc_infos[0];
-    let mut data = acc_info.data.borrow_mut();
+    let mut data = acc_info.try_borrow_mut_data()?;
 
     let zero_index = 0 * TEST_BLOCK_WIDTH;
     let one_index = 1 * TEST_BLOCK_WIDTH;
@@ -428,7 +428,7 @@ pub fn rule_insert_preserves_parent_of_right_child() {
 
     let acc_infos: [AccountInfo; 16] = acc_infos_with_mem_layout!();
     let acc_info = &acc_infos[0];
-    let mut data = acc_info.data.borrow_mut();
+    let mut data = acc_info.try_borrow_mut_data()?;
 
     let zero_index = 0 * TEST_BLOCK_WIDTH;
     let one_index = 1 * TEST_BLOCK_WIDTH;
@@ -535,7 +535,7 @@ pub fn rule_insert_preserves_root_parent_is_nil() {
 
     let acc_infos: [AccountInfo; 16] = acc_infos_with_mem_layout!();
     let acc_info = &acc_infos[0];
-    let mut data = acc_info.data.borrow_mut();
+    let mut data = acc_info.try_borrow_mut_data()?;
 
     let zero_index = 0 * TEST_BLOCK_WIDTH;
     let one_index = 1 * TEST_BLOCK_WIDTH;
@@ -606,7 +606,7 @@ pub fn rule_root_is_black_after_insert_empty_tree() {
 
     let acc_infos: [AccountInfo; 16] = acc_infos_with_mem_layout!();
     let acc_info = &acc_infos[0];
-    let mut data = acc_info.data.borrow_mut();
+    let mut data = acc_info.try_borrow_mut_data()?;
 
     let mut tree: RedBlackTree<TestOrder> = RedBlackTree::new(&mut data, NIL, NIL);
 
@@ -642,7 +642,7 @@ pub fn rule_root_is_black_after_insert_non_empty_tree() {
 
     let acc_infos: [AccountInfo; 16] = acc_infos_with_mem_layout!();
     let acc_info = &acc_infos[0];
-    let mut data = acc_info.data.borrow_mut();
+    let mut data = acc_info.try_borrow_mut_data()?;
 
     let zero_index = 0 * TEST_BLOCK_WIDTH;
     let one_index = 1 * TEST_BLOCK_WIDTH;
@@ -722,7 +722,7 @@ pub fn rule_tree_is_ordered_after_insert_smallest_element() {
 
     let acc_infos: [AccountInfo; 16] = acc_infos_with_mem_layout!();
     let acc_info = &acc_infos[0];
-    let mut data = acc_info.data.borrow_mut();
+    let mut data = acc_info.try_borrow_mut_data()?;
 
     let zero_index = 0 * TEST_BLOCK_WIDTH;
     let one_index = 1 * TEST_BLOCK_WIDTH;
@@ -866,7 +866,7 @@ pub fn rule_insert_fix_matches_reference_no_parent() {
 
     let acc_infos: [AccountInfo; 16] = acc_infos_with_mem_layout!();
     let acc_info = &acc_infos[0];
-    let mut data = acc_info.data.borrow_mut();
+    let mut data = acc_info.try_borrow_mut_data()?;
 
     let index_0 = 0 * TEST_BLOCK_WIDTH;
     let index_1 = 1 * TEST_BLOCK_WIDTH;
@@ -1051,7 +1051,7 @@ pub fn rule_insert_fix_matches_reference_case1_left_child() {
 
     let acc_infos: [AccountInfo; 16] = acc_infos_with_mem_layout!();
     let acc_info = &acc_infos[0];
-    let mut data = acc_info.data.borrow_mut();
+    let mut data = acc_info.try_borrow_mut_data()?;
 
     let index_0 = 0 * TEST_BLOCK_WIDTH;
     let index_1 = 1 * TEST_BLOCK_WIDTH;
@@ -1271,7 +1271,7 @@ pub fn rule_insert_fix_matches_reference_case2_left_child() {
 
     let acc_infos: [AccountInfo; 16] = acc_infos_with_mem_layout!();
     let acc_info = &acc_infos[0];
-    let mut data = acc_info.data.borrow_mut();
+    let mut data = acc_info.try_borrow_mut_data()?;
 
     let index_0 = 0 * TEST_BLOCK_WIDTH;
     let index_1 = 1 * TEST_BLOCK_WIDTH;
@@ -1491,7 +1491,7 @@ pub fn rule_insert_fix_matches_reference_case3_left_child() {
 
     let acc_infos: [AccountInfo; 16] = acc_infos_with_mem_layout!();
     let acc_info = &acc_infos[0];
-    let mut data = acc_info.data.borrow_mut();
+    let mut data = acc_info.try_borrow_mut_data()?;
 
     let index_0 = 0 * TEST_BLOCK_WIDTH;
     let index_1 = 1 * TEST_BLOCK_WIDTH;
@@ -1711,7 +1711,7 @@ pub fn rule_insert_fix_matches_reference_case1_right_child() {
 
     let acc_infos: [AccountInfo; 16] = acc_infos_with_mem_layout!();
     let acc_info = &acc_infos[0];
-    let mut data = acc_info.data.borrow_mut();
+    let mut data = acc_info.try_borrow_mut_data()?;
 
     let index_0 = 0 * TEST_BLOCK_WIDTH;
     let index_1 = 1 * TEST_BLOCK_WIDTH;
@@ -1931,7 +1931,7 @@ pub fn rule_insert_fix_matches_reference_case2_right_child() {
 
     let acc_infos: [AccountInfo; 16] = acc_infos_with_mem_layout!();
     let acc_info = &acc_infos[0];
-    let mut data = acc_info.data.borrow_mut();
+    let mut data = acc_info.try_borrow_mut_data()?;
 
     let index_0 = 0 * TEST_BLOCK_WIDTH;
     let index_1 = 1 * TEST_BLOCK_WIDTH;
@@ -2151,7 +2151,7 @@ pub fn rule_insert_fix_matches_reference_case3_right_child() {
 
     let acc_infos: [AccountInfo; 16] = acc_infos_with_mem_layout!();
     let acc_info = &acc_infos[0];
-    let mut data = acc_info.data.borrow_mut();
+    let mut data = acc_info.try_borrow_mut_data()?;
 
     let index_0 = 0 * TEST_BLOCK_WIDTH;
     let index_1 = 1 * TEST_BLOCK_WIDTH;
@@ -2482,7 +2482,7 @@ pub fn rule_remove_fix_matches_reference_case1_left_child() {
 
     let acc_infos: [AccountInfo; 16] = acc_infos_with_mem_layout!();
     let acc_info = &acc_infos[0];
-    let mut data = acc_info.data.borrow_mut();
+    let mut data = acc_info.try_borrow_mut_data()?;
 
     let index_0 = 0 * TEST_BLOCK_WIDTH;
     let index_1 = 1 * TEST_BLOCK_WIDTH;
@@ -2588,7 +2588,7 @@ pub fn rule_remove_fix_matches_reference_case1_right_child() {
 
     let acc_infos: [AccountInfo; 16] = acc_infos_with_mem_layout!();
     let acc_info = &acc_infos[0];
-    let mut data = acc_info.data.borrow_mut();
+    let mut data = acc_info.try_borrow_mut_data()?;
 
     let index_0 = 0 * TEST_BLOCK_WIDTH;
     let index_1 = 1 * TEST_BLOCK_WIDTH;
@@ -2695,7 +2695,7 @@ pub fn rule_remove_fix_matches_reference_case2_left_child() {
 
     let acc_infos: [AccountInfo; 16] = acc_infos_with_mem_layout!();
     let acc_info = &acc_infos[0];
-    let mut data = acc_info.data.borrow_mut();
+    let mut data = acc_info.try_borrow_mut_data()?;
 
     let index_0 = 0 * TEST_BLOCK_WIDTH;
     let index_1 = 1 * TEST_BLOCK_WIDTH;
@@ -2804,7 +2804,7 @@ pub fn rule_remove_fix_matches_reference_case2_right_child() {
 
     let acc_infos: [AccountInfo; 16] = acc_infos_with_mem_layout!();
     let acc_info = &acc_infos[0];
-    let mut data = acc_info.data.borrow_mut();
+    let mut data = acc_info.try_borrow_mut_data()?;
 
     let index_0 = 0 * TEST_BLOCK_WIDTH;
     let index_1 = 1 * TEST_BLOCK_WIDTH;
@@ -2916,7 +2916,7 @@ pub fn rule_remove_fix_matches_reference_case3_left_child() {
 
     let acc_infos: [AccountInfo; 16] = acc_infos_with_mem_layout!();
     let acc_info = &acc_infos[0];
-    let mut data = acc_info.data.borrow_mut();
+    let mut data = acc_info.try_borrow_mut_data()?;
 
     let index_0 = 0 * TEST_BLOCK_WIDTH;
     let index_1 = 1 * TEST_BLOCK_WIDTH;
@@ -3015,7 +3015,7 @@ pub fn rule_remove_fix_matches_reference_case3_right_child() {
 
     let acc_infos: [AccountInfo; 16] = acc_infos_with_mem_layout!();
     let acc_info = &acc_infos[0];
-    let mut data = acc_info.data.borrow_mut();
+    let mut data = acc_info.try_borrow_mut_data()?;
 
     let index_0 = 0 * TEST_BLOCK_WIDTH;
     let index_1 = 1 * TEST_BLOCK_WIDTH;
@@ -3113,7 +3113,7 @@ pub fn rule_remove_fix_matches_reference_case4_left_child() {
 
     let acc_infos: [AccountInfo; 16] = acc_infos_with_mem_layout!();
     let acc_info = &acc_infos[0];
-    let mut data = acc_info.data.borrow_mut();
+    let mut data = acc_info.try_borrow_mut_data()?;
 
     let index_0 = 0 * TEST_BLOCK_WIDTH;
     let index_1 = 1 * TEST_BLOCK_WIDTH;
@@ -3211,7 +3211,7 @@ pub fn rule_remove_fix_matches_reference_case4_right_child() {
 
     let acc_infos: [AccountInfo; 16] = acc_infos_with_mem_layout!();
     let acc_info = &acc_infos[0];
-    let mut data = acc_info.data.borrow_mut();
+    let mut data = acc_info.try_borrow_mut_data()?;
 
     let index_0 = 0 * TEST_BLOCK_WIDTH;
     let index_1 = 1 * TEST_BLOCK_WIDTH;
@@ -3297,7 +3297,7 @@ pub fn rule_insert_updates_max_index_empty_tree() {
 
     let acc_infos: [AccountInfo; 16] = acc_infos_with_mem_layout!();
     let acc_info = &acc_infos[0];
-    let mut data = acc_info.data.borrow_mut();
+    let mut data = acc_info.try_borrow_mut_data()?;
 
     let mut tree: RedBlackTree<TestOrder> = RedBlackTree::new(&mut data, NIL, NIL);
 
@@ -3353,7 +3353,7 @@ pub fn rule_insert_updates_max_index_non_empty_tree_max() {
 
     let acc_infos: [AccountInfo; 16] = acc_infos_with_mem_layout!();
     let acc_info = &acc_infos[0];
-    let mut data = acc_info.data.borrow_mut();
+    let mut data = acc_info.try_borrow_mut_data()?;
 
     let index_1 = 1 * TEST_BLOCK_WIDTH;
     let index_2 = 2 * TEST_BLOCK_WIDTH;
@@ -3411,7 +3411,7 @@ pub fn rule_insert_updates_max_index_non_empty_tree_not_max() {
 
     let acc_infos: [AccountInfo; 16] = acc_infos_with_mem_layout!();
     let acc_info = &acc_infos[0];
-    let mut data = acc_info.data.borrow_mut();
+    let mut data = acc_info.try_borrow_mut_data()?;
 
     let index_1 = 1 * TEST_BLOCK_WIDTH;
     let index_2 = 2 * TEST_BLOCK_WIDTH;
@@ -3481,7 +3481,7 @@ pub fn rule_remove_updates_max_index_single_node_tree() {
 
     let acc_infos: [AccountInfo; 16] = acc_infos_with_mem_layout!();
     let acc_info = &acc_infos[0];
-    let mut data = acc_info.data.borrow_mut();
+    let mut data = acc_info.try_borrow_mut_data()?;
 
     let index_0 = 0;
 
@@ -3507,7 +3507,7 @@ pub fn rule_remove_updates_max_index_non_empty_tree_max() {
 
     let acc_infos: [AccountInfo; 16] = acc_infos_with_mem_layout!();
     let acc_info = &acc_infos[0];
-    let mut data = acc_info.data.borrow_mut();
+    let mut data = acc_info.try_borrow_mut_data()?;
 
     let index_0 = 0 * TEST_BLOCK_WIDTH;
     let index_1 = 1 * TEST_BLOCK_WIDTH;
@@ -3573,7 +3573,7 @@ pub fn rule_remove_updates_max_index_non_empty_tree_not_max() {
 
     let acc_infos: [AccountInfo; 16] = acc_infos_with_mem_layout!();
     let acc_info = &acc_infos[0];
-    let mut data = acc_info.data.borrow_mut();
+    let mut data = acc_info.try_borrow_mut_data()?;
 
     let index_0 = 0 * TEST_BLOCK_WIDTH;
     let index_1 = 1 * TEST_BLOCK_WIDTH;
@@ -3681,7 +3681,7 @@ pub fn rule_swap_internal_nodes_left_children() {
 
     let acc_infos: [AccountInfo; 16] = acc_infos_with_mem_layout!();
     let acc_info = &acc_infos[0];
-    let mut data = acc_info.data.borrow_mut();
+    let mut data = acc_info.try_borrow_mut_data()?;
 
     let index_0 = 0 * TEST_BLOCK_WIDTH;
     let index_1 = 1 * TEST_BLOCK_WIDTH;
@@ -3805,7 +3805,7 @@ pub fn rule_swap_internal_nodes_right_children() {
 
     let acc_infos: [AccountInfo; 16] = acc_infos_with_mem_layout!();
     let acc_info = &acc_infos[0];
-    let mut data = acc_info.data.borrow_mut();
+    let mut data = acc_info.try_borrow_mut_data()?;
 
     let index_0 = 0 * TEST_BLOCK_WIDTH;
     let index_1 = 1 * TEST_BLOCK_WIDTH;
@@ -3920,7 +3920,7 @@ pub fn rule_swap_internal_nodes_first_is_root() {
 
     let acc_infos: [AccountInfo; 16] = acc_infos_with_mem_layout!();
     let acc_info = &acc_infos[0];
-    let mut data = acc_info.data.borrow_mut();
+    let mut data = acc_info.try_borrow_mut_data()?;
 
     let _index_0 = 0 * TEST_BLOCK_WIDTH;
     let index_1 = 1 * TEST_BLOCK_WIDTH;
@@ -4037,7 +4037,7 @@ pub fn rule_swap_internal_nodes_second_is_root() {
 
     let acc_infos: [AccountInfo; 16] = acc_infos_with_mem_layout!();
     let acc_info = &acc_infos[0];
-    let mut data = acc_info.data.borrow_mut();
+    let mut data = acc_info.try_borrow_mut_data()?;
 
     let index_0 = 0 * TEST_BLOCK_WIDTH;
     let index_1 = 1 * TEST_BLOCK_WIDTH;
@@ -4143,7 +4143,7 @@ pub fn rule_swap_nodes_with_one_child_left_right() {
 
     let acc_infos: [AccountInfo; 16] = acc_infos_with_mem_layout!();
     let acc_info = &acc_infos[0];
-    let mut data = acc_info.data.borrow_mut();
+    let mut data = acc_info.try_borrow_mut_data()?;
 
     let index_0: DataIndex = 0 * TEST_BLOCK_WIDTH;
     let index_1: DataIndex = 1 * TEST_BLOCK_WIDTH;
@@ -4247,7 +4247,7 @@ pub fn rule_swap_nodes_with_one_child_right_left() {
 
     let acc_infos: [AccountInfo; 16] = acc_infos_with_mem_layout!();
     let acc_info = &acc_infos[0];
-    let mut data = acc_info.data.borrow_mut();
+    let mut data = acc_info.try_borrow_mut_data()?;
 
     let index_0 = 0 * TEST_BLOCK_WIDTH;
     let index_1 = 1 * TEST_BLOCK_WIDTH;
@@ -4333,7 +4333,7 @@ pub fn rule_swap_leaves() {
 
     let acc_infos: [AccountInfo; 16] = acc_infos_with_mem_layout!();
     let acc_info = &acc_infos[0];
-    let mut data = acc_info.data.borrow_mut();
+    let mut data = acc_info.try_borrow_mut_data()?;
 
     let index_0 = 0 * TEST_BLOCK_WIDTH;
     let index_1 = 1 * TEST_BLOCK_WIDTH;
@@ -4433,7 +4433,7 @@ pub fn rule_swap_parent_right_child() {
 
     let acc_infos: [AccountInfo; 16] = acc_infos_with_mem_layout!();
     let acc_info = &acc_infos[0];
-    let mut data = acc_info.data.borrow_mut();
+    let mut data = acc_info.try_borrow_mut_data()?;
 
     let index_0 = 0 * TEST_BLOCK_WIDTH;
     let index_1 = 1 * TEST_BLOCK_WIDTH;
@@ -4535,7 +4535,7 @@ pub fn rule_swap_parent_left_child() {
 
     let acc_infos: [AccountInfo; 16] = acc_infos_with_mem_layout!();
     let acc_info = &acc_infos[0];
-    let mut data = acc_info.data.borrow_mut();
+    let mut data = acc_info.try_borrow_mut_data()?;
 
     let index_0 = 0 * TEST_BLOCK_WIDTH;
     let index_1 = 1 * TEST_BLOCK_WIDTH;
@@ -4637,7 +4637,7 @@ pub fn rule_swap_right_child_parent() {
 
     let acc_infos: [AccountInfo; 16] = acc_infos_with_mem_layout!();
     let acc_info = &acc_infos[0];
-    let mut data = acc_info.data.borrow_mut();
+    let mut data = acc_info.try_borrow_mut_data()?;
 
     let index_0 = 0 * TEST_BLOCK_WIDTH;
     let index_1 = 1 * TEST_BLOCK_WIDTH;
@@ -4739,7 +4739,7 @@ pub fn rule_swap_left_child_parent() {
 
     let acc_infos: [AccountInfo; 16] = acc_infos_with_mem_layout!();
     let acc_info = &acc_infos[0];
-    let mut data = acc_info.data.borrow_mut();
+    let mut data = acc_info.try_borrow_mut_data()?;
 
     let index_0 = 0 * TEST_BLOCK_WIDTH;
     let index_1 = 1 * TEST_BLOCK_WIDTH;

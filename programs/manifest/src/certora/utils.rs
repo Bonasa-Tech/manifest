@@ -331,7 +331,7 @@ macro_rules! place_single_order_res {
         let mut ctx: AddSingleOrderCtx =
             AddSingleOrderCtx::new($args, fixed, dynamic, $remaining_base_atoms, $now_slot);
 
-        let res: Result<AddOrderToMarketInnerResult, solana_program::program_error::ProgramError> =
+        let res: Result<AddOrderToMarketInnerResult, pinocchio::program_error::ProgramError> =
             ctx.place_single_order($current_order_index);
         (
             res,

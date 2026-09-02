@@ -1,4 +1,7 @@
-use std::cell::RefMut;
+use pinocchio::account_info::RefMut;
+use crate::validation::AccountInfoExt;
+use pinocchio::ProgramResult;
+use pinocchio::program_error::ProgramError;
 
 #[cfg(not(feature = "certora"))]
 use crate::{
@@ -18,7 +21,7 @@ use hypertree::{DataIndex, NIL};
 use solana_program::program::invoke_signed;
 #[cfg(not(feature = "no-clock"))]
 use solana_program::sysvar::Sysvar;
-use solana_program::{entrypoint::ProgramResult, program_error::ProgramError, pubkey::Pubkey};
+use solana_program::{pubkey::Pubkey};
 #[cfg(not(feature = "certora"))]
 use spl_token_2022::{
     extension::{
@@ -151,8 +154,8 @@ pub(crate) fn settle_global_gas_refunds(
         // if let Some(system_program) = &global_trade_accounts.system_program {
         //     solana_program::program::invoke_signed(
         //         &solana_program::system_instruction::transfer(
-        //             &global.key,
-        //             &trader.info.key,
+        //             &global.pubkey(),
+        //             &trader.info.pubkey(),
         //             GAS_DEPOSIT_LAMPORTS,
         //         ),
         //         &[global.info.clone(), trader.info.clone(), system_program.info.clone()],
@@ -177,7 +180,7 @@ pub(crate) fn try_to_add_to_global(
         ..
     } = global_trade_accounts;
 
-    let global_data: &mut RefMut<&mut [u8]> = &mut global.try_borrow_mut_data()?;
+    let global_data: &mut RefMut<[u8]> = &mut global.try_borrow_mut_data()?;
     let mut global_dynamic_account: GlobalRefMut = get_mut_dynamic_account(global_data);
     global_dynamic_account.add_order(resting_order, gas_payer_opt.as_ref().unwrap().key)
 }
@@ -223,8 +226,8 @@ pub(crate) fn pay_global_gas_prepayment(
     // reference.
     invoke(
         &solana_program::system_instruction::transfer(
-            &gas_payer_opt.as_ref().unwrap().info.key,
-            &global.key,
+            &gas_payer_opt.as_ref().unwrap().info.pubkey(),
+            &global.pubkey(),
             GAS_DEPOSIT_LAMPORTS
                 .checked_mul(num_gas_prepayments)
                 .unwrap(),
@@ -257,8 +260,8 @@ pub(crate) fn pay_global_gas_prepayment(
     let lamports: u64 = GAS_DEPOSIT_LAMPORTS
         .checked_mul(num_gas_prepayments)
         .unwrap();
-    cvt::cvt_assume!(**payer_info.lamports.borrow() >= lamports);
-    cvt::cvt_assume!(**global.lamports.borrow() <= u64::MAX - lamports);
+    cvt::cvt_assume!(**payer_info.lamports() >= lamports);
+    cvt::cvt_assume!(**global.lamports() <= u64::MAX - lamports);
     **payer_info.lamports.borrow_mut() -= lamports;
     **global.lamports.borrow_mut() += lamports;
 
@@ -294,8 +297,8 @@ pub(crate) fn assert_already_has_seat(trader_index: DataIndex) -> ProgramResult 
     Ok(())
 }
 
-pub(crate) fn can_back_order<'a, 'info>(
-    global_trade_accounts_opt: &'a Option<GlobalTradeAccounts<'a, 'info>>,
+pub(crate) fn can_back_order<'a>(
+    global_trade_accounts_opt: &'a Option<GlobalTradeAccounts<'a>>,
     resting_order_trader: &Pubkey,
     desired_global_atoms: GlobalAtoms,
 ) -> bool {
@@ -305,7 +308,7 @@ pub(crate) fn can_back_order<'a, 'info>(
     let global_trade_accounts: &GlobalTradeAccounts = &global_trade_accounts_opt.as_ref().unwrap();
     let GlobalTradeAccounts { global, .. } = global_trade_accounts;
 
-    let global_data: &mut RefMut<&mut [u8]> = &mut global.try_borrow_mut_data().unwrap();
+    let global_data: &mut RefMut<[u8]> = &mut global.try_borrow_mut_data().unwrap();
     let global_dynamic_account: GlobalRefMut = get_mut_dynamic_account(global_data);
 
     let num_deposited_atoms: GlobalAtoms =
@@ -319,8 +322,8 @@ pub(crate) fn can_back_order<'a, 'info>(
 ///
 /// Returns Ok(true) if balance was reduced successfully, Ok(false) if
 /// insufficient balance or transfer would fail (fee/hook), Err on other errors.
-pub(crate) fn try_to_reduce_global_tokens<'a, 'info>(
-    global_trade_accounts_opt: &'a Option<GlobalTradeAccounts<'a, 'info>>,
+pub(crate) fn try_to_reduce_global_tokens<'a>(
+    global_trade_accounts_opt: &'a Option<GlobalTradeAccounts<'a>>,
     resting_order_trader: &Pubkey,
     desired_global_atoms: GlobalAtoms,
 ) -> Result<bool, ProgramError> {
@@ -342,7 +345,7 @@ pub(crate) fn try_to_reduce_global_tokens<'a, 'info>(
         ..
     } = global_trade_accounts;
 
-    let global_data: &mut RefMut<&mut [u8]> = &mut global.try_borrow_mut_data()?;
+    let global_data: &mut RefMut<[u8]> = &mut global.try_borrow_mut_data()?;
     let mut global_dynamic_account: GlobalRefMut = get_mut_dynamic_account(global_data);
 
     let num_deposited_atoms: GlobalAtoms =
@@ -351,7 +354,7 @@ pub(crate) fn try_to_reduce_global_tokens<'a, 'info>(
     // Never let that optional account turn an unbacked maker into a panic.
     let cleaner: Pubkey = gas_receiver_opt
         .as_ref()
-        .map(|receiver| *receiver.key)
+        .map(|receiver| *receiver.pubkey())
         .unwrap_or(*resting_order_trader);
     // Intentionally does not allow partial fills against a global order. The
     // reason for this is to punish global orders that are not backed. There is
@@ -380,12 +383,12 @@ pub(crate) fn try_to_reduce_global_tokens<'a, 'info>(
     }
 
     #[cfg(not(feature = "certora"))]
-    let token_program: &TokenProgram<'a, 'info> = token_program_opt.as_ref().unwrap();
+    let token_program: &TokenProgram<'a> = token_program_opt.as_ref().unwrap();
 
     // Check transfer fee/hook BEFORE reducing balance to avoid permanent
     // balance loss when the transfer is rejected.
     #[cfg(not(feature = "certora"))]
-    if *token_program.key == spl_token_2022::id() {
+    if *token_program.pubkey() == spl_token_2022::id() {
         require!(
             mint_opt.is_some(),
             crate::program::ManifestError::MissingGlobal,
@@ -394,7 +397,7 @@ pub(crate) fn try_to_reduce_global_tokens<'a, 'info>(
 
         // Prevent transfer from global to market vault if a token has a non-zero fee.
         let mint_account_info: &MintAccountInfo = &mint_opt.as_ref().unwrap();
-        if StateWithExtensions::<Mint>::unpack(&mint_account_info.info.data.borrow())?
+        if StateWithExtensions::<Mint>::unpack(&mint_account_info.info.try_borrow_data()?)?
             .get_extension::<TransferFeeConfig>()
             .is_ok_and(|f| f.get_epoch_fee(get_now_epoch()).transfer_fee_basis_points != 0.into())
         {
@@ -407,7 +410,7 @@ pub(crate) fn try_to_reduce_global_tokens<'a, 'info>(
             })?;
             return Ok(false);
         }
-        if StateWithExtensions::<Mint>::unpack(&mint_account_info.info.data.borrow())?
+        if StateWithExtensions::<Mint>::unpack(&mint_account_info.info.try_borrow_data()?)?
             .get_extension::<TransferHook>()
             .is_ok_and(|f| f.program_id.0 != Pubkey::default())
         {
@@ -436,8 +439,8 @@ pub(crate) fn try_to_reduce_global_tokens<'a, 'info>(
 /// amounts, which is what makes the global vault visible to the funds
 /// invariants.
 #[cfg(feature = "certora")]
-pub(crate) fn transfer_global_tokens<'a, 'info>(
-    global_trade_accounts_opt: &'a Option<GlobalTradeAccounts<'a, 'info>>,
+pub(crate) fn transfer_global_tokens<'a>(
+    global_trade_accounts_opt: &'a Option<GlobalTradeAccounts<'a>>,
     total_atoms: GlobalAtoms,
 ) -> Result<(), ProgramError> {
     if total_atoms.as_u64() == 0 {
@@ -456,8 +459,8 @@ pub(crate) fn transfer_global_tokens<'a, 'info>(
         ..
     } = global_trade_accounts;
 
-    let global_vault: &TokenAccountInfo<'a, 'info> = global_vault_opt.as_ref().unwrap();
-    let market_vault: &TokenAccountInfo<'a, 'info> = market_vault_opt.as_ref().unwrap();
+    let global_vault: &TokenAccountInfo<'a> = global_vault_opt.as_ref().unwrap();
+    let market_vault: &TokenAccountInfo<'a> = market_vault_opt.as_ref().unwrap();
 
     solana_cvt::token::spl_token_transfer(
         global_vault.info,
@@ -470,8 +473,8 @@ pub(crate) fn transfer_global_tokens<'a, 'info>(
 /// Transfers tokens from global vault to market vault.
 /// Should be called after matching is complete with the accumulated total.
 #[cfg(not(feature = "certora"))]
-pub(crate) fn transfer_global_tokens<'a, 'info>(
-    global_trade_accounts_opt: &'a Option<GlobalTradeAccounts<'a, 'info>>,
+pub(crate) fn transfer_global_tokens<'a>(
+    global_trade_accounts_opt: &'a Option<GlobalTradeAccounts<'a>>,
     total_atoms: GlobalAtoms,
 ) -> Result<(), ProgramError> {
     if total_atoms.as_u64() == 0 {
@@ -493,25 +496,25 @@ pub(crate) fn transfer_global_tokens<'a, 'info>(
         ..
     } = global_trade_accounts;
 
-    let global_data: &mut RefMut<&mut [u8]> = &mut global.try_borrow_mut_data()?;
+    let global_data: &mut RefMut<[u8]> = &mut global.try_borrow_mut_data()?;
     let global_dynamic_account: GlobalRefMut = get_mut_dynamic_account(global_data);
 
     let mint_key: Pubkey = *global_dynamic_account.fixed.get_mint();
     let global_vault_bump: u8 = global_dynamic_account.fixed.get_vault_bump();
 
-    let global_vault: &TokenAccountInfo<'a, 'info> = global_vault_opt.as_ref().unwrap();
-    let market_vault: &TokenAccountInfo<'a, 'info> = market_vault_opt.as_ref().unwrap();
-    let token_program: &TokenProgram<'a, 'info> = token_program_opt.as_ref().unwrap();
+    let global_vault: &TokenAccountInfo<'a> = global_vault_opt.as_ref().unwrap();
+    let market_vault: &TokenAccountInfo<'a> = market_vault_opt.as_ref().unwrap();
+    let token_program: &TokenProgram<'a> = token_program_opt.as_ref().unwrap();
 
-    if *token_program.key == spl_token_2022::id() {
+    if *token_program.pubkey() == spl_token_2022::id() {
         let mint_account_info: &MintAccountInfo = &mint_opt.as_ref().unwrap();
         invoke_signed(
             &spl_token_2022::instruction::transfer_checked(
-                token_program.key,
-                global_vault.key,
-                mint_account_info.info.key,
-                market_vault.key,
-                global_vault.key,
+                token_program.pubkey(),
+                global_vault.pubkey(),
+                mint_account_info.info.pubkey(),
+                market_vault.pubkey(),
+                global_vault.pubkey(),
                 &[],
                 total_atoms.as_u64(),
                 mint_account_info.mint.decimals,
@@ -527,10 +530,10 @@ pub(crate) fn transfer_global_tokens<'a, 'info>(
     } else {
         invoke_signed(
             &spl_token::instruction::transfer(
-                token_program.key,
-                global_vault.key,
-                market_vault.key,
-                global_vault.key,
+                token_program.pubkey(),
+                global_vault.pubkey(),
+                market_vault.pubkey(),
+                global_vault.pubkey(),
                 &[],
                 total_atoms.as_u64(),
             )?,

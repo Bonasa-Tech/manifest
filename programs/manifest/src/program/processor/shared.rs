@@ -1,7 +1,5 @@
-use std::{
-    cell::{Ref, RefMut},
-    mem::size_of,
-};
+use pinocchio::account_info::{Ref, RefMut};
+use std::mem::size_of;
 
 use crate::{
     require,
@@ -12,22 +10,30 @@ use crate::{
     validation::{ManifestAccount, ManifestAccountInfo, Signer},
 };
 use bytemuck::Pod;
+use core::mem::MaybeUninit;
+use pinocchio::instruction::{
+    AccountMeta as PinocchioAccountMeta, Instruction as PinocchioInstruction,
+};
+
+use crate::validation::as_raw_key;
+use crate::validation::AccountInfoExt;
+use pinocchio::ProgramResult;
+use pinocchio::program_error::ProgramError;
 use hypertree::{get_helper, get_mut_helper, DataIndex, Get, RBNode};
 #[cfg(not(feature = "certora"))]
 use solana_program::sysvar::Sysvar;
 use solana_program::{
-    account_info::AccountInfo, entrypoint::ProgramResult, instruction::Instruction,
-    sysvar::slot_history::ProgramError,
-};
+    account_info::AccountInfo, instruction::Instruction,
+    };
 
 use super::batch_update::MarketDataTreeNodeType;
 
-pub(crate) fn expand_market_if_needed<'a, 'info, T: ManifestAccount + Pod + Clone>(
-    payer: &AccountInfo<'info>,
-    market_account_info: &ManifestAccountInfo<'a, 'info, T>,
+pub(crate) fn expand_market_if_needed<'a, T: ManifestAccount + Pod + Clone>(
+    payer: &AccountInfo,
+    market_account_info: &ManifestAccountInfo<'a, T>,
 ) -> ProgramResult {
     let need_expand: bool = {
-        let market_data: &Ref<&mut [u8]> = &market_account_info.try_borrow_data()?;
+        let market_data: &Ref<[u8]> = &market_account_info.try_borrow_data()?;
         let fixed: &MarketFixed = get_helper::<MarketFixed>(market_data, 0_u32);
         !fixed.has_free_block()
     };
@@ -41,18 +47,18 @@ pub(crate) fn expand_market_if_needed<'a, 'info, T: ManifestAccount + Pod + Clon
     expand_market(&Signer::new_payer(payer)?, market_account_info)
 }
 
-pub(crate) fn expand_market<'a, 'info, T: ManifestAccount + Pod + Clone>(
-    payer: &Signer<'a, 'info>,
-    manifest_account: &ManifestAccountInfo<'a, 'info, T>,
+pub(crate) fn expand_market<'a, T: ManifestAccount + Pod + Clone>(
+    payer: &Signer<'a>,
+    manifest_account: &ManifestAccountInfo<'a, T>,
 ) -> ProgramResult {
     expand_dynamic(payer, manifest_account, MARKET_BLOCK_SIZE)?;
     expand_market_fixed(manifest_account.info)?;
     Ok(())
 }
 
-pub(crate) fn batch_expand_market<'a, 'info, T: ManifestAccount + Pod + Clone>(
-    payer: &Signer<'a, 'info>,
-    manifest_account: &ManifestAccountInfo<'a, 'info, T>,
+pub(crate) fn batch_expand_market<'a, T: ManifestAccount + Pod + Clone>(
+    payer: &Signer<'a>,
+    manifest_account: &ManifestAccountInfo<'a, T>,
     num_blocks: u32,
 ) -> ProgramResult {
     expand_dynamic(
@@ -65,9 +71,9 @@ pub(crate) fn batch_expand_market<'a, 'info, T: ManifestAccount + Pod + Clone>(
 }
 
 // Expand is always needed because global doesnt free bytes ever.
-pub(crate) fn expand_global<'a, 'info, T: ManifestAccount + Pod + Clone>(
-    payer: &Signer<'a, 'info>,
-    manifest_account: &ManifestAccountInfo<'a, 'info, T>,
+pub(crate) fn expand_global<'a, T: ManifestAccount + Pod + Clone>(
+    payer: &Signer<'a>,
+    manifest_account: &ManifestAccountInfo<'a, T>,
 ) -> ProgramResult {
     // Expand twice because of two trees at once.
     expand_dynamic(payer, manifest_account, 2 * GLOBAL_BLOCK_SIZE)?;
@@ -76,17 +82,17 @@ pub(crate) fn expand_global<'a, 'info, T: ManifestAccount + Pod + Clone>(
 }
 
 #[cfg(feature = "certora")]
-fn expand_dynamic<'a, 'info, T: ManifestAccount + Pod + Clone>(
-    _payer: &Signer<'a, 'info>,
-    _manifest_account: &ManifestAccountInfo<'a, 'info, T>,
+fn expand_dynamic<'a, T: ManifestAccount + Pod + Clone>(
+    _payer: &Signer<'a>,
+    _manifest_account: &ManifestAccountInfo<'a, T>,
     _block_size: usize,
 ) -> ProgramResult {
     Ok(())
 }
 #[cfg(not(feature = "certora"))]
-fn expand_dynamic<'a, 'info, T: ManifestAccount + Pod + Clone>(
-    payer: &Signer<'a, 'info>,
-    manifest_account: &ManifestAccountInfo<'a, 'info, T>,
+fn expand_dynamic<'a, T: ManifestAccount + Pod + Clone>(
+    payer: &Signer<'a>,
+    manifest_account: &ManifestAccountInfo<'a, T>,
     block_size: usize,
 ) -> ProgramResult {
     // Account types were already validated, so do not need to reverify that the
@@ -103,8 +109,8 @@ fn expand_dynamic<'a, 'info, T: ManifestAccount + Pod + Clone>(
 
     invoke(
         &solana_program::system_instruction::transfer(
-            payer.key,
-            expandable_account.key,
+            payer.pubkey(),
+            expandable_account.pubkey(),
             lamports_diff,
         ),
         &[payer.clone(), expandable_account.clone()],
@@ -113,7 +119,7 @@ fn expand_dynamic<'a, 'info, T: ManifestAccount + Pod + Clone>(
     #[cfg(feature = "fuzz")]
     {
         solana_program::program::invoke(
-            &solana_program::system_instruction::allocate(expandable_account.key, new_size as u64),
+            &solana_program::system_instruction::allocate(expandable_account.pubkey(), new_size as u64),
             &[expandable_account.clone()],
         )?;
     }
@@ -126,7 +132,7 @@ fn expand_dynamic<'a, 'info, T: ManifestAccount + Pod + Clone>(
 }
 
 fn expand_market_fixed(expandable_account: &AccountInfo) -> ProgramResult {
-    let market_data: &mut RefMut<&mut [u8]> = &mut expandable_account.try_borrow_mut_data()?;
+    let market_data: &mut RefMut<[u8]> = &mut expandable_account.try_borrow_mut_data()?;
     let mut dynamic_account: DynamicAccount<&mut MarketFixed, &mut [u8]> =
         get_mut_dynamic_account(market_data);
     dynamic_account.market_expand()?;
@@ -134,7 +140,7 @@ fn expand_market_fixed(expandable_account: &AccountInfo) -> ProgramResult {
 }
 
 fn expand_market_fixed_n(expandable_account: &AccountInfo, n: u32) -> ProgramResult {
-    let market_data: &mut RefMut<&mut [u8]> = &mut expandable_account.try_borrow_mut_data()?;
+    let market_data: &mut RefMut<[u8]> = &mut expandable_account.try_borrow_mut_data()?;
     let mut dynamic_account: DynamicAccount<&mut MarketFixed, &mut [u8]> =
         get_mut_dynamic_account(market_data);
     dynamic_account.market_expand_n(n)?;
@@ -142,7 +148,7 @@ fn expand_market_fixed_n(expandable_account: &AccountInfo, n: u32) -> ProgramRes
 }
 
 fn expand_global_fixed(expandable_account: &AccountInfo) -> ProgramResult {
-    let global_data: &mut RefMut<&mut [u8]> = &mut expandable_account.try_borrow_mut_data()?;
+    let global_data: &mut RefMut<[u8]> = &mut expandable_account.try_borrow_mut_data()?;
     let mut dynamic_account: DynamicAccount<&mut GlobalFixed, &mut [u8]> =
         get_mut_dynamic_account(global_data);
     dynamic_account.global_expand()?;
@@ -151,7 +157,7 @@ fn expand_global_fixed(expandable_account: &AccountInfo) -> ProgramResult {
 
 /// Generic get dynamic account from the data bytes of the account.
 pub fn get_dynamic_account<'a, T: Get>(
-    data: &'a Ref<'a, &'a mut [u8]>,
+    data: &'a Ref<'a, [u8]>,
 ) -> DynamicAccount<&'a T, &'a [u8]> {
     let (fixed_data, dynamic) = data.split_at(size_of::<T>());
     let fixed: &T = get_helper::<T>(fixed_data, 0_u32);
@@ -162,7 +168,7 @@ pub fn get_dynamic_account<'a, T: Get>(
 
 /// Generic get mutable dynamic account from the data bytes of the account.
 pub fn get_mut_dynamic_account<'a, T: Get>(
-    data: &'a mut RefMut<'_, &mut [u8]>,
+    data: &'a mut RefMut<'_, [u8]>,
 ) -> DynamicAccount<&'a mut T, &'a mut [u8]> {
     let (fixed_data, dynamic) = data.split_at_mut(size_of::<T>());
     let fixed: &mut T = get_mut_helper::<T>(fixed_data, 0_u32);
@@ -221,7 +227,7 @@ pub(crate) fn get_trader_index_with_hint(
     payer: &Signer,
 ) -> Result<DataIndex, ProgramError> {
     let trader_index: DataIndex = match trader_index_hint {
-        None => dynamic_account.get_trader_index(payer.key),
+        None => dynamic_account.get_trader_index(payer.pubkey()),
         Some(hinted_index) => {
             verify_trader_index_hint(hinted_index, &dynamic_account, &payer)?;
             hinted_index
@@ -260,15 +266,47 @@ fn verify_trader_index_hint(
     Ok(())
 }
 
-// TODO: Same for invoke_signed
+/// Calls another program.
+///
+/// The instruction is still built with the `solana_program` builders, which
+/// are what the SPL and system program crates hand out, and is translated to
+/// pinocchio's borrowed form here: its `Instruction` points at the caller's
+/// key, metas and data rather than owning them, so the translation is one
+/// stack array of metas and no copying of the instruction data.
+///
+/// Accounts arrive as `&[&AccountInfo]` because that is what pinocchio's CPI
+/// takes; the slice form avoids the const generic count at every call site.
+pub fn invoke(ix: &Instruction, account_infos: &[&AccountInfo]) -> ProgramResult {
+    const MAX_CPI_ACCOUNTS: usize = 16;
+    require!(
+        ix.accounts.len() <= MAX_CPI_ACCOUNTS,
+        ProgramError::InvalidArgument,
+        "CPI with {} accounts, more than the {} supported",
+        ix.accounts.len(),
+        MAX_CPI_ACCOUNTS,
+    )?;
 
-pub fn invoke(ix: &Instruction, account_infos: &[AccountInfo<'_>]) -> ProgramResult {
-    #[cfg(target_os = "solana")]
-    {
-        solana_invoke::invoke_unchecked(ix, account_infos)
+    let mut metas: [MaybeUninit<PinocchioAccountMeta>; MAX_CPI_ACCOUNTS] =
+        [const { MaybeUninit::uninit() }; MAX_CPI_ACCOUNTS];
+    for (meta, account) in metas.iter_mut().zip(ix.accounts.iter()) {
+        meta.write(PinocchioAccountMeta {
+            pubkey: as_raw_key(&account.pubkey),
+            is_writable: account.is_writable,
+            is_signer: account.is_signer,
+        });
     }
-    #[cfg(not(target_os = "solana"))]
-    {
-        solana_program::program::invoke(ix, account_infos)
-    }
+    // SAFETY: the first `ix.accounts.len()` entries were just written, and
+    // that length is within the array by the check above.
+    let metas: &[PinocchioAccountMeta] = unsafe {
+        core::slice::from_raw_parts(metas.as_ptr().cast(), ix.accounts.len())
+    };
+
+    pinocchio::cpi::slice_invoke(
+        &PinocchioInstruction {
+            program_id: as_raw_key(&ix.program_id),
+            accounts: metas,
+            data: &ix.data,
+        },
+        account_infos,
+    )
 }

@@ -15,6 +15,7 @@
 //! `transfer_fees_charged` to state exact deltas.
 
 use solana_cvt::token::{spl_token_account_get_amount, spl_token_account_set_amount};
+use crate::validation::AccountInfoExt;
 use solana_program::{account_info::AccountInfo, entrypoint::ProgramResult};
 
 /// Whether transfers may charge a nondeterministic fee. Reset by
@@ -59,7 +60,7 @@ pub fn spl_token_2022_transfer_with_fee<'a>(
     _authority_info: &AccountInfo<'a>,
     amount: u64,
 ) -> ProgramResult {
-    if src_info.key != dst_info.key {
+    if src_info.pubkey() != dst_info.pubkey() {
         let fee: u64 = if transfer_fee_enabled() {
             let fee: u64 = ::nondet::nondet();
             cvt::cvt_assume!(fee <= amount);

@@ -69,7 +69,7 @@ pub const MAX_ACCOUNTS: usize = 64;
 
 /// Program instruction processor signature, same as `solana_program`'s.
 pub type ProcessInstruction =
-    fn(&Pubkey, &[AccountInfo], &[u8]) -> solana_program::entrypoint::ProgramResult;
+    fn(&Pubkey, &[AccountInfo], &[u8]) -> pinocchio::ProgramResult;
 
 /// Value of `RuntimeAccount::dup_info` when the account is not a duplicate.
 const NON_DUP_MARKER: u8 = u8::MAX;

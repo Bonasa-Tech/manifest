@@ -1,4 +1,6 @@
 use std::{cell::Ref, mem::size_of};
+use crate::validation::AccountInfoExt;
+use pinocchio::ProgramResult;
 
 use crate::{
     global_seeds_with_bump, global_vault_seeds_with_bump,
@@ -10,7 +12,7 @@ use crate::{
 };
 use hypertree::{get_mut_helper, trace};
 use solana_program::{
-    account_info::AccountInfo, entrypoint::ProgramResult, program_pack::Pack, pubkey::Pubkey,
+    account_info::AccountInfo, program_pack::Pack, pubkey::Pubkey,
     rent::Rent, system_instruction, sysvar::Sysvar,
 };
 use spl_token_2022::{
@@ -38,21 +40,21 @@ pub(crate) fn process_global_create(
             global_bump,
         } = global_create_context;
         let (expected_global_vault_key, global_vault_bump) =
-            get_global_vault_address(global_mint.info.key);
+            get_global_vault_address(global_mint.info.pubkey());
 
         // Make the global account.
         {
             let global_seeds: Vec<Vec<u8>> = vec![
                 b"global".to_vec(),
-                global_mint.info.key.as_ref().to_vec(),
+                global_mint.info.pubkey().as_ref().to_vec(),
                 vec![global_bump],
             ];
 
             if global.info.lamports() > 0 {
                 solana_program::program::invoke_signed(
                     &system_instruction::transfer(
-                        global.info.key,
-                        payer.info.key,
+                        global.info.pubkey(),
+                        payer.info.pubkey(),
                         global.info.lamports(),
                     ),
                     &[
@@ -60,7 +62,7 @@ pub(crate) fn process_global_create(
                         global.info.clone(),
                         system_program.info.clone(),
                     ],
-                    global_seeds_with_bump!(global_mint.info.key, global_bump),
+                    global_seeds_with_bump!(global_mint.info.pubkey(), global_bump),
                 )?;
             }
             create_account(
@@ -91,7 +93,7 @@ pub(crate) fn process_global_create(
         // Make the global vault.
         {
             // We dont have to deserialize the mint, just check the owner.
-            let is_mint_22: bool = *global_mint.info.owner == spl_token_2022::id();
+            let is_mint_22: bool = *global_mint.info.owner_pubkey() == spl_token_2022::id();
             let token_program_for_mint: Pubkey = if is_mint_22 {
                 spl_token_2022::id()
             } else {
@@ -100,17 +102,17 @@ pub(crate) fn process_global_create(
 
             let global_vault_seeds: Vec<Vec<u8>> = vec![
                 b"global-vault".to_vec(),
-                global_mint.info.key.as_ref().to_vec(),
+                global_mint.info.pubkey().as_ref().to_vec(),
                 vec![global_vault_bump],
             ];
-            assert_eq!(expected_global_vault_key, *global_vault.info.key);
+            assert_eq!(expected_global_vault_key, *global_vault.info.pubkey());
             let rent: Rent = Rent::get()?;
 
             if global_vault.info.lamports() > 0 {
                 solana_program::program::invoke_signed(
                     &system_instruction::transfer(
-                        global_vault.info.key,
-                        payer.info.key,
+                        global_vault.info.pubkey(),
+                        payer.info.pubkey(),
                         global_vault.info.lamports(),
                     ),
                     &[
@@ -118,12 +120,12 @@ pub(crate) fn process_global_create(
                         global_vault.info.clone(),
                         system_program.info.clone(),
                     ],
-                    global_vault_seeds_with_bump!(global_mint.info.key, global_vault_bump),
+                    global_vault_seeds_with_bump!(global_mint.info.pubkey(), global_vault_bump),
                 )?;
             }
 
             if is_mint_22 {
-                let mint_data: Ref<'_, &mut [u8]> = global_mint.info.data.borrow();
+                let mint_data: Ref<[u8]> = global_mint.info.try_borrow_data()?;
                 let mint_with_extension: PodStateWithExtensions<'_, PodMint> =
                     PodStateWithExtensions::<PodMint>::unpack(&mint_data).unwrap();
                 let mint_extensions: Vec<ExtensionType> =
@@ -145,7 +147,7 @@ pub(crate) fn process_global_create(
                     &spl_token_2022::instruction::initialize_account3(
                         &spl_token_2022::id(),
                         global_vault.as_ref().key,
-                        global_mint.info.key,
+                        global_mint.info.pubkey(),
                         global_vault.as_ref().key,
                     )?,
                     &[
@@ -170,7 +172,7 @@ pub(crate) fn process_global_create(
                     &spl_token::instruction::initialize_account3(
                         &spl_token::id(),
                         global_vault.as_ref().key,
-                        global_mint.info.key,
+                        global_mint.info.pubkey(),
                         global_vault.as_ref().key,
                     )?,
                     &[
@@ -184,8 +186,8 @@ pub(crate) fn process_global_create(
         }
 
         emit_stack(GlobalCreateLog {
-            global: *global.info.key,
-            creator: *payer.key,
+            global: *global.info.pubkey(),
+            creator: *payer.pubkey(),
         })?;
     }
 

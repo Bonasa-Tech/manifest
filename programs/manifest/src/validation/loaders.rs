@@ -1,19 +1,26 @@
-use std::{
-    cell::{Cell, Ref},
-    slice::Iter,
-};
+use pinocchio::account_info::Ref;
+use std::{cell::Cell, slice::Iter};
 
 #[cfg(not(feature = "certora"))]
 use hypertree::get_mut_helper;
+use pinocchio::ProgramResult;
+use pinocchio::program_error::ProgramError;
 
 use hypertree::{get_helper, trace};
+use pinocchio::account_info::AccountInfo;
 use solana_program::{
-    account_info::{next_account_info, AccountInfo},
-    entrypoint::ProgramResult,
-    program_error::ProgramError,
-    pubkey::Pubkey,
-    system_program,
+    pubkey::Pubkey, system_program,
 };
+
+use crate::validation::AccountInfoExt;
+
+/// pinocchio has no `next_account_info`; the runtime hands over a slice and
+/// the loaders below walk it in order, same as before.
+fn next_account_info<'a>(
+    iter: &mut Iter<'a, AccountInfo>,
+) -> Result<&'a AccountInfo, ProgramError> {
+    iter.next().ok_or(ProgramError::NotEnoughAccountKeys)
+}
 
 use crate::{
     program::ManifestError,
@@ -67,9 +74,9 @@ impl<'a> CreateMarketContext<'a> {
         let quote_vault: EmptyAccount = EmptyAccount::new(next_account_info(account_iter)?)?;
 
         let (expected_base_vault, base_vault_bump) =
-            get_vault_address(market.key, base_mint.info.key());
+            get_vault_address(market.pubkey(), base_mint.info.key());
         let (expected_quote_vault, quote_vault_bump) =
-            get_vault_address(market.key, quote_mint.info.key());
+            get_vault_address(market.pubkey(), quote_mint.info.key());
 
         require!(
             expected_base_vault == *base_vault.info.key(),
@@ -184,9 +191,9 @@ impl<'a> DepositContext<'a> {
                 return Err(ManifestError::InvalidWithdrawAccounts.into());
             };
 
-        trace!("trader token account {:?}", token_account_info.key);
+        trace!("trader token account {:?}", token_account_info.pubkey());
         let trader_token: TokenAccountInfo =
-            TokenAccountInfo::new_with_owner(token_account_info, mint, payer.key)?;
+            TokenAccountInfo::new_with_owner(token_account_info, mint, payer.pubkey())?;
 
         trace!("vault token account {:?}", expected_vault_address);
         let vault: TokenAccountInfo = TokenAccountInfo::new_with_owner_and_key(
@@ -248,7 +255,7 @@ impl<'a> WithdrawContext<'a> {
             };
 
         let trader_token: TokenAccountInfo =
-            TokenAccountInfo::new_with_owner(token_account_info, mint, payer.key)?;
+            TokenAccountInfo::new_with_owner(token_account_info, mint, payer.pubkey())?;
         let vault: TokenAccountInfo = TokenAccountInfo::new_with_owner_and_key(
             next_account_info(account_iter)?,
             mint,
@@ -302,7 +309,7 @@ impl<'a> SwapContext<'a> {
 
         let owner_or_market: &'a AccountInfo = next_account_info(account_iter)?;
         let (owner, market): (Signer, ManifestAccountInfo<MarketFixed>) =
-            if *owner_or_market.owner == crate::ID {
+            if *owner_or_market.owner_pubkey() == crate::ID {
                 // Normal case where the payer of rent is the same as the token account
                 // owners and the caller has only included one to save ix call data
                 // bytes.
@@ -356,16 +363,16 @@ impl<'a> SwapContext<'a> {
         // Possibly includes base mint.
         if current_account_info_or
             .as_ref()
-            .is_ok_and(|f| *f.owner == spl_token::id() || *f.owner == spl_token_2022::id())
+            .is_ok_and(|f| *f.owner_pubkey() == spl_token::id() || *f.owner_pubkey() == spl_token_2022::id())
         {
             let current_account_info: &AccountInfo = current_account_info_or?;
             require!(
-                current_account_info.key == &base_mint_key,
+                current_account_info.pubkey() == &base_mint_key,
                 ManifestError::IncorrectAccount,
                 "Optional base mint does not match the market base mint",
             )?;
             require!(
-                current_account_info.owner == token_program_base.info.key(),
+                current_account_info.owner_pubkey() == token_program_base.info.key(),
                 ProgramError::IncorrectProgramId,
                 "Base mint owner does not match the base token program",
             )?;
@@ -383,7 +390,7 @@ impl<'a> SwapContext<'a> {
         // Possibly includes quote token program.
         if current_account_info_or
             .as_ref()
-            .is_ok_and(|f| *f.key == spl_token::id() || *f.key == spl_token_2022::id())
+            .is_ok_and(|f| *f.pubkey() == spl_token::id() || *f.pubkey() == spl_token_2022::id())
         {
             let current_account_info: &AccountInfo = current_account_info_or?;
             token_program_quote = TokenProgram::new(current_account_info)?;
@@ -392,16 +399,16 @@ impl<'a> SwapContext<'a> {
         // Possibly includes quote mint if the quote token program was token22.
         if current_account_info_or
             .as_ref()
-            .is_ok_and(|f| *f.owner == spl_token::id() || *f.owner == spl_token_2022::id())
+            .is_ok_and(|f| *f.owner_pubkey() == spl_token::id() || *f.owner_pubkey() == spl_token_2022::id())
         {
             let current_account_info: &AccountInfo = current_account_info_or?;
             require!(
-                current_account_info.key == &quote_mint_key,
+                current_account_info.pubkey() == &quote_mint_key,
                 ManifestError::IncorrectAccount,
                 "Optional quote mint does not match the market quote mint",
             )?;
             require!(
-                current_account_info.owner == token_program_quote.info.key(),
+                current_account_info.owner_pubkey() == token_program_quote.info.key(),
                 ProgramError::IncorrectProgramId,
                 "Quote mint owner does not match the quote token program",
             )?;
@@ -429,7 +436,7 @@ impl<'a> SwapContext<'a> {
             if !current_account_info.data_is_empty() {
                 let global: ManifestAccountInfo<'a, GlobalFixed> =
                     ManifestAccountInfo::<GlobalFixed>::new(current_account_info)?;
-                let global_data: Ref<&mut [u8]> = global.data.borrow();
+                let global_data: Ref<[u8]> = global.try_borrow_data()?;
                 let global_fixed: &GlobalFixed = get_helper::<GlobalFixed>(&global_data, 0_u32);
                 let global_mint_key: &Pubkey = global_fixed.get_mint();
                 let expected_global_vault_address: &Pubkey = global_fixed.get_vault();
@@ -611,7 +618,7 @@ impl<'a> BatchUpdateContext<'a> {
                     // Assert that the global itself is at the expected address,
                     // see `verify_market_global`.
                     verify_market_global(&market, index, mint.info.key(), global.info.key())?;
-                    let global_data: Ref<&mut [u8]> = global.data.borrow();
+                    let global_data: Ref<[u8]> = global.try_borrow_data()?;
                     let global_fixed: &GlobalFixed = get_helper::<GlobalFixed>(&global_data, 0_u32);
                     let expected_global_vault_address: &Pubkey = global_fixed.get_vault();
 
@@ -794,7 +801,7 @@ impl<'a> GlobalAddTraderContext<'a> {
         let global: ManifestAccountInfo<GlobalFixed> =
             ManifestAccountInfo::<GlobalFixed>::new(next_account_info(account_iter)?)?;
 
-        let global_data: Ref<&mut [u8]> = global.data.borrow();
+        let global_data: Ref<[u8]> = global.try_borrow_data()?;
         let global_fixed: &GlobalFixed = get_helper::<GlobalFixed>(&global_data, 0_u32);
         let global_mint_key: &Pubkey = global_fixed.get_mint();
         // The global is validated against its own stored bump, see
@@ -840,7 +847,7 @@ impl<'a> GlobalDepositContext<'a> {
 
         let mint: MintAccountInfo = MintAccountInfo::new(next_account_info(account_iter)?)?;
 
-        let global_data: Ref<&mut [u8]> = global.data.borrow();
+        let global_data: Ref<[u8]> = global.try_borrow_data()?;
         let global_fixed: &GlobalFixed = get_helper::<GlobalFixed>(&global_data, 0_u32);
 
         let global_mint_key: &Pubkey = global_fixed.get_mint();
@@ -868,7 +875,7 @@ impl<'a> GlobalDepositContext<'a> {
 
         let token_account_info: &AccountInfo = next_account_info(account_iter)?;
         let trader_token: TokenAccountInfo =
-            TokenAccountInfo::new_with_owner(token_account_info, mint.info.key(), payer.key)?;
+            TokenAccountInfo::new_with_owner(token_account_info, mint.info.key(), payer.pubkey())?;
         let token_program: TokenProgram = TokenProgram::new(next_account_info(account_iter)?)?;
         Ok(Self {
             payer,
@@ -901,7 +908,7 @@ impl<'a> GlobalWithdrawContext<'a> {
 
         let mint: MintAccountInfo = MintAccountInfo::new(next_account_info(account_iter)?)?;
 
-        let global_data: Ref<&mut [u8]> = global.data.borrow();
+        let global_data: Ref<[u8]> = global.try_borrow_data()?;
         let global_fixed: &GlobalFixed = get_helper::<GlobalFixed>(&global_data, 0_u32);
 
         let global_mint_key: &Pubkey = global_fixed.get_mint();
@@ -929,7 +936,7 @@ impl<'a> GlobalWithdrawContext<'a> {
 
         let token_account_info: &AccountInfo = next_account_info(account_iter)?;
         let trader_token: TokenAccountInfo =
-            TokenAccountInfo::new_with_owner(token_account_info, mint.info.key(), payer.key)?;
+            TokenAccountInfo::new_with_owner(token_account_info, mint.info.key(), payer.pubkey())?;
         let token_program: TokenProgram = TokenProgram::new(next_account_info(account_iter)?)?;
         Ok(Self {
             payer,
@@ -964,7 +971,7 @@ impl<'a> GlobalEvictContext<'a> {
 
         let mint: MintAccountInfo = MintAccountInfo::new(next_account_info(account_iter)?)?;
 
-        let global_data: Ref<&mut [u8]> = global.data.borrow();
+        let global_data: Ref<[u8]> = global.try_borrow_data()?;
         let global_fixed: &GlobalFixed = get_helper::<GlobalFixed>(&global_data, 0_u32);
 
         let global_mint_key: &Pubkey = global_fixed.get_mint();
@@ -992,7 +999,7 @@ impl<'a> GlobalEvictContext<'a> {
 
         let token_account_info: &AccountInfo = next_account_info(account_iter)?;
         let trader_token: TokenAccountInfo =
-            TokenAccountInfo::new_with_owner(token_account_info, mint.info.key(), payer.key)?;
+            TokenAccountInfo::new_with_owner(token_account_info, mint.info.key(), payer.pubkey())?;
         let token_account_info: &AccountInfo = next_account_info(account_iter)?;
         let evictee_token: TokenAccountInfo =
             TokenAccountInfo::new(token_account_info, mint.info.key())?;
@@ -1032,7 +1039,7 @@ impl<'a> GlobalCleanContext<'a> {
         let global: ManifestAccountInfo<GlobalFixed> =
             ManifestAccountInfo::<GlobalFixed>::new(next_account_info(account_iter)?)?;
 
-        let global_data: Ref<&mut [u8]> = global.data.borrow();
+        let global_data: Ref<[u8]> = global.try_borrow_data()?;
         let global_fixed: &GlobalFixed = get_helper::<GlobalFixed>(&global_data, 0_u32);
         let global_mint_key: &Pubkey = global_fixed.get_mint();
         // The global is validated against its own stored bump, see

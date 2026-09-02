@@ -1,4 +1,5 @@
 use crate::*;
+use crate::validation::AccountInfoExt;
 use cvt::cvt_assume;
 use cvt_macros::rule;
 use nondet::*;
@@ -52,9 +53,9 @@ fn rule_deposit_check<const IS_BASE: bool>() {
     } else {
         market_quote_vault_pk
     };
-    cvt_assume!(vault_token.key == &vault_pk);
+    cvt_assume!(vault_token.pubkey() == &vault_pk);
     // -- trader and vault have different token accounts
-    cvt_assume!(trader_token.key != vault_token.key);
+    cvt_assume!(trader_token.pubkey() != vault_token.pubkey());
 
     // if IS_BASE, then vault_base amount comes from vault_token
     // otherwise, vault_quote amount comes from vault_token
@@ -162,9 +163,9 @@ fn rule_withdraw_check<const IS_BASE: bool>() {
     } else {
         market_quote_vault_pk
     };
-    cvt_assume!(vault_token.key == &vault_pk);
+    cvt_assume!(vault_token.pubkey() == &vault_pk);
     // -- trader and vault have different token accounts
-    cvt_assume!(trader_token.key != vault_token.key);
+    cvt_assume!(trader_token.pubkey() != vault_token.pubkey());
 
     // if IS_BASE, then vault_base amount comes from vault_token
     // otherwise, vault_quote amount comes from vault_token
@@ -271,7 +272,7 @@ fn rest_remaining_check<const IS_BID: bool>() {
     cvt_assume_funds_invariants(balances_old);
 
     let args: AddOrderToMarketArgs = AddOrderToMarketArgs {
-        market: *market_info.key,
+        market: *market_info.pubkey(),
         trader_index: main_trader_index(),
         num_base_atoms: nondet(),
         price: nondet(),

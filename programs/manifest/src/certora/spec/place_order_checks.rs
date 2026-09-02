@@ -1,4 +1,5 @@
 use crate::*;
+use crate::validation::AccountInfoExt;
 use cvt::cvt_assume;
 use cvt_macros::rule;
 use nondet::*;
@@ -37,7 +38,7 @@ pub fn place_single_order_nondet_inputs_with_type<'a, const IS_BID: bool>(
     global_trade_accounts_opts: &'a [Option<GlobalTradeAccounts<'a, 'static>>; 2],
 ) -> (AddOrderToMarketArgs<'a, 'static>, BaseAtoms, u32) {
     let args: AddOrderToMarketArgs = AddOrderToMarketArgs {
-        market: *market_info.key,
+        market: *market_info.pubkey(),
         trader_index: main_trader_index(),
         num_base_atoms: nondet(),
         price: QuoteAtomsPerBaseAtom::nondet_price_u32(),

@@ -1,4 +1,7 @@
-use std::cell::RefMut;
+use pinocchio::account_info::RefMut;
+use crate::validation::AccountInfoExt;
+use pinocchio::ProgramResult;
+use pinocchio::program_error::ProgramError;
 
 use crate::{
     program::get_trader_index_with_hint,
@@ -15,8 +18,7 @@ use borsh::{BorshDeserialize, BorshSerialize};
 
 use hypertree::{get_helper, trace, DataIndex, RBNode};
 use solana_program::{
-    account_info::AccountInfo, entrypoint::ProgramResult, program_error::ProgramError,
-    pubkey::Pubkey,
+    account_info::AccountInfo, pubkey::Pubkey,
 };
 
 use super::{expand_market_if_needed, shared::get_mut_dynamic_account};
@@ -266,7 +268,7 @@ pub(crate) fn process_batch_update_core(
     trace!("batch_update trader_index_hint:{trader_index_hint:?} cancels:{cancels:?} orders:{orders:?}");
 
     let trader_index: DataIndex = {
-        let market_data: &mut RefMut<&mut [u8]> = &mut market.try_borrow_mut_data()?;
+        let market_data: &mut RefMut<[u8]> = &mut market.try_borrow_mut_data()?;
 
         let mut dynamic_account: MarketRefMut = get_mut_dynamic_account(market_data);
         let trader_index: DataIndex =
@@ -350,13 +352,13 @@ pub(crate) fn process_batch_update_core(
             let last_valid_slot: u32 = place_order_params.last_valid_slot();
 
             // Need to reborrow every iteration so we can borrow later for expanding.
-            let market_data: &mut RefMut<&mut [u8]> = &mut market.try_borrow_mut_data()?;
+            let market_data: &mut RefMut<[u8]> = &mut market.try_borrow_mut_data()?;
             let mut dynamic_account: MarketRefMut = get_mut_dynamic_account(market_data);
 
             let add_order_to_market_result: AddOrderToMarketResult = batch_place_order(
                 &mut dynamic_account,
                 AddOrderToMarketArgs {
-                    market: *market.key,
+                    market: *market.pubkey(),
                     trader_index,
                     num_base_atoms: base_atoms,
                     price,

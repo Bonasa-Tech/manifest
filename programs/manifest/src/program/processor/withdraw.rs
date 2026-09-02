@@ -1,4 +1,6 @@
-use std::cell::RefMut;
+use pinocchio::account_info::RefMut;
+use crate::validation::AccountInfoExt;
+use pinocchio::ProgramResult;
 
 use super::get_trader_index_with_hint;
 use crate::{
@@ -9,7 +11,7 @@ use crate::{
 };
 use borsh::{BorshDeserialize, BorshSerialize};
 use hypertree::DataIndex;
-use solana_program::{account_info::AccountInfo, entrypoint::ProgramResult, pubkey::Pubkey};
+use solana_program::{account_info::AccountInfo, pubkey::Pubkey};
 
 #[cfg(not(feature = "certora"))]
 use {crate::market_vault_seeds_with_bump, solana_program::program::invoke_signed};
@@ -65,7 +67,7 @@ pub(crate) fn process_withdraw_core(
         mint,
     } = withdraw_context;
 
-    let market_data: &mut RefMut<&mut [u8]> = &mut market.try_borrow_mut_data()?;
+    let market_data: &mut RefMut<[u8]> = &mut market.try_borrow_mut_data()?;
     let mut dynamic_account: MarketRefMut = get_mut_dynamic_account(market_data);
 
     // Validation verifies that the mint is either base or quote.
@@ -84,7 +86,7 @@ pub(crate) fn process_withdraw_core(
         dynamic_account.fixed.get_quote_vault_bump()
     };
 
-    if *vault.owner == spl_token_2022::id() {
+    if *vault.owner_pubkey() == spl_token_2022::id() {
         spl_token_2022_transfer_from_vault_to_trader_fixed(
             &token_program,
             Some(mint),
@@ -97,7 +99,7 @@ pub(crate) fn process_withdraw_core(
             } else {
                 dynamic_account.fixed.get_quote_mint_decimals()
             },
-            market.key,
+            market.pubkey(),
             bump,
         )?;
     } else {
@@ -106,7 +108,7 @@ pub(crate) fn process_withdraw_core(
             &vault,
             &trader_token,
             amount_atoms,
-            market.key,
+            market.pubkey(),
             bump,
             mint_key,
         )?;
@@ -117,8 +119,8 @@ pub(crate) fn process_withdraw_core(
     dynamic_account.withdraw(trader_index, amount_atoms, is_base)?;
 
     emit_stack(WithdrawLog {
-        market: *market.key,
-        trader: *payer.key,
+        market: *market.pubkey(),
+        trader: *payer.pubkey(),
         mint: if is_base {
             *dynamic_account.get_base_mint()
         } else {
@@ -132,10 +134,10 @@ pub(crate) fn process_withdraw_core(
 
 /** Transfer from base (quote) vault to base (quote) trader using SPL Token **/
 #[cfg(not(feature = "certora"))]
-fn spl_token_transfer_from_vault_to_trader<'a, 'info>(
-    token_program: &TokenProgram<'a, 'info>,
-    vault: &TokenAccountInfo<'a, 'info>,
-    trader_account: &TokenAccountInfo<'a, 'info>,
+fn spl_token_transfer_from_vault_to_trader<'a>(
+    token_program: &TokenProgram<'a>,
+    vault: &TokenAccountInfo<'a>,
+    trader_account: &TokenAccountInfo<'a>,
     amount: u64,
     market_key: &Pubkey,
     vault_bump: u8,
@@ -143,10 +145,10 @@ fn spl_token_transfer_from_vault_to_trader<'a, 'info>(
 ) -> ProgramResult {
     invoke_signed(
         &spl_token::instruction::transfer(
-            token_program.key,
-            vault.key,
-            trader_account.key,
-            vault.key,
+            token_program.pubkey(),
+            vault.pubkey(),
+            trader_account.pubkey(),
+            vault.pubkey(),
             &[],
             amount,
         )?,
@@ -161,10 +163,10 @@ fn spl_token_transfer_from_vault_to_trader<'a, 'info>(
 
 #[cfg(feature = "certora")]
 /** (Summary) Transfer from base (quote) vault to base (quote) trader using SPL Token **/
-fn spl_token_transfer_from_vault_to_trader<'a, 'info>(
-    _token_program: &TokenProgram<'a, 'info>,
-    vault: &TokenAccountInfo<'a, 'info>,
-    trader_account: &TokenAccountInfo<'a, 'info>,
+fn spl_token_transfer_from_vault_to_trader<'a>(
+    _token_program: &TokenProgram<'a>,
+    vault: &TokenAccountInfo<'a>,
+    trader_account: &TokenAccountInfo<'a>,
     amount: u64,
     _market_key: &Pubkey,
     _vault_bump: u8,
@@ -175,12 +177,12 @@ fn spl_token_transfer_from_vault_to_trader<'a, 'info>(
 
 /** Transfer from base (quote) vault to base (quote) trader using SPL Token 2022 **/
 #[cfg(not(feature = "certora"))]
-fn spl_token_2022_transfer_from_vault_to_trader_fixed<'a, 'info>(
-    token_program: &TokenProgram<'a, 'info>,
-    mint: Option<MintAccountInfo<'a, 'info>>,
+fn spl_token_2022_transfer_from_vault_to_trader_fixed<'a>(
+    token_program: &TokenProgram<'a>,
+    mint: Option<MintAccountInfo<'a>>,
     mint_key: &Pubkey,
-    vault: &TokenAccountInfo<'a, 'info>,
-    trader_token: &TokenAccountInfo<'a, 'info>,
+    vault: &TokenAccountInfo<'a>,
+    trader_token: &TokenAccountInfo<'a>,
     amount_atoms: u64,
     decimals: u8,
     market_key: &Pubkey,
@@ -188,11 +190,11 @@ fn spl_token_2022_transfer_from_vault_to_trader_fixed<'a, 'info>(
 ) -> ProgramResult {
     invoke_signed(
         &spl_token_2022::instruction::transfer_checked(
-            token_program.key,
-            vault.key,
+            token_program.pubkey(),
+            vault.pubkey(),
             mint_key,
-            trader_token.key,
-            vault.key,
+            trader_token.pubkey(),
+            vault.pubkey(),
             &[],
             amount_atoms,
             decimals,
@@ -210,12 +212,12 @@ fn spl_token_2022_transfer_from_vault_to_trader_fixed<'a, 'info>(
 // TODO: Share these with swap and deposit.
 #[cfg(feature = "certora")]
 /** (Summary) Transfer from base (quote) vault to base (quote) trader using SPL Token 2022 **/
-fn spl_token_2022_transfer_from_vault_to_trader_fixed<'a, 'info>(
-    _token_program: &TokenProgram<'a, 'info>,
-    _mint: Option<MintAccountInfo<'a, 'info>>,
+fn spl_token_2022_transfer_from_vault_to_trader_fixed<'a>(
+    _token_program: &TokenProgram<'a>,
+    _mint: Option<MintAccountInfo<'a>>,
     _mint_key: &Pubkey,
-    vault: &TokenAccountInfo<'a, 'info>,
-    trader_token: &TokenAccountInfo<'a, 'info>,
+    vault: &TokenAccountInfo<'a>,
+    trader_token: &TokenAccountInfo<'a>,
     amount_atoms: u64,
     _decimals: u8,
     _market_key: &Pubkey,

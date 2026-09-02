@@ -1,8 +1,10 @@
-use std::cell::RefMut;
+use pinocchio::account_info::RefMut;
+use crate::validation::AccountInfoExt;
+use pinocchio::ProgramResult;
 
 use hypertree::trace;
 use solana_program::{
-    account_info::AccountInfo, entrypoint::ProgramResult, program_pack::Pack, pubkey::Pubkey,
+    account_info::AccountInfo, program_pack::Pack, pubkey::Pubkey,
     rent::Rent, sysvar::Sysvar,
 };
 use spl_token::state::Account;
@@ -33,8 +35,8 @@ pub(crate) fn process_global_add_trader(
         let rent: Rent = Rent::get()?;
         invoke(
             &solana_program::system_instruction::transfer(
-                &payer.key,
-                &global.key,
+                &payer.pubkey(),
+                &global.pubkey(),
                 rent.minimum_balance(Account::LEN as usize) * 2,
             ),
             &[payer.info.clone(), global.info.clone()],
@@ -44,14 +46,14 @@ pub(crate) fn process_global_add_trader(
     // Needs a spot for this trader on the global account.
     expand_global(&payer, &global)?;
 
-    let global_data: &mut RefMut<&mut [u8]> = &mut global.try_borrow_mut_data()?;
+    let global_data: &mut RefMut<[u8]> = &mut global.try_borrow_mut_data()?;
     let mut global_dynamic_account: GlobalRefMut = get_mut_dynamic_account(global_data);
 
-    global_dynamic_account.add_trader(payer.key)?;
+    global_dynamic_account.add_trader(payer.pubkey())?;
 
     emit_stack(GlobalAddTraderLog {
-        global: *global.key,
-        trader: *payer.key,
+        global: *global.pubkey(),
+        trader: *payer.pubkey(),
     })?;
 
     Ok(())

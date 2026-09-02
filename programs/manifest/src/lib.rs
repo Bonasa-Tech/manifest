@@ -18,6 +18,8 @@ pub mod deps {
 pub mod certora;
 
 use hypertree::trace;
+use pinocchio::ProgramResult;
+use pinocchio::program_error::ProgramError;
 use program::{
     batch_update::process_batch_update, claim_seat::process_claim_seat,
     create_market::process_create_market, deposit::process_deposit,
@@ -28,7 +30,7 @@ use program::{
     ManifestInstruction,
 };
 use pinocchio::{account_info::AccountInfo, pubkey::Pubkey as Address, ProgramResult};
-use solana_program::{declare_id, program_error::ProgramError, pubkey::Pubkey};
+use solana_program::{declare_id, pubkey::Pubkey};
 
 #[cfg(not(feature = "no-entrypoint"))]
 use solana_security_txt::security_txt;
