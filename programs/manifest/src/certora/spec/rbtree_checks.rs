@@ -9,7 +9,7 @@ use hypertree::{
     get_helper, get_mut_helper, DataIndex, HyperTreeReadOperations, HyperTreeWriteOperations, NIL,
 };
 use nondet::*;
-use solana_program::account_info::AccountInfo;
+use pinocchio::account::AccountView;
 use std::{cmp::Ordering, fmt::Display};
 
 #[derive(Copy, Clone, Pod, Zeroable, Debug)]
@@ -106,9 +106,9 @@ macro_rules! mk_rb_node {
 pub fn rule_rotate_left() {
     init_static();
 
-    let acc_infos: [AccountInfo; 16] = acc_infos_with_mem_layout!();
+    let acc_infos: [AccountView; 16] = account_views_with_mem_layout!();
     let acc_info = &acc_infos[0];
-    let mut data = acc_info.data.borrow_mut();
+    let mut data = acc_info.try_borrow_mut().unwrap();
 
     let gg_index = 0 * TEST_BLOCK_WIDTH;
     let g_index = 1 * TEST_BLOCK_WIDTH;
@@ -211,9 +211,9 @@ pub fn rule_rotate_left() {
 pub fn rule_rotate_right() {
     init_static();
 
-    let acc_infos: [AccountInfo; 16] = acc_infos_with_mem_layout!();
+    let acc_infos: [AccountView; 16] = account_views_with_mem_layout!();
     let acc_info = &acc_infos[0];
-    let mut data = acc_info.data.borrow_mut();
+    let mut data = acc_info.try_borrow_mut().unwrap();
 
     let gg_index = 0 * TEST_BLOCK_WIDTH;
     let g_index = 1 * TEST_BLOCK_WIDTH;
@@ -329,9 +329,9 @@ pub fn rule_rotate_right() {
 pub fn rule_insert_preserves_parent_of_left_child() {
     init_static();
 
-    let acc_infos: [AccountInfo; 16] = acc_infos_with_mem_layout!();
+    let acc_infos: [AccountView; 16] = account_views_with_mem_layout!();
     let acc_info = &acc_infos[0];
-    let mut data = acc_info.data.borrow_mut();
+    let mut data = acc_info.try_borrow_mut().unwrap();
 
     let zero_index = 0 * TEST_BLOCK_WIDTH;
     let one_index = 1 * TEST_BLOCK_WIDTH;
@@ -426,9 +426,9 @@ pub fn rule_insert_preserves_parent_of_left_child() {
 pub fn rule_insert_preserves_parent_of_right_child() {
     init_static();
 
-    let acc_infos: [AccountInfo; 16] = acc_infos_with_mem_layout!();
+    let acc_infos: [AccountView; 16] = account_views_with_mem_layout!();
     let acc_info = &acc_infos[0];
-    let mut data = acc_info.data.borrow_mut();
+    let mut data = acc_info.try_borrow_mut().unwrap();
 
     let zero_index = 0 * TEST_BLOCK_WIDTH;
     let one_index = 1 * TEST_BLOCK_WIDTH;
@@ -533,9 +533,9 @@ pub fn rule_insert_preserves_parent_of_right_child() {
 pub fn rule_insert_preserves_root_parent_is_nil() {
     init_static();
 
-    let acc_infos: [AccountInfo; 16] = acc_infos_with_mem_layout!();
+    let acc_infos: [AccountView; 16] = account_views_with_mem_layout!();
     let acc_info = &acc_infos[0];
-    let mut data = acc_info.data.borrow_mut();
+    let mut data = acc_info.try_borrow_mut().unwrap();
 
     let zero_index = 0 * TEST_BLOCK_WIDTH;
     let one_index = 1 * TEST_BLOCK_WIDTH;
@@ -604,9 +604,9 @@ pub fn rule_insert_preserves_root_parent_is_nil() {
 pub fn rule_root_is_black_after_insert_empty_tree() {
     init_static();
 
-    let acc_infos: [AccountInfo; 16] = acc_infos_with_mem_layout!();
+    let acc_infos: [AccountView; 16] = account_views_with_mem_layout!();
     let acc_info = &acc_infos[0];
-    let mut data = acc_info.data.borrow_mut();
+    let mut data = acc_info.try_borrow_mut().unwrap();
 
     let mut tree: RedBlackTree<TestOrder> = RedBlackTree::new(&mut data, NIL, NIL);
 
@@ -640,9 +640,9 @@ pub fn rule_root_is_black_after_insert_empty_tree() {
 pub fn rule_root_is_black_after_insert_non_empty_tree() {
     init_static();
 
-    let acc_infos: [AccountInfo; 16] = acc_infos_with_mem_layout!();
+    let acc_infos: [AccountView; 16] = account_views_with_mem_layout!();
     let acc_info = &acc_infos[0];
-    let mut data = acc_info.data.borrow_mut();
+    let mut data = acc_info.try_borrow_mut().unwrap();
 
     let zero_index = 0 * TEST_BLOCK_WIDTH;
     let one_index = 1 * TEST_BLOCK_WIDTH;
@@ -720,9 +720,9 @@ pub fn rule_root_is_black_after_insert_non_empty_tree() {
 pub fn rule_tree_is_ordered_after_insert_smallest_element() {
     init_static();
 
-    let acc_infos: [AccountInfo; 16] = acc_infos_with_mem_layout!();
+    let acc_infos: [AccountView; 16] = account_views_with_mem_layout!();
     let acc_info = &acc_infos[0];
-    let mut data = acc_info.data.borrow_mut();
+    let mut data = acc_info.try_borrow_mut().unwrap();
 
     let zero_index = 0 * TEST_BLOCK_WIDTH;
     let one_index = 1 * TEST_BLOCK_WIDTH;
@@ -864,9 +864,9 @@ macro_rules! build_tree_0 {
 pub fn rule_insert_fix_matches_reference_no_parent() {
     init_static();
 
-    let acc_infos: [AccountInfo; 16] = acc_infos_with_mem_layout!();
+    let acc_infos: [AccountView; 16] = account_views_with_mem_layout!();
     let acc_info = &acc_infos[0];
-    let mut data = acc_info.data.borrow_mut();
+    let mut data = acc_info.try_borrow_mut().unwrap();
 
     let index_0 = 0 * TEST_BLOCK_WIDTH;
     let index_1 = 1 * TEST_BLOCK_WIDTH;
@@ -1049,9 +1049,9 @@ macro_rules! build_tree_1 {
 pub fn rule_insert_fix_matches_reference_case1_left_child() {
     init_static();
 
-    let acc_infos: [AccountInfo; 16] = acc_infos_with_mem_layout!();
+    let acc_infos: [AccountView; 16] = account_views_with_mem_layout!();
     let acc_info = &acc_infos[0];
-    let mut data = acc_info.data.borrow_mut();
+    let mut data = acc_info.try_borrow_mut().unwrap();
 
     let index_0 = 0 * TEST_BLOCK_WIDTH;
     let index_1 = 1 * TEST_BLOCK_WIDTH;
@@ -1269,9 +1269,9 @@ macro_rules! build_tree_2 {
 pub fn rule_insert_fix_matches_reference_case2_left_child() {
     init_static();
 
-    let acc_infos: [AccountInfo; 16] = acc_infos_with_mem_layout!();
+    let acc_infos: [AccountView; 16] = account_views_with_mem_layout!();
     let acc_info = &acc_infos[0];
-    let mut data = acc_info.data.borrow_mut();
+    let mut data = acc_info.try_borrow_mut().unwrap();
 
     let index_0 = 0 * TEST_BLOCK_WIDTH;
     let index_1 = 1 * TEST_BLOCK_WIDTH;
@@ -1489,9 +1489,9 @@ macro_rules! build_tree_3 {
 pub fn rule_insert_fix_matches_reference_case3_left_child() {
     init_static();
 
-    let acc_infos: [AccountInfo; 16] = acc_infos_with_mem_layout!();
+    let acc_infos: [AccountView; 16] = account_views_with_mem_layout!();
     let acc_info = &acc_infos[0];
-    let mut data = acc_info.data.borrow_mut();
+    let mut data = acc_info.try_borrow_mut().unwrap();
 
     let index_0 = 0 * TEST_BLOCK_WIDTH;
     let index_1 = 1 * TEST_BLOCK_WIDTH;
@@ -1709,9 +1709,9 @@ macro_rules! build_tree_4 {
 pub fn rule_insert_fix_matches_reference_case1_right_child() {
     init_static();
 
-    let acc_infos: [AccountInfo; 16] = acc_infos_with_mem_layout!();
+    let acc_infos: [AccountView; 16] = account_views_with_mem_layout!();
     let acc_info = &acc_infos[0];
-    let mut data = acc_info.data.borrow_mut();
+    let mut data = acc_info.try_borrow_mut().unwrap();
 
     let index_0 = 0 * TEST_BLOCK_WIDTH;
     let index_1 = 1 * TEST_BLOCK_WIDTH;
@@ -1929,9 +1929,9 @@ macro_rules! build_tree_5 {
 pub fn rule_insert_fix_matches_reference_case2_right_child() {
     init_static();
 
-    let acc_infos: [AccountInfo; 16] = acc_infos_with_mem_layout!();
+    let acc_infos: [AccountView; 16] = account_views_with_mem_layout!();
     let acc_info = &acc_infos[0];
-    let mut data = acc_info.data.borrow_mut();
+    let mut data = acc_info.try_borrow_mut().unwrap();
 
     let index_0 = 0 * TEST_BLOCK_WIDTH;
     let index_1 = 1 * TEST_BLOCK_WIDTH;
@@ -2149,9 +2149,9 @@ macro_rules! build_tree_6 {
 pub fn rule_insert_fix_matches_reference_case3_right_child() {
     init_static();
 
-    let acc_infos: [AccountInfo; 16] = acc_infos_with_mem_layout!();
+    let acc_infos: [AccountView; 16] = account_views_with_mem_layout!();
     let acc_info = &acc_infos[0];
-    let mut data = acc_info.data.borrow_mut();
+    let mut data = acc_info.try_borrow_mut().unwrap();
 
     let index_0 = 0 * TEST_BLOCK_WIDTH;
     let index_1 = 1 * TEST_BLOCK_WIDTH;
@@ -2480,9 +2480,9 @@ macro_rules! build_tree_shape_2 {
 pub fn rule_remove_fix_matches_reference_case1_left_child() {
     init_static();
 
-    let acc_infos: [AccountInfo; 16] = acc_infos_with_mem_layout!();
+    let acc_infos: [AccountView; 16] = account_views_with_mem_layout!();
     let acc_info = &acc_infos[0];
-    let mut data = acc_info.data.borrow_mut();
+    let mut data = acc_info.try_borrow_mut().unwrap();
 
     let index_0 = 0 * TEST_BLOCK_WIDTH;
     let index_1 = 1 * TEST_BLOCK_WIDTH;
@@ -2586,9 +2586,9 @@ pub fn rule_remove_fix_matches_reference_case1_left_child() {
 pub fn rule_remove_fix_matches_reference_case1_right_child() {
     init_static();
 
-    let acc_infos: [AccountInfo; 16] = acc_infos_with_mem_layout!();
+    let acc_infos: [AccountView; 16] = account_views_with_mem_layout!();
     let acc_info = &acc_infos[0];
-    let mut data = acc_info.data.borrow_mut();
+    let mut data = acc_info.try_borrow_mut().unwrap();
 
     let index_0 = 0 * TEST_BLOCK_WIDTH;
     let index_1 = 1 * TEST_BLOCK_WIDTH;
@@ -2693,9 +2693,9 @@ pub fn rule_remove_fix_matches_reference_case1_right_child() {
 pub fn rule_remove_fix_matches_reference_case2_left_child() {
     init_static();
 
-    let acc_infos: [AccountInfo; 16] = acc_infos_with_mem_layout!();
+    let acc_infos: [AccountView; 16] = account_views_with_mem_layout!();
     let acc_info = &acc_infos[0];
-    let mut data = acc_info.data.borrow_mut();
+    let mut data = acc_info.try_borrow_mut().unwrap();
 
     let index_0 = 0 * TEST_BLOCK_WIDTH;
     let index_1 = 1 * TEST_BLOCK_WIDTH;
@@ -2802,9 +2802,9 @@ pub fn rule_remove_fix_matches_reference_case2_left_child() {
 pub fn rule_remove_fix_matches_reference_case2_right_child() {
     init_static();
 
-    let acc_infos: [AccountInfo; 16] = acc_infos_with_mem_layout!();
+    let acc_infos: [AccountView; 16] = account_views_with_mem_layout!();
     let acc_info = &acc_infos[0];
-    let mut data = acc_info.data.borrow_mut();
+    let mut data = acc_info.try_borrow_mut().unwrap();
 
     let index_0 = 0 * TEST_BLOCK_WIDTH;
     let index_1 = 1 * TEST_BLOCK_WIDTH;
@@ -2914,9 +2914,9 @@ pub fn rule_remove_fix_matches_reference_case2_right_child() {
 pub fn rule_remove_fix_matches_reference_case3_left_child() {
     init_static();
 
-    let acc_infos: [AccountInfo; 16] = acc_infos_with_mem_layout!();
+    let acc_infos: [AccountView; 16] = account_views_with_mem_layout!();
     let acc_info = &acc_infos[0];
-    let mut data = acc_info.data.borrow_mut();
+    let mut data = acc_info.try_borrow_mut().unwrap();
 
     let index_0 = 0 * TEST_BLOCK_WIDTH;
     let index_1 = 1 * TEST_BLOCK_WIDTH;
@@ -3013,9 +3013,9 @@ pub fn rule_remove_fix_matches_reference_case3_left_child() {
 pub fn rule_remove_fix_matches_reference_case3_right_child() {
     init_static();
 
-    let acc_infos: [AccountInfo; 16] = acc_infos_with_mem_layout!();
+    let acc_infos: [AccountView; 16] = account_views_with_mem_layout!();
     let acc_info = &acc_infos[0];
-    let mut data = acc_info.data.borrow_mut();
+    let mut data = acc_info.try_borrow_mut().unwrap();
 
     let index_0 = 0 * TEST_BLOCK_WIDTH;
     let index_1 = 1 * TEST_BLOCK_WIDTH;
@@ -3111,9 +3111,9 @@ pub fn rule_remove_fix_matches_reference_case3_right_child() {
 pub fn rule_remove_fix_matches_reference_case4_left_child() {
     init_static();
 
-    let acc_infos: [AccountInfo; 16] = acc_infos_with_mem_layout!();
+    let acc_infos: [AccountView; 16] = account_views_with_mem_layout!();
     let acc_info = &acc_infos[0];
-    let mut data = acc_info.data.borrow_mut();
+    let mut data = acc_info.try_borrow_mut().unwrap();
 
     let index_0 = 0 * TEST_BLOCK_WIDTH;
     let index_1 = 1 * TEST_BLOCK_WIDTH;
@@ -3209,9 +3209,9 @@ pub fn rule_remove_fix_matches_reference_case4_left_child() {
 pub fn rule_remove_fix_matches_reference_case4_right_child() {
     init_static();
 
-    let acc_infos: [AccountInfo; 16] = acc_infos_with_mem_layout!();
+    let acc_infos: [AccountView; 16] = account_views_with_mem_layout!();
     let acc_info = &acc_infos[0];
-    let mut data = acc_info.data.borrow_mut();
+    let mut data = acc_info.try_borrow_mut().unwrap();
 
     let index_0 = 0 * TEST_BLOCK_WIDTH;
     let index_1 = 1 * TEST_BLOCK_WIDTH;
@@ -3295,9 +3295,9 @@ pub fn rule_remove_fix_matches_reference_case4_right_child() {
 pub fn rule_insert_updates_max_index_empty_tree() {
     init_static();
 
-    let acc_infos: [AccountInfo; 16] = acc_infos_with_mem_layout!();
+    let acc_infos: [AccountView; 16] = account_views_with_mem_layout!();
     let acc_info = &acc_infos[0];
-    let mut data = acc_info.data.borrow_mut();
+    let mut data = acc_info.try_borrow_mut().unwrap();
 
     let mut tree: RedBlackTree<TestOrder> = RedBlackTree::new(&mut data, NIL, NIL);
 
@@ -3351,9 +3351,9 @@ macro_rules! build_tree_7 {
 pub fn rule_insert_updates_max_index_non_empty_tree_max() {
     init_static();
 
-    let acc_infos: [AccountInfo; 16] = acc_infos_with_mem_layout!();
+    let acc_infos: [AccountView; 16] = account_views_with_mem_layout!();
     let acc_info = &acc_infos[0];
-    let mut data = acc_info.data.borrow_mut();
+    let mut data = acc_info.try_borrow_mut().unwrap();
 
     let index_1 = 1 * TEST_BLOCK_WIDTH;
     let index_2 = 2 * TEST_BLOCK_WIDTH;
@@ -3409,9 +3409,9 @@ macro_rules! build_tree_8 {
 pub fn rule_insert_updates_max_index_non_empty_tree_not_max() {
     init_static();
 
-    let acc_infos: [AccountInfo; 16] = acc_infos_with_mem_layout!();
+    let acc_infos: [AccountView; 16] = account_views_with_mem_layout!();
     let acc_info = &acc_infos[0];
-    let mut data = acc_info.data.borrow_mut();
+    let mut data = acc_info.try_borrow_mut().unwrap();
 
     let index_1 = 1 * TEST_BLOCK_WIDTH;
     let index_2 = 2 * TEST_BLOCK_WIDTH;
@@ -3479,9 +3479,9 @@ macro_rules! build_tree_9 {
 pub fn rule_remove_updates_max_index_single_node_tree() {
     init_static();
 
-    let acc_infos: [AccountInfo; 16] = acc_infos_with_mem_layout!();
+    let acc_infos: [AccountView; 16] = account_views_with_mem_layout!();
     let acc_info = &acc_infos[0];
-    let mut data = acc_info.data.borrow_mut();
+    let mut data = acc_info.try_borrow_mut().unwrap();
 
     let index_0 = 0;
 
@@ -3505,9 +3505,9 @@ pub fn rule_remove_updates_max_index_single_node_tree() {
 pub fn rule_remove_updates_max_index_non_empty_tree_max() {
     init_static();
 
-    let acc_infos: [AccountInfo; 16] = acc_infos_with_mem_layout!();
+    let acc_infos: [AccountView; 16] = account_views_with_mem_layout!();
     let acc_info = &acc_infos[0];
-    let mut data = acc_info.data.borrow_mut();
+    let mut data = acc_info.try_borrow_mut().unwrap();
 
     let index_0 = 0 * TEST_BLOCK_WIDTH;
     let index_1 = 1 * TEST_BLOCK_WIDTH;
@@ -3571,9 +3571,9 @@ macro_rules! build_tree_9_1 {
 pub fn rule_remove_updates_max_index_non_empty_tree_not_max() {
     init_static();
 
-    let acc_infos: [AccountInfo; 16] = acc_infos_with_mem_layout!();
+    let acc_infos: [AccountView; 16] = account_views_with_mem_layout!();
     let acc_info = &acc_infos[0];
-    let mut data = acc_info.data.borrow_mut();
+    let mut data = acc_info.try_borrow_mut().unwrap();
 
     let index_0 = 0 * TEST_BLOCK_WIDTH;
     let index_1 = 1 * TEST_BLOCK_WIDTH;
@@ -3679,9 +3679,9 @@ macro_rules! build_tree_10 {
 pub fn rule_swap_internal_nodes_left_children() {
     init_static();
 
-    let acc_infos: [AccountInfo; 16] = acc_infos_with_mem_layout!();
+    let acc_infos: [AccountView; 16] = account_views_with_mem_layout!();
     let acc_info = &acc_infos[0];
-    let mut data = acc_info.data.borrow_mut();
+    let mut data = acc_info.try_borrow_mut().unwrap();
 
     let index_0 = 0 * TEST_BLOCK_WIDTH;
     let index_1 = 1 * TEST_BLOCK_WIDTH;
@@ -3803,9 +3803,9 @@ macro_rules! build_tree_11 {
 pub fn rule_swap_internal_nodes_right_children() {
     init_static();
 
-    let acc_infos: [AccountInfo; 16] = acc_infos_with_mem_layout!();
+    let acc_infos: [AccountView; 16] = account_views_with_mem_layout!();
     let acc_info = &acc_infos[0];
-    let mut data = acc_info.data.borrow_mut();
+    let mut data = acc_info.try_borrow_mut().unwrap();
 
     let index_0 = 0 * TEST_BLOCK_WIDTH;
     let index_1 = 1 * TEST_BLOCK_WIDTH;
@@ -3918,9 +3918,9 @@ macro_rules! build_tree_12 {
 pub fn rule_swap_internal_nodes_first_is_root() {
     init_static();
 
-    let acc_infos: [AccountInfo; 16] = acc_infos_with_mem_layout!();
+    let acc_infos: [AccountView; 16] = account_views_with_mem_layout!();
     let acc_info = &acc_infos[0];
-    let mut data = acc_info.data.borrow_mut();
+    let mut data = acc_info.try_borrow_mut().unwrap();
 
     let _index_0 = 0 * TEST_BLOCK_WIDTH;
     let index_1 = 1 * TEST_BLOCK_WIDTH;
@@ -4035,9 +4035,9 @@ macro_rules! build_tree_13 {
 pub fn rule_swap_internal_nodes_second_is_root() {
     init_static();
 
-    let acc_infos: [AccountInfo; 16] = acc_infos_with_mem_layout!();
+    let acc_infos: [AccountView; 16] = account_views_with_mem_layout!();
     let acc_info = &acc_infos[0];
-    let mut data = acc_info.data.borrow_mut();
+    let mut data = acc_info.try_borrow_mut().unwrap();
 
     let index_0 = 0 * TEST_BLOCK_WIDTH;
     let index_1 = 1 * TEST_BLOCK_WIDTH;
@@ -4141,9 +4141,9 @@ macro_rules! build_tree_14 {
 pub fn rule_swap_nodes_with_one_child_left_right() {
     init_static();
 
-    let acc_infos: [AccountInfo; 16] = acc_infos_with_mem_layout!();
+    let acc_infos: [AccountView; 16] = account_views_with_mem_layout!();
     let acc_info = &acc_infos[0];
-    let mut data = acc_info.data.borrow_mut();
+    let mut data = acc_info.try_borrow_mut().unwrap();
 
     let index_0: DataIndex = 0 * TEST_BLOCK_WIDTH;
     let index_1: DataIndex = 1 * TEST_BLOCK_WIDTH;
@@ -4245,9 +4245,9 @@ macro_rules! build_tree_15 {
 pub fn rule_swap_nodes_with_one_child_right_left() {
     init_static();
 
-    let acc_infos: [AccountInfo; 16] = acc_infos_with_mem_layout!();
+    let acc_infos: [AccountView; 16] = account_views_with_mem_layout!();
     let acc_info = &acc_infos[0];
-    let mut data = acc_info.data.borrow_mut();
+    let mut data = acc_info.try_borrow_mut().unwrap();
 
     let index_0 = 0 * TEST_BLOCK_WIDTH;
     let index_1 = 1 * TEST_BLOCK_WIDTH;
@@ -4331,9 +4331,9 @@ macro_rules! build_tree_16 {
 pub fn rule_swap_leaves() {
     init_static();
 
-    let acc_infos: [AccountInfo; 16] = acc_infos_with_mem_layout!();
+    let acc_infos: [AccountView; 16] = account_views_with_mem_layout!();
     let acc_info = &acc_infos[0];
-    let mut data = acc_info.data.borrow_mut();
+    let mut data = acc_info.try_borrow_mut().unwrap();
 
     let index_0 = 0 * TEST_BLOCK_WIDTH;
     let index_1 = 1 * TEST_BLOCK_WIDTH;
@@ -4431,9 +4431,9 @@ macro_rules! build_tree_17 {
 pub fn rule_swap_parent_right_child() {
     init_static();
 
-    let acc_infos: [AccountInfo; 16] = acc_infos_with_mem_layout!();
+    let acc_infos: [AccountView; 16] = account_views_with_mem_layout!();
     let acc_info = &acc_infos[0];
-    let mut data = acc_info.data.borrow_mut();
+    let mut data = acc_info.try_borrow_mut().unwrap();
 
     let index_0 = 0 * TEST_BLOCK_WIDTH;
     let index_1 = 1 * TEST_BLOCK_WIDTH;
@@ -4533,9 +4533,9 @@ macro_rules! build_tree_18 {
 pub fn rule_swap_parent_left_child() {
     init_static();
 
-    let acc_infos: [AccountInfo; 16] = acc_infos_with_mem_layout!();
+    let acc_infos: [AccountView; 16] = account_views_with_mem_layout!();
     let acc_info = &acc_infos[0];
-    let mut data = acc_info.data.borrow_mut();
+    let mut data = acc_info.try_borrow_mut().unwrap();
 
     let index_0 = 0 * TEST_BLOCK_WIDTH;
     let index_1 = 1 * TEST_BLOCK_WIDTH;
@@ -4635,9 +4635,9 @@ macro_rules! build_tree_19 {
 pub fn rule_swap_right_child_parent() {
     init_static();
 
-    let acc_infos: [AccountInfo; 16] = acc_infos_with_mem_layout!();
+    let acc_infos: [AccountView; 16] = account_views_with_mem_layout!();
     let acc_info = &acc_infos[0];
-    let mut data = acc_info.data.borrow_mut();
+    let mut data = acc_info.try_borrow_mut().unwrap();
 
     let index_0 = 0 * TEST_BLOCK_WIDTH;
     let index_1 = 1 * TEST_BLOCK_WIDTH;
@@ -4737,9 +4737,9 @@ macro_rules! build_tree_20 {
 pub fn rule_swap_left_child_parent() {
     init_static();
 
-    let acc_infos: [AccountInfo; 16] = acc_infos_with_mem_layout!();
+    let acc_infos: [AccountView; 16] = account_views_with_mem_layout!();
     let acc_info = &acc_infos[0];
-    let mut data = acc_info.data.borrow_mut();
+    let mut data = acc_info.try_borrow_mut().unwrap();
 
     let index_0 = 0 * TEST_BLOCK_WIDTH;
     let index_1 = 1 * TEST_BLOCK_WIDTH;

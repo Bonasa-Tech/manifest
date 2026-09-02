@@ -40,7 +40,7 @@ num_enum = { workspace = true }
 thiserror = { workspace = true }
 solana-security-txt = { workspace = true }
 static_assertions = { workspace = true }
-nondet = { workspace = true, optional = true}
+nondet = { workspace = true, optional = true, features = ["pinocchio_accounts"] }
 cvt = { workspace = true, optional = true}
 cvt-macros = { workspace = true, optional = true}
 early-panic = { workspace = true, optional = true}

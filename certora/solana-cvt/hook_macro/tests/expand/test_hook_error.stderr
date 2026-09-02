@@ -1,0 +1,5 @@
+error: expected `fn`
+  --> tests/expand/test_hook_error.rs:10:1
+   |
+10 | struct S1 {
+   | ^^^^^^

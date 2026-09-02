@@ -1,5 +1,9 @@
 use crate::validation::AccountViewExt;
-use pinocchio::{account::RefMut, error::ProgramError, ProgramResult};
+use pinocchio::{
+    account::{AccountView, RefMut},
+    error::ProgramError,
+    ProgramResult,
+};
 
 #[cfg(not(feature = "certora"))]
 use crate::program::invoke_signed;
@@ -129,8 +133,8 @@ pub(crate) fn settle_global_gas_refunds(
 
         // The simple implementation gets
         //
-        //     **receiver.lamports().borrow_mut() += GAS_DEPOSIT_LAMPORTS;
-        //     **global.lamports().borrow_mut() -= GAS_DEPOSIT_LAMPORTS;
+        //     receiver.set_lamports(receiver.lamports() + GAS_DEPOSIT_LAMPORTS);
+        //     global.set_lamports(global.lamports() - GAS_DEPOSIT_LAMPORTS);
         //
         // failed: sum of account balances before and after instruction do not match
         //
@@ -259,10 +263,10 @@ pub(crate) fn pay_global_gas_prepayment(
     let lamports: u64 = GAS_DEPOSIT_LAMPORTS
         .checked_mul(num_gas_prepayments)
         .unwrap();
-    cvt::cvt_assume!(**payer_info.lamports() >= lamports);
-    cvt::cvt_assume!(**global.lamports() <= u64::MAX - lamports);
-    **payer_info.lamports().borrow_mut() -= lamports;
-    **global.lamports().borrow_mut() += lamports;
+    cvt::cvt_assume!(payer_info.lamports() >= lamports);
+    cvt::cvt_assume!(global.lamports() <= u64::MAX - lamports);
+    payer_info.set_lamports(payer_info.lamports() - lamports);
+    global.set_lamports(global.lamports() + lamports);
 
     Ok(())
 }

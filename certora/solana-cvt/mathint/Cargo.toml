@@ -1,0 +1,14 @@
+[package]
+name = "mathint"
+version = "0.1.0"
+edition = "2021"
+
+[features]
+default = []
+rt = []
+
+[dependencies]
+nondet = { path = "../nondet" }
+
+[dev-dependencies]
+mathint = { path = ".", features = ["rt"] }

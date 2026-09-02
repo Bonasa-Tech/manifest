@@ -7,7 +7,7 @@ use crate::{
 };
 use hypertree::DataIndex;
 use nondet::nondet;
-use solana_program::program_error::ProgramError;
+use pinocchio::error::ProgramError;
 
 /// This summary for place_order assumes that there is a matched order with a trader,
 /// and its price is 1:1

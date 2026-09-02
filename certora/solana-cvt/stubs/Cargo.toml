@@ -1,0 +1,18 @@
+[package]
+name = "stubs"
+version = "0.2.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+[features]
+impls = ["solana", "dep:solana-sdk"]
+solana = ["dep:solana-program"]
+
+[dependencies]
+solana-program = {version = "2.2", optional = true}
+solana-sdk = { version = "2.2", optional = true  }
+
+[lib]
+crate-type = ["lib"]
+path = "mod.rs"
+name = "stubs"

@@ -894,7 +894,6 @@ dependencies = [
 [[package]]
 name = "calltrace"
 version = "0.0.1"
-source = "git+https://github.com/Certora/solana-cvt?branch=solana-v2.2#ea9e7b23aa217baaba5d150db8c448bfa8ddfb33"
 dependencies = [
  "cvt",
 ]
@@ -1323,7 +1322,6 @@ dependencies = [
 [[package]]
 name = "cvt"
 version = "0.2.0"
-source = "git+https://github.com/Certora/solana-cvt?branch=solana-v2.2#ea9e7b23aa217baaba5d150db8c448bfa8ddfb33"
 dependencies = [
  "stubs",
 ]
@@ -1331,7 +1329,6 @@ dependencies = [
 [[package]]
 name = "cvt-macros"
 version = "0.0.1"
-source = "git+https://github.com/Certora/solana-cvt?branch=solana-v2.2#ea9e7b23aa217baaba5d150db8c448bfa8ddfb33"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1434,6 +1431,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "derive_nondet"
+version = "0.3.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.104",
+]
+
+[[package]]
 name = "diff"
 version = "0.1.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1523,7 +1529,6 @@ checksum = "abe71d579d1812060163dff96056261deb5bf6729b100fa2e36a68b9649ba3d3"
 [[package]]
 name = "early-panic"
 version = "0.0.1"
-source = "git+https://github.com/Certora/solana-cvt?branch=solana-v2.2#ea9e7b23aa217baaba5d150db8c448bfa8ddfb33"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2148,7 +2153,6 @@ dependencies = [
 [[package]]
 name = "hook_macro"
 version = "0.1.0"
-source = "git+https://github.com/Certora/solana-cvt?branch=solana-v2.2#ea9e7b23aa217baaba5d150db8c448bfa8ddfb33"
 dependencies = [
  "macrotest",
  "quote",
@@ -2979,10 +2983,13 @@ dependencies = [
 [[package]]
 name = "nondet"
 version = "0.5.0"
-source = "git+https://github.com/Certora/solana-cvt?branch=solana-v2.2#ea9e7b23aa217baaba5d150db8c448bfa8ddfb33"
 dependencies = [
  "cvt",
+ "derive_nondet",
+ "pinocchio",
  "solana-program",
+ "spl-token 8.0.0",
+ "spl-token-2022 9.0.0",
  "stubs",
 ]
 
@@ -7493,11 +7500,11 @@ dependencies = [
 [[package]]
 name = "solana_cvt"
 version = "0.3.0"
-source = "git+https://github.com/Certora/solana-cvt?branch=solana-v2.2#ea9e7b23aa217baaba5d150db8c448bfa8ddfb33"
 dependencies = [
  "arrayref",
  "cvt",
  "nondet",
+ "pinocchio",
  "solana-program",
 ]
 
@@ -8230,9 +8237,9 @@ dependencies = [
 [[package]]
 name = "stubs"
 version = "0.2.0"
-source = "git+https://github.com/Certora/solana-cvt?branch=solana-v2.2#ea9e7b23aa217baaba5d150db8c448bfa8ddfb33"
 dependencies = [
  "solana-program",
+ "solana-sdk",
 ]
 
 [[package]]
@@ -8948,7 +8955,6 @@ checksum = "accd4ea62f7bb7a82fe23066fb0957d48ef677f6eeb8215f372f52e48bb32426"
 [[package]]
 name = "vectors"
 version = "0.2.0"
-source = "git+https://github.com/Certora/solana-cvt?branch=solana-v2.2#ea9e7b23aa217baaba5d150db8c448bfa8ddfb33"
 dependencies = [
  "anchor-lang",
  "borsh 0.10.4",

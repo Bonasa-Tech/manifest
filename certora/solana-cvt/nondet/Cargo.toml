@@ -1,0 +1,22 @@
+[package]
+name = "nondet"
+version = "0.5.0"
+edition = "2021"
+
+[features]
+default = ["solana", "std"]
+solana = ["std", "dep:solana-program", "stubs/solana"]
+spl_token = ["solana", "dep:spl-token", "dep:spl-token-2022"]
+# Account views, for programs that read accounts as the runtime lays them out.
+pinocchio_accounts = ["std", "dep:pinocchio"]
+std = []
+derive = ["derive_nondet"]
+
+[dependencies]
+solana-program = {version = "2.2", optional=true}
+pinocchio = { version = "0.10.2", optional=true }
+spl-token = { version = "8", optional=true}
+spl-token-2022 = { version = "9", optional=true }
+cvt = { path = "../cvt" }
+stubs = { path = "../stubs" }
+derive_nondet = { version = "0.3.0", path = "./derive", optional=true }

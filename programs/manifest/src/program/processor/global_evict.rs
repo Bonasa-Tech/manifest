@@ -211,10 +211,14 @@ fn charge_eviction_fee<'a>(
     global: &ManifestAccountInfo<'a, GlobalFixed>,
 ) -> ProgramResult {
     let fee_lamports: u64 = ::nondet::nondet();
-    cvt::cvt_assume!(**payer.info.lamports() >= fee_lamports);
-    cvt::cvt_assume!(**global.info.lamports() <= u64::MAX - fee_lamports);
-    **payer.info.lamports().borrow_mut() -= fee_lamports;
-    **global.info.lamports().borrow_mut() += fee_lamports;
+    cvt::cvt_assume!(payer.info.lamports() >= fee_lamports);
+    cvt::cvt_assume!(global.info.lamports() <= u64::MAX - fee_lamports);
+    payer
+        .info
+        .set_lamports(payer.info.lamports() - fee_lamports);
+    global
+        .info
+        .set_lamports(global.info.lamports() + fee_lamports);
     Ok(())
 }
 

@@ -14,8 +14,10 @@
 //! charged by each call accumulates in a ghost that rules read back with
 //! `transfer_fees_charged` to state exact deltas.
 
+use crate::validation::AccountViewExt;
+use pinocchio::{account::AccountView, ProgramResult};
 use solana_cvt::token::{spl_token_account_get_amount, spl_token_account_set_amount};
-use solana_program::{account_info::AccountInfo, entrypoint::ProgramResult};
+use solana_program::entrypoint::ProgramResult;
 
 /// Whether transfers may charge a nondeterministic fee. Reset by
 /// `init_static`; havoced in rules that do not initialize statics.
@@ -54,12 +56,12 @@ pub fn transfer_fees_charged() -> u64 {
 /// `solana_cvt` summary: the source covers the amount, self-transfers are
 /// no-ops.
 pub fn spl_token_2022_transfer_with_fee<'a>(
-    src_info: &AccountInfo<'a>,
-    dst_info: &AccountInfo<'a>,
-    _authority_info: &AccountInfo<'a>,
+    src_info: &AccountView,
+    dst_info: &AccountView,
+    _authority_info: &AccountView,
     amount: u64,
 ) -> ProgramResult {
-    if src_info.key != dst_info.key {
+    if src_info.pubkey() != dst_info.pubkey() {
         let fee: u64 = if transfer_fee_enabled() {
             let fee: u64 = ::nondet::nondet();
             cvt::cvt_assume!(fee <= amount);

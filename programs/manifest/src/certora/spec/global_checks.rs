@@ -16,12 +16,12 @@
 //! vault land in the market vault, and are credited to somebody, in the same
 //! instruction. Note that a resting global order contributes nothing to
 //! `orderbook`, which is what makes the two invariants independent.
-use crate::*;
+use crate::{validation::AccountViewExt, *};
 use cvt::{cvt_assert, cvt_assume};
 use cvt_macros::rule;
 use nondet::*;
 
-use solana_program::account_info::AccountInfo;
+use pinocchio::account::AccountView;
 
 use crate::{
     certora::spec::{
@@ -47,10 +47,10 @@ use solana_cvt::token::spl_token_account_get_amount;
 /// The market vault on the side the global maker backs their order with. A
 /// taker bid is matched by a global ask, which is backed by base.
 fn global_side_market_vault<'a>(
-    vault_base_token: &'a AccountInfo<'static>,
-    vault_quote_token: &'a AccountInfo<'static>,
+    vault_base_token: &'a AccountView,
+    vault_quote_token: &'a AccountView,
     is_bid: bool,
-) -> &'a AccountInfo<'static> {
+) -> &'a AccountView {
     if is_bid {
         vault_base_token
     } else {
@@ -64,14 +64,14 @@ fn global_side_market_vault<'a>(
 pub fn place_single_order_global_match_check<const IS_BID: bool, const IS_FULL_MATCH: bool>() {
     cvt_static_initializer!();
 
-    let acc_infos: [AccountInfo; 16] = acc_infos_with_mem_layout!();
-    let trader: &AccountInfo = &acc_infos[0];
-    let market_info: &AccountInfo = &acc_infos[1];
-    let maker_trader: &AccountInfo = &acc_infos[7];
-    let vault_base_token: &AccountInfo = &acc_infos[8];
-    let vault_quote_token: &AccountInfo = &acc_infos[9];
-    let global_info: &AccountInfo = &acc_infos[10];
-    let global_vault_token: &AccountInfo = &acc_infos[11];
+    let acc_infos: [AccountView; 16] = account_views_with_mem_layout!();
+    let trader: &AccountView = &acc_infos[0];
+    let market_info: &AccountView = &acc_infos[1];
+    let maker_trader: &AccountView = &acc_infos[7];
+    let vault_base_token: &AccountView = &acc_infos[8];
+    let vault_quote_token: &AccountView = &acc_infos[9];
+    let global_info: &AccountView = &acc_infos[10];
+    let global_vault_token: &AccountView = &acc_infos[11];
 
     // -- the maker order on the book is a global order
     let maker_order_index: DataIndex = cvt_assume_global_market_preconditions::<IS_BID>(
@@ -82,7 +82,7 @@ pub fn place_single_order_global_match_check<const IS_BID: bool, const IS_FULL_M
         maker_trader,
     );
 
-    let market_vault_token: &AccountInfo =
+    let market_vault_token: &AccountView =
         global_side_market_vault(vault_base_token, vault_quote_token, IS_BID);
 
     let global_trade_accounts_opts: [Option<GlobalTradeAccounts>; 2] =
@@ -195,14 +195,14 @@ pub fn rule_place_single_order_global_partial_match_ask() {
 pub fn place_single_order_global_unbacked_check<const IS_BID: bool>() {
     cvt_static_initializer!();
 
-    let acc_infos: [AccountInfo; 16] = acc_infos_with_mem_layout!();
-    let trader: &AccountInfo = &acc_infos[0];
-    let market_info: &AccountInfo = &acc_infos[1];
-    let maker_trader: &AccountInfo = &acc_infos[7];
-    let vault_base_token: &AccountInfo = &acc_infos[8];
-    let vault_quote_token: &AccountInfo = &acc_infos[9];
-    let global_info: &AccountInfo = &acc_infos[10];
-    let global_vault_token: &AccountInfo = &acc_infos[11];
+    let acc_infos: [AccountView; 16] = account_views_with_mem_layout!();
+    let trader: &AccountView = &acc_infos[0];
+    let market_info: &AccountView = &acc_infos[1];
+    let maker_trader: &AccountView = &acc_infos[7];
+    let vault_base_token: &AccountView = &acc_infos[8];
+    let vault_quote_token: &AccountView = &acc_infos[9];
+    let global_info: &AccountView = &acc_infos[10];
+    let global_vault_token: &AccountView = &acc_infos[11];
 
     let maker_order_index: DataIndex = cvt_assume_global_market_preconditions::<IS_BID>(
         market_info,
@@ -212,7 +212,7 @@ pub fn place_single_order_global_unbacked_check<const IS_BID: bool>() {
         maker_trader,
     );
 
-    let market_vault_token: &AccountInfo =
+    let market_vault_token: &AccountView =
         global_side_market_vault(vault_base_token, vault_quote_token, IS_BID);
 
     let global_trade_accounts_opts: [Option<GlobalTradeAccounts>; 2] =
@@ -305,14 +305,14 @@ pub fn rule_place_single_order_global_unbacked_ask() {
 pub fn rest_remaining_global_check<const IS_BID: bool>() {
     cvt_static_initializer!();
 
-    let acc_infos: [AccountInfo; 16] = acc_infos_with_mem_layout!();
-    let trader: &AccountInfo = &acc_infos[0];
-    let market_info: &AccountInfo = &acc_infos[1];
-    let maker_trader: &AccountInfo = &acc_infos[7];
-    let vault_base_token: &AccountInfo = &acc_infos[8];
-    let vault_quote_token: &AccountInfo = &acc_infos[9];
-    let global_info: &AccountInfo = &acc_infos[10];
-    let global_vault_token: &AccountInfo = &acc_infos[11];
+    let acc_infos: [AccountView; 16] = account_views_with_mem_layout!();
+    let trader: &AccountView = &acc_infos[0];
+    let market_info: &AccountView = &acc_infos[1];
+    let maker_trader: &AccountView = &acc_infos[7];
+    let vault_base_token: &AccountView = &acc_infos[8];
+    let vault_quote_token: &AccountView = &acc_infos[9];
+    let global_info: &AccountView = &acc_infos[10];
+    let global_vault_token: &AccountView = &acc_infos[11];
 
     let maker_order_index: DataIndex = cvt_assume_market_preconditions::<IS_BID>(
         market_info,
@@ -326,7 +326,7 @@ pub fn rest_remaining_global_check<const IS_BID: bool>() {
     // it is an ask and quote when it is a bid. That is the opposite side from a
     // maker sitting on the book, which is why the vault picked here is the
     // mirror of the matching rules.
-    let market_vault_token: &AccountInfo =
+    let market_vault_token: &AccountView =
         global_side_market_vault(vault_base_token, vault_quote_token, !IS_BID);
 
     // The trader resting the global order needs the global seat, not the maker.
@@ -356,7 +356,7 @@ pub fn rest_remaining_global_check<const IS_BID: bool>() {
     cvt_assume_global_funds_invariants(global_old);
 
     let args: AddOrderToMarketArgs = AddOrderToMarketArgs {
-        market: *market_info.key,
+        market: *market_info.pubkey(),
         trader_index: main_trader_index(),
         num_base_atoms: nondet(),
         price: crate::quantities::QuoteAtomsPerBaseAtom::nondet_price_u32(),
@@ -420,14 +420,14 @@ pub fn rule_rest_remaining_global_ask() {
 pub fn cancel_global_order_check<const IS_BID: bool>() {
     cvt_static_initializer!();
 
-    let acc_infos: [AccountInfo; 16] = acc_infos_with_mem_layout!();
-    let trader: &AccountInfo = &acc_infos[0];
-    let market_info: &AccountInfo = &acc_infos[1];
-    let maker_trader: &AccountInfo = &acc_infos[7];
-    let vault_base_token: &AccountInfo = &acc_infos[8];
-    let vault_quote_token: &AccountInfo = &acc_infos[9];
-    let global_info: &AccountInfo = &acc_infos[10];
-    let global_vault_token: &AccountInfo = &acc_infos[11];
+    let acc_infos: [AccountView; 16] = account_views_with_mem_layout!();
+    let trader: &AccountView = &acc_infos[0];
+    let market_info: &AccountView = &acc_infos[1];
+    let maker_trader: &AccountView = &acc_infos[7];
+    let vault_base_token: &AccountView = &acc_infos[8];
+    let vault_quote_token: &AccountView = &acc_infos[9];
+    let global_info: &AccountView = &acc_infos[10];
+    let global_vault_token: &AccountView = &acc_infos[11];
 
     // The global order to cancel rests on the book opposite a taker on IS_BID.
     let order_index: DataIndex = cvt_assume_global_market_preconditions::<IS_BID>(
@@ -438,7 +438,7 @@ pub fn cancel_global_order_check<const IS_BID: bool>() {
         maker_trader,
     );
 
-    let market_vault_token: &AccountInfo =
+    let market_vault_token: &AccountView =
         global_side_market_vault(vault_base_token, vault_quote_token, IS_BID);
 
     let global_trade_accounts_opts: [Option<GlobalTradeAccounts>; 2] =
@@ -513,15 +513,15 @@ pub fn rule_cancel_global_order_ask() {
 pub fn cancel_global_order_gas_refund_check<const IS_BID: bool>() {
     cvt_static_initializer!();
 
-    let acc_infos: [AccountInfo; 16] = acc_infos_with_mem_layout!();
-    let trader: &AccountInfo = &acc_infos[0];
-    let market_info: &AccountInfo = &acc_infos[1];
-    let maker_trader: &AccountInfo = &acc_infos[7];
-    let vault_base_token: &AccountInfo = &acc_infos[8];
-    let vault_quote_token: &AccountInfo = &acc_infos[9];
-    let global_info: &AccountInfo = &acc_infos[10];
-    let global_vault_token: &AccountInfo = &acc_infos[11];
-    let system_program_info: &AccountInfo = &acc_infos[12];
+    let acc_infos: [AccountView; 16] = account_views_with_mem_layout!();
+    let trader: &AccountView = &acc_infos[0];
+    let market_info: &AccountView = &acc_infos[1];
+    let maker_trader: &AccountView = &acc_infos[7];
+    let vault_base_token: &AccountView = &acc_infos[8];
+    let vault_quote_token: &AccountView = &acc_infos[9];
+    let global_info: &AccountView = &acc_infos[10];
+    let global_vault_token: &AccountView = &acc_infos[11];
+    let system_program_info: &AccountView = &acc_infos[12];
 
     let order_index: DataIndex = cvt_assume_global_market_preconditions::<IS_BID>(
         market_info,
@@ -531,7 +531,7 @@ pub fn cancel_global_order_gas_refund_check<const IS_BID: bool>() {
         maker_trader,
     );
 
-    let market_vault_token: &AccountInfo =
+    let market_vault_token: &AccountView =
         global_side_market_vault(vault_base_token, vault_quote_token, IS_BID);
 
     let global_trade_accounts_opts: [Option<GlobalTradeAccounts>; 2] =
@@ -595,16 +595,16 @@ pub fn rule_cancel_global_order_gas_refund_ask() {
 pub fn rule_global_gas_prepayment() {
     cvt_static_initializer!();
 
-    let acc_infos: [AccountInfo; 16] = acc_infos_with_mem_layout!();
-    let trader: &AccountInfo = &acc_infos[0];
-    let market_info: &AccountInfo = &acc_infos[1];
-    let maker_trader: &AccountInfo = &acc_infos[7];
-    let market_vault_token: &AccountInfo = &acc_infos[8];
-    let global_info: &AccountInfo = &acc_infos[10];
-    let global_vault_token: &AccountInfo = &acc_infos[11];
-    let system_program_info: &AccountInfo = &acc_infos[12];
+    let acc_infos: [AccountView; 16] = account_views_with_mem_layout!();
+    let trader: &AccountView = &acc_infos[0];
+    let market_info: &AccountView = &acc_infos[1];
+    let maker_trader: &AccountView = &acc_infos[7];
+    let market_vault_token: &AccountView = &acc_infos[8];
+    let global_info: &AccountView = &acc_infos[10];
+    let global_vault_token: &AccountView = &acc_infos[11];
+    let system_program_info: &AccountView = &acc_infos[12];
 
-    crate::state::cvt_assume_main_trader_has_seat(trader.key);
+    crate::state::cvt_assume_main_trader_has_seat(trader.pubkey());
 
     let global_trade_accounts_opts: [Option<GlobalTradeAccounts>; 2] =
         cvt_assume_global_trade_accounts_with_gas(
@@ -660,9 +660,9 @@ pub fn rule_global_gas_prepayment() {
 pub fn rule_global_evict() {
     cvt_static_initializer!();
 
-    let acc_infos: [AccountInfo; 16] = acc_infos_with_mem_layout!();
-    let global_info: &AccountInfo = &acc_infos[10];
-    let global_vault_token: &AccountInfo = &acc_infos[11];
+    let acc_infos: [AccountView; 16] = account_views_with_mem_layout!();
+    let global_info: &AccountView = &acc_infos[10];
+    let global_vault_token: &AccountView = &acc_infos[11];
 
     cvt_assume!(global_info.owner == &crate::id());
     create_global!(global_info);
@@ -681,7 +681,7 @@ pub fn rule_global_evict() {
     cvt_assume!(global_vault_old == global_deposits_old);
 
     {
-        let global_data: &mut std::cell::RefMut<&mut [u8]> =
+        let global_data: &mut pinocchio::account::RefMut<[u8]> =
             &mut global_info.try_borrow_mut_data().unwrap();
         let mut global_dynamic_account: crate::state::GlobalRefMut =
             get_mut_dynamic_account(global_data);
@@ -715,8 +715,8 @@ pub fn rule_global_evict() {
 }
 
 /// Give the mocked global account an arbitrary number of claimed seats.
-fn set_nondet_num_seats_claimed(global_info: &AccountInfo) {
-    let global_data: &mut std::cell::RefMut<&mut [u8]> =
+fn set_nondet_num_seats_claimed(global_info: &AccountView) {
+    let global_data: &mut pinocchio::account::RefMut<[u8]> =
         &mut global_info.try_borrow_mut_data().unwrap();
     let global_dynamic_account: crate::state::GlobalRefMut = get_mut_dynamic_account(global_data);
     global_dynamic_account.fixed.set_num_seats_claimed(nondet());
@@ -733,13 +733,13 @@ fn set_nondet_num_seats_claimed(global_info: &AccountInfo) {
 pub fn rule_global_evict_processor() {
     cvt_static_initializer!();
 
-    let acc_infos: [AccountInfo; 16] = acc_infos_with_mem_layout!();
-    let used_acc_infos: &[AccountInfo] = &acc_infos[..8];
-    let payer: &AccountInfo = &used_acc_infos[0]; // the evictor
-    let global_info: &AccountInfo = &used_acc_infos[1];
-    let global_vault_token: &AccountInfo = &used_acc_infos[3];
-    let trader_token: &AccountInfo = &used_acc_infos[4];
-    let evictee_token: &AccountInfo = &used_acc_infos[5];
+    let acc_infos: [AccountView; 16] = account_views_with_mem_layout!();
+    let used_acc_infos: &[AccountView] = &acc_infos[..8];
+    let payer: &AccountView = &used_acc_infos[0]; // the evictor
+    let global_info: &AccountView = &used_acc_infos[1];
+    let global_vault_token: &AccountView = &used_acc_infos[3];
+    let trader_token: &AccountView = &used_acc_infos[4];
+    let evictee_token: &AccountView = &used_acc_infos[5];
 
     cvt_assume!(global_info.owner == &crate::id());
     create_global!(global_info);
@@ -749,19 +749,19 @@ pub fn rule_global_evict_processor() {
     set_nondet_num_seats_claimed(global_info);
 
     // -- the evictee holds the only modeled seat, the evictor holds none
-    cvt_assume!(payer.key == crate::state::main_trader_pk());
+    cvt_assume!(payer.pubkey() == crate::state::main_trader_pk());
     cvt_assume!(
         &evictee_token.try_borrow_data().unwrap()[32..64]
             == crate::state::second_trader_pk().as_ref()
     );
-    cvt_assume!(payer.key != crate::state::second_trader_pk());
+    cvt_assume!(payer.pubkey() != crate::state::second_trader_pk());
     cvt_assume!(crate::state::is_second_global_seat_taken());
     cvt_assume!(crate::state::is_main_global_seat_free());
 
     // -- distinct token accounts
-    cvt_assume!(trader_token.key != global_vault_token.key);
-    cvt_assume!(evictee_token.key != global_vault_token.key);
-    cvt_assume!(evictee_token.key != trader_token.key);
+    cvt_assume!(trader_token.pubkey() != global_vault_token.pubkey());
+    cvt_assume!(evictee_token.pubkey() != global_vault_token.pubkey());
+    cvt_assume!(evictee_token.pubkey() != trader_token.pubkey());
 
     let global_old: GlobalBalances = record_global_balances(global_info, global_vault_token, payer);
     cvt_assume_global_funds_invariants(global_old);
@@ -815,11 +815,11 @@ pub fn rule_global_evict_processor() {
     cvt_assert_global_funds_invariants(global_new);
 
     // -- the seat changed hands and the balances ended where they should
-    cvt_assert!(crate::state::has_mock_global_seat(payer.key));
+    cvt_assert!(crate::state::has_mock_global_seat(payer.pubkey()));
     cvt_assert!(!crate::state::has_mock_global_seat(
         crate::state::second_trader_pk()
     ));
-    cvt_assert!(crate::state::global_balance_atoms(payer.key) == amount_atoms);
+    cvt_assert!(crate::state::global_balance_atoms(payer.pubkey()) == amount_atoms);
     cvt_assert!(crate::state::global_balance_atoms(crate::state::second_trader_pk()) == 0);
 
     cvt_vacuity_check!();
@@ -836,13 +836,13 @@ pub fn rule_global_evict_processor_with_fee() {
 
     cvt_static_initializer!();
 
-    let acc_infos: [AccountInfo; 16] = acc_infos_with_mem_layout!();
-    let used_acc_infos: &[AccountInfo] = &acc_infos[..8];
-    let payer: &AccountInfo = &used_acc_infos[0]; // the evictor
-    let global_info: &AccountInfo = &used_acc_infos[1];
-    let global_vault_token: &AccountInfo = &used_acc_infos[3];
-    let trader_token: &AccountInfo = &used_acc_infos[4];
-    let evictee_token: &AccountInfo = &used_acc_infos[5];
+    let acc_infos: [AccountView; 16] = account_views_with_mem_layout!();
+    let used_acc_infos: &[AccountView] = &acc_infos[..8];
+    let payer: &AccountView = &used_acc_infos[0]; // the evictor
+    let global_info: &AccountView = &used_acc_infos[1];
+    let global_vault_token: &AccountView = &used_acc_infos[3];
+    let trader_token: &AccountView = &used_acc_infos[4];
+    let evictee_token: &AccountView = &used_acc_infos[5];
 
     cvt_assume!(global_info.owner == &crate::id());
     create_global!(global_info);
@@ -857,19 +857,19 @@ pub fn rule_global_evict_processor_with_fee() {
     cvt_enable_transfer_fee();
 
     // -- the evictee holds the only modeled seat, the evictor holds none
-    cvt_assume!(payer.key == crate::state::main_trader_pk());
+    cvt_assume!(payer.pubkey() == crate::state::main_trader_pk());
     cvt_assume!(
         &evictee_token.try_borrow_data().unwrap()[32..64]
             == crate::state::second_trader_pk().as_ref()
     );
-    cvt_assume!(payer.key != crate::state::second_trader_pk());
+    cvt_assume!(payer.pubkey() != crate::state::second_trader_pk());
     cvt_assume!(crate::state::is_second_global_seat_taken());
     cvt_assume!(crate::state::is_main_global_seat_free());
 
     // -- distinct token accounts
-    cvt_assume!(trader_token.key != global_vault_token.key);
-    cvt_assume!(evictee_token.key != global_vault_token.key);
-    cvt_assume!(evictee_token.key != trader_token.key);
+    cvt_assume!(trader_token.pubkey() != global_vault_token.pubkey());
+    cvt_assume!(evictee_token.pubkey() != global_vault_token.pubkey());
+    cvt_assume!(evictee_token.pubkey() != trader_token.pubkey());
 
     let global_old: GlobalBalances = record_global_balances(global_info, global_vault_token, payer);
     cvt_assume_global_funds_invariants(global_old);
@@ -894,7 +894,7 @@ pub fn rule_global_evict_processor_with_fee() {
 
     // The two legs charge one fee each. The evictor's credited balance
     // recovers the deposit-leg fee; the rest was charged on the withdraw leg.
-    let deposited: u64 = crate::state::global_balance_atoms(payer.key);
+    let deposited: u64 = crate::state::global_balance_atoms(payer.pubkey());
     cvt_assert!(deposited <= amount_atoms);
     let deposit_fee: u64 = amount_atoms - deposited;
     let fees: u64 = transfer_fees_charged();
@@ -924,7 +924,7 @@ pub fn rule_global_evict_processor_with_fee() {
     cvt_assert_global_funds_invariants(global_new);
 
     // -- the seat changed hands and the balances ended where they should
-    cvt_assert!(crate::state::has_mock_global_seat(payer.key));
+    cvt_assert!(crate::state::has_mock_global_seat(payer.pubkey()));
     cvt_assert!(!crate::state::has_mock_global_seat(
         crate::state::second_trader_pk()
     ));
@@ -939,18 +939,18 @@ pub fn rule_global_evict_processor_with_fee() {
 pub fn rule_global_deposit() {
     cvt_static_initializer!();
 
-    let acc_infos: [AccountInfo; 16] = acc_infos_with_mem_layout!();
-    let used_acc_infos: &[AccountInfo] = &acc_infos[..6];
-    let trader: &AccountInfo = &used_acc_infos[0];
-    let global_info: &AccountInfo = &used_acc_infos[1];
-    let global_vault_token: &AccountInfo = &used_acc_infos[3];
-    let trader_token: &AccountInfo = &used_acc_infos[4];
+    let acc_infos: [AccountView; 16] = account_views_with_mem_layout!();
+    let used_acc_infos: &[AccountView] = &acc_infos[..6];
+    let trader: &AccountView = &used_acc_infos[0];
+    let global_info: &AccountView = &used_acc_infos[1];
+    let global_vault_token: &AccountView = &used_acc_infos[3];
+    let trader_token: &AccountView = &used_acc_infos[4];
 
     cvt_assume!(global_info.owner == &crate::id());
     create_global!(global_info);
-    crate::state::cvt_assume_main_trader_has_seat(trader.key);
-    crate::state::cvt_assume_has_global_seat(trader.key);
-    cvt_assume!(trader_token.key != global_vault_token.key);
+    crate::state::cvt_assume_main_trader_has_seat(trader.pubkey());
+    crate::state::cvt_assume_has_global_seat(trader.pubkey());
+    cvt_assume!(trader_token.pubkey() != global_vault_token.pubkey());
 
     let global_old: GlobalBalances =
         record_global_balances(global_info, global_vault_token, trader);
@@ -996,18 +996,18 @@ pub fn rule_global_deposit_with_fee() {
 
     cvt_static_initializer!();
 
-    let acc_infos: [AccountInfo; 16] = acc_infos_with_mem_layout!();
-    let used_acc_infos: &[AccountInfo] = &acc_infos[..6];
-    let trader: &AccountInfo = &used_acc_infos[0];
-    let global_info: &AccountInfo = &used_acc_infos[1];
-    let global_vault_token: &AccountInfo = &used_acc_infos[3];
-    let trader_token: &AccountInfo = &used_acc_infos[4];
+    let acc_infos: [AccountView; 16] = account_views_with_mem_layout!();
+    let used_acc_infos: &[AccountView] = &acc_infos[..6];
+    let trader: &AccountView = &used_acc_infos[0];
+    let global_info: &AccountView = &used_acc_infos[1];
+    let global_vault_token: &AccountView = &used_acc_infos[3];
+    let trader_token: &AccountView = &used_acc_infos[4];
 
     cvt_assume!(global_info.owner == &crate::id());
     create_global!(global_info);
-    crate::state::cvt_assume_main_trader_has_seat(trader.key);
-    crate::state::cvt_assume_has_global_seat(trader.key);
-    cvt_assume!(trader_token.key != global_vault_token.key);
+    crate::state::cvt_assume_main_trader_has_seat(trader.pubkey());
+    crate::state::cvt_assume_has_global_seat(trader.pubkey());
+    cvt_assume!(trader_token.pubkey() != global_vault_token.pubkey());
 
     // -- the vault is a token-2022 account, the only path where a transfer fee
     // exists, and the mint may charge one
@@ -1056,18 +1056,18 @@ pub fn rule_global_deposit_with_fee() {
 pub fn rule_global_withdraw() {
     cvt_static_initializer!();
 
-    let acc_infos: [AccountInfo; 16] = acc_infos_with_mem_layout!();
-    let used_acc_infos: &[AccountInfo] = &acc_infos[..6];
-    let trader: &AccountInfo = &used_acc_infos[0];
-    let global_info: &AccountInfo = &used_acc_infos[1];
-    let global_vault_token: &AccountInfo = &used_acc_infos[3];
-    let trader_token: &AccountInfo = &used_acc_infos[4];
+    let acc_infos: [AccountView; 16] = account_views_with_mem_layout!();
+    let used_acc_infos: &[AccountView] = &acc_infos[..6];
+    let trader: &AccountView = &used_acc_infos[0];
+    let global_info: &AccountView = &used_acc_infos[1];
+    let global_vault_token: &AccountView = &used_acc_infos[3];
+    let trader_token: &AccountView = &used_acc_infos[4];
 
     cvt_assume!(global_info.owner == &crate::id());
     create_global!(global_info);
-    crate::state::cvt_assume_main_trader_has_seat(trader.key);
-    crate::state::cvt_assume_has_global_seat(trader.key);
-    cvt_assume!(trader_token.key != global_vault_token.key);
+    crate::state::cvt_assume_main_trader_has_seat(trader.pubkey());
+    crate::state::cvt_assume_has_global_seat(trader.pubkey());
+    cvt_assume!(trader_token.pubkey() != global_vault_token.pubkey());
 
     let global_old: GlobalBalances =
         record_global_balances(global_info, global_vault_token, trader);

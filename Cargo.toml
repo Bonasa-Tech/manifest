@@ -50,14 +50,14 @@ solana-hash = "=2.2.1"
 solana-address-lookup-table-interface = "=2.2.2"
 tokio = "1.28.0"
 
-nondet = { git = "https://github.com/Certora/solana-cvt", branch = "solana-v2.2" }
-cvt = { git = "https://github.com/Certora/solana-cvt", branch = "solana-v2.2" }
-early-panic = { git = "https://github.com/Certora/solana-cvt", branch = "solana-v2.2" }
-cvt-macros = { git = "https://github.com/Certora/solana-cvt", branch = "solana-v2.2" }
-calltrace = { git = "https://github.com/Certora/solana-cvt", branch = "solana-v2.2" }
-solana_cvt = { git = "https://github.com/Certora/solana-cvt", branch = "solana-v2.2" }
-hook_macro = { git = "https://github.com/Certora/solana-cvt", branch = "solana-v2.2" }
-vectors = { git = "https://github.com/Certora/solana-cvt", branch = "solana-v2.2" }
+nondet = { path = "certora/solana-cvt/nondet" }
+cvt = { path = "certora/solana-cvt/cvt" }
+early-panic = { path = "certora/solana-cvt/early-panic" }
+cvt-macros = { path = "certora/solana-cvt/cvt-macros" }
+calltrace = { path = "certora/solana-cvt/calltrace" }
+solana_cvt = { path = "certora/solana-cvt/solana_cvt" }
+hook_macro = { path = "certora/solana-cvt/hook_macro" }
+vectors = { path = "certora/solana-cvt/vectors" }
 arrayref = "0.3.7"
 
 # https://doc.rust-lang.org/cargo/reference/profiles.html
