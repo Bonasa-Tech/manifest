@@ -1,4 +1,5 @@
 use hypertree::RBTREE_OVERHEAD_BYTES;
+use static_assertions::const_assert_eq;
 
 pub const MARKET_FIXED_SIZE: usize = 256;
 pub const GLOBAL_FIXED_SIZE: usize = 96;
@@ -47,3 +48,9 @@ pub const GAS_DEPOSIT_LAMPORTS: u64 = 5_000;
 pub const MAX_GLOBAL_SEATS: u16 = 4;
 #[cfg(not(feature = "test"))]
 pub const MAX_GLOBAL_SEATS: u16 = 999;
+
+// `get_helper` reads a node at a block boundary and relies on that boundary
+// being aligned for the node type, which holds because every block size is a
+// multiple of eight.
+const_assert_eq!(MARKET_BLOCK_SIZE % 8, 0);
+const_assert_eq!(GLOBAL_BLOCK_SIZE % 8, 0);
