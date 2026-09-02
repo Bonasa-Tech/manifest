@@ -134,12 +134,8 @@ pub(crate) fn process_create_market(
                         token_account.pubkey(),
                     )
                     .map_err(to_program_error)?,
-                    &[
-                        payer.as_ref(),
-                        token_account,
-                        mint,
-                        token_program_22.as_ref(),
-                    ],
+                    // initialize_account3 names the account and its mint.
+                    &[token_account, mint],
                 )?;
             } else {
                 let space: usize = spl_token::state::Account::LEN;
@@ -160,7 +156,8 @@ pub(crate) fn process_create_market(
                         token_account.pubkey(),
                     )
                     .map_err(to_program_error)?,
-                    &[payer.as_ref(), token_account, mint, token_program.as_ref()],
+                    // initialize_account3 names the account and its mint.
+                    &[token_account, mint],
                 )?;
             }
         }

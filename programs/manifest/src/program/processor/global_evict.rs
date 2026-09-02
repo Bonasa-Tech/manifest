@@ -241,10 +241,11 @@ fn spl_token_transfer_from_global_vault_to_evictee<'a>(
                 mint.mint.decimals,
             )
             .map_err(to_program_error)?,
+            // source, mint, destination, authority: the vault signs for itself.
             &[
-                token_program.as_ref(),
-                evictee_token.as_ref(),
+                global_vault.as_ref(),
                 mint.as_ref(),
+                evictee_token.as_ref(),
                 global_vault.as_ref(),
             ],
             global_vault_seeds_with_bump!(mint.info.pubkey(), bump),
@@ -260,10 +261,11 @@ fn spl_token_transfer_from_global_vault_to_evictee<'a>(
                 amount_atoms,
             )
             .map_err(to_program_error)?,
+            // source, destination, authority: the vault signs for itself.
             &[
-                token_program.as_ref(),
                 global_vault.as_ref(),
                 evictee_token.as_ref(),
+                global_vault.as_ref(),
             ],
             global_vault_seeds_with_bump!(mint.info.pubkey(), bump),
         )?;
@@ -324,8 +326,8 @@ fn spl_token_transfer_from_evictor_to_global_vault<'a>(
                 mint.mint.decimals,
             )
             .map_err(to_program_error)?,
+            // source, mint, destination, authority.
             &[
-                token_program.as_ref(),
                 trader_token.as_ref(),
                 mint.as_ref(),
                 global_vault.as_ref(),
@@ -343,12 +345,8 @@ fn spl_token_transfer_from_evictor_to_global_vault<'a>(
                 amount_atoms,
             )
             .map_err(to_program_error)?,
-            &[
-                token_program.as_ref(),
-                trader_token.as_ref(),
-                global_vault.as_ref(),
-                payer.as_ref(),
-            ],
+            // source, destination, authority.
+            &[trader_token.as_ref(), global_vault.as_ref(), payer.as_ref()],
         )?;
     }
     Ok(())

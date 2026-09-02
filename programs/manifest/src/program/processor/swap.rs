@@ -544,12 +544,8 @@ fn spl_token_transfer_from_trader_to_vault<'a>(
             amount,
         )
         .map_err(to_program_error)?,
-        &[
-            token_program.as_ref(),
-            trader_account.as_ref(),
-            vault.as_ref(),
-            owner.as_ref(),
-        ],
+        // source, destination, authority.
+        &[trader_account.as_ref(), vault.as_ref(), owner.as_ref()],
     )
 }
 #[cfg(feature = "certora")]
@@ -588,11 +584,11 @@ fn spl_token_2022_transfer_from_trader_to_vault<'a>(
             decimals,
         )
         .map_err(to_program_error)?,
+        // source, mint, destination, authority.
         &[
-            token_program.as_ref(),
             trader_account.as_ref(),
-            vault.as_ref(),
             mint.unwrap().as_ref(),
+            vault.as_ref(),
             owner.as_ref(),
         ],
     )
@@ -634,11 +630,8 @@ fn spl_token_transfer_from_vault_to_trader<'a>(
             amount,
         )
         .map_err(to_program_error)?,
-        &[
-            token_program.as_ref(),
-            vault.as_ref(),
-            trader_account.as_ref(),
-        ],
+        // source, destination, authority: the vault signs for itself.
+        &[vault.as_ref(), trader_account.as_ref(), vault.as_ref()],
         market_vault_seeds_with_bump!(market_key, mint_pubkey, vault_bump),
     )
 }
@@ -682,11 +675,12 @@ fn spl_token_2022_transfer_from_vault_to_trader<'a>(
             decimals,
         )
         .map_err(to_program_error)?,
+        // source, mint, destination, authority: the vault signs for itself.
         &[
-            token_program.as_ref(),
             vault.as_ref(),
             mint.unwrap().as_ref(),
             trader_account.as_ref(),
+            vault.as_ref(),
         ],
         market_vault_seeds_with_bump!(market_key, mint_pubkey, vault_bump),
     )

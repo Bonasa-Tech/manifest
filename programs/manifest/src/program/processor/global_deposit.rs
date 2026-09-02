@@ -131,8 +131,8 @@ fn spl_token_transfer_from_trader_to_global_vault<'a>(
             amount_atoms,
         )
         .map_err(to_program_error)?,
+        // source, destination, authority.
         &[
-            token_program.as_ref(),
             trader_token_account.as_ref(),
             global_vault.as_ref(),
             payer.as_ref(),
@@ -179,8 +179,8 @@ fn spl_token_2022_transfer_from_trader_to_global_vault<'a>(
             mint.mint.decimals,
         )
         .map_err(to_program_error)?,
+        // source, mint, destination, authority.
         &[
-            token_program.as_ref(),
             trader_token_account.as_ref(),
             mint.as_ref(),
             global_vault.as_ref(),

@@ -122,10 +122,11 @@ fn spl_token_transfer_from_global_vault_to_trader<'a>(
             amount_atoms,
         )
         .map_err(to_program_error)?,
+        // source, destination, authority: the vault signs for itself.
         &[
-            token_program.as_ref(),
             global_vault.as_ref(),
             trader_token.as_ref(),
+            global_vault.as_ref(),
         ],
         global_vault_seeds_with_bump!(mint.info.pubkey(), bump),
     )
@@ -171,10 +172,11 @@ fn spl_token_2022_transfer_from_global_vault_to_trader<'a>(
             mint.mint.decimals,
         )
         .map_err(to_program_error)?,
+        // source, mint, destination, authority: the vault signs for itself.
         &[
-            token_program.as_ref(),
-            trader_token.as_ref(),
+            global_vault.as_ref(),
             mint.as_ref(),
+            trader_token.as_ref(),
             global_vault.as_ref(),
         ],
         global_vault_seeds_with_bump!(mint.info.pubkey(), bump),

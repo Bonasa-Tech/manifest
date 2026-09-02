@@ -58,7 +58,7 @@ pub(crate) fn process_global_create(
                         payer.info.pubkey(),
                         global.info.lamports(),
                     ),
-                    &[payer.info, global.info, system_program.info],
+                    &[payer.info, global.info],
                     global_seeds_with_bump!(global_mint.info.pubkey(), global_bump),
                 )?;
             }
@@ -112,7 +112,7 @@ pub(crate) fn process_global_create(
                         payer.info.pubkey(),
                         global_vault.info.lamports(),
                     ),
-                    &[payer.info, global_vault.info, system_program.info],
+                    &[payer.info, global_vault.info],
                     global_vault_seeds_with_bump!(global_mint.info.pubkey(), global_vault_bump),
                 )?;
             }
@@ -147,12 +147,8 @@ pub(crate) fn process_global_create(
                         global_vault.as_ref().pubkey(),
                     )
                     .map_err(to_program_error)?,
-                    &[
-                        payer.as_ref(),
-                        global_vault.as_ref(),
-                        global_mint.as_ref(),
-                        token_program.as_ref(),
-                    ],
+                    // initialize_account3 names the account and its mint.
+                    &[global_vault.as_ref(), global_mint.as_ref()],
                 )?;
             } else {
                 let space: usize = spl_token::state::Account::LEN;
@@ -173,12 +169,8 @@ pub(crate) fn process_global_create(
                         global_vault.as_ref().pubkey(),
                     )
                     .map_err(to_program_error)?,
-                    &[
-                        payer.as_ref(),
-                        global_vault.as_ref(),
-                        global_mint.as_ref(),
-                        token_program.as_ref(),
-                    ],
+                    // initialize_account3 names the account and its mint.
+                    &[global_vault.as_ref(), global_mint.as_ref()],
                 )?;
             }
         }

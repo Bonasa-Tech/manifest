@@ -35,7 +35,8 @@ pub fn create_account<'a>(
             space,
             program_owner,
         ),
-        &[payer, new_account, system_program],
+        // create_account names the funder and the new account.
+        &[payer, new_account],
         &[seeds
             .iter()
             .map(|seed| seed.as_slice())

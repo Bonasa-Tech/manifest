@@ -521,11 +521,12 @@ pub(crate) fn transfer_global_tokens<'a>(
                 mint_account_info.mint.decimals,
             )
             .map_err(to_program_error)?,
+            // source, mint, destination, authority: the vault signs for itself.
             &[
-                token_program.as_ref(),
                 global_vault.as_ref(),
                 mint_account_info.as_ref(),
                 market_vault.as_ref(),
+                global_vault.as_ref(),
             ],
             global_vault_seeds_with_bump!(&mint_key, global_vault_bump),
         )?;
@@ -540,10 +541,11 @@ pub(crate) fn transfer_global_tokens<'a>(
                 total_atoms.as_u64(),
             )
             .map_err(to_program_error)?,
+            // source, destination, authority: the vault signs for itself.
             &[
-                token_program.as_ref(),
                 global_vault.as_ref(),
                 market_vault.as_ref(),
+                global_vault.as_ref(),
             ],
             global_vault_seeds_with_bump!(&mint_key, global_vault_bump),
         )?;
