@@ -1,4 +1,5 @@
 use crate::require;
+use crate::validation::AccountInfoExt;
 use pinocchio::program_error::ProgramError;
 use pinocchio::account_info::AccountInfo;
 use solana_program::{

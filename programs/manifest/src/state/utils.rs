@@ -44,8 +44,8 @@ pub fn get_now_slot() -> u32 {
     #[cfg(feature = "no-clock")]
     let now_slot: u64 = 0;
     #[cfg(not(feature = "no-clock"))]
-    let now_slot: u64 = solana_program::clock::Clock::get()
-        .unwrap_or(solana_program::clock::Clock {
+    let now_slot: u64 = pinocchio::sysvars::clock::Clock::get()
+        .unwrap_or(pinocchio::sysvars::clock::Clock {
             slot: u64::MAX,
             epoch_start_timestamp: i64::MAX,
             epoch: u64::MAX,
@@ -61,8 +61,8 @@ pub(crate) fn get_now_epoch() -> u64 {
     #[cfg(feature = "no-clock")]
     let now_epoch: u64 = 0;
     #[cfg(not(feature = "no-clock"))]
-    let now_epoch: u64 = solana_program::clock::Clock::get()
-        .unwrap_or(solana_program::clock::Clock {
+    let now_epoch: u64 = pinocchio::sysvars::clock::Clock::get()
+        .unwrap_or(pinocchio::sysvars::clock::Clock {
             slot: u64::MAX,
             epoch_start_timestamp: i64::MAX,
             epoch: u64::MAX,
@@ -131,8 +131,8 @@ pub(crate) fn settle_global_gas_refunds(
 
         // The simple implementation gets
         //
-        //     **receiver.lamports.borrow_mut() += GAS_DEPOSIT_LAMPORTS;
-        //     **global.lamports.borrow_mut() -= GAS_DEPOSIT_LAMPORTS;
+        //     **receiver.lamports().borrow_mut() += GAS_DEPOSIT_LAMPORTS;
+        //     **global.lamports().borrow_mut() -= GAS_DEPOSIT_LAMPORTS;
         //
         // failed: sum of account balances before and after instruction do not match
         //
@@ -158,13 +158,15 @@ pub(crate) fn settle_global_gas_refunds(
         //             &trader.info.pubkey(),
         //             GAS_DEPOSIT_LAMPORTS,
         //         ),
-        //         &[global.info.clone(), trader.info.clone(), system_program.info.clone()],
+        //         &[global.info, trader.info, system_program.info],
         //         global_seeds_with_bump!(mint, global_bump),
         //     )?;
         // }
         let refund_lamports: u64 = GAS_DEPOSIT_LAMPORTS.checked_mul(num_refunds).unwrap();
-        **global.lamports.borrow_mut() -= refund_lamports;
-        **gas_receiver_opt.as_ref().unwrap().lamports.borrow_mut() += refund_lamports;
+        // Both accounts belong to this program here, so the lamports move by
+        // writing the balances rather than asking the system program.
+        *global.try_borrow_mut_lamports()? -= refund_lamports;
+        *gas_receiver_opt.as_ref().unwrap().try_borrow_mut_lamports()? += refund_lamports;
     }
 
     Ok(())
@@ -182,7 +184,7 @@ pub(crate) fn try_to_add_to_global(
 
     let global_data: &mut RefMut<[u8]> = &mut global.try_borrow_mut_data()?;
     let mut global_dynamic_account: GlobalRefMut = get_mut_dynamic_account(global_data);
-    global_dynamic_account.add_order(resting_order, gas_payer_opt.as_ref().unwrap().key)
+    global_dynamic_account.add_order(resting_order, gas_payer_opt.as_ref().unwrap().pubkey())
 }
 
 // Takes a slice so both `Vec` (production) and `NoResizableVec` (certora, via
@@ -233,8 +235,8 @@ pub(crate) fn pay_global_gas_prepayment(
                 .unwrap(),
         ),
         &[
-            gas_payer_opt.as_ref().unwrap().info.clone(),
-            global.info.clone(),
+            gas_payer_opt.as_ref().unwrap().info,
+            global.info,
         ],
     )?;
 
@@ -262,8 +264,8 @@ pub(crate) fn pay_global_gas_prepayment(
         .unwrap();
     cvt::cvt_assume!(**payer_info.lamports() >= lamports);
     cvt::cvt_assume!(**global.lamports() <= u64::MAX - lamports);
-    **payer_info.lamports.borrow_mut() -= lamports;
-    **global.lamports.borrow_mut() += lamports;
+    **payer_info.lamports().borrow_mut() -= lamports;
+    **global.lamports().borrow_mut() += lamports;
 
     Ok(())
 }

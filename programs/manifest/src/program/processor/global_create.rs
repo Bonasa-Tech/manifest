@@ -58,10 +58,9 @@ pub(crate) fn process_global_create(
                         payer.info.pubkey(),
                         global.info.lamports(),
                     ),
-                    &[
-                        payer.info.clone(),
-                        global.info.clone(),
-                        system_program.info.clone(),
+                    &[payer.info,
+                        global.info,
+                        system_program.info,
                     ],
                     global_seeds_with_bump!(global_mint.info.pubkey(), global_bump),
                 )?;
@@ -78,7 +77,7 @@ pub(crate) fn process_global_create(
 
             // Setup the empty market
             let empty_global_fixed: GlobalFixed = GlobalFixed::new_empty_with_bumps(
-                global_mint.as_ref().key,
+                global_mint.as_ref().pubkey(),
                 expected_global_vault_key,
                 global_vault_bump,
                 global_bump,
@@ -116,10 +115,9 @@ pub(crate) fn process_global_create(
                         payer.info.pubkey(),
                         global_vault.info.lamports(),
                     ),
-                    &[
-                        payer.info.clone(),
-                        global_vault.info.clone(),
-                        system_program.info.clone(),
+                    &[payer.info,
+                        global_vault.info,
+                        system_program.info,
                     ],
                     global_vault_seeds_with_bump!(global_mint.info.pubkey(), global_vault_bump),
                 )?;
@@ -147,9 +145,9 @@ pub(crate) fn process_global_create(
                 invoke(
                     &spl_token_2022::instruction::initialize_account3(
                         &spl_token_2022::id(),
-                        global_vault.as_ref().key,
+                        global_vault.as_ref().pubkey(),
                         global_mint.info.pubkey(),
-                        global_vault.as_ref().key,
+                        global_vault.as_ref().pubkey(),
                     )?,
                     &[
                         payer.as_ref(),
@@ -172,9 +170,9 @@ pub(crate) fn process_global_create(
                 invoke(
                     &spl_token::instruction::initialize_account3(
                         &spl_token::id(),
-                        global_vault.as_ref().key,
+                        global_vault.as_ref().pubkey(),
                         global_mint.info.pubkey(),
-                        global_vault.as_ref().key,
+                        global_vault.as_ref().pubkey(),
                     )?,
                     &[
                         payer.as_ref(),

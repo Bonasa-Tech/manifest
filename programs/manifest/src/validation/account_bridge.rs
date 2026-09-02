@@ -13,8 +13,6 @@
 //! terms of `Pubkey` and no bytes are copied to get there.
 
 use pinocchio::{account_info::AccountInfo, program_error::ProgramError, pubkey::Pubkey as RawKey};
-use crate::validation::io_to_program_error;
-use crate::validation::to_program_error;
 use solana_program::pubkey::Pubkey;
 
 /// Reinterprets a raw runtime key as a `Pubkey`.

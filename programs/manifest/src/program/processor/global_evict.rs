@@ -196,7 +196,7 @@ fn charge_eviction_fee<'a>(
             &global.pubkey(),
             rent.minimum_balance(Account::LEN as usize) * 2 + 10000 * GAS_DEPOSIT_LAMPORTS,
         ),
-        &[payer.info.clone(), global.info.clone()],
+        &[payer.info, global.info],
     )?;
     Ok(())
 }
@@ -213,8 +213,8 @@ fn charge_eviction_fee<'a>(
     let fee_lamports: u64 = ::nondet::nondet();
     cvt::cvt_assume!(**payer.info.lamports() >= fee_lamports);
     cvt::cvt_assume!(**global.info.lamports() <= u64::MAX - fee_lamports);
-    **payer.info.lamports.borrow_mut() -= fee_lamports;
-    **global.info.lamports.borrow_mut() += fee_lamports;
+    **payer.info.lamports().borrow_mut() -= fee_lamports;
+    **global.info.lamports().borrow_mut() += fee_lamports;
     Ok(())
 }
 

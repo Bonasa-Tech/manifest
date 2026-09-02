@@ -40,7 +40,7 @@ pub(crate) fn process_global_add_trader(
                 &global.pubkey(),
                 rent.minimum_balance(Account::LEN as usize) * 2,
             ),
-            &[payer.info.clone(), global.info.clone()],
+            &[payer.info, global.info],
         )?;
     }
 
