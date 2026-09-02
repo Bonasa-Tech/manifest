@@ -14,8 +14,8 @@
 //! charged by each call accumulates in a ghost that rules read back with
 //! `transfer_fees_charged` to state exact deltas.
 
-use solana_cvt::token::{spl_token_account_get_amount, spl_token_account_set_amount};
 use crate::validation::AccountInfoExt;
+use solana_cvt::token::{spl_token_account_get_amount, spl_token_account_set_amount};
 use solana_program::{account_info::AccountInfo, entrypoint::ProgramResult};
 
 /// Whether transfers may charge a nondeterministic fee. Reset by

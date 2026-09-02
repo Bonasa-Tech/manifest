@@ -1,10 +1,10 @@
-use pinocchio::account_info::{Ref, RefMut};
-use pinocchio::sysvars::Sysvar;
-use manifest::validation::next_account_info;
-use manifest::validation::AccountInfoExt;
-use pinocchio::account_info::AccountInfo;
-use pinocchio::ProgramResult;
-use pinocchio::program_error::ProgramError;
+use manifest::validation::{next_account_info, AccountInfoExt};
+use pinocchio::{
+    account_info::{AccountInfo, Ref, RefMut},
+    program_error::ProgramError,
+    sysvars::Sysvar,
+    ProgramResult,
+};
 
 use borsh::{BorshDeserialize, BorshSerialize};
 use hypertree::{
@@ -19,10 +19,7 @@ use manifest::{
     state::{claimed_seat::ClaimedSeat, DynamicAccount, MarketFixed},
     validation::{ManifestAccountInfo, Program, Signer},
 };
-use solana_program::{
-    pubkey::Pubkey,
-    system_program,
-    };
+use solana_program::{pubkey::Pubkey, system_program};
 
 use crate::{
     market_info::MarketInfo, open_order::WrapperOpenOrder,
@@ -65,9 +62,11 @@ pub(crate) fn process_cancel_order(
         Program::new(next_account_info(account_iter)?, &manifest::id())?;
 
     check_signer(&wrapper_state, owner.pubkey());
-    let market_info_index: DataIndex = get_market_info_index_for_market(&wrapper_state, market.pubkey());
+    let market_info_index: DataIndex =
+        get_market_info_index_for_market(&wrapper_state, market.pubkey());
 
-    let cancel = WrapperCancelOrderParams::try_from_slice(data).map_err(manifest::validation::io_to_program_error)?;
+    let cancel = WrapperCancelOrderParams::try_from_slice(data)
+        .map_err(manifest::validation::io_to_program_error)?;
 
     // prepare cancel
     let wrapper_data: Ref<[u8]> = wrapper_state.info.try_borrow_data()?;

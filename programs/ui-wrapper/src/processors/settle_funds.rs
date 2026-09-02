@@ -1,9 +1,9 @@
-use pinocchio::account_info::{Ref, RefMut};
-use manifest::validation::next_account_info;
-use manifest::validation::AccountInfoExt;
-use pinocchio::account_info::AccountInfo;
-use pinocchio::ProgramResult;
-use pinocchio::program_error::ProgramError;
+use manifest::validation::{next_account_info, AccountInfoExt};
+use pinocchio::{
+    account_info::{AccountInfo, Ref, RefMut},
+    program_error::ProgramError,
+    ProgramResult,
+};
 
 use borsh::{BorshDeserialize, BorshSerialize};
 use hypertree::{get_mut_helper, trace, DataIndex, RBNode};
@@ -14,10 +14,7 @@ use manifest::{
     state::{DynamicAccount, MarketFixed, MarketRef},
     validation::{ManifestAccountInfo, Program, Signer},
 };
-use solana_program::{
-    pubkey,
-    pubkey::Pubkey,
-};
+use solana_program::{pubkey, pubkey::Pubkey};
 
 use crate::{
     logs::{PlatformFeeLog, ReferrerFeeLog},
@@ -79,7 +76,8 @@ pub(crate) fn process_settle_funds(
     if *fee_authority.pubkey() != FEE_AUTHORITY {
         return Err(ProgramError::InvalidArgument);
     }
-    let market_info_index: DataIndex = get_market_info_index_for_market(&wrapper_state, market.pubkey());
+    let market_info_index: DataIndex =
+        get_market_info_index_for_market(&wrapper_state, market.pubkey());
 
     // Do an initial sync to update withdrawable balances and volume traded for fee calculation.
     sync_fast(&wrapper_state, &market, market_info_index)?;
@@ -96,7 +94,8 @@ pub(crate) fn process_settle_funds(
     let WrapperSettleFundsParams {
         fee_mantissa,
         platform_fee_percent,
-    } = WrapperSettleFundsParams::try_from_slice(data).map_err(manifest::validation::io_to_program_error)?;
+    } = WrapperSettleFundsParams::try_from_slice(data)
+        .map_err(manifest::validation::io_to_program_error)?;
     let fee_mantissa = (fee_mantissa as u128).min(FEE_DENOMINATOR);
     if fee_mantissa == 0 {
         return Err(ProgramError::InvalidArgument);
@@ -198,7 +197,8 @@ pub(crate) fn process_settle_funds(
                 &[],
                 platform_fee_atoms,
                 quote_mint_decimals,
-            ).map_err(manifest::validation::to_program_error)?,
+            )
+            .map_err(manifest::validation::to_program_error)?,
             &[
                 token_program_quote,
                 trader_token_account_quote,
@@ -216,7 +216,8 @@ pub(crate) fn process_settle_funds(
                 owner.pubkey(),
                 &[],
                 platform_fee_atoms,
-            ).map_err(manifest::validation::to_program_error)?,
+            )
+            .map_err(manifest::validation::to_program_error)?,
             &[
                 token_program_quote,
                 trader_token_account_quote,
@@ -249,7 +250,8 @@ pub(crate) fn process_settle_funds(
                     &[],
                     referrer_fee_atoms,
                     quote_mint_decimals,
-                ).map_err(manifest::validation::to_program_error)?,
+                )
+                .map_err(manifest::validation::to_program_error)?,
                 &[
                     token_program_quote,
                     trader_token_account_quote,
@@ -267,7 +269,8 @@ pub(crate) fn process_settle_funds(
                     owner.pubkey(),
                     &[],
                     referrer_fee_atoms,
-                ).map_err(manifest::validation::to_program_error)?,
+                )
+                .map_err(manifest::validation::to_program_error)?,
                 &[
                     token_program_quote,
                     trader_token_account_quote,

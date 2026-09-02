@@ -1,18 +1,9 @@
-use std::{
-    mem::size_of,
-    ops::Deref,
-};
+use std::{mem::size_of, ops::Deref};
 
 use crate::{
     market_info::MarketInfo, open_order::WrapperOpenOrder, wrapper_user::ManifestWrapperUserFixed,
 };
 use bytemuck::{Pod, Zeroable};
-use pinocchio::sysvars::{rent::Rent, Sysvar};
-use pinocchio::account_info::{Ref, RefMut};
-use manifest::validation::AccountInfoExt;
-use pinocchio::account_info::AccountInfo;
-use pinocchio::ProgramResult;
-use pinocchio::program_error::ProgramError;
 use hypertree::{
     get_helper, get_mut_helper, trace, DataIndex, FreeList, HyperTreeReadOperations,
     HyperTreeValueIteratorTrait, HyperTreeWriteOperations, RBNode, RedBlackTree,
@@ -23,12 +14,15 @@ use manifest::{
     quantities::BaseAtoms,
     require,
     state::{claimed_seat::ClaimedSeat, MarketFixed, RestingOrder},
-    validation::{ManifestAccountInfo, Program, Signer},
+    validation::{AccountInfoExt, ManifestAccountInfo, Program, Signer},
 };
-use solana_program::{
-    pubkey::Pubkey,
-    system_instruction,
+use pinocchio::{
+    account_info::{AccountInfo, Ref, RefMut},
+    program_error::ProgramError,
+    sysvars::{rent::Rent, Sysvar},
+    ProgramResult,
 };
+use solana_program::{pubkey::Pubkey, system_instruction};
 use static_assertions::const_assert_eq;
 
 pub const WRAPPER_BLOCK_PAYLOAD_SIZE: usize = 80;
@@ -75,11 +69,7 @@ pub(crate) fn expand_wrapper_if_needed<'a>(
 
         invoke(
             &system_instruction::transfer(payer.pubkey(), wrapper_state.pubkey(), lamports_diff),
-            &[
-                payer.info,
-                wrapper_state,
-                system_program.info,
-            ],
+            &[payer.info, wrapper_state, system_program.info],
         )?;
 
         trace!(
@@ -273,9 +263,7 @@ pub const WRAPPER_USER_DISCRIMINANT: u64 = 1;
 
 impl<'a> WrapperStateAccountInfo<'a> {
     #[inline(always)]
-    fn _new_unchecked(
-        info: &'a AccountInfo,
-    ) -> Result<WrapperStateAccountInfo<'a>, ProgramError> {
+    fn _new_unchecked(info: &'a AccountInfo) -> Result<WrapperStateAccountInfo<'a>, ProgramError> {
         require!(
             info.owner_pubkey() == &crate::ID,
             ProgramError::IllegalOwner,
@@ -284,9 +272,7 @@ impl<'a> WrapperStateAccountInfo<'a> {
         Ok(Self { info })
     }
 
-    pub fn new(
-        info: &'a AccountInfo,
-    ) -> Result<WrapperStateAccountInfo<'a>, ProgramError> {
+    pub fn new(info: &'a AccountInfo) -> Result<WrapperStateAccountInfo<'a>, ProgramError> {
         let wrapper_state: WrapperStateAccountInfo<'a> = Self::_new_unchecked(info)?;
 
         let market_bytes: Ref<[u8]> = info.try_borrow_data()?;
@@ -303,9 +289,7 @@ impl<'a> WrapperStateAccountInfo<'a> {
         Ok(wrapper_state)
     }
 
-    pub fn new_init(
-        info: &'a AccountInfo,
-    ) -> Result<WrapperStateAccountInfo<'a>, ProgramError> {
+    pub fn new_init(info: &'a AccountInfo) -> Result<WrapperStateAccountInfo<'a>, ProgramError> {
         require!(
             info.is_signer(),
             ProgramError::MissingRequiredSignature,

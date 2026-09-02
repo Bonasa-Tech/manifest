@@ -1,6 +1,5 @@
-use pinocchio::account_info::RefMut;
 use crate::validation::AccountInfoExt;
-use pinocchio::ProgramResult;
+use pinocchio::{account_info::RefMut, ProgramResult};
 
 use crate::{
     logs::{emit_stack, ClaimSeatLog},

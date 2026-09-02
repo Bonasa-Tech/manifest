@@ -18,7 +18,10 @@ pub mod deps {
 pub mod certora;
 
 use hypertree::trace;
-use pinocchio::program_error::ProgramError;
+use pinocchio::{
+    account_info::AccountInfo, program_error::ProgramError, pubkey::Pubkey as Address,
+    ProgramResult,
+};
 use program::{
     batch_update::process_batch_update, claim_seat::process_claim_seat,
     create_market::process_create_market, deposit::process_deposit,
@@ -28,7 +31,6 @@ use program::{
     global_withdraw::process_global_withdraw, process_swap, withdraw::process_withdraw,
     ManifestInstruction,
 };
-use pinocchio::{account_info::AccountInfo, pubkey::Pubkey as Address, ProgramResult};
 use solana_program::{declare_id, pubkey::Pubkey};
 
 #[cfg(not(feature = "no-entrypoint"))]
@@ -160,4 +162,3 @@ pub fn process_instruction(
 
     Ok(())
 }
-

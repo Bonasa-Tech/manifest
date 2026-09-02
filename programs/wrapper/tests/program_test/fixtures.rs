@@ -61,16 +61,8 @@ pub struct TestFixture {
 
 impl TestFixture {
     pub async fn new() -> TestFixture {
-        let mut program: ProgramTest = ProgramTest::new(
-            "wrapper",
-            wrapper::ID,
-            None,
-        );
-        program.add_program(
-            "manifest",
-            manifest::ID,
-            None,
-        );
+        let mut program: ProgramTest = ProgramTest::new("wrapper", wrapper::ID, None);
+        program.add_program("manifest", manifest::ID, None);
 
         let second_keypair: Keypair = Keypair::new();
         program.add_account(

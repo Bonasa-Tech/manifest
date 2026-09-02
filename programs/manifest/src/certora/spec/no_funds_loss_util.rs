@@ -1,5 +1,5 @@
-use cvt::{cvt_assert, cvt_assume};
 use crate::validation::AccountInfoExt;
+use cvt::{cvt_assert, cvt_assume};
 use nondet::*;
 
 use crate::{
@@ -77,7 +77,8 @@ pub fn record_all_balances_without_order(
     maker_trader: &AccountInfo,
 ) -> AllBalances {
     let (trader_base, trader_quote) = get_trader_balance!(market, trader.pubkey());
-    let (maker_trader_base, maker_trader_quote) = get_trader_balance!(market, maker_trader.pubkey());
+    let (maker_trader_base, maker_trader_quote) =
+        get_trader_balance!(market, maker_trader.pubkey());
 
     let withdrawable_base: u64 = get_withdrawable_base_atoms!(market);
     let withdrawable_quote: u64 = get_withdrawable_quote_atoms!(market);

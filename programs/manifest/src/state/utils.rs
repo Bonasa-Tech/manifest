@@ -1,8 +1,8 @@
-use pinocchio::account_info::RefMut;
 use crate::validation::AccountInfoExt;
-use pinocchio::ProgramResult;
-use pinocchio::program_error::ProgramError;
+use pinocchio::{account_info::RefMut, program_error::ProgramError, ProgramResult};
 
+#[cfg(not(feature = "certora"))]
+use crate::program::invoke_signed;
 #[cfg(not(feature = "certora"))]
 use crate::{
     global_vault_seeds_with_bump,
@@ -17,11 +17,9 @@ use crate::{
     validation::{loaders::GlobalTradeAccounts, TokenAccountInfo},
 };
 use hypertree::{DataIndex, NIL};
-#[cfg(not(feature = "certora"))]
-use crate::program::invoke_signed;
 #[cfg(not(feature = "no-clock"))]
 use pinocchio::sysvars::Sysvar;
-use solana_program::{pubkey::Pubkey};
+use solana_program::pubkey::Pubkey;
 #[cfg(not(feature = "certora"))]
 use spl_token_2022::{
     extension::{
@@ -166,7 +164,10 @@ pub(crate) fn settle_global_gas_refunds(
         // Both accounts belong to this program here, so the lamports move by
         // writing the balances rather than asking the system program.
         *global.try_borrow_mut_lamports()? -= refund_lamports;
-        *gas_receiver_opt.as_ref().unwrap().try_borrow_mut_lamports()? += refund_lamports;
+        *gas_receiver_opt
+            .as_ref()
+            .unwrap()
+            .try_borrow_mut_lamports()? += refund_lamports;
     }
 
     Ok(())
@@ -234,10 +235,7 @@ pub(crate) fn pay_global_gas_prepayment(
                 .checked_mul(num_gas_prepayments)
                 .unwrap(),
         ),
-        &[
-            gas_payer_opt.as_ref().unwrap().info,
-            global.info,
-        ],
+        &[gas_payer_opt.as_ref().unwrap().info, global.info],
     )?;
 
     Ok(())
@@ -256,8 +254,7 @@ pub(crate) fn pay_global_gas_prepayment(
         gas_payer_opt,
         ..
     } = global_trade_accounts;
-    let payer_info: &AccountInfo =
-        gas_payer_opt.as_ref().unwrap().info;
+    let payer_info: &AccountInfo = gas_payer_opt.as_ref().unwrap().info;
 
     let lamports: u64 = GAS_DEPOSIT_LAMPORTS
         .checked_mul(num_gas_prepayments)
@@ -399,7 +396,8 @@ pub(crate) fn try_to_reduce_global_tokens<'a>(
 
         // Prevent transfer from global to market vault if a token has a non-zero fee.
         let mint_account_info: &MintAccountInfo = mint_opt.as_ref().unwrap();
-        if StateWithExtensions::<Mint>::unpack(&mint_account_info.info.try_borrow_data()?).map_err(to_program_error)?
+        if StateWithExtensions::<Mint>::unpack(&mint_account_info.info.try_borrow_data()?)
+            .map_err(to_program_error)?
             .get_extension::<TransferFeeConfig>()
             .is_ok_and(|f| f.get_epoch_fee(get_now_epoch()).transfer_fee_basis_points != 0.into())
         {
@@ -412,7 +410,8 @@ pub(crate) fn try_to_reduce_global_tokens<'a>(
             })?;
             return Ok(false);
         }
-        if StateWithExtensions::<Mint>::unpack(&mint_account_info.info.try_borrow_data()?).map_err(to_program_error)?
+        if StateWithExtensions::<Mint>::unpack(&mint_account_info.info.try_borrow_data()?)
+            .map_err(to_program_error)?
             .get_extension::<TransferHook>()
             .is_ok_and(|f| f.program_id.0 != Pubkey::default())
         {
@@ -520,7 +519,8 @@ pub(crate) fn transfer_global_tokens<'a>(
                 &[],
                 total_atoms.as_u64(),
                 mint_account_info.mint.decimals,
-            ).map_err(to_program_error)?,
+            )
+            .map_err(to_program_error)?,
             &[
                 token_program.as_ref(),
                 global_vault.as_ref(),
@@ -538,7 +538,8 @@ pub(crate) fn transfer_global_tokens<'a>(
                 global_vault.pubkey(),
                 &[],
                 total_atoms.as_u64(),
-            ).map_err(to_program_error)?,
+            )
+            .map_err(to_program_error)?,
             &[
                 token_program.as_ref(),
                 global_vault.as_ref(),

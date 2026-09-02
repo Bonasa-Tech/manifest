@@ -1,3 +1,4 @@
+use pinocchio::ProgramResult;
 /// The global order state stores information about all global orders for a given token.
 ///
 /// The reason for global orders to be sharded by token is that it will make it
@@ -5,7 +6,6 @@
 /// for state that covers all markets, you just need to write lock state that
 /// covers all orders involving a given token.
 use std::{cmp::Ordering, collections::BTreeMap, mem::size_of};
-use pinocchio::ProgramResult;
 
 use bytemuck::{Pod, Zeroable};
 #[cfg(not(feature = "certora"))]
@@ -17,7 +17,7 @@ use hypertree::{
 };
 use hypertree::{DataIndex, Get, NIL};
 use shank::ShankType;
-use solana_program::{pubkey::Pubkey};
+use solana_program::pubkey::Pubkey;
 use static_assertions::const_assert_eq;
 
 use crate::{

@@ -1,8 +1,5 @@
-use pinocchio::account_info::RefMut;
-use crate::validation::io_to_program_error;
-use crate::validation::to_program_error;
-use crate::validation::AccountInfoExt;
-use pinocchio::ProgramResult;
+use crate::validation::{io_to_program_error, to_program_error, AccountInfoExt};
+use pinocchio::{account_info::RefMut, ProgramResult};
 
 use borsh::{BorshDeserialize, BorshSerialize};
 use pinocchio::account_info::AccountInfo;
@@ -48,7 +45,8 @@ pub(crate) fn process_global_deposit(
     accounts: &[AccountInfo],
     data: &[u8],
 ) -> ProgramResult {
-    let params: GlobalDepositParams = GlobalDepositParams::try_from_slice(data).map_err(io_to_program_error)?;
+    let params: GlobalDepositParams =
+        GlobalDepositParams::try_from_slice(data).map_err(io_to_program_error)?;
     process_global_deposit_core(program_id, accounts, params)
 }
 
@@ -102,7 +100,8 @@ pub(crate) fn process_global_deposit_core(
     // Now deposit the actual received amount (which may be less than requested due to transfer fees)
     let global_data: &mut RefMut<[u8]> = &mut global.try_borrow_mut_data()?;
     let mut global_dynamic_account: GlobalRefMut = get_mut_dynamic_account(global_data);
-    global_dynamic_account.deposit_global(payer.pubkey(), GlobalAtoms::new(deposited_amount_atoms))?;
+    global_dynamic_account
+        .deposit_global(payer.pubkey(), GlobalAtoms::new(deposited_amount_atoms))?;
 
     emit_stack(GlobalDepositLog {
         global: *global.pubkey(),
@@ -130,7 +129,8 @@ fn spl_token_transfer_from_trader_to_global_vault<'a>(
             payer.pubkey(),
             &[],
             amount_atoms,
-        ).map_err(to_program_error)?,
+        )
+        .map_err(to_program_error)?,
         &[
             token_program.as_ref(),
             trader_token_account.as_ref(),
@@ -177,7 +177,8 @@ fn spl_token_2022_transfer_from_trader_to_global_vault<'a>(
             &[],
             amount_atoms,
             mint.mint.decimals,
-        ).map_err(to_program_error)?,
+        )
+        .map_err(to_program_error)?,
         &[
             token_program.as_ref(),
             trader_token_account.as_ref(),

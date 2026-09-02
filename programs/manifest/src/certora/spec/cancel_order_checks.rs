@@ -1,5 +1,4 @@
-use crate::*;
-use crate::validation::AccountInfoExt;
+use crate::{validation::AccountInfoExt, *};
 use cvt::{cvt_assert, cvt_assume};
 use cvt_macros::rule;
 use nondet::*;
@@ -39,7 +38,8 @@ pub fn cancel_order_by_index_no_revert<const IS_BID: bool>() {
 
     // Assume that there will not be an overflow when adding to seat balance.
     let (maker_order_base, maker_order_quote) = get_order_atoms!(maker_order_index);
-    let (maker_seat_base, maker_seat_quote) = get_trader_balance!(market_info, maker_trader.pubkey());
+    let (maker_seat_base, maker_seat_quote) =
+        get_trader_balance!(market_info, maker_trader.pubkey());
     if IS_BID {
         cvt_assume!(maker_seat_base + maker_order_base.as_u64() <= u64::MAX);
     } else {

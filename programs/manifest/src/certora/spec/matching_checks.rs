@@ -1,5 +1,4 @@
-use crate::*;
-use crate::validation::AccountInfoExt;
+use crate::{validation::AccountInfoExt, *};
 use cvt::{cvt_assert, cvt_assume};
 use cvt_macros::rule;
 use nondet::*;

@@ -80,18 +80,10 @@ pub struct TestFixture {
 
 impl TestFixture {
     pub async fn new() -> TestFixture {
-        let mut program: ProgramTest = ProgramTest::new(
-            "ui_wrapper",
-            ui_wrapper::ID,
-            None,
-        );
+        let mut program: ProgramTest = ProgramTest::new("ui_wrapper", ui_wrapper::ID, None);
         // needed extra cu for logs and traces
         program.set_compute_max_units(600_000);
-        program.add_program(
-            "manifest",
-            manifest::ID,
-            None,
-        );
+        program.add_program("manifest", manifest::ID, None);
 
         let second_keypair: Keypair = Keypair::new();
         program.add_account(
@@ -176,18 +168,10 @@ impl TestFixture {
     }
 
     pub async fn new_with_extensions(transfer_fee: bool, transfer_hook: bool) -> TestFixture {
-        let mut program: ProgramTest = ProgramTest::new(
-            "ui_wrapper",
-            ui_wrapper::ID,
-            None,
-        );
+        let mut program: ProgramTest = ProgramTest::new("ui_wrapper", ui_wrapper::ID, None);
         // needed extra cu for logs and traces
         program.set_compute_max_units(600_000);
-        program.add_program(
-            "manifest",
-            manifest::ID,
-            None,
-        );
+        program.add_program("manifest", manifest::ID, None);
 
         let second_keypair: Keypair = Keypair::new();
         program.add_account(

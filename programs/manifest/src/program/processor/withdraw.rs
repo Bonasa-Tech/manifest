@@ -1,8 +1,5 @@
-use pinocchio::account_info::RefMut;
-use crate::validation::io_to_program_error;
-use crate::validation::to_program_error;
-use crate::validation::AccountInfoExt;
-use pinocchio::ProgramResult;
+use crate::validation::{io_to_program_error, to_program_error, AccountInfoExt};
+use pinocchio::{account_info::RefMut, ProgramResult};
 
 use super::get_trader_index_with_hint;
 use crate::{
@@ -154,7 +151,8 @@ fn spl_token_transfer_from_vault_to_trader<'a>(
             vault.pubkey(),
             &[],
             amount,
-        ).map_err(to_program_error)?,
+        )
+        .map_err(to_program_error)?,
         &[
             token_program.as_ref(),
             vault.as_ref(),
@@ -201,7 +199,8 @@ fn spl_token_2022_transfer_from_vault_to_trader_fixed<'a>(
             &[],
             amount_atoms,
             decimals,
-        ).map_err(to_program_error)?,
+        )
+        .map_err(to_program_error)?,
         &[
             token_program.as_ref(),
             vault.as_ref(),

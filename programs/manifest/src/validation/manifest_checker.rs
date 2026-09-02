@@ -1,14 +1,10 @@
 use bytemuck::Pod;
-use pinocchio::ProgramResult;
-use pinocchio::program_error::ProgramError;
 use hypertree::{get_helper, Get};
-use pinocchio::account_info::AccountInfo;
+use pinocchio::{account_info::AccountInfo, program_error::ProgramError, ProgramResult};
 
 use crate::validation::AccountInfoExt;
-use solana_program::{
-    pubkey::Pubkey,
-};
 use pinocchio::account_info::Ref;
+use solana_program::pubkey::Pubkey;
 use std::{mem::size_of, ops::Deref};
 
 use crate::require;
@@ -26,9 +22,7 @@ impl<'a, T: ManifestAccount + Get + Pod + Clone> ManifestAccountInfo<'a, T> {
         all(feature = "certora", not(feature = "certora-test")),
         early_panic::early_panic
     )]
-    pub fn new(
-        info: &'a AccountInfo,
-    ) -> Result<ManifestAccountInfo<'a, T>, ProgramError> {
+    pub fn new(info: &'a AccountInfo) -> Result<ManifestAccountInfo<'a, T>, ProgramError> {
         verify_owned_by_manifest(info.owner_pubkey())?;
 
         let bytes: Ref<[u8]> = info.try_borrow_data()?;
@@ -42,9 +36,7 @@ impl<'a, T: ManifestAccount + Get + Pod + Clone> ManifestAccountInfo<'a, T> {
         })
     }
 
-    pub fn new_init(
-        info: &'a AccountInfo,
-    ) -> Result<ManifestAccountInfo<'a, T>, ProgramError> {
+    pub fn new_init(info: &'a AccountInfo) -> Result<ManifestAccountInfo<'a, T>, ProgramError> {
         verify_owned_by_manifest(info.owner_pubkey())?;
         verify_uninitialized::<T>(info)?;
         Ok(Self {

@@ -1,13 +1,12 @@
-use pinocchio::account_info::RefMut;
-use pinocchio::sysvars::{rent::Rent, Sysvar};
-use pinocchio::account_info::AccountInfo;
 use crate::validation::AccountInfoExt;
-use pinocchio::ProgramResult;
+use pinocchio::{
+    account_info::{AccountInfo, RefMut},
+    sysvars::{rent::Rent, Sysvar},
+    ProgramResult,
+};
 
 use hypertree::trace;
-use solana_program::{
-    program_pack::Pack, pubkey::Pubkey,
-    };
+use solana_program::{program_pack::Pack, pubkey::Pubkey};
 use spl_token::state::Account;
 
 use crate::{

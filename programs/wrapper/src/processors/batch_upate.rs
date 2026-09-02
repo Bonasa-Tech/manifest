@@ -1,10 +1,6 @@
 use std::mem::size_of;
 
 use borsh::{BorshDeserialize, BorshSerialize};
-use pinocchio::account_info::{Ref, RefMut};
-use manifest::validation::next_account_info;
-use manifest::validation::AccountInfoExt;
-use pinocchio::ProgramResult;
 use hypertree::{
     get_helper, get_mut_helper, DataIndex, FreeList, HyperTreeReadOperations,
     HyperTreeValueIteratorTrait, HyperTreeWriteOperations, RBNode, NIL,
@@ -19,9 +15,12 @@ use manifest::{
         utils::get_now_slot, DynamicAccount, MarketFixed, OrderType, RestingOrder,
         MARKET_FIXED_SIZE, NO_EXPIRATION_LAST_VALID_SLOT,
     },
-    validation::{ManifestAccountInfo, Program, Signer},
+    validation::{next_account_info, AccountInfoExt, ManifestAccountInfo, Program, Signer},
 };
-use pinocchio::account_info::AccountInfo;
+use pinocchio::{
+    account_info::{AccountInfo, Ref, RefMut},
+    ProgramResult,
+};
 use solana_program::{
     instruction::{AccountMeta, Instruction},
     program::get_return_data,
@@ -331,7 +330,9 @@ fn execute_cpi(
         accounts: acc_metas,
         data: [
             ManifestInstruction::BatchUpdate.to_vec(),
-            BatchUpdateParams::new(trader_index_hint, core_cancels, core_orders).try_to_vec().map_err(manifest::validation::io_to_program_error)?,
+            BatchUpdateParams::new(trader_index_hint, core_cancels, core_orders)
+                .try_to_vec()
+                .map_err(manifest::validation::io_to_program_error)?,
         ]
         .concat(),
     };
@@ -516,7 +517,8 @@ pub(crate) fn process_batch_update(
         Program::new(next_account_info(account_iter)?, &system_program::id())?;
 
     check_signer(&wrapper_state, payer.pubkey());
-    let market_info_index: DataIndex = get_market_info_index_for_market(&wrapper_state, market.pubkey());
+    let market_info_index: DataIndex =
+        get_market_info_index_for_market(&wrapper_state, market.pubkey());
 
     // One clock read for the whole instruction.
     let now_slot: u32 = get_now_slot();
@@ -528,7 +530,8 @@ pub(crate) fn process_batch_update(
         orders,
         cancel_all,
         cancels,
-    } = WrapperBatchUpdateParams::try_from_slice(data).map_err(manifest::validation::io_to_program_error)?;
+    } = WrapperBatchUpdateParams::try_from_slice(data)
+        .map_err(manifest::validation::io_to_program_error)?;
 
     // Only price the funds that cancels free up when a new order needs the
     // balance check.

@@ -1,8 +1,7 @@
+use crate::validation::AccountInfoExt;
+use pinocchio::{program_error::ProgramError, ProgramResult};
 #[cfg(feature = "certora")]
 use {crate::certora::hooks::*, hook_macro::cvt_hook_end, nondet::nondet};
-use crate::validation::AccountInfoExt;
-use pinocchio::ProgramResult;
-use pinocchio::program_error::ProgramError;
 
 use bytemuck::{Pod, Zeroable};
 use hypertree::{
@@ -15,7 +14,7 @@ use hypertree::{
     RedBlackTreeReadOnly,
 };
 use shank::ShankType;
-use solana_program::{pubkey::Pubkey};
+use solana_program::pubkey::Pubkey;
 use static_assertions::const_assert_eq;
 use std::{collections::HashSet, mem::size_of};
 
@@ -260,7 +259,8 @@ impl MarketFixed {
         market_key: &Pubkey,
     ) -> Self {
         let (base_vault, base_vault_bump) = get_vault_address(market_key, base_mint.info.pubkey());
-        let (quote_vault, quote_vault_bump) = get_vault_address(market_key, quote_mint.info.pubkey());
+        let (quote_vault, quote_vault_bump) =
+            get_vault_address(market_key, quote_mint.info.pubkey());
         Self::new_empty_with_vaults(
             base_mint,
             quote_mint,

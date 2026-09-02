@@ -1,5 +1,5 @@
-use std::mem::size_of;
 use pinocchio::account_info::{Ref, RefMut};
+use std::mem::size_of;
 
 use hypertree::{
     get_mut_helper, DataIndex, FreeList, HyperTreeReadOperations, HyperTreeWriteOperations, RBNode,
@@ -16,15 +16,9 @@ use crate::{
     market_info::MarketInfo,
     wrapper_state::ManifestWrapperStateFixed,
 };
-use manifest::validation::{Program, Signer};
-use manifest::validation::next_account_info;
-use manifest::validation::AccountInfoExt;
-use pinocchio::ProgramResult;
-use pinocchio::account_info::AccountInfo;
-use solana_program::{
-    pubkey::Pubkey,
-    system_program,
-};
+use manifest::validation::{next_account_info, AccountInfoExt, Program, Signer};
+use pinocchio::{account_info::AccountInfo, ProgramResult};
+use solana_program::{pubkey::Pubkey, system_program};
 
 use super::shared::{
     expand_wrapper_if_needed, MarketInfosTree, UnusedWrapperFreeListPadding, ORDERS_LAYOUT_LIST,

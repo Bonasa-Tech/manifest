@@ -11,8 +11,7 @@
 //! an arithmetic overflow or a `?` on a checked operation -- and never from a
 //! deliberate `require!`. That is exactly the property the original rules
 //! state.
-use crate::*;
-use crate::validation::AccountInfoExt;
+use crate::{validation::AccountInfoExt, *};
 use cvt::{cvt_assert, cvt_assume};
 use cvt_macros::rule;
 use nondet::*;

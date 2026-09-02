@@ -10,17 +10,13 @@ pub mod processors;
 pub mod wrapper_state;
 
 use hypertree::trace;
-use pinocchio::account_info::AccountInfo;
-use pinocchio::ProgramResult;
-use pinocchio::program_error::ProgramError;
 use instruction::ManifestWrapperInstruction;
+use pinocchio::{account_info::AccountInfo, program_error::ProgramError, ProgramResult};
 use processors::{
     batch_upate::process_batch_update, claim_seat::process_claim_seat, collect::process_collect,
     create_wrapper::process_create_wrapper, deposit::process_deposit, withdraw::process_withdraw,
 };
-use solana_program::{
-    declare_id, pubkey::Pubkey,
-};
+use solana_program::{declare_id, pubkey::Pubkey};
 
 #[cfg(not(feature = "no-entrypoint"))]
 use solana_security_txt::security_txt;
@@ -85,4 +81,3 @@ pub fn process_instruction(
 
     Ok(())
 }
-

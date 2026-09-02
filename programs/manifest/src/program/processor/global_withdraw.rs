@@ -1,8 +1,5 @@
-use pinocchio::account_info::RefMut;
-use crate::validation::io_to_program_error;
-use crate::validation::to_program_error;
-use crate::validation::AccountInfoExt;
-use pinocchio::ProgramResult;
+use crate::validation::{io_to_program_error, to_program_error, AccountInfoExt};
+use pinocchio::{account_info::RefMut, ProgramResult};
 
 use borsh::{BorshDeserialize, BorshSerialize};
 use pinocchio::account_info::AccountInfo;
@@ -45,7 +42,8 @@ pub(crate) fn process_global_withdraw(
     accounts: &[AccountInfo],
     data: &[u8],
 ) -> ProgramResult {
-    let params: GlobalWithdrawParams = GlobalWithdrawParams::try_from_slice(data).map_err(io_to_program_error)?;
+    let params: GlobalWithdrawParams =
+        GlobalWithdrawParams::try_from_slice(data).map_err(io_to_program_error)?;
     process_global_withdraw_core(program_id, accounts, params)
 }
 
@@ -122,7 +120,8 @@ fn spl_token_transfer_from_global_vault_to_trader<'a>(
             global_vault.pubkey(),
             &[],
             amount_atoms,
-        ).map_err(to_program_error)?,
+        )
+        .map_err(to_program_error)?,
         &[
             token_program.as_ref(),
             global_vault.as_ref(),
@@ -170,7 +169,8 @@ fn spl_token_2022_transfer_from_global_vault_to_trader<'a>(
             &[],
             amount_atoms,
             mint.mint.decimals,
-        ).map_err(to_program_error)?,
+        )
+        .map_err(to_program_error)?,
         &[
             token_program.as_ref(),
             trader_token.as_ref(),

@@ -1,5 +1,4 @@
-use pinocchio::account_info::{Ref, RefMut};
-use pinocchio::account_info::AccountInfo;
+use pinocchio::account_info::{AccountInfo, Ref, RefMut};
 use std::mem::size_of;
 
 use crate::{
@@ -17,16 +16,12 @@ use pinocchio::instruction::{
     Signer as PinocchioSigner,
 };
 
-use crate::validation::as_raw_key;
-use crate::validation::AccountInfoExt;
-use pinocchio::ProgramResult;
-use pinocchio::program_error::ProgramError;
+use crate::validation::{as_raw_key, AccountInfoExt};
 use hypertree::{get_helper, get_mut_helper, DataIndex, Get, RBNode};
 #[cfg(not(feature = "certora"))]
 use pinocchio::sysvars::Sysvar;
-use solana_program::{
-    instruction::Instruction,
-    };
+use pinocchio::{program_error::ProgramError, ProgramResult};
+use solana_program::instruction::Instruction;
 
 use super::batch_update::MarketDataTreeNodeType;
 
@@ -121,7 +116,10 @@ fn expand_dynamic<'a, T: ManifestAccount + Pod + Clone>(
     #[cfg(feature = "fuzz")]
     {
         solana_program::program::invoke(
-            &solana_program::system_instruction::allocate(expandable_account.pubkey(), new_size as u64),
+            &solana_program::system_instruction::allocate(
+                expandable_account.pubkey(),
+                new_size as u64,
+            ),
             &[expandable_account.clone()],
         )?;
     }
@@ -158,9 +156,7 @@ fn expand_global_fixed(expandable_account: &AccountInfo) -> ProgramResult {
 }
 
 /// Generic get dynamic account from the data bytes of the account.
-pub fn get_dynamic_account<'a, T: Get>(
-    data: &'a Ref<'a, [u8]>,
-) -> DynamicAccount<&'a T, &'a [u8]> {
+pub fn get_dynamic_account<'a, T: Get>(data: &'a Ref<'a, [u8]>) -> DynamicAccount<&'a T, &'a [u8]> {
     let (fixed_data, dynamic) = data.split_at(size_of::<T>());
     let fixed: &T = get_helper::<T>(fixed_data, 0_u32);
 

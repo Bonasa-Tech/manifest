@@ -1,16 +1,15 @@
-use pinocchio::account_info::RefMut;
-use pinocchio::sysvars::{rent::Rent, Sysvar};
-use crate::validation::io_to_program_error;
-use crate::validation::to_program_error;
-use crate::validation::AccountInfoExt;
-use pinocchio::ProgramResult;
+use crate::validation::{io_to_program_error, to_program_error, AccountInfoExt};
+use pinocchio::{
+    account_info::RefMut,
+    sysvars::{rent::Rent, Sysvar},
+    ProgramResult,
+};
 
-use borsh::{BorshDeserialize, BorshSerialize};
-use pinocchio::account_info::AccountInfo;
-use solana_program::pubkey::Pubkey;
 #[cfg(not(feature = "certora"))]
 use crate::program::invoke_signed;
-use solana_program::program_pack::Pack;
+use borsh::{BorshDeserialize, BorshSerialize};
+use pinocchio::account_info::AccountInfo;
+use solana_program::{program_pack::Pack, pubkey::Pubkey};
 #[cfg(not(feature = "certora"))]
 use spl_token::state::Account;
 
@@ -54,7 +53,8 @@ pub(crate) fn process_global_evict(
     accounts: &[AccountInfo],
     data: &[u8],
 ) -> ProgramResult {
-    let params: GlobalEvictParams = GlobalEvictParams::try_from_slice(data).map_err(io_to_program_error)?;
+    let params: GlobalEvictParams =
+        GlobalEvictParams::try_from_slice(data).map_err(io_to_program_error)?;
     process_global_evict_core(program_id, accounts, params)
 }
 
@@ -239,7 +239,8 @@ fn spl_token_transfer_from_global_vault_to_evictee<'a>(
                 &[],
                 amount_atoms,
                 mint.mint.decimals,
-            ).map_err(to_program_error)?,
+            )
+            .map_err(to_program_error)?,
             &[
                 token_program.as_ref(),
                 evictee_token.as_ref(),
@@ -257,7 +258,8 @@ fn spl_token_transfer_from_global_vault_to_evictee<'a>(
                 global_vault.pubkey(),
                 &[],
                 amount_atoms,
-            ).map_err(to_program_error)?,
+            )
+            .map_err(to_program_error)?,
             &[
                 token_program.as_ref(),
                 global_vault.as_ref(),
@@ -320,7 +322,8 @@ fn spl_token_transfer_from_evictor_to_global_vault<'a>(
                 &[],
                 amount_atoms,
                 mint.mint.decimals,
-            ).map_err(to_program_error)?,
+            )
+            .map_err(to_program_error)?,
             &[
                 token_program.as_ref(),
                 trader_token.as_ref(),
@@ -338,7 +341,8 @@ fn spl_token_transfer_from_evictor_to_global_vault<'a>(
                 payer.pubkey(),
                 &[],
                 amount_atoms,
-            ).map_err(to_program_error)?,
+            )
+            .map_err(to_program_error)?,
             &[
                 token_program.as_ref(),
                 trader_token.as_ref(),

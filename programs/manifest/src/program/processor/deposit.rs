@@ -1,8 +1,5 @@
-use pinocchio::account_info::RefMut;
-use crate::validation::io_to_program_error;
-use crate::validation::to_program_error;
-use crate::validation::AccountInfoExt;
-use pinocchio::ProgramResult;
+use crate::validation::{io_to_program_error, to_program_error, AccountInfoExt};
+use pinocchio::{account_info::RefMut, ProgramResult};
 
 use crate::{
     logs::{emit_stack, DepositLog},
@@ -149,7 +146,8 @@ fn spl_token_transfer_from_trader_to_vault<'a>(
             payer.pubkey(),
             &[],
             amount,
-        ).map_err(to_program_error)?,
+        )
+        .map_err(to_program_error)?,
         // spl_token::transfer names source, destination, authority.
         &[trader_account.as_ref(), vault.as_ref(), payer.as_ref()],
     )
@@ -188,7 +186,8 @@ fn spl_token_2022_transfer_from_trader_to_vault<'a>(
             &[],
             amount,
             decimals,
-        ).map_err(to_program_error)?,
+        )
+        .map_err(to_program_error)?,
         // transfer_checked names source, mint, destination, authority.
         &[
             trader_account.as_ref(),

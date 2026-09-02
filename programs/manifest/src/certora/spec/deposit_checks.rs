@@ -1,5 +1,4 @@
-use crate::{get_trader_balance, get_trader_index};
-use crate::validation::AccountInfoExt;
+use crate::{get_trader_balance, get_trader_index, validation::AccountInfoExt};
 use cvt::{cvt_assert, cvt_assume};
 use cvt_macros::rule;
 use nondet::{acc_infos_with_mem_layout, nondet};

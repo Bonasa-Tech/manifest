@@ -1,15 +1,6 @@
-use std::{
-    mem::size_of,
-};
+use std::mem::size_of;
 
 use borsh::{BorshDeserialize, BorshSerialize};
-use pinocchio::sysvars::Sysvar;
-use pinocchio::account_info::{Ref, RefMut};
-use manifest::validation::next_account_info;
-use manifest::validation::AccountInfoExt;
-use pinocchio::account_info::AccountInfo;
-use pinocchio::ProgramResult;
-use pinocchio::program_error::ProgramError;
 use hypertree::{
     get_helper, get_mut_helper, trace, DataIndex, FreeList, HyperTreeReadOperations,
     HyperTreeWriteOperations, RBNode, NIL,
@@ -23,7 +14,13 @@ use manifest::{
     quantities::{BaseAtoms, QuoteAtoms, QuoteAtomsPerBaseAtom, WrapperU64},
     require,
     state::{claimed_seat::ClaimedSeat, DynamicAccount, MarketFixed, MarketRef, OrderType},
-    validation::{ManifestAccountInfo, Program, Signer},
+    validation::{next_account_info, AccountInfoExt, ManifestAccountInfo, Program, Signer},
+};
+use pinocchio::{
+    account_info::{AccountInfo, Ref, RefMut},
+    program_error::ProgramError,
+    sysvars::Sysvar,
+    ProgramResult,
 };
 use solana_program::{
     instruction::{AccountMeta, Instruction},
@@ -165,7 +162,8 @@ fn get_or_create_market_info<'a>(
     system_program: &Program<'a>,
     trader_index: u32,
 ) -> Result<(MarketInfo, DataIndex), ProgramError> {
-    let market_info_index: DataIndex = get_market_info_index_for_market(&wrapper_state, market.pubkey());
+    let market_info_index: DataIndex =
+        get_market_info_index_for_market(&wrapper_state, market.pubkey());
     if market_info_index != NIL {
         // Do an initial sync to get all existing orders and balances fresh. This is
         // needed for modifying user orders for insufficient funds.
@@ -257,7 +255,8 @@ pub(crate) fn process_place_order(
     let remaining_base_atoms: BaseAtoms = market_info.base_balance;
     let remaining_quote_atoms: QuoteAtoms = market_info.quote_balance;
 
-    let order = WrapperPlaceOrderParams::try_from_slice(data).map_err(manifest::validation::io_to_program_error)?;
+    let order = WrapperPlaceOrderParams::try_from_slice(data)
+        .map_err(manifest::validation::io_to_program_error)?;
     let base_atoms = BaseAtoms::new(order.base_atoms);
     let price = QuoteAtomsPerBaseAtom::try_from_mantissa_and_exponent(
         order.price_mantissa,
@@ -289,7 +288,8 @@ pub(crate) fn process_place_order(
     let deposit_amount_atoms = if *mint.owner_pubkey() == spl_token_2022::id() {
         let mint_data: Ref<[u8]> = mint.try_borrow_data()?;
         let deposit_mint: StateWithExtensions<'_, Mint> =
-            StateWithExtensions::<Mint>::unpack(&mint_data).map_err(manifest::validation::to_program_error)?;
+            StateWithExtensions::<Mint>::unpack(&mint_data)
+                .map_err(manifest::validation::to_program_error)?;
 
         if let Ok(extension) = deposit_mint.get_extension::<TransferHook>() {
             if !extension.program_id.0.eq(&Pubkey::default()) {
@@ -365,7 +365,8 @@ pub(crate) fn process_place_order(
             data: [
                 ManifestInstruction::BatchUpdate.to_vec(),
                 BatchUpdateParams::new(Some(trader_index), vec![], vec![core_place])
-                    .try_to_vec().map_err(manifest::validation::io_to_program_error)?,
+                    .try_to_vec()
+                    .map_err(manifest::validation::io_to_program_error)?,
             ]
             .concat(),
         };

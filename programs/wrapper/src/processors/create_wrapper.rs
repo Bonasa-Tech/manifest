@@ -1,13 +1,7 @@
 use hypertree::get_mut_helper;
-use manifest::validation::next_account_info;
-use manifest::validation::AccountInfoExt;
-use pinocchio::ProgramResult;
-use manifest::validation::{Program, Signer};
-use pinocchio::account_info::AccountInfo;
-use solana_program::{
-    pubkey::Pubkey,
-    system_program,
-};
+use manifest::validation::{next_account_info, AccountInfoExt, Program, Signer};
+use pinocchio::{account_info::AccountInfo, ProgramResult};
+use solana_program::{pubkey::Pubkey, system_program};
 
 use crate::{loader::WrapperStateAccountInfo, wrapper_state::ManifestWrapperStateFixed};
 

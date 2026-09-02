@@ -1,8 +1,9 @@
-use crate::{require, validation::AccountInfoExt};
-use crate::validation::to_program_error;
-use pinocchio::program_error::ProgramError;
-use pinocchio::account_info::AccountInfo;
-use solana_program::{pubkey::Pubkey};
+use crate::{
+    require,
+    validation::{to_program_error, AccountInfoExt},
+};
+use pinocchio::{account_info::AccountInfo, program_error::ProgramError};
+use solana_program::pubkey::Pubkey;
 use spl_token_2022::{
     check_spl_token_program_account, extension::StateWithExtensions, state::Mint,
 };
@@ -38,10 +39,7 @@ pub struct TokenAccountInfo<'a> {
 }
 
 impl<'a> TokenAccountInfo<'a> {
-    pub fn new(
-        info: &'a AccountInfo,
-        mint: &Pubkey,
-    ) -> Result<TokenAccountInfo<'a>, ProgramError> {
+    pub fn new(info: &'a AccountInfo, mint: &Pubkey) -> Result<TokenAccountInfo<'a>, ProgramError> {
         require!(
             info.owned_by(&spl_token::id()) || info.owned_by(&spl_token_2022::id()),
             ProgramError::IllegalOwner,

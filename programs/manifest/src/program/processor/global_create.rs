@@ -1,9 +1,10 @@
+use crate::validation::{to_program_error, AccountInfoExt};
+use pinocchio::{
+    account_info::AccountInfo,
+    sysvars::{rent::Rent, Sysvar},
+    ProgramResult,
+};
 use std::{cell::Ref, mem::size_of};
-use crate::validation::to_program_error;
-use pinocchio::sysvars::{rent::Rent, Sysvar};
-use pinocchio::account_info::AccountInfo;
-use crate::validation::AccountInfoExt;
-use pinocchio::ProgramResult;
 
 use crate::{
     global_seeds_with_bump, global_vault_seeds_with_bump,
@@ -14,9 +15,7 @@ use crate::{
     validation::{get_global_vault_address, loaders::GlobalCreateContext},
 };
 use hypertree::{get_mut_helper, trace};
-use solana_program::{
-    program_pack::Pack, pubkey::Pubkey,
-    system_instruction, };
+use solana_program::{program_pack::Pack, pubkey::Pubkey, system_instruction};
 use spl_token_2022::{
     extension::{BaseStateWithExtensions, ExtensionType, PodStateWithExtensions},
     pod::PodMint,
@@ -59,10 +58,7 @@ pub(crate) fn process_global_create(
                         payer.info.pubkey(),
                         global.info.lamports(),
                     ),
-                    &[payer.info,
-                        global.info,
-                        system_program.info,
-                    ],
+                    &[payer.info, global.info, system_program.info],
                     global_seeds_with_bump!(global_mint.info.pubkey(), global_bump),
                 )?;
             }
@@ -116,24 +112,24 @@ pub(crate) fn process_global_create(
                         payer.info.pubkey(),
                         global_vault.info.lamports(),
                     ),
-                    &[payer.info,
-                        global_vault.info,
-                        system_program.info,
-                    ],
+                    &[payer.info, global_vault.info, system_program.info],
                     global_vault_seeds_with_bump!(global_mint.info.pubkey(), global_vault_bump),
                 )?;
             }
 
             if is_mint_22 {
-                let mint_data: pinocchio::account_info::Ref<[u8]> = global_mint.info.try_borrow_data()?;
+                let mint_data: pinocchio::account_info::Ref<[u8]> =
+                    global_mint.info.try_borrow_data()?;
                 let mint_with_extension: PodStateWithExtensions<'_, PodMint> =
                     PodStateWithExtensions::<PodMint>::unpack(&mint_data).unwrap();
-                let mint_extensions: Vec<ExtensionType> =
-                    mint_with_extension.get_extension_types().map_err(to_program_error)?;
+                let mint_extensions: Vec<ExtensionType> = mint_with_extension
+                    .get_extension_types()
+                    .map_err(to_program_error)?;
                 let required_extensions: Vec<ExtensionType> =
                     ExtensionType::get_required_init_account_extensions(&mint_extensions);
                 let space: usize =
-                    ExtensionType::try_calculate_account_len::<Account>(&required_extensions).map_err(to_program_error)?;
+                    ExtensionType::try_calculate_account_len::<Account>(&required_extensions)
+                        .map_err(to_program_error)?;
                 create_account(
                     payer.as_ref(),
                     global_vault.info,
@@ -149,7 +145,8 @@ pub(crate) fn process_global_create(
                         global_vault.as_ref().pubkey(),
                         global_mint.info.pubkey(),
                         global_vault.as_ref().pubkey(),
-                    ).map_err(to_program_error)?,
+                    )
+                    .map_err(to_program_error)?,
                     &[
                         payer.as_ref(),
                         global_vault.as_ref(),
@@ -174,7 +171,8 @@ pub(crate) fn process_global_create(
                         global_vault.as_ref().pubkey(),
                         global_mint.info.pubkey(),
                         global_vault.as_ref().pubkey(),
-                    ).map_err(to_program_error)?,
+                    )
+                    .map_err(to_program_error)?,
                     &[
                         payer.as_ref(),
                         global_vault.as_ref(),

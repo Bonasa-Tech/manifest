@@ -1,16 +1,14 @@
+use pinocchio::{
+    account_info::{Ref, RefMut},
+    sysvars::{rent::Rent, Sysvar},
+};
 use std::mem::size_of;
-use pinocchio::sysvars::{rent::Rent, Sysvar};
-use pinocchio::account_info::{Ref, RefMut};
 
 use crate::{
     loader::WrapperStateAccountInfo, market_info::MarketInfo, open_order::WrapperOpenOrder,
     processors::batch_upate::WrapperCancelOrderParams, wrapper_state::ManifestWrapperStateFixed,
 };
 use bytemuck::{Pod, Zeroable};
-use manifest::validation::AccountInfoExt;
-use pinocchio::account_info::AccountInfo;
-use pinocchio::ProgramResult;
-use pinocchio::program_error::ProgramError;
 use hypertree::{
     convert_red_black_tree_to_linked_list, get_helper, get_mut_helper, trace, DataIndex, FreeList,
     FreeListNode, HyperTreeReadOperations, HyperTreeWriteOperations, LinkedList,
@@ -23,8 +21,9 @@ use manifest::{
         claimed_seat::ClaimedSeat, get_helper_seat, utils::get_now_slot, MarketFixed, OrderType,
         RestingOrder,
     },
-    validation::{ManifestAccountInfo, Program, Signer},
+    validation::{AccountInfoExt, ManifestAccountInfo, Program, Signer},
 };
+use pinocchio::{account_info::AccountInfo, program_error::ProgramError, ProgramResult};
 use solana_program::{pubkey::Pubkey, system_instruction};
 use static_assertions::const_assert_eq;
 
@@ -146,11 +145,7 @@ pub(crate) fn ensure_free_slots<'a>(
         let lamports_diff: u64 = new_minimum_balance.saturating_sub(old_minimum_balance);
         invoke(
             &system_instruction::transfer(payer.pubkey(), wrapper_state.pubkey(), lamports_diff),
-            &[
-                payer.info,
-                wrapper_state,
-                system_program.info,
-            ],
+            &[payer.info, wrapper_state, system_program.info],
         )?;
         trace!(
             "expand_if_needed -> realloc {} {:?}",

@@ -1,7 +1,5 @@
-use pinocchio::account_info::Ref;
-use manifest::validation::next_account_info;
-use manifest::validation::AccountInfoExt;
-use pinocchio::ProgramResult;
+use manifest::validation::{next_account_info, AccountInfoExt};
+use pinocchio::{account_info::Ref, ProgramResult};
 
 use borsh::{BorshDeserialize, BorshSerialize};
 use hypertree::DataIndex;
@@ -13,9 +11,7 @@ use manifest::{
 
 use manifest::validation::{Program, Signer};
 use pinocchio::account_info::AccountInfo;
-use solana_program::{
-    pubkey::Pubkey,
-};
+use solana_program::pubkey::Pubkey;
 
 use crate::loader::{check_signer, WrapperStateAccountInfo};
 
@@ -64,7 +60,8 @@ pub(crate) fn process_withdraw(
     };
 
     // Params are a direct pass through.
-    let WrapperWithdrawParams { amount_atoms } = WrapperWithdrawParams::try_from_slice(data).map_err(manifest::validation::io_to_program_error)?;
+    let WrapperWithdrawParams { amount_atoms } = WrapperWithdrawParams::try_from_slice(data)
+        .map_err(manifest::validation::io_to_program_error)?;
 
     let trader_index_hint: Option<DataIndex> =
         get_trader_index_hint_for_market(&wrapper_state, &market.info.pubkey())?;

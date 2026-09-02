@@ -1,6 +1,5 @@
-use pinocchio::account_info::AccountInfo;
+use pinocchio::{account_info::AccountInfo, ProgramResult};
 use solana_program::pubkey::Pubkey;
-use pinocchio::ProgramResult;
 
 use crate::{
     program::{batch_expand_market, get_dynamic_account},

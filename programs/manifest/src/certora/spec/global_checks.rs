@@ -16,8 +16,7 @@
 //! vault land in the market vault, and are credited to somebody, in the same
 //! instruction. Note that a resting global order contributes nothing to
 //! `orderbook`, which is what makes the two invariants independent.
-use crate::*;
-use crate::validation::AccountInfoExt;
+use crate::{validation::AccountInfoExt, *};
 use cvt::{cvt_assert, cvt_assume};
 use cvt_macros::rule;
 use nondet::*;

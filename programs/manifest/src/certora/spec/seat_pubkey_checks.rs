@@ -22,8 +22,7 @@
 //! `remove_from_global`, `try_to_add_to_global`, `transfer_global_tokens`)
 //! are exercised by the preservation induction too.
 use super::verification_utils::init_static;
-use crate::validation::AccountInfoExt;
-use crate::*;
+use crate::{validation::AccountInfoExt, *};
 use cvt::{cvt_assert, cvt_assume};
 use cvt_macros::rule;
 use nondet::*;

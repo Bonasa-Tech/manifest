@@ -1,6 +1,8 @@
 use crate::{wrapper_user::ManifestWrapperUserFixed, ManifestWrapperInstruction};
-use pinocchio::program_error::ProgramError;
-use pinocchio::sysvars::{rent::Rent, Sysvar};
+use pinocchio::{
+    program_error::ProgramError,
+    sysvars::{rent::Rent, Sysvar},
+};
 use solana_program::{
     instruction::{AccountMeta, Instruction},
     pubkey::Pubkey,

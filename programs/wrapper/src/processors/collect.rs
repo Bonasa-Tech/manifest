@@ -1,16 +1,11 @@
-use manifest::validation::{Program, Signer};
-use pinocchio::sysvars::Sysvar;
-use manifest::validation::next_account_info;
-use manifest::validation::AccountInfoExt;
-use pinocchio::ProgramResult;
-use pinocchio::program_error::ProgramError;
-use pinocchio::account_info::AccountInfo;
-use solana_program::{
-    pubkey,
-    pubkey::Pubkey,
-    system_program,
-    };
-use pinocchio::account_info::RefMut;
+use manifest::validation::{next_account_info, AccountInfoExt, Program, Signer};
+use pinocchio::{
+    account_info::{AccountInfo, RefMut},
+    program_error::ProgramError,
+    sysvars::Sysvar,
+    ProgramResult,
+};
+use solana_program::{pubkey, pubkey::Pubkey, system_program};
 
 use crate::loader::WrapperStateAccountInfo;
 
