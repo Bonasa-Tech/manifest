@@ -3,10 +3,13 @@ use pinocchio::ProgramResult;
 use pinocchio::program_error::ProgramError;
 use hypertree::{get_helper, Get};
 use pinocchio::account_info::AccountInfo;
+
+use crate::validation::AccountInfoExt;
 use solana_program::{
     pubkey::Pubkey,
 };
-use std::{cell::Ref, mem::size_of, ops::Deref};
+use pinocchio::account_info::Ref;
+use std::{mem::size_of, ops::Deref};
 
 use crate::require;
 
@@ -26,9 +29,9 @@ impl<'a, T: ManifestAccount + Get + Pod + Clone> ManifestAccountInfo<'a, T> {
     pub fn new(
         info: &'a AccountInfo,
     ) -> Result<ManifestAccountInfo<'a, T>, ProgramError> {
-        verify_owned_by_manifest(info.owner())?;
+        verify_owned_by_manifest(info.owner_pubkey())?;
 
-        let bytes: pinocchio::account_info::Ref<[u8]> = info.try_borrow_data()?;
+        let bytes: Ref<[u8]> = info.try_borrow_data()?;
         let (header_bytes, _) = bytes.split_at(size_of::<T>());
         let header: &T = get_helper::<T>(header_bytes, 0_u32);
         header.verify_discriminant()?;
@@ -42,7 +45,7 @@ impl<'a, T: ManifestAccount + Get + Pod + Clone> ManifestAccountInfo<'a, T> {
     pub fn new_init(
         info: &'a AccountInfo,
     ) -> Result<ManifestAccountInfo<'a, T>, ProgramError> {
-        verify_owned_by_manifest(info.owner())?;
+        verify_owned_by_manifest(info.owner_pubkey())?;
         verify_uninitialized::<T>(info)?;
         Ok(Self {
             info,
@@ -51,7 +54,7 @@ impl<'a, T: ManifestAccount + Get + Pod + Clone> ManifestAccountInfo<'a, T> {
     }
 
     pub fn get_fixed(&self) -> Result<Ref<'_, T>, ProgramError> {
-        let data: pinocchio::account_info::Ref<[u8]> = self.info.try_borrow_data()?;
+        let data: Ref<[u8]> = self.info.try_borrow_data()?;
         Ok(Ref::map(data, |data| {
             return get_helper::<T>(data, 0_u32);
         }))
@@ -82,7 +85,7 @@ fn verify_owned_by_manifest(owner: &Pubkey) -> ProgramResult {
 }
 
 fn verify_uninitialized<T: Pod + ManifestAccount>(info: &AccountInfo) -> ProgramResult {
-    let bytes: pinocchio::account_info::Ref<[u8]> = info.try_borrow_data()?;
+    let bytes: Ref<[u8]> = info.try_borrow_data()?;
     require!(
         size_of::<T>() == bytes.len(),
         ProgramError::InvalidAccountData,

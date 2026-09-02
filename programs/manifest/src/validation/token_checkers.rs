@@ -16,9 +16,11 @@ pub struct MintAccountInfo<'a> {
 
 impl<'a> MintAccountInfo<'a> {
     pub fn new(info: &'a AccountInfo) -> Result<MintAccountInfo<'a>, ProgramError> {
-        check_spl_token_program_account(info.owner_pubkey())?;
+        check_spl_token_program_account(info.owner_pubkey()).map_err(to_program_error)?;
 
-        let mint: Mint = StateWithExtensions::<Mint>::unpack(&info.try_borrow_data().map_err(to_program_error)?).map_err(to_program_error)?.base;
+        let mint: Mint = StateWithExtensions::<Mint>::unpack(&info.try_borrow_data()?)
+            .map_err(to_program_error)?
+            .base;
 
         Ok(Self { mint, info })
     }

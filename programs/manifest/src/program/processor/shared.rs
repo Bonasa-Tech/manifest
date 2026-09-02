@@ -115,7 +115,7 @@ fn expand_dynamic<'a, T: ManifestAccount + Pod + Clone>(
             expandable_account.pubkey(),
             lamports_diff,
         ),
-        &[payer.clone(), expandable_account.clone()],
+        &[payer, expandable_account],
     )?;
 
     #[cfg(feature = "fuzz")]
@@ -259,7 +259,7 @@ fn verify_trader_index_hint(
     )?;
     require!(
         payer
-            .key
+            .pubkey()
             .eq(dynamic_account.get_trader_key_by_index(hinted_index)),
         crate::program::ManifestError::WrongIndexHintParams,
         "Invalid trader hint index {} did not match payer",

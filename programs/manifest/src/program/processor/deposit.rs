@@ -197,7 +197,7 @@ fn spl_token_2022_transfer_from_trader_to_vault<'a>(
             token_program.as_ref(),
             trader_account.as_ref(),
             vault.as_ref(),
-            mint.unwrap().as_ref().clone(),
+            mint.unwrap().as_ref(),
             payer.as_ref(),
         ],
     )

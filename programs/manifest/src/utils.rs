@@ -2,7 +2,6 @@ use pinocchio::{
     account_info::AccountInfo, program_error::ProgramError, sysvars::rent::Rent, ProgramResult,
 };
 use solana_program::{keccak, pubkey::Pubkey, system_instruction};
-use pinocchio::program_error::ProgramError;
 
 use crate::{program::invoke_signed, validation::AccountInfoExt};
 

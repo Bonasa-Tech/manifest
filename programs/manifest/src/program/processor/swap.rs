@@ -593,7 +593,7 @@ fn spl_token_2022_transfer_from_trader_to_vault<'a>(
             token_program.as_ref(),
             trader_account.as_ref(),
             vault.as_ref(),
-            mint.unwrap().as_ref().clone(),
+            mint.unwrap().as_ref(),
             owner.as_ref(),
         ],
     )
@@ -684,7 +684,7 @@ fn spl_token_2022_transfer_from_vault_to_trader<'a>(
         &[
             token_program.as_ref(),
             vault.as_ref(),
-            mint.unwrap().as_ref().clone(),
+            mint.unwrap().as_ref(),
             trader_account.as_ref(),
         ],
         market_vault_seeds_with_bump!(market_key, mint_pubkey, vault_bump),

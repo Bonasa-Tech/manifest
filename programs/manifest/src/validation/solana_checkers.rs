@@ -126,7 +126,7 @@ impl<'a> EmptyAccount<'a> {
             info.pubkey()
         )?;
         require!(
-            info.owner() == &system_program::id(),
+            info.owned_by(&system_program::id()),
             ProgramError::IllegalOwner,
             "Empty accounts must be owned by the system program {:?}",
             info.pubkey()
