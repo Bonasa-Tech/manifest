@@ -200,10 +200,10 @@ pub(crate) fn process_settle_funds(
                 quote_mint_decimals,
             ).map_err(manifest::validation::to_program_error)?,
             &[
-                token_program_quote.as_ref(),
-                trader_token_account_quote.as_ref(),
-                mint_quote.as_ref(),
-                platform_token_account.as_ref(),
+                token_program_quote,
+                trader_token_account_quote,
+                mint_quote,
+                platform_token_account,
                 owner.as_ref(),
             ],
         )?;
@@ -251,10 +251,10 @@ pub(crate) fn process_settle_funds(
                     quote_mint_decimals,
                 ).map_err(manifest::validation::to_program_error)?,
                 &[
-                    token_program_quote.as_ref(),
-                    trader_token_account_quote.as_ref(),
-                    mint_quote.as_ref(),
-                    referrer_token_account.as_ref(),
+                    token_program_quote,
+                    trader_token_account_quote,
+                    mint_quote,
+                    referrer_token_account,
                     owner.as_ref(),
                 ],
             )?;

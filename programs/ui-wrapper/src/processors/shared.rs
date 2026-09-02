@@ -26,10 +26,8 @@ use manifest::{
     validation::{ManifestAccountInfo, Program, Signer},
 };
 use solana_program::{
-    clock::Clock,
     pubkey::Pubkey,
     system_instruction,
-    sysvar::{Sysvar},
 };
 use static_assertions::const_assert_eq;
 

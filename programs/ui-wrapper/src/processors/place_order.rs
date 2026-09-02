@@ -3,6 +3,7 @@ use std::{
 };
 
 use borsh::{BorshDeserialize, BorshSerialize};
+use pinocchio::sysvars::Sysvar;
 use pinocchio::account_info::{Ref, RefMut};
 use manifest::validation::next_account_info;
 use manifest::validation::AccountInfoExt;
@@ -27,10 +28,8 @@ use manifest::{
 use solana_program::{
     instruction::{AccountMeta, Instruction},
     program::get_return_data,
-    program_error::ProgramError,
     pubkey::Pubkey,
     system_program,
-    sysvar::{clock::Clock, Sysvar},
 };
 use spl_token_2022::{
     extension::{
@@ -378,9 +377,9 @@ pub(crate) fn process_place_order(
             owner.info,
             market.info,
         ]);
-        account_infos.extend_from_slice(&accounts[10..]);
+        account_infos.extend(accounts[10..].iter());
 
-        invoke(&ix, &account_infos.iter().collect::<Vec<_>>())?;
+        invoke(&ix, &account_infos)?;
     }
 
     // Process the order result
@@ -388,7 +387,8 @@ pub(crate) fn process_place_order(
     let cpi_return_data: Option<(Pubkey, Vec<u8>)> = get_return_data();
     let BatchUpdateReturn {
         orders: batch_update_orders,
-    } = BatchUpdateReturn::try_from_slice(&cpi_return_data.unwrap().1[..])?;
+    } = BatchUpdateReturn::try_from_slice(&cpi_return_data.unwrap().1[..])
+        .map_err(manifest::validation::io_to_program_error)?;
 
     trace!("cpi return orders:{batch_update_orders:?}");
 

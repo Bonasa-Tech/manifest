@@ -1,4 +1,5 @@
 use pinocchio::account_info::{Ref, RefMut};
+use pinocchio::sysvars::Sysvar;
 use manifest::validation::next_account_info;
 use manifest::validation::AccountInfoExt;
 use pinocchio::account_info::AccountInfo;
@@ -19,7 +20,6 @@ use manifest::{
     validation::{ManifestAccountInfo, Program, Signer},
 };
 use solana_program::{
-    clock::Clock,
     pubkey::Pubkey,
     system_program,
     };

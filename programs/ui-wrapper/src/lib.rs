@@ -40,13 +40,14 @@ security_txt! {
 declare_id!("UMnFStVeG1ecZFc2gc5K3vFy3sMpotq8C91mXBQDGwh");
 
 #[cfg(not(feature = "no-entrypoint"))]
-manifest::entrypoint!(process_instruction);
+pinocchio::program_entrypoint!(process_instruction, { manifest::entrypoint::MAX_ACCOUNTS });
 
 pub fn process_instruction(
-    program_id: &Pubkey,
+    program_id_raw: &pinocchio::pubkey::Pubkey,
     accounts: &[AccountInfo],
     instruction_data: &[u8],
 ) -> ProgramResult {
+    let program_id: &Pubkey = manifest::validation::as_pubkey(program_id_raw);
     let (tag, data) = instruction_data
         .split_first()
         .ok_or(ProgramError::InvalidInstructionData)?;
