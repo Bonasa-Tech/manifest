@@ -64,12 +64,12 @@ impl TestFixture {
         let mut program: ProgramTest = ProgramTest::new(
             "wrapper",
             wrapper::ID,
-            processor!(wrapper::process_instruction),
+            None,
         );
         program.add_program(
             "manifest",
             manifest::ID,
-            processor!(manifest::process_instruction),
+            None,
         );
 
         let second_keypair: Keypair = Keypair::new();

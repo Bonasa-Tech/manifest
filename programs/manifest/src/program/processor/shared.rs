@@ -269,15 +269,19 @@ fn verify_trader_index_hint(
 }
 
 /// Builds pinocchio's borrowed instruction from a `solana_program` one and
-/// hands it to `call`, which does the actual CPI.
+/// hands it, with the accounts it names, to `call`.
 ///
-/// The instruction is still built with the `solana_program` builders, which
-/// are what the SPL and system program crates hand out. pinocchio's
-/// `Instruction` points at the caller's key, metas and data rather than owning
-/// them, so this is one stack array of metas and no copy of the data.
+/// Two things have to be translated. The instruction itself: pinocchio's
+/// points at the caller's key, metas and data rather than owning them, so this
+/// is one stack array of metas and no copy of the data. And the accounts:
+/// `solana_program`'s `invoke` takes any superset of the instruction's
+/// accounts in any order and matches them up by key, while pinocchio's takes
+/// exactly the instruction's accounts, in the instruction's order. Call sites
+/// here pass what they have, so the matching happens here.
 fn with_pinocchio_instruction<R>(
     ix: &Instruction,
-    call: impl FnOnce(&PinocchioInstruction) -> R,
+    account_infos: &[&AccountInfo],
+    call: impl FnOnce(&PinocchioInstruction, &[&AccountInfo]) -> R,
 ) -> Result<R, ProgramError> {
     const MAX_CPI_ACCOUNTS: usize = 16;
     require!(
@@ -290,29 +294,43 @@ fn with_pinocchio_instruction<R>(
 
     let mut metas: [MaybeUninit<PinocchioAccountMeta>; MAX_CPI_ACCOUNTS] =
         [const { MaybeUninit::uninit() }; MAX_CPI_ACCOUNTS];
-    for (meta, account) in metas.iter_mut().zip(ix.accounts.iter()) {
-        meta.write(PinocchioAccountMeta {
+    let mut ordered: [MaybeUninit<&AccountInfo>; MAX_CPI_ACCOUNTS] =
+        [const { MaybeUninit::uninit() }; MAX_CPI_ACCOUNTS];
+
+    for (index, account) in ix.accounts.iter().enumerate() {
+        metas[index].write(PinocchioAccountMeta {
             pubkey: as_raw_key(&account.pubkey),
             is_writable: account.is_writable,
             is_signer: account.is_signer,
         });
+        let found: &&AccountInfo = account_infos
+            .iter()
+            .find(|info| info.pubkey() == &account.pubkey)
+            .ok_or(ProgramError::NotEnoughAccountKeys)?;
+        ordered[index].write(found);
     }
-    // SAFETY: the first `ix.accounts.len()` entries were just written, and
-    // that length is within the array by the check above.
+
+    // SAFETY: the first `ix.accounts.len()` entries of both arrays were just
+    // written, and that length is within the arrays by the check above.
     let metas: &[PinocchioAccountMeta] =
         unsafe { core::slice::from_raw_parts(metas.as_ptr().cast(), ix.accounts.len()) };
+    let ordered: &[&AccountInfo] =
+        unsafe { core::slice::from_raw_parts(ordered.as_ptr().cast(), ix.accounts.len()) };
 
-    Ok(call(&PinocchioInstruction {
-        program_id: as_raw_key(&ix.program_id),
-        accounts: metas,
-        data: &ix.data,
-    }))
+    Ok(call(
+        &PinocchioInstruction {
+            program_id: as_raw_key(&ix.program_id),
+            accounts: metas,
+            data: &ix.data,
+        },
+        ordered,
+    ))
 }
 
 /// Calls another program, signing for a program derived address.
 ///
-/// `seeds` are the same byte slices the address was derived from, bump
-/// included, in the shape the `*_seeds_with_bump!` macros produce.
+/// `seeds` are the byte slices the address was derived from, bump included,
+/// in the shape the `*_seeds_with_bump!` macros produce.
 pub fn invoke_signed(
     ix: &Instruction,
     account_infos: &[&AccountInfo],
@@ -338,8 +356,8 @@ pub fn invoke_signed(
         unsafe { core::slice::from_raw_parts(seed_array.as_ptr().cast(), seeds[0].len()) };
     let signer: PinocchioSigner = PinocchioSigner::from(written);
 
-    with_pinocchio_instruction(ix, |pinocchio_ix| {
-        pinocchio::cpi::slice_invoke_signed(pinocchio_ix, account_infos, &[signer])
+    with_pinocchio_instruction(ix, account_infos, |pinocchio_ix, ordered| {
+        pinocchio::cpi::slice_invoke_signed(pinocchio_ix, ordered, &[signer])
     })?
 }
 
@@ -354,7 +372,7 @@ pub fn invoke_signed(
 /// Accounts arrive as `&[&AccountInfo]` because that is what pinocchio's CPI
 /// takes; the slice form avoids the const generic count at every call site.
 pub fn invoke(ix: &Instruction, account_infos: &[&AccountInfo]) -> ProgramResult {
-    with_pinocchio_instruction(ix, |pinocchio_ix| {
-        pinocchio::cpi::slice_invoke(pinocchio_ix, account_infos)
+    with_pinocchio_instruction(ix, account_infos, |pinocchio_ix, ordered| {
+        pinocchio::cpi::slice_invoke(pinocchio_ix, ordered)
     })?
 }

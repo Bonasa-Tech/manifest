@@ -83,14 +83,14 @@ impl TestFixture {
         let mut program: ProgramTest = ProgramTest::new(
             "ui_wrapper",
             ui_wrapper::ID,
-            processor!(ui_wrapper::process_instruction),
+            None,
         );
         // needed extra cu for logs and traces
         program.set_compute_max_units(600_000);
         program.add_program(
             "manifest",
             manifest::ID,
-            processor!(manifest::process_instruction),
+            None,
         );
 
         let second_keypair: Keypair = Keypair::new();
@@ -179,14 +179,14 @@ impl TestFixture {
         let mut program: ProgramTest = ProgramTest::new(
             "ui_wrapper",
             ui_wrapper::ID,
-            processor!(ui_wrapper::process_instruction),
+            None,
         );
         // needed extra cu for logs and traces
         program.set_compute_max_units(600_000);
         program.add_program(
             "manifest",
             manifest::ID,
-            processor!(manifest::process_instruction),
+            None,
         );
 
         let second_keypair: Keypair = Keypair::new();
