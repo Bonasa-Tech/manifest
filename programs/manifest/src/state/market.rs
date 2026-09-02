@@ -1666,7 +1666,7 @@ impl<
                 ManifestError::MissingGlobal,
                 "Missing global accounts when adding a global",
             )?;
-            try_to_add_to_global(&global_trade_account_opt.as_ref().unwrap(), &resting_order)?;
+            try_to_add_to_global(global_trade_account_opt.as_ref().unwrap(), &resting_order)?;
         } else {
             // Place the remaining.
             // Rounds up quote atoms so price can be rounded in favor of taker

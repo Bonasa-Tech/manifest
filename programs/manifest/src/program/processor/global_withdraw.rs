@@ -17,7 +17,7 @@ use crate::{
 };
 
 #[cfg(not(feature = "certora"))]
-use {crate::global_vault_seeds_with_bump, solana_program::program::invoke_signed};
+use crate::{global_vault_seeds_with_bump, program::invoke_signed};
 
 #[cfg(feature = "certora")]
 use {

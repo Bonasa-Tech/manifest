@@ -82,7 +82,7 @@ pub(crate) fn remove_from_global(
         // results in a stranded gas prepayment on the global account.
         return Ok(());
     }
-    let global_trade_accounts: &GlobalTradeAccounts = &global_trade_accounts_opt.as_ref().unwrap();
+    let global_trade_accounts: &GlobalTradeAccounts = global_trade_accounts_opt.as_ref().unwrap();
 
     // The refund cannot be a CPI because the global account carries data
     // (`from` must not carry data), so it has to be a direct lamport
@@ -228,7 +228,7 @@ pub(crate) fn pay_global_gas_prepayment(
     // reference.
     invoke(
         &solana_program::system_instruction::transfer(
-            &gas_payer_opt.as_ref().unwrap().info.pubkey(),
+            gas_payer_opt.as_ref().unwrap().info.pubkey(),
             &global.pubkey(),
             GAS_DEPOSIT_LAMPORTS
                 .checked_mul(num_gas_prepayments)
@@ -256,7 +256,7 @@ pub(crate) fn pay_global_gas_prepayment(
         gas_payer_opt,
         ..
     } = global_trade_accounts;
-    let payer_info: &solana_program::account_info::AccountInfo =
+    let payer_info: &AccountInfo =
         gas_payer_opt.as_ref().unwrap().info;
 
     let lamports: u64 = GAS_DEPOSIT_LAMPORTS
@@ -307,7 +307,7 @@ pub(crate) fn can_back_order<'a>(
     if global_trade_accounts_opt.is_none() {
         return false;
     }
-    let global_trade_accounts: &GlobalTradeAccounts = &global_trade_accounts_opt.as_ref().unwrap();
+    let global_trade_accounts: &GlobalTradeAccounts = global_trade_accounts_opt.as_ref().unwrap();
     let GlobalTradeAccounts { global, .. } = global_trade_accounts;
 
     let global_data: &mut RefMut<[u8]> = &mut global.try_borrow_mut_data().unwrap();
@@ -334,7 +334,7 @@ pub(crate) fn try_to_reduce_global_tokens<'a>(
         crate::program::ManifestError::MissingGlobal,
         "Missing global accounts when adding a global",
     )?;
-    let global_trade_accounts: &GlobalTradeAccounts = &global_trade_accounts_opt.as_ref().unwrap();
+    let global_trade_accounts: &GlobalTradeAccounts = global_trade_accounts_opt.as_ref().unwrap();
     let GlobalTradeAccounts {
         global,
         gas_receiver_opt,
@@ -398,7 +398,7 @@ pub(crate) fn try_to_reduce_global_tokens<'a>(
         )?;
 
         // Prevent transfer from global to market vault if a token has a non-zero fee.
-        let mint_account_info: &MintAccountInfo = &mint_opt.as_ref().unwrap();
+        let mint_account_info: &MintAccountInfo = mint_opt.as_ref().unwrap();
         if StateWithExtensions::<Mint>::unpack(&mint_account_info.info.try_borrow_data().map_err(to_program_error)?)?
             .get_extension::<TransferFeeConfig>()
             .is_ok_and(|f| f.get_epoch_fee(get_now_epoch()).transfer_fee_basis_points != 0.into())
@@ -454,7 +454,7 @@ pub(crate) fn transfer_global_tokens<'a>(
         crate::program::ManifestError::MissingGlobal,
         "Missing global accounts when transferring",
     )?;
-    let global_trade_accounts: &GlobalTradeAccounts = &global_trade_accounts_opt.as_ref().unwrap();
+    let global_trade_accounts: &GlobalTradeAccounts = global_trade_accounts_opt.as_ref().unwrap();
     let GlobalTradeAccounts {
         global_vault_opt,
         market_vault_opt,
@@ -488,7 +488,7 @@ pub(crate) fn transfer_global_tokens<'a>(
         crate::program::ManifestError::MissingGlobal,
         "Missing global accounts when transferring",
     )?;
-    let global_trade_accounts: &GlobalTradeAccounts = &global_trade_accounts_opt.as_ref().unwrap();
+    let global_trade_accounts: &GlobalTradeAccounts = global_trade_accounts_opt.as_ref().unwrap();
     let GlobalTradeAccounts {
         global,
         mint_opt,
@@ -509,7 +509,7 @@ pub(crate) fn transfer_global_tokens<'a>(
     let token_program: &TokenProgram<'a> = token_program_opt.as_ref().unwrap();
 
     if *token_program.pubkey() == spl_token_2022::id() {
-        let mint_account_info: &MintAccountInfo = &mint_opt.as_ref().unwrap();
+        let mint_account_info: &MintAccountInfo = mint_opt.as_ref().unwrap();
         invoke_signed(
             &spl_token_2022::instruction::transfer_checked(
                 token_program.pubkey(),
