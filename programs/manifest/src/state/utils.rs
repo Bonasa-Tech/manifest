@@ -399,7 +399,7 @@ pub(crate) fn try_to_reduce_global_tokens<'a>(
 
         // Prevent transfer from global to market vault if a token has a non-zero fee.
         let mint_account_info: &MintAccountInfo = &mint_opt.as_ref().unwrap();
-        if StateWithExtensions::<Mint>::unpack(&mint_account_info.info.try_borrow_data()?)?
+        if StateWithExtensions::<Mint>::unpack(&mint_account_info.info.try_borrow_data().map_err(to_program_error)?)?
             .get_extension::<TransferFeeConfig>()
             .is_ok_and(|f| f.get_epoch_fee(get_now_epoch()).transfer_fee_basis_points != 0.into())
         {
@@ -412,7 +412,7 @@ pub(crate) fn try_to_reduce_global_tokens<'a>(
             })?;
             return Ok(false);
         }
-        if StateWithExtensions::<Mint>::unpack(&mint_account_info.info.try_borrow_data()?)?
+        if StateWithExtensions::<Mint>::unpack(&mint_account_info.info.try_borrow_data().map_err(to_program_error)?)?
             .get_extension::<TransferHook>()
             .is_ok_and(|f| f.program_id.0 != Pubkey::default())
         {

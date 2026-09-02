@@ -1,6 +1,10 @@
-use solana_program::{
-    keccak, pubkey::Pubkey, rent::Rent, system_instruction,
+use pinocchio::{
+    account_info::AccountInfo, program_error::ProgramError, sysvars::rent::Rent, ProgramResult,
 };
+use solana_program::{keccak, pubkey::Pubkey, system_instruction};
+use pinocchio::program_error::ProgramError;
+
+use crate::{program::invoke_signed, validation::AccountInfoExt};
 
 /// Canonical discriminant of the given struct. It is the hash of program ID and
 /// the name of the type.
@@ -32,7 +36,7 @@ pub fn create_account<'a>(
             space,
             program_owner,
         ),
-        &[payer.clone(), new_account.clone(), system_program.clone()],
+        &[payer, new_account, system_program],
         &[seeds
             .iter()
             .map(|seed| seed.as_slice())

@@ -1,4 +1,5 @@
 use crate::{require, validation::AccountInfoExt};
+use crate::validation::to_program_error;
 use pinocchio::program_error::ProgramError;
 use pinocchio::account_info::AccountInfo;
 use solana_program::{pubkey::Pubkey};
@@ -17,7 +18,7 @@ impl<'a> MintAccountInfo<'a> {
     pub fn new(info: &'a AccountInfo) -> Result<MintAccountInfo<'a>, ProgramError> {
         check_spl_token_program_account(info.owner_pubkey())?;
 
-        let mint: Mint = StateWithExtensions::<Mint>::unpack(&info.try_borrow_data()?).map_err(to_program_error)?.base;
+        let mint: Mint = StateWithExtensions::<Mint>::unpack(&info.try_borrow_data().map_err(to_program_error)?).map_err(to_program_error)?.base;
 
         Ok(Self { mint, info })
     }

@@ -436,7 +436,7 @@ impl<'a> SwapContext<'a> {
             if !current_account_info.data_is_empty() {
                 let global: ManifestAccountInfo<'a, GlobalFixed> =
                     ManifestAccountInfo::<GlobalFixed>::new(current_account_info)?;
-                let global_data: Ref<[u8]> = global.try_borrow_data()?;
+                let global_data: pinocchio::account_info::Ref<[u8]> = global.try_borrow_data()?;
                 let global_fixed: &GlobalFixed = get_helper::<GlobalFixed>(&global_data, 0_u32);
                 let global_mint_key: &Pubkey = global_fixed.get_mint();
                 let expected_global_vault_address: &Pubkey = global_fixed.get_vault();
@@ -618,7 +618,7 @@ impl<'a> BatchUpdateContext<'a> {
                     // Assert that the global itself is at the expected address,
                     // see `verify_market_global`.
                     verify_market_global(&market, index, mint.info.pubkey(), global.info.pubkey())?;
-                    let global_data: Ref<[u8]> = global.try_borrow_data()?;
+                    let global_data: pinocchio::account_info::Ref<[u8]> = global.try_borrow_data()?;
                     let global_fixed: &GlobalFixed = get_helper::<GlobalFixed>(&global_data, 0_u32);
                     let expected_global_vault_address: &Pubkey = global_fixed.get_vault();
 
@@ -801,7 +801,7 @@ impl<'a> GlobalAddTraderContext<'a> {
         let global: ManifestAccountInfo<GlobalFixed> =
             ManifestAccountInfo::<GlobalFixed>::new(next_account_info(account_iter)?)?;
 
-        let global_data: Ref<[u8]> = global.try_borrow_data()?;
+        let global_data: pinocchio::account_info::Ref<[u8]> = global.try_borrow_data()?;
         let global_fixed: &GlobalFixed = get_helper::<GlobalFixed>(&global_data, 0_u32);
         let global_mint_key: &Pubkey = global_fixed.get_mint();
         // The global is validated against its own stored bump, see
@@ -847,7 +847,7 @@ impl<'a> GlobalDepositContext<'a> {
 
         let mint: MintAccountInfo = MintAccountInfo::new(next_account_info(account_iter)?)?;
 
-        let global_data: Ref<[u8]> = global.try_borrow_data()?;
+        let global_data: pinocchio::account_info::Ref<[u8]> = global.try_borrow_data()?;
         let global_fixed: &GlobalFixed = get_helper::<GlobalFixed>(&global_data, 0_u32);
 
         let global_mint_key: &Pubkey = global_fixed.get_mint();
@@ -908,7 +908,7 @@ impl<'a> GlobalWithdrawContext<'a> {
 
         let mint: MintAccountInfo = MintAccountInfo::new(next_account_info(account_iter)?)?;
 
-        let global_data: Ref<[u8]> = global.try_borrow_data()?;
+        let global_data: pinocchio::account_info::Ref<[u8]> = global.try_borrow_data()?;
         let global_fixed: &GlobalFixed = get_helper::<GlobalFixed>(&global_data, 0_u32);
 
         let global_mint_key: &Pubkey = global_fixed.get_mint();
@@ -971,7 +971,7 @@ impl<'a> GlobalEvictContext<'a> {
 
         let mint: MintAccountInfo = MintAccountInfo::new(next_account_info(account_iter)?)?;
 
-        let global_data: Ref<[u8]> = global.try_borrow_data()?;
+        let global_data: pinocchio::account_info::Ref<[u8]> = global.try_borrow_data()?;
         let global_fixed: &GlobalFixed = get_helper::<GlobalFixed>(&global_data, 0_u32);
 
         let global_mint_key: &Pubkey = global_fixed.get_mint();
@@ -1039,7 +1039,7 @@ impl<'a> GlobalCleanContext<'a> {
         let global: ManifestAccountInfo<GlobalFixed> =
             ManifestAccountInfo::<GlobalFixed>::new(next_account_info(account_iter)?)?;
 
-        let global_data: Ref<[u8]> = global.try_borrow_data()?;
+        let global_data: pinocchio::account_info::Ref<[u8]> = global.try_borrow_data()?;
         let global_fixed: &GlobalFixed = get_helper::<GlobalFixed>(&global_data, 0_u32);
         let global_mint_key: &Pubkey = global_fixed.get_mint();
         // The global is validated against its own stored bump, see

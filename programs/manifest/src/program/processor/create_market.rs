@@ -1,4 +1,5 @@
 use std::{cell::Ref, mem::size_of};
+use crate::validation::to_program_error;
 use pinocchio::sysvars::{rent::Rent, Sysvar};
 use pinocchio::account_info::AccountInfo;
 use crate::validation::AccountInfoExt;
@@ -57,7 +58,7 @@ pub(crate) fn process_create_market(
 
     for mint in [base_mint.as_ref(), quote_mint.as_ref()] {
         if *mint.owner_pubkey() == spl_token_2022::id() {
-            let mint_data: Ref<[u8]> = mint.try_borrow_data()?;
+            let mint_data: pinocchio::account_info::Ref<[u8]> = mint.try_borrow_data()?;
             let pool_mint: StateWithExtensions<'_, Mint> =
                 StateWithExtensions::<Mint>::unpack(&mint_data).map_err(to_program_error)?;
             // Closable mints can be replaced with different ones, breaking some saved info on the market.
@@ -106,15 +107,15 @@ pub(crate) fn process_create_market(
             ];
 
             if is_mint_22 {
-                let mint_data: Ref<[u8]> = mint.try_borrow_data()?;
+                let mint_data: pinocchio::account_info::Ref<[u8]> = mint.try_borrow_data()?;
                 let mint_with_extension: PodStateWithExtensions<'_, PodMint> =
                     PodStateWithExtensions::<PodMint>::unpack(&mint_data).unwrap();
                 let mint_extensions: Vec<ExtensionType> =
-                    mint_with_extension.get_extension_types()?;
+                    mint_with_extension.get_extension_types().map_err(to_program_error)?;
                 let required_extensions: Vec<ExtensionType> =
                     ExtensionType::get_required_init_account_extensions(&mint_extensions);
                 let space: usize =
-                    ExtensionType::try_calculate_account_len::<Account>(&required_extensions)?;
+                    ExtensionType::try_calculate_account_len::<Account>(&required_extensions).map_err(to_program_error)?;
                 create_account(
                     payer.as_ref(),
                     token_account,
@@ -130,11 +131,11 @@ pub(crate) fn process_create_market(
                         token_account.pubkey(),
                         mint.pubkey(),
                         token_account.pubkey(),
-                    )?,
+                    ).map_err(to_program_error)?,
                     &[
                         payer.as_ref(),
-                        token_account.clone(),
-                        mint.clone(),
+                        token_account,
+                        mint,
                         token_program_22.as_ref(),
                     ],
                 )?;
@@ -155,11 +156,11 @@ pub(crate) fn process_create_market(
                         token_account.pubkey(),
                         mint.pubkey(),
                         token_account.pubkey(),
-                    )?,
+                    ).map_err(to_program_error)?,
                     &[
                         payer.as_ref(),
-                        token_account.clone(),
-                        mint.clone(),
+                        token_account,
+                        mint,
                         token_program.as_ref(),
                     ],
                 )?;

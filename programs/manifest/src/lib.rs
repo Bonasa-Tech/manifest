@@ -18,7 +18,6 @@ pub mod deps {
 pub mod certora;
 
 use hypertree::trace;
-use pinocchio::ProgramResult;
 use pinocchio::program_error::ProgramError;
 use program::{
     batch_update::process_batch_update, claim_seat::process_claim_seat,
