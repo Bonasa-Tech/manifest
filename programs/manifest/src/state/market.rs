@@ -281,16 +281,43 @@ impl MarketFixed {
         quote_vault: Pubkey,
         quote_vault_bump: u8,
     ) -> Self {
+        Self::new_empty_from_mint_parts(
+            base_mint.info.pubkey(),
+            base_mint.mint.decimals,
+            quote_mint.info.pubkey(),
+            quote_mint.mint.decimals,
+            base_vault,
+            base_vault_bump,
+            quote_vault,
+            quote_vault_bump,
+        )
+    }
+
+    /// The same, from what it actually reads off the mints: their addresses
+    /// and decimals. Callers holding an account for each use the wrapper
+    /// above; tests and anything else describing a market without one use
+    /// this, since the runtime's account type cannot be built off chain.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_empty_from_mint_parts(
+        base_mint: &Pubkey,
+        base_mint_decimals: u8,
+        quote_mint: &Pubkey,
+        quote_mint_decimals: u8,
+        base_vault: Pubkey,
+        base_vault_bump: u8,
+        quote_vault: Pubkey,
+        quote_vault_bump: u8,
+    ) -> Self {
         MarketFixed {
             discriminant: MARKET_FIXED_DISCRIMINANT,
             version: 0,
-            base_mint_decimals: base_mint.mint.decimals,
-            quote_mint_decimals: quote_mint.mint.decimals,
+            base_mint_decimals,
+            quote_mint_decimals,
             base_vault_bump,
             quote_vault_bump,
             _padding1: [0; 3],
-            base_mint: *base_mint.info.pubkey(),
-            quote_mint: *quote_mint.info.pubkey(),
+            base_mint: *base_mint,
+            quote_mint: *quote_mint,
             base_vault,
             quote_vault,
             order_sequence_number: 0,
@@ -2110,51 +2137,22 @@ pub fn create_empty_market(
     mint_authority: &Pubkey,
     market_key: &Pubkey,
 ) -> MarketFixed {
-    // Values on the mints are not important.
-    use pinocchio::account_info::AccountInfo;
-    use spl_token_2022::state::Mint;
-    use std::{cell::RefCell, rc::Rc, str::FromStr};
-    let mut lamports: u64 = 0;
-    let base_mint: MintAccountInfo = MintAccountInfo {
-        mint: Mint {
-            mint_authority: Some(*mint_authority).into(),
-            supply: 0,
-            decimals: base_decimals,
-            is_initialized: true,
-            freeze_authority: None.into(),
-        },
-        info: &AccountInfo {
-            key: &Pubkey::from_str(base_mint).expect("Valid base mint"),
-            lamports: Rc::new(RefCell::new(&mut lamports)),
-            data: Rc::new(RefCell::new(&mut [])),
-            owner: &Pubkey::new_unique(),
-            rent_epoch: 0,
-            is_signer: false,
-            is_writable: false,
-            executable: false,
-        },
-    };
-
-    let mut lamports: u64 = 0;
-    let quote_mint: MintAccountInfo = MintAccountInfo {
-        mint: Mint {
-            mint_authority: Some(*mint_authority).into(),
-            supply: 0,
-            decimals: quote_decimals,
-            is_initialized: true,
-            freeze_authority: None.into(),
-        },
-        info: &AccountInfo {
-            key: &Pubkey::from_str(quote_mint).expect("Valid quote mint"),
-            lamports: Rc::new(RefCell::new(&mut lamports)),
-            data: Rc::new(RefCell::new(&mut [])),
-            owner: &Pubkey::new_unique(),
-            rent_epoch: 0,
-            is_signer: false,
-            is_writable: false,
-            executable: false,
-        },
-    };
-    let market_fixed: MarketFixed = MarketFixed::new_empty(&base_mint, &quote_mint, market_key);
-    market_fixed
+    // Values on the mints are not important, and the runtime's account type
+    // cannot be built off chain, so this describes the mints by what a market
+    // records of them: their addresses and decimals.
+    use std::str::FromStr;
+    let base_mint: Pubkey = Pubkey::from_str(base_mint).expect("Valid base mint");
+    let quote_mint: Pubkey = Pubkey::from_str(quote_mint).expect("Valid quote mint");
+    let (base_vault, base_vault_bump) = get_vault_address(market_key, &base_mint);
+    let (quote_vault, quote_vault_bump) = get_vault_address(market_key, &quote_mint);
+    MarketFixed::new_empty_from_mint_parts(
+        &base_mint,
+        base_decimals,
+        &quote_mint,
+        quote_decimals,
+        base_vault,
+        base_vault_bump,
+        quote_vault,
+        quote_vault_bump,
+    )
 }
