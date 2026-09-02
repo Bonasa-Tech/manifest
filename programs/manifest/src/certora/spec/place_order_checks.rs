@@ -21,7 +21,7 @@ use hypertree::DataIndex;
 
 pub fn place_single_order_nondet_inputs<const IS_BID: bool>(
     market_info: &AccountView,
-) -> (AddOrderToMarketArgs<'static, 'static>, BaseAtoms, u32) {
+) -> (AddOrderToMarketArgs<'static>, BaseAtoms, u32) {
     place_single_order_nondet_inputs_with_type::<IS_BID>(
         market_info,
         state::OrderType::Limit,

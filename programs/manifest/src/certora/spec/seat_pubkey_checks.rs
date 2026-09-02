@@ -123,7 +123,7 @@ pub fn rule_seat_pubkey_preserved_by_release_seat() {
 
     {
         let market_data: &mut pinocchio::account::RefMut<[u8]> =
-            &mut market_info.try_borrow_mut_data().unwrap();
+            &mut market_info.try_borrow_mut().unwrap();
         let mut dynamic_account: MarketRefMut = get_mut_dynamic_account(market_data);
         dynamic_account.release_seat(&trader_key).unwrap();
     }

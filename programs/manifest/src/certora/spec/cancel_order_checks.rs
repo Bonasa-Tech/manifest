@@ -49,7 +49,7 @@ pub fn cancel_order_by_index_no_revert<const IS_BID: bool>() {
 
     // -- call to cancel_order_by_index
     let market_data: &mut pinocchio::account::RefMut<[u8]> =
-        &mut market_info.try_borrow_mut_data().unwrap();
+        &mut market_info.try_borrow_mut().unwrap();
     let mut dynamic_account: MarketRefMut = get_mut_dynamic_account(market_data);
     let order_index: DataIndex = maker_order_index;
     let result: ProgramResult = dynamic_account.cancel_order_by_index(order_index, &[None, None]);

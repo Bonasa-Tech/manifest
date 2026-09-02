@@ -682,7 +682,7 @@ pub fn rule_global_evict() {
 
     {
         let global_data: &mut pinocchio::account::RefMut<[u8]> =
-            &mut global_info.try_borrow_mut_data().unwrap();
+            &mut global_info.try_borrow_mut().unwrap();
         let mut global_dynamic_account: crate::state::GlobalRefMut =
             get_mut_dynamic_account(global_data);
         global_dynamic_account
@@ -717,7 +717,7 @@ pub fn rule_global_evict() {
 /// Give the mocked global account an arbitrary number of claimed seats.
 fn set_nondet_num_seats_claimed(global_info: &AccountView) {
     let global_data: &mut pinocchio::account::RefMut<[u8]> =
-        &mut global_info.try_borrow_mut_data().unwrap();
+        &mut global_info.try_borrow_mut().unwrap();
     let global_dynamic_account: crate::state::GlobalRefMut = get_mut_dynamic_account(global_data);
     global_dynamic_account.fixed.set_num_seats_claimed(nondet());
 }
@@ -751,8 +751,7 @@ pub fn rule_global_evict_processor() {
     // -- the evictee holds the only modeled seat, the evictor holds none
     cvt_assume!(payer.pubkey() == crate::state::main_trader_pk());
     cvt_assume!(
-        &evictee_token.try_borrow_data().unwrap()[32..64]
-            == crate::state::second_trader_pk().as_ref()
+        &evictee_token.try_borrow().unwrap()[32..64] == crate::state::second_trader_pk().as_ref()
     );
     cvt_assume!(payer.pubkey() != crate::state::second_trader_pk());
     cvt_assume!(crate::state::is_second_global_seat_taken());
@@ -859,8 +858,7 @@ pub fn rule_global_evict_processor_with_fee() {
     // -- the evictee holds the only modeled seat, the evictor holds none
     cvt_assume!(payer.pubkey() == crate::state::main_trader_pk());
     cvt_assume!(
-        &evictee_token.try_borrow_data().unwrap()[32..64]
-            == crate::state::second_trader_pk().as_ref()
+        &evictee_token.try_borrow().unwrap()[32..64] == crate::state::second_trader_pk().as_ref()
     );
     cvt_assume!(payer.pubkey() != crate::state::second_trader_pk());
     cvt_assume!(crate::state::is_second_global_seat_taken());

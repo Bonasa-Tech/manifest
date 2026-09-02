@@ -262,7 +262,7 @@ pub fn cancel_global_order_no_revert_check<const IS_BID: bool>() {
         );
 
     let market_data: &mut pinocchio::account::RefMut<[u8]> =
-        &mut market_info.try_borrow_mut_data().unwrap();
+        &mut market_info.try_borrow_mut().unwrap();
     let mut dynamic_account: MarketRefMut = get_mut_dynamic_account(market_data);
     let result: ProgramResult =
         dynamic_account.cancel_order_by_index(order_index, &global_trade_accounts_opts);
@@ -334,7 +334,7 @@ pub fn rest_remaining_global_no_revert_check<const IS_BID: bool>() {
     };
 
     let market_data: &mut pinocchio::account::RefMut<[u8]> =
-        &mut market_info.try_borrow_mut_data().unwrap();
+        &mut market_info.try_borrow_mut().unwrap();
     let mut dynamic_account: MarketRefMut = get_mut_dynamic_account(market_data);
     let result = dynamic_account.certora_rest_remaining(
         args,

@@ -88,7 +88,7 @@ pub fn rule_integrity_of_batch_update_cancel<const IS_BID: bool>() {
 
 macro_rules! get_order {
     ($market_acc_info:expr, $order_index:expr) => {{
-        let market_data: &mut RefMut<[u8]> = &mut $market_acc_info.try_borrow_mut_data().unwrap();
+        let market_data: &mut RefMut<[u8]> = &mut $market_acc_info.try_borrow_mut().unwrap();
         let dynamic_account: MarketRefMut = get_mut_dynamic_account(market_data);
         let order: &RestingOrder = dynamic_account.get_order_by_index($order_index);
         *order

@@ -429,7 +429,7 @@ pub fn cancel_order_check<const IS_BID: bool>() {
     let order_sequence_number: u64 = resting_order.get_sequence_number();
     {
         let market_data: &mut pinocchio::account::RefMut<[u8]> =
-            &mut market_info.try_borrow_mut_data().unwrap();
+            &mut market_info.try_borrow_mut().unwrap();
         let mut dynamic_account: MarketRefMut = get_mut_dynamic_account(market_data);
         dynamic_account
             .cancel_order(trader_index, order_sequence_number, &[None, None])
