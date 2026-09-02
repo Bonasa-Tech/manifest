@@ -1,8 +1,8 @@
-use crate::validation::{io_to_program_error, to_program_error, AccountInfoExt};
-use pinocchio::{account_info::RefMut, ProgramResult};
+use crate::validation::{io_to_program_error, to_program_error, AccountViewExt};
+use pinocchio::{account::RefMut, ProgramResult};
 
 use borsh::{BorshDeserialize, BorshSerialize};
-use pinocchio::account_info::AccountInfo;
+use pinocchio::account::AccountView;
 use solana_program::pubkey::Pubkey;
 
 use crate::{
@@ -42,7 +42,7 @@ impl GlobalDepositParams {
 
 pub(crate) fn process_global_deposit(
     program_id: &Pubkey,
-    accounts: &[AccountInfo],
+    accounts: &[AccountView],
     data: &[u8],
 ) -> ProgramResult {
     let params: GlobalDepositParams =
@@ -53,7 +53,7 @@ pub(crate) fn process_global_deposit(
 #[cfg_attr(all(feature = "certora", not(feature = "certora-test")), early_panic)]
 pub(crate) fn process_global_deposit_core(
     _program_id: &Pubkey,
-    accounts: &[AccountInfo],
+    accounts: &[AccountView],
     params: GlobalDepositParams,
 ) -> ProgramResult {
     let global_deposit_context: GlobalDepositContext = GlobalDepositContext::load(accounts)?;
@@ -98,7 +98,7 @@ pub(crate) fn process_global_deposit_core(
     }
 
     // Now deposit the actual received amount (which may be less than requested due to transfer fees)
-    let global_data: &mut RefMut<[u8]> = &mut global.try_borrow_mut_data()?;
+    let global_data: &mut RefMut<[u8]> = &mut global.try_borrow_mut()?;
     let mut global_dynamic_account: GlobalRefMut = get_mut_dynamic_account(global_data);
     global_dynamic_account
         .deposit_global(payer.pubkey(), GlobalAtoms::new(deposited_amount_atoms))?;

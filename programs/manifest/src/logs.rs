@@ -1,6 +1,6 @@
 use bytemuck::{Pod, Zeroable};
 use hypertree::PodBool;
-use pinocchio::program_error::ProgramError;
+use pinocchio::error::ProgramError;
 use shank::ShankAccount;
 use solana_program::pubkey::Pubkey;
 

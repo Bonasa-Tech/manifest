@@ -1,4 +1,4 @@
-use crate::validation::AccountInfoExt;
+use crate::validation::AccountViewExt;
 use cvt::{cvt_assert, cvt_assume};
 use nondet::*;
 
@@ -14,7 +14,7 @@ use crate::{
 };
 use hypertree::DataIndex;
 use solana_cvt::token::spl_token_account_get_amount;
-use solana_program::account_info::AccountInfo;
+use solana_program::account::AccountView;
 use state::{
     cvt_assume_has_global_seat, global_balance_atoms, is_ask_order_taken, is_bid_order_taken,
     main_ask_order_index, main_bid_order_index, modeled_global_deposits, GlobalFixed, OrderType,
@@ -70,11 +70,11 @@ impl AllBalances {
 
 /// Extract all relevant balances from all accounts
 pub fn record_all_balances_without_order(
-    market: &AccountInfo,
-    vault_base_token: &AccountInfo,
-    vault_quote_token: &AccountInfo,
-    trader: &AccountInfo,
-    maker_trader: &AccountInfo,
+    market: &AccountView,
+    vault_base_token: &AccountView,
+    vault_quote_token: &AccountView,
+    trader: &AccountView,
+    maker_trader: &AccountView,
 ) -> AllBalances {
     let (trader_base, trader_quote) = get_trader_balance!(market, trader.pubkey());
     let (maker_trader_base, maker_trader_quote) =
@@ -107,11 +107,11 @@ pub fn record_all_balances_without_order(
 
 /// Extract all relevant balances from all accounts and a maker order
 pub fn record_all_balances(
-    market: &AccountInfo,
-    vault_base_token: &AccountInfo,
-    vault_quote_token: &AccountInfo,
-    trader: &AccountInfo,
-    maker_trader: &AccountInfo,
+    market: &AccountView,
+    vault_base_token: &AccountView,
+    vault_quote_token: &AccountView,
+    trader: &AccountView,
+    maker_trader: &AccountView,
     maker_order_index: DataIndex,
 ) -> AllBalances {
     let mut all_balances = record_all_balances_without_order(
@@ -129,11 +129,11 @@ pub fn record_all_balances(
 
 // Very basic market pre-conditions
 pub fn cvt_assume_basic_market_preconditions(
-    market: &AccountInfo,
-    trader: &AccountInfo,
-    vault_base_token: &AccountInfo,
-    vault_quote_token: &AccountInfo,
-    maker_trader: &AccountInfo,
+    market: &AccountView,
+    trader: &AccountView,
+    vault_base_token: &AccountView,
+    vault_quote_token: &AccountView,
+    maker_trader: &AccountView,
 ) {
     // -- assume both maker and taker traders have seats
     state::cvt_assume_main_trader_has_seat(trader.pubkey());
@@ -154,11 +154,11 @@ pub fn cvt_assume_basic_market_preconditions(
 /// Basic market pre-conditions. The maker order resting on the book is any
 /// order type except global.
 pub fn cvt_assume_market_preconditions<const IS_BID: bool>(
-    market: &AccountInfo,
-    trader: &AccountInfo,
-    vault_base_token: &AccountInfo,
-    vault_quote_token: &AccountInfo,
-    maker_trader: &AccountInfo,
+    market: &AccountView,
+    trader: &AccountView,
+    vault_base_token: &AccountView,
+    vault_quote_token: &AccountView,
+    maker_trader: &AccountView,
 ) -> DataIndex {
     cvt_assume_market_preconditions_gen::<IS_BID, false /* MAKER_IS_GLOBAL */>(
         market,
@@ -172,11 +172,11 @@ pub fn cvt_assume_market_preconditions<const IS_BID: bool>(
 /// Same as `cvt_assume_market_preconditions` but the maker order resting on the
 /// book is a global order.
 pub fn cvt_assume_global_market_preconditions<const IS_BID: bool>(
-    market: &AccountInfo,
-    trader: &AccountInfo,
-    vault_base_token: &AccountInfo,
-    vault_quote_token: &AccountInfo,
-    maker_trader: &AccountInfo,
+    market: &AccountView,
+    trader: &AccountView,
+    vault_base_token: &AccountView,
+    vault_quote_token: &AccountView,
+    maker_trader: &AccountView,
 ) -> DataIndex {
     cvt_assume_market_preconditions_gen::<IS_BID, true /* MAKER_IS_GLOBAL */>(
         market,
@@ -193,7 +193,7 @@ pub fn cvt_assume_global_market_preconditions<const IS_BID: bool>(
 /// reads the maker's key back out of the seat node to know whose global
 /// deposit pays for a global order, so without this a counterexample can trade
 /// against one trader's order while drawing down another trader's deposit.
-pub fn cvt_assume_seat_pubkeys(trader: &AccountInfo, maker_trader: &AccountInfo) {
+pub fn cvt_assume_seat_pubkeys(trader: &AccountView, maker_trader: &AccountView) {
     let dynamic: &[u8; 8] = &[0; 8];
     cvt_assume!(
         state::get_helper_seat(dynamic, state::main_trader_index())
@@ -215,11 +215,11 @@ pub fn cvt_assume_seat_pubkeys(trader: &AccountInfo, maker_trader: &AccountInfo)
 /// book. `MAKER_IS_GLOBAL` picks whether that maker order is a global order,
 /// which is what decides where its funds come from.
 pub fn cvt_assume_market_preconditions_gen<const IS_BID: bool, const MAKER_IS_GLOBAL: bool>(
-    market: &AccountInfo,
-    trader: &AccountInfo,
-    vault_base_token: &AccountInfo,
-    vault_quote_token: &AccountInfo,
-    maker_trader: &AccountInfo,
+    market: &AccountView,
+    trader: &AccountView,
+    vault_base_token: &AccountView,
+    vault_quote_token: &AccountView,
+    maker_trader: &AccountView,
 ) -> DataIndex {
     // -- assume both maker and taker traders have seats, and that the seat
     // -- nodes carry their pubkeys
@@ -300,11 +300,11 @@ pub fn cvt_assume_maker_not_reversible(maker_order_index: DataIndex) {
 ///
 /// Returns `(maker_order_index, coalesce_order_index)`.
 pub fn cvt_assume_reverse_coalesce_preconditions<const IS_BID: bool, const IS_TIGHT: bool>(
-    market: &AccountInfo,
-    trader: &AccountInfo,
-    vault_base_token: &AccountInfo,
-    vault_quote_token: &AccountInfo,
-    maker_trader: &AccountInfo,
+    market: &AccountView,
+    trader: &AccountView,
+    vault_base_token: &AccountView,
+    vault_quote_token: &AccountView,
+    maker_trader: &AccountView,
 ) -> (DataIndex, DataIndex) {
     // -- assume both maker and taker traders have seats, and that the seat
     // -- nodes carry their pubkeys
@@ -417,9 +417,9 @@ pub struct GlobalBalances {
 
 /// Read the balances of the global account and its vault.
 pub fn record_global_balances(
-    global: &AccountInfo,
-    global_vault_token: &AccountInfo,
-    maker_trader: &AccountInfo,
+    global: &AccountView,
+    global_vault_token: &AccountView,
+    maker_trader: &AccountView,
 ) -> GlobalBalances {
     let global_vault: u64 = spl_token_account_get_amount(global_vault_token);
     let global_deposits: u64 = get_global_deposited_atoms!(global);
@@ -501,13 +501,13 @@ pub fn cvt_assert_global_funds_moved_to_market(
 /// that removing a global order counts a gas prepayment refund for the gas
 /// receiver (the trader).
 pub fn cvt_assume_global_trade_accounts_with_gas<'a>(
-    market: &AccountInfo,
-    trader: &'a AccountInfo<'static>,
-    maker_trader: &AccountInfo,
-    global: &'a AccountInfo<'static>,
-    global_vault_token: &'a AccountInfo<'static>,
-    market_vault_token: &'a AccountInfo<'static>,
-    system_program: &'a AccountInfo<'static>,
+    market: &AccountView,
+    trader: &'a AccountView<'static>,
+    maker_trader: &AccountView,
+    global: &'a AccountView<'static>,
+    global_vault_token: &'a AccountView<'static>,
+    market_vault_token: &'a AccountView<'static>,
+    system_program: &'a AccountView<'static>,
     is_global_base: bool,
 ) -> [Option<GlobalTradeAccounts<'a, 'static>>; 2] {
     cvt_assume!(system_program.pubkey() == &solana_program::system_program::id());
@@ -530,12 +530,12 @@ pub fn cvt_assume_global_trade_accounts_with_gas<'a>(
 /// 1, so `is_global_base` picks the slot. A global bid is backed with quote, a
 /// global ask with base.
 pub fn cvt_assume_global_trade_accounts<'a>(
-    market: &AccountInfo,
-    trader: &'a AccountInfo<'static>,
-    maker_trader: &AccountInfo,
-    global: &'a AccountInfo<'static>,
-    global_vault_token: &'a AccountInfo<'static>,
-    market_vault_token: &'a AccountInfo<'static>,
+    market: &AccountView,
+    trader: &'a AccountView<'static>,
+    maker_trader: &AccountView,
+    global: &'a AccountView<'static>,
+    global_vault_token: &'a AccountView<'static>,
+    market_vault_token: &'a AccountView<'static>,
     is_global_base: bool,
 ) -> [Option<GlobalTradeAccounts<'a, 'static>>; 2] {
     cvt_assume_global_trade_accounts_gen(
@@ -552,13 +552,13 @@ pub fn cvt_assume_global_trade_accounts<'a>(
 
 #[allow(clippy::too_many_arguments)]
 fn cvt_assume_global_trade_accounts_gen<'a>(
-    market: &AccountInfo,
-    trader: &'a AccountInfo<'static>,
-    maker_trader: &AccountInfo,
-    global: &'a AccountInfo<'static>,
-    global_vault_token: &'a AccountInfo<'static>,
-    market_vault_token: &'a AccountInfo<'static>,
-    system_program: Option<&'a AccountInfo<'static>>,
+    market: &AccountView,
+    trader: &'a AccountView<'static>,
+    maker_trader: &AccountView,
+    global: &'a AccountView<'static>,
+    global_vault_token: &'a AccountView<'static>,
+    market_vault_token: &'a AccountView<'static>,
+    system_program: Option<&'a AccountView<'static>>,
     is_global_base: bool,
 ) -> [Option<GlobalTradeAccounts<'a, 'static>>; 2] {
     // -- the global account is a manifest account holding a GlobalFixed

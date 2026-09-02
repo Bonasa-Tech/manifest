@@ -22,7 +22,7 @@ on:
   workflow_dispatch:
 
 env:
-  RUST_TOOLCHAIN: '1.86.0'
+  RUST_TOOLCHAIN: '1.89.0'
 
 jobs:
   autogen-check:

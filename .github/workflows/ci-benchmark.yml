@@ -44,7 +44,7 @@ on:
 env:
   CARGO_TERM_COLOR: always
   SOLANA_VERSION: '2.2.20'
-  RUST_TOOLCHAIN: '1.86.0'
+  RUST_TOOLCHAIN: '1.89.0'
   # Must be configured as a full, reviewed commit SHA. Mutable branch names
   # are rejected before any private-repository code is checked out.
   BENCHMARK_REPOSITORY_SHA: ${{ vars.MANIFEST_PRIVATE_BENCHMARK_SHA }}

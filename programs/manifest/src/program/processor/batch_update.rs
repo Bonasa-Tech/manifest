@@ -1,7 +1,7 @@
-use crate::validation::{io_to_program_error, AccountInfoExt};
+use crate::validation::{io_to_program_error, AccountViewExt};
 use pinocchio::{
-    account_info::{AccountInfo, RefMut},
-    program_error::ProgramError,
+    account::{AccountView, RefMut},
+    error::ProgramError,
     ProgramResult,
 };
 
@@ -158,7 +158,7 @@ pub enum MarketDataTreeNodeType {
 
 pub(crate) fn process_batch_update(
     program_id: &Pubkey,
-    accounts: &[AccountInfo],
+    accounts: &[AccountView],
     data: &[u8],
 ) -> ProgramResult {
     let params: BatchUpdateParams =
@@ -246,7 +246,7 @@ fn batch_place_order(
 /// decoding historical transactions; nothing emits them.
 pub(crate) fn process_batch_update_core(
     _program_id: &Pubkey,
-    accounts: &[AccountInfo],
+    accounts: &[AccountView],
     params: BatchUpdateParams,
 ) -> ProgramResult {
     let batch_update_context: BatchUpdateContext = BatchUpdateContext::load(accounts)?;
@@ -269,7 +269,7 @@ pub(crate) fn process_batch_update_core(
     trace!("batch_update trader_index_hint:{trader_index_hint:?} cancels:{cancels:?} orders:{orders:?}");
 
     let trader_index: DataIndex = {
-        let market_data: &mut RefMut<[u8]> = &mut market.try_borrow_mut_data()?;
+        let market_data: &mut RefMut<[u8]> = &mut market.try_borrow_mut()?;
 
         let mut dynamic_account: MarketRefMut = get_mut_dynamic_account(market_data);
         let trader_index: DataIndex =
@@ -353,7 +353,7 @@ pub(crate) fn process_batch_update_core(
             let last_valid_slot: u32 = place_order_params.last_valid_slot();
 
             // Need to reborrow every iteration so we can borrow later for expanding.
-            let market_data: &mut RefMut<[u8]> = &mut market.try_borrow_mut_data()?;
+            let market_data: &mut RefMut<[u8]> = &mut market.try_borrow_mut()?;
             let mut dynamic_account: MarketRefMut = get_mut_dynamic_account(market_data);
 
             let add_order_to_market_result: AddOrderToMarketResult = batch_place_order(

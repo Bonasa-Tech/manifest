@@ -1,4 +1,4 @@
-use pinocchio::account_info::{Ref, RefMut};
+use pinocchio::account::{Ref, RefMut};
 use std::mem::size_of;
 
 use hypertree::{
@@ -16,8 +16,8 @@ use crate::{
     market_info::MarketInfo,
     wrapper_state::ManifestWrapperStateFixed,
 };
-use manifest::validation::{next_account_info, AccountInfoExt, Program, Signer};
-use pinocchio::{account_info::AccountInfo, ProgramResult};
+use manifest::validation::{next_account_info, AccountViewExt, Program, Signer};
+use pinocchio::{account::AccountView, ProgramResult};
 use solana_program::{pubkey::Pubkey, system_program};
 
 use super::shared::{
@@ -26,10 +26,10 @@ use super::shared::{
 
 pub(crate) fn process_claim_seat(
     _program_id: &Pubkey,
-    accounts: &[AccountInfo],
+    accounts: &[AccountView],
     _data: &[u8],
 ) -> ProgramResult {
-    let account_iter: &mut std::slice::Iter<AccountInfo> = &mut accounts.iter();
+    let account_iter: &mut std::slice::Iter<AccountView> = &mut accounts.iter();
     let manifest_program: Program =
         Program::new(next_account_info(account_iter)?, &manifest::id())?;
     let owner: Signer = Signer::new(next_account_info(account_iter)?)?;
@@ -45,7 +45,7 @@ pub(crate) fn process_claim_seat(
     // they already had a seat on a different wrapper.
     let trader_index: DataIndex = {
         let trader_index: DataIndex = {
-            let market_data: &Ref<[u8]> = &market.try_borrow_data()?;
+            let market_data: &Ref<[u8]> = &market.try_borrow()?;
             let dynamic_account: MarketRef = get_dynamic_account(market_data);
             dynamic_account.get_trader_index(owner.pubkey())
         };
@@ -77,7 +77,7 @@ pub(crate) fn process_claim_seat(
             )?;
 
             // fetch newly assigned trader index after claiming core seat
-            let market_data: &Ref<[u8]> = &mut market.try_borrow_data()?;
+            let market_data: &Ref<[u8]> = &mut market.try_borrow()?;
             let dynamic_account: MarketRef = get_dynamic_account(market_data);
             dynamic_account.get_trader_index(owner.pubkey())
         }
@@ -89,8 +89,8 @@ pub(crate) fn process_claim_seat(
     expand_wrapper_if_needed(&wrapper_state, &owner, &system_program)?;
 
     // Load the market_infos tree and insert a new one.
-    let wrapper_state_info: &AccountInfo = wrapper_state.info;
-    let mut wrapper_data: RefMut<[u8]> = wrapper_state_info.try_borrow_mut_data().unwrap();
+    let wrapper_state_info: &AccountView = wrapper_state.info;
+    let mut wrapper_data: RefMut<[u8]> = wrapper_state_info.try_borrow_mut().unwrap();
     let (fixed_data, wrapper_dynamic_data) =
         wrapper_data.split_at_mut(size_of::<ManifestWrapperStateFixed>());
     let wrapper_fixed: &mut ManifestWrapperStateFixed = get_mut_helper(fixed_data, 0);

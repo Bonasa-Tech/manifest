@@ -1,5 +1,5 @@
-use crate::validation::{io_to_program_error, to_program_error, AccountInfoExt};
-use pinocchio::{account_info::RefMut, ProgramResult};
+use crate::validation::{io_to_program_error, to_program_error, AccountViewExt};
+use pinocchio::{account::RefMut, ProgramResult};
 
 use crate::{
     logs::{emit_stack, PlaceOrderLogV2},
@@ -19,7 +19,7 @@ use crate::{
 };
 use borsh::{BorshDeserialize, BorshSerialize};
 use hypertree::{trace, DataIndex, NIL};
-use pinocchio::account_info::AccountInfo;
+use pinocchio::account::AccountView;
 use solana_program::pubkey::Pubkey;
 
 use super::shared::get_mut_dynamic_account;
@@ -32,7 +32,7 @@ use {
 };
 
 use crate::validation::{MintAccountInfo, Signer, TokenAccountInfo, TokenProgram};
-use pinocchio::program_error::ProgramError;
+use pinocchio::error::ProgramError;
 #[cfg(not(feature = "certora"))]
 use {
     crate::state::utils::get_now_epoch,
@@ -93,7 +93,7 @@ where
 
 pub(crate) fn process_swap(
     program_id: &Pubkey,
-    accounts: &[AccountInfo],
+    accounts: &[AccountView],
     data: &[u8],
 ) -> ProgramResult {
     let params = SwapParams::try_from_slice(data).map_err(io_to_program_error)?;
@@ -103,7 +103,7 @@ pub(crate) fn process_swap(
 #[cfg_attr(all(feature = "certora", not(feature = "certora-test")), early_panic)]
 pub(crate) fn process_swap_core(
     _program_id: &Pubkey,
-    accounts: &[AccountInfo],
+    accounts: &[AccountView],
     params: SwapParams,
 ) -> ProgramResult {
     let swap_context: SwapContext = SwapContext::load(accounts)?;
@@ -124,7 +124,7 @@ pub(crate) fn process_swap_core(
     } = swap_context;
 
     let (existing_seat_index, trader_index, initial_base_atoms, initial_quote_atoms) = {
-        let market_data: &mut RefMut<[u8]> = &mut market.try_borrow_mut_data()?;
+        let market_data: &mut RefMut<[u8]> = &mut market.try_borrow_mut()?;
         let mut dynamic_account: MarketRefMut = get_mut_dynamic_account(market_data);
 
         // Claim seat if needed
@@ -151,7 +151,7 @@ pub(crate) fn process_swap_core(
     // free block for the reverse order.
     expand_market_if_needed(&payer, &market)?;
 
-    let market_data: &mut RefMut<[u8]> = &mut market.try_borrow_mut_data()?;
+    let market_data: &mut RefMut<[u8]> = &mut market.try_borrow_mut()?;
     let mut dynamic_account: MarketRefMut = get_mut_dynamic_account(market_data);
 
     let SwapParams {
@@ -730,7 +730,7 @@ fn calculate_post_fee_amount<'a>(
         return Ok(amount);
     };
 
-    let mint_data = mint_info.info.try_borrow_data()?;
+    let mint_data = mint_info.info.try_borrow()?;
     let mint_state = StateWithExtensions::<Mint>::unpack(&mint_data).map_err(to_program_error)?;
 
     // Check for TransferFeeConfig extension
@@ -789,7 +789,7 @@ fn calculate_pre_fee_amount<'a>(
         return Ok(desired_amount);
     };
 
-    let mint_data = mint_info.info.try_borrow_data()?;
+    let mint_data = mint_info.info.try_borrow()?;
     let mint_state = StateWithExtensions::<Mint>::unpack(&mint_data).map_err(to_program_error)?;
 
     // Check for TransferFeeConfig extension

@@ -1,10 +1,10 @@
-use crate::{validation::AccountInfoExt, *};
+use crate::{validation::AccountViewExt, *};
 use cvt::{cvt_assert, cvt_assume};
 use cvt_macros::rule;
 use nondet::*;
 
 use certora::hooks::last_called_remove_order_from_tree_and_free;
-use solana_program::account_info::AccountInfo;
+use solana_program::account::AccountView;
 
 use certora::spec::place_order_checks::place_single_order_nondet_inputs;
 use state::get_helper_order;
@@ -25,7 +25,7 @@ use hypertree::DataIndex;
 pub fn matching_if_maker_order_exists<const IS_BID: bool>() {
     cvt_static_initializer!();
 
-    let acc_infos: [AccountInfo; 16] = acc_infos_with_mem_layout!();
+    let acc_infos: [AccountView; 16] = acc_infos_with_mem_layout!();
     let trader = &acc_infos[0];
     let market_info = &acc_infos[1];
 
@@ -87,7 +87,7 @@ pub fn rule_matching_if_maker_order_exists_ask() {
 pub fn crossed_prices_if_matched<const IS_BID: bool>() {
     cvt_static_initializer!();
 
-    let acc_infos: [AccountInfo; 16] = acc_infos_with_mem_layout!();
+    let acc_infos: [AccountView; 16] = acc_infos_with_mem_layout!();
     let trader = &acc_infos[0];
     let market_info = &acc_infos[1];
 
@@ -148,7 +148,7 @@ pub fn rule_crossed_prices_if_matched_ask() {
 pub fn place_single_order_full_match_balances<const IS_BID: bool>() {
     cvt_static_initializer!();
 
-    let acc_infos: [AccountInfo; 16] = acc_infos_with_mem_layout!();
+    let acc_infos: [AccountView; 16] = acc_infos_with_mem_layout!();
     let trader = &acc_infos[0];
     let market_info = &acc_infos[1];
 
@@ -231,7 +231,7 @@ pub fn rule_place_single_order_full_match_balances_ask() {
 pub fn place_single_order_partial_match_balances<const IS_BID: bool>() {
     cvt_static_initializer!();
 
-    let acc_infos: [AccountInfo; 16] = acc_infos_with_mem_layout!();
+    let acc_infos: [AccountView; 16] = acc_infos_with_mem_layout!();
     let trader = &acc_infos[0];
     let market_info = &acc_infos[1];
 
@@ -317,7 +317,7 @@ pub fn rule_place_single_order_partial_match_balances_ask() {
 pub fn matching_order_removed_if_fully_matched<const IS_BID: bool>() {
     cvt_static_initializer!();
 
-    let acc_infos: [AccountInfo; 16] = acc_infos_with_mem_layout!();
+    let acc_infos: [AccountView; 16] = acc_infos_with_mem_layout!();
     let trader = &acc_infos[0];
     let market_info = &acc_infos[1];
 
@@ -369,7 +369,7 @@ pub fn rule_matching_order_removed_if_fully_matched_ask() {
 pub fn matching_fully_matched_if_order_removed<const IS_BID: bool>() {
     cvt_static_initializer!();
 
-    let acc_infos: [AccountInfo; 16] = acc_infos_with_mem_layout!();
+    let acc_infos: [AccountView; 16] = acc_infos_with_mem_layout!();
     let trader = &acc_infos[0];
     let market_info = &acc_infos[1];
 
@@ -428,7 +428,7 @@ pub fn rule_matching_fully_matched_if_order_removed_ask() {
 pub fn matching_decrease_maker_order_atoms<const IS_BID: bool>() {
     cvt_static_initializer!();
 
-    let acc_infos: [AccountInfo; 16] = acc_infos_with_mem_layout!();
+    let acc_infos: [AccountView; 16] = acc_infos_with_mem_layout!();
     let trader = &acc_infos[0];
     let market_info = &acc_infos[1];
 

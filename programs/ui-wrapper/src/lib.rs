@@ -12,7 +12,7 @@ pub mod wrapper_user;
 
 use hypertree::trace;
 use instruction::ManifestWrapperInstruction;
-use pinocchio::{account_info::AccountInfo, program_error::ProgramError, ProgramResult};
+use pinocchio::{account::AccountView, error::ProgramError, ProgramResult};
 use processors::{
     cancel_order::process_cancel_order, create_wrapper::process_create_wrapper,
     place_order::process_place_order, settle_funds::process_settle_funds,
@@ -39,8 +39,8 @@ declare_id!("UMnFStVeG1ecZFc2gc5K3vFy3sMpotq8C91mXBQDGwh");
 pinocchio::program_entrypoint!(process_instruction, { manifest::entrypoint::MAX_ACCOUNTS });
 
 pub fn process_instruction(
-    program_id_raw: &pinocchio::pubkey::Pubkey,
-    accounts: &[AccountInfo],
+    program_id_raw: &pinocchio::address::Address,
+    accounts: &[AccountView],
     instruction_data: &[u8],
 ) -> ProgramResult {
     let program_id: &Pubkey = manifest::validation::as_pubkey(program_id_raw);

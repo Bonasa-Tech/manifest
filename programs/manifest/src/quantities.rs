@@ -2,7 +2,7 @@ use crate::program::ManifestError;
 use borsh::{BorshDeserialize as Deserialize, BorshSerialize as Serialize};
 use bytemuck::{Pod, Zeroable};
 use hypertree::trace;
-use pinocchio::program_error::ProgramError;
+use pinocchio::error::ProgramError;
 use shank::ShankAccount;
 use static_assertions::const_assert;
 use std::{

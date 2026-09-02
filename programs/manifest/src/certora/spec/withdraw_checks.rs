@@ -1,10 +1,10 @@
-use crate::validation::AccountInfoExt;
+use crate::validation::AccountViewExt;
 use cvt::{cvt_assert, cvt_assume};
 use cvt_macros::rule;
 use nondet::*;
 
 use crate::*;
-use solana_program::account_info::AccountInfo;
+use solana_program::account::AccountView;
 
 use solana_cvt::token::spl_token_account_get_amount;
 use state::{cvt_assume_main_trader_has_seat, is_second_seat_taken, second_trader_pk};
@@ -24,13 +24,13 @@ use crate::{
 pub fn rule_withdraw_withdraws() {
     crate::certora::spec::verification_utils::init_static();
 
-    let acc_infos: [AccountInfo; 16] = acc_infos_with_mem_layout!();
-    let used_acc_infos: &[AccountInfo] = &acc_infos[..6];
-    let trader_token: &AccountInfo = &used_acc_infos[2];
-    let vault_token: &AccountInfo = &used_acc_infos[3];
-    let trader: &AccountInfo = &used_acc_infos[0];
-    let market: &AccountInfo = &used_acc_infos[1];
-    let unrelated_trader: &AccountInfo = &acc_infos[7];
+    let acc_infos: [AccountView; 16] = acc_infos_with_mem_layout!();
+    let used_acc_infos: &[AccountView] = &acc_infos[..6];
+    let trader_token: &AccountView = &used_acc_infos[2];
+    let vault_token: &AccountView = &used_acc_infos[3];
+    let trader: &AccountView = &used_acc_infos[0];
+    let market: &AccountView = &used_acc_infos[1];
+    let unrelated_trader: &AccountView = &acc_infos[7];
 
     cvt_assume_main_trader_has_seat(trader.pubkey());
 
@@ -102,9 +102,9 @@ pub fn rule_withdraw_withdraws() {
 pub fn rule_withdraw_does_not_revert() {
     crate::certora::spec::verification_utils::init_static();
 
-    let acc_infos: [AccountInfo; 16] = acc_infos_with_mem_layout!();
-    let used_acc_infos: &[AccountInfo] = &acc_infos[..6];
-    let trader: &AccountInfo = &used_acc_infos[0];
+    let acc_infos: [AccountView; 16] = acc_infos_with_mem_layout!();
+    let used_acc_infos: &[AccountView] = &acc_infos[..6];
+    let trader: &AccountView = &used_acc_infos[0];
 
     cvt_assume_main_trader_has_seat(trader.pubkey());
 

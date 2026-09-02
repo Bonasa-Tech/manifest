@@ -1,10 +1,11 @@
-use crate::{validation::AccountInfoExt, *};
+use crate::{validation::AccountViewExt, *};
 use cvt::{cvt_assert, cvt_assume};
 use cvt_macros::rule;
 use nondet::*;
+use pinocchio::account::RefMut;
 
 use hypertree::DataIndex;
-use solana_program::account_info::AccountInfo;
+use solana_program::account::AccountView;
 
 use crate::{
     program::get_mut_dynamic_account,
@@ -20,12 +21,12 @@ pub fn cancel_order_by_index_no_revert<const IS_BID: bool>() {
 
     cvt_static_initializer!();
 
-    let acc_infos: [AccountInfo; 16] = acc_infos_with_mem_layout!();
-    let trader: &AccountInfo = &acc_infos[0];
-    let market_info: &AccountInfo = &acc_infos[1];
-    let maker_trader: &AccountInfo = &acc_infos[7];
-    let vault_base_token: &AccountInfo = &acc_infos[8];
-    let vault_quote_token: &AccountInfo = &acc_infos[9];
+    let acc_infos: [AccountView; 16] = acc_infos_with_mem_layout!();
+    let trader: &AccountView = &acc_infos[0];
+    let market_info: &AccountView = &acc_infos[1];
+    let maker_trader: &AccountView = &acc_infos[7];
+    let vault_base_token: &AccountView = &acc_infos[8];
+    let vault_quote_token: &AccountView = &acc_infos[9];
 
     // -- market preconditions
     let maker_order_index: DataIndex = cvt_assume_market_preconditions::<IS_BID>(
@@ -47,8 +48,7 @@ pub fn cancel_order_by_index_no_revert<const IS_BID: bool>() {
     }
 
     // -- call to cancel_order_by_index
-    let market_data: &mut std::cell::RefMut<&mut [u8]> =
-        &mut market_info.try_borrow_mut_data().unwrap();
+    let market_data: &mut std::cell::RefMut<&mut [u8]> = &mut market_info.try_borrow_mut().unwrap();
     let mut dynamic_account: MarketRefMut = get_mut_dynamic_account(market_data);
     let order_index: DataIndex = maker_order_index;
     let result: ProgramResult = dynamic_account.cancel_order_by_index(order_index, &[None, None]);

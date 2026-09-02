@@ -1,10 +1,10 @@
-use crate::validation::{to_program_error, AccountInfoExt};
+use crate::validation::{to_program_error, AccountViewExt};
 use pinocchio::{
-    account_info::AccountInfo,
+    account::AccountView,
     sysvars::{rent::Rent, Sysvar},
     ProgramResult,
 };
-use std::{cell::Ref, mem::size_of};
+use std::mem::size_of;
 
 use crate::{
     global_seeds_with_bump, global_vault_seeds_with_bump,
@@ -24,7 +24,7 @@ use spl_token_2022::{
 
 pub(crate) fn process_global_create(
     _program_id: &Pubkey,
-    accounts: &[AccountInfo],
+    accounts: &[AccountView],
     _data: &[u8],
 ) -> ProgramResult {
     {
@@ -37,7 +37,9 @@ pub(crate) fn process_global_create(
             system_program,
             global_mint,
             global_vault,
-            token_program,
+            // Validated on load; the CPIs below name the accounts the
+            // instruction names, and a program is not one of them.
+            token_program: _,
             global_bump,
         } = global_create_context;
         let (expected_global_vault_key, global_vault_bump) =
@@ -81,7 +83,7 @@ pub(crate) fn process_global_create(
             );
             assert_eq!(global.info.data_len(), size_of::<GlobalFixed>());
 
-            let global_bytes: &mut [u8] = &mut global.info.try_borrow_mut_data()?[..];
+            let global_bytes: &mut [u8] = &mut global.info.try_borrow_mut()?[..];
             *get_mut_helper::<GlobalFixed>(global_bytes, 0_u32) = empty_global_fixed;
 
             // Global does not require a permanent free block for swapping.
@@ -118,8 +120,7 @@ pub(crate) fn process_global_create(
             }
 
             if is_mint_22 {
-                let mint_data: pinocchio::account_info::Ref<[u8]> =
-                    global_mint.info.try_borrow_data()?;
+                let mint_data: pinocchio::account::Ref<[u8]> = global_mint.info.try_borrow()?;
                 let mint_with_extension: PodStateWithExtensions<'_, PodMint> =
                     PodStateWithExtensions::<PodMint>::unpack(&mint_data).unwrap();
                 let mint_extensions: Vec<ExtensionType> = mint_with_extension

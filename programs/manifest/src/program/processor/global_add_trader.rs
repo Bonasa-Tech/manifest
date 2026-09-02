@@ -1,6 +1,6 @@
-use crate::validation::AccountInfoExt;
+use crate::validation::AccountViewExt;
 use pinocchio::{
-    account_info::{AccountInfo, RefMut},
+    account::{AccountView, RefMut},
     sysvars::{rent::Rent, Sysvar},
     ProgramResult,
 };
@@ -18,7 +18,7 @@ use crate::{
 
 pub(crate) fn process_global_add_trader(
     _program_id: &Pubkey,
-    accounts: &[AccountInfo],
+    accounts: &[AccountView],
     _data: &[u8],
 ) -> ProgramResult {
     trace!("process_global_add_trader accs={}", accounts.len());
@@ -37,7 +37,7 @@ pub(crate) fn process_global_add_trader(
             &solana_program::system_instruction::transfer(
                 &payer.pubkey(),
                 &global.pubkey(),
-                rent.minimum_balance(Account::LEN as usize) * 2,
+                rent.try_minimum_balance(Account::LEN as usize)? * 2,
             ),
             &[payer.info, global.info],
         )?;
@@ -46,7 +46,7 @@ pub(crate) fn process_global_add_trader(
     // Needs a spot for this trader on the global account.
     expand_global(&payer, &global)?;
 
-    let global_data: &mut RefMut<[u8]> = &mut global.try_borrow_mut_data()?;
+    let global_data: &mut RefMut<[u8]> = &mut global.try_borrow_mut()?;
     let mut global_dynamic_account: GlobalRefMut = get_mut_dynamic_account(global_data);
 
     global_dynamic_account.add_trader(payer.pubkey())?;

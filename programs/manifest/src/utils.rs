@@ -1,9 +1,7 @@
-use pinocchio::{
-    account_info::AccountInfo, program_error::ProgramError, sysvars::rent::Rent, ProgramResult,
-};
+use pinocchio::{account::AccountView, error::ProgramError, sysvars::rent::Rent, ProgramResult};
 use solana_program::{keccak, pubkey::Pubkey, system_instruction};
 
-use crate::{program::invoke_signed, validation::AccountInfoExt};
+use crate::{program::invoke_signed, validation::AccountViewExt};
 
 /// Canonical discriminant of the given struct. It is the hash of program ID and
 /// the name of the type.
@@ -19,9 +17,11 @@ pub fn get_discriminant<T>() -> Result<u64, ProgramError> {
 
 /// Send CPI for creating a new account on chain.
 pub fn create_account<'a>(
-    payer: &'a AccountInfo,
-    new_account: &'a AccountInfo,
-    system_program: &'a AccountInfo,
+    payer: &'a AccountView,
+    new_account: &'a AccountView,
+    // Kept in the signature so callers still pass the account the runtime
+    // requires to be present; create_account names only the two below.
+    _system_program: &'a AccountView,
     program_owner: &Pubkey,
     rent: &Rent,
     space: u64,
@@ -31,7 +31,7 @@ pub fn create_account<'a>(
         &system_instruction::create_account(
             payer.pubkey(),
             new_account.pubkey(),
-            rent.minimum_balance(space as usize),
+            rent.try_minimum_balance(space as usize)?,
             space,
             program_owner,
         ),

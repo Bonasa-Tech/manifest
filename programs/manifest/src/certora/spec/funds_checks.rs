@@ -1,9 +1,10 @@
-use crate::{validation::AccountInfoExt, *};
+use crate::{validation::AccountViewExt, *};
 use cvt::cvt_assume;
 use cvt_macros::rule;
 use nondet::*;
+use pinocchio::account::RefMut;
 
-use solana_program::account_info::AccountInfo;
+use solana_program::account::AccountView;
 
 use crate::{
     program::{
@@ -22,16 +23,16 @@ use state::{main_trader_index, second_trader_index};
 fn rule_deposit_check<const IS_BASE: bool>() {
     cvt_static_initializer!();
 
-    let acc_infos: [AccountInfo; 16] = acc_infos_with_mem_layout!();
-    let used_acc_infos: &[AccountInfo] = &acc_infos[..6];
-    let trader: &AccountInfo = &used_acc_infos[0];
-    let market_info: &AccountInfo = &used_acc_infos[1];
-    let trader_token: &AccountInfo = &used_acc_infos[2];
-    let vault_token: &AccountInfo = &used_acc_infos[3];
+    let acc_infos: [AccountView; 16] = acc_infos_with_mem_layout!();
+    let used_acc_infos: &[AccountView] = &acc_infos[..6];
+    let trader: &AccountView = &used_acc_infos[0];
+    let market_info: &AccountView = &used_acc_infos[1];
+    let trader_token: &AccountView = &used_acc_infos[2];
+    let vault_token: &AccountView = &used_acc_infos[3];
 
-    let maker_trader: &AccountInfo = &acc_infos[7];
-    let vault_base_token: &AccountInfo = &acc_infos[8];
-    let vault_quote_token: &AccountInfo = &acc_infos[9];
+    let maker_trader: &AccountView = &acc_infos[7];
+    let vault_base_token: &AccountView = &acc_infos[8];
+    let vault_quote_token: &AccountView = &acc_infos[9];
 
     // -- market preconditions
     // the parameter true below implies there is a bid order,
@@ -132,16 +133,16 @@ pub fn rule_deposit_quote() {
 fn rule_withdraw_check<const IS_BASE: bool>() {
     cvt_static_initializer!();
 
-    let acc_infos: [AccountInfo; 16] = acc_infos_with_mem_layout!();
-    let used_acc_infos: &[AccountInfo] = &acc_infos[..6];
-    let trader: &AccountInfo = &used_acc_infos[0];
-    let market_info: &AccountInfo = &used_acc_infos[1];
-    let trader_token: &AccountInfo = &used_acc_infos[2];
-    let vault_token: &AccountInfo = &used_acc_infos[3];
+    let acc_infos: [AccountView; 16] = acc_infos_with_mem_layout!();
+    let used_acc_infos: &[AccountView] = &acc_infos[..6];
+    let trader: &AccountView = &used_acc_infos[0];
+    let market_info: &AccountView = &used_acc_infos[1];
+    let trader_token: &AccountView = &used_acc_infos[2];
+    let vault_token: &AccountView = &used_acc_infos[3];
 
-    let maker_trader: &AccountInfo = &acc_infos[7];
-    let vault_base_token: &AccountInfo = &acc_infos[8];
-    let vault_quote_token: &AccountInfo = &acc_infos[9];
+    let maker_trader: &AccountView = &acc_infos[7];
+    let vault_base_token: &AccountView = &acc_infos[8];
+    let vault_quote_token: &AccountView = &acc_infos[9];
 
     // -- market preconditions
     // the parameter true below implies there is a bid order,
@@ -242,12 +243,12 @@ pub fn rule_withdraw_quote() {
 fn rest_remaining_check<const IS_BID: bool>() {
     cvt_static_initializer!();
 
-    let acc_infos: [AccountInfo; 16] = acc_infos_with_mem_layout!();
-    let trader: &AccountInfo = &acc_infos[0];
-    let market_info: &AccountInfo = &acc_infos[1];
-    let maker_trader: &AccountInfo = &acc_infos[7];
-    let vault_base_token: &AccountInfo = &acc_infos[8];
-    let vault_quote_token: &AccountInfo = &acc_infos[9];
+    let acc_infos: [AccountView; 16] = acc_infos_with_mem_layout!();
+    let trader: &AccountView = &acc_infos[0];
+    let market_info: &AccountView = &acc_infos[1];
+    let maker_trader: &AccountView = &acc_infos[7];
+    let vault_base_token: &AccountView = &acc_infos[8];
+    let vault_quote_token: &AccountView = &acc_infos[9];
 
     // -- market preconditions
     let maker_order_index: DataIndex = cvt_assume_market_preconditions::<IS_BID>(
@@ -327,12 +328,12 @@ pub fn cancel_order_by_index_check<const IS_BID: bool>() {
 
     cvt_static_initializer!();
 
-    let acc_infos: [AccountInfo; 16] = acc_infos_with_mem_layout!();
-    let trader: &AccountInfo = &acc_infos[0];
-    let market_info: &AccountInfo = &acc_infos[1];
-    let maker_trader: &AccountInfo = &acc_infos[2];
-    let vault_base_token: &AccountInfo = &acc_infos[3];
-    let vault_quote_token: &AccountInfo = &acc_infos[4];
+    let acc_infos: [AccountView; 16] = acc_infos_with_mem_layout!();
+    let trader: &AccountView = &acc_infos[0];
+    let market_info: &AccountView = &acc_infos[1];
+    let maker_trader: &AccountView = &acc_infos[2];
+    let vault_base_token: &AccountView = &acc_infos[3];
+    let vault_quote_token: &AccountView = &acc_infos[4];
 
     // -- market preconditions
     let maker_order_index: DataIndex = cvt_assume_market_preconditions::<IS_BID>(
@@ -392,12 +393,12 @@ pub fn cancel_order_check<const IS_BID: bool>() {
 
     cvt_static_initializer!();
 
-    let acc_infos: [AccountInfo; 16] = acc_infos_with_mem_layout!();
-    let trader: &AccountInfo = &acc_infos[0];
-    let market_info: &AccountInfo = &acc_infos[1];
-    let maker_trader: &AccountInfo = &acc_infos[2];
-    let vault_base_token: &AccountInfo = &acc_infos[3];
-    let vault_quote_token: &AccountInfo = &acc_infos[4];
+    let acc_infos: [AccountView; 16] = acc_infos_with_mem_layout!();
+    let trader: &AccountView = &acc_infos[0];
+    let market_info: &AccountView = &acc_infos[1];
+    let maker_trader: &AccountView = &acc_infos[2];
+    let vault_base_token: &AccountView = &acc_infos[3];
+    let vault_quote_token: &AccountView = &acc_infos[4];
 
     // -- market preconditions
     let maker_order_index: DataIndex = cvt_assume_market_preconditions::<IS_BID>(
@@ -429,7 +430,7 @@ pub fn cancel_order_check<const IS_BID: bool>() {
     let order_sequence_number: u64 = resting_order.get_sequence_number();
     {
         let market_data: &mut std::cell::RefMut<&mut [u8]> =
-            &mut market_info.try_borrow_mut_data().unwrap();
+            &mut market_info.try_borrow_mut().unwrap();
         let mut dynamic_account: MarketRefMut = get_mut_dynamic_account(market_data);
         dynamic_account
             .cancel_order(trader_index, order_sequence_number, &[None, None])

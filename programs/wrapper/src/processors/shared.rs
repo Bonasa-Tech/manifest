@@ -1,5 +1,5 @@
 use pinocchio::{
-    account_info::{Ref, RefMut},
+    account::{Ref, RefMut},
     sysvars::{rent::Rent, Sysvar},
 };
 use std::mem::size_of;
@@ -21,9 +21,9 @@ use manifest::{
         claimed_seat::ClaimedSeat, get_helper_seat, utils::get_now_slot, MarketFixed, OrderType,
         RestingOrder,
     },
-    validation::{AccountInfoExt, ManifestAccountInfo, Program, Signer},
+    validation::{AccountViewExt, ManifestAccountInfo, Program, Signer},
 };
-use pinocchio::{account_info::AccountInfo, program_error::ProgramError, ProgramResult};
+use pinocchio::{account::AccountView, error::ProgramError, ProgramResult};
 use solana_program::{pubkey::Pubkey, system_instruction};
 use static_assertions::const_assert_eq;
 
@@ -133,15 +133,15 @@ pub(crate) fn ensure_free_slots<'a>(
     let blocks: usize = missing.div_ceil(WRAPPER_EXPAND_BLOCKS) * WRAPPER_EXPAND_BLOCKS;
 
     {
-        let wrapper_state: &AccountInfo = wrapper_state_account_info.info;
+        let wrapper_state: &AccountView = wrapper_state_account_info.info;
 
-        let wrapper_data: Ref<[u8]> = wrapper_state.try_borrow_data()?;
+        let wrapper_data: Ref<[u8]> = wrapper_state.try_borrow()?;
         let old_size: usize = wrapper_data.len();
         let new_size: usize = old_size + WRAPPER_BLOCK_SIZE * blocks;
         drop(wrapper_data);
         let rent: Rent = Rent::get()?;
-        let new_minimum_balance: u64 = rent.minimum_balance(new_size);
-        let old_minimum_balance: u64 = rent.minimum_balance(old_size);
+        let new_minimum_balance: u64 = rent.try_minimum_balance(new_size)?;
+        let old_minimum_balance: u64 = rent.try_minimum_balance(old_size)?;
         let lamports_diff: u64 = new_minimum_balance.saturating_sub(old_minimum_balance);
         invoke(
             &system_instruction::transfer(payer.pubkey(), wrapper_state.pubkey(), lamports_diff),
@@ -163,12 +163,12 @@ pub(crate) fn ensure_free_slots<'a>(
         #[cfg(not(feature = "fuzz"))]
         {
             #[allow(deprecated)]
-            wrapper_state.realloc(new_size, false)?;
+            wrapper_state.resize(new_size)?;
         }
     }
 
-    let wrapper_state_info: &AccountInfo = wrapper_state_account_info.info;
-    let wrapper_data: &mut [u8] = &mut wrapper_state_info.try_borrow_mut_data().unwrap();
+    let wrapper_state_info: &AccountView = wrapper_state_account_info.info;
+    let wrapper_data: &mut [u8] = &mut wrapper_state_info.try_borrow_mut().unwrap();
     for _ in 0..blocks {
         expand_wrapper(wrapper_data);
     }
@@ -177,7 +177,7 @@ pub(crate) fn ensure_free_slots<'a>(
 
 /// Number of free slots, counting at most `limit` of them.
 fn count_free_slots(wrapper_state: &WrapperStateAccountInfo, limit: usize) -> usize {
-    let wrapper_data: Ref<[u8]> = wrapper_state.info.try_borrow_data().unwrap();
+    let wrapper_data: Ref<[u8]> = wrapper_state.info.try_borrow().unwrap();
     let (fixed_data, dynamic_data) = wrapper_data.split_at(size_of::<ManifestWrapperStateFixed>());
     let wrapper_fixed: &ManifestWrapperStateFixed = get_helper(fixed_data, 0);
     let mut index: DataIndex = wrapper_fixed.free_list_head_index;
@@ -382,11 +382,11 @@ pub(crate) fn sync_fast(
     orders_exact: bool,
     mut matcher: Option<&mut CancelMatcher>,
 ) -> ProgramResult {
-    let market_data: Ref<[u8]> = market.try_borrow_data()?;
+    let market_data: Ref<[u8]> = market.try_borrow()?;
     let market_ref = get_dynamic_account::<MarketFixed>(&market_data);
     let market_sequence_number: u64 = market_ref.fixed.get_order_sequence_number();
 
-    let mut wrapper_data: RefMut<[u8]> = wrapper_state.info.try_borrow_mut_data()?;
+    let mut wrapper_data: RefMut<[u8]> = wrapper_state.info.try_borrow_mut()?;
     let (fixed_data, wrapper_dynamic_data) =
         wrapper_data.split_at_mut(size_of::<ManifestWrapperStateFixed>());
     ensure_orders_list(wrapper_dynamic_data, market_info_index);
@@ -503,7 +503,7 @@ pub(crate) fn get_market_info_index_for_market(
     wrapper_state: &WrapperStateAccountInfo,
     market: &Pubkey,
 ) -> DataIndex {
-    let mut wrapper_data: RefMut<[u8]> = wrapper_state.info.try_borrow_mut_data().unwrap();
+    let mut wrapper_data: RefMut<[u8]> = wrapper_state.info.try_borrow_mut().unwrap();
     let (fixed_data, wrapper_dynamic_data) =
         wrapper_data.split_at_mut(size_of::<ManifestWrapperStateFixed>());
 
@@ -526,7 +526,7 @@ pub(crate) fn get_trader_index_hint_for_market(
 ) -> Result<Option<DataIndex>, ProgramError> {
     let market_info_index: DataIndex = get_market_info_index_for_market(wrapper_state, market_key);
 
-    let wrapper_data: Ref<[u8]> = wrapper_state.info.try_borrow_data()?;
+    let wrapper_data: Ref<[u8]> = wrapper_state.info.try_borrow()?;
     let (_fixed_data, wrapper_dynamic_data) =
         wrapper_data.split_at(size_of::<ManifestWrapperStateFixed>());
     let market_info: MarketInfo =

@@ -9,7 +9,10 @@ env:
   MANIFEST_NAME: manifest
   WRAPPER_NAME: wrapper
   UI_WRAPPER_NAME: ui_wrapper
-  RUST_TOOLCHAIN: '1.86.0'
+  RUST_TOOLCHAIN: '1.89.0'
+  # pinocchio's account view crates need rustc 1.89, and platform
+  # tools v1.57 is the first that ships one new enough (1.95).
+  PLATFORM_TOOLS: 'v1.57'
   SOLANA_TOOLCHAIN: '2.2.20'
   SVM_ARCH: 'v2'
   SOLANA_VERIFIABLE_BUILD_IMAGE: 'solanafoundation/solana-verifiable-build@sha256:a1c0d5899ee0ffc81412428760662d9ba4643c2003ec3a92ab6f75a6e2e52a1b'

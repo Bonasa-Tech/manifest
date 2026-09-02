@@ -14,11 +14,11 @@ use manifest::{
     quantities::BaseAtoms,
     require,
     state::{claimed_seat::ClaimedSeat, MarketFixed, RestingOrder},
-    validation::{AccountInfoExt, ManifestAccountInfo, Program, Signer},
+    validation::{AccountViewExt, ManifestAccountInfo, Program, Signer},
 };
 use pinocchio::{
-    account_info::{AccountInfo, Ref, RefMut},
-    program_error::ProgramError,
+    account::{AccountView, Ref, RefMut},
+    error::ProgramError,
     sysvars::{rent::Rent, Sysvar},
     ProgramResult,
 };
@@ -57,14 +57,14 @@ pub(crate) fn expand_wrapper_if_needed<'a>(
     }
 
     {
-        let wrapper_state: &AccountInfo = wrapper_state_account_info.info;
+        let wrapper_state: &AccountView = wrapper_state_account_info.info;
 
-        let wrapper_data: Ref<[u8]> = wrapper_state.try_borrow_data()?;
+        let wrapper_data: Ref<[u8]> = wrapper_state.try_borrow()?;
         let new_size: usize = wrapper_data.len() + WRAPPER_BLOCK_SIZE;
         drop(wrapper_data);
 
         let rent: Rent = Rent::get()?;
-        let new_minimum_balance: u64 = rent.minimum_balance(new_size);
+        let new_minimum_balance: u64 = rent.try_minimum_balance(new_size)?;
         let lamports_diff: u64 = new_minimum_balance.saturating_sub(wrapper_state.lamports());
 
         invoke(
@@ -87,12 +87,12 @@ pub(crate) fn expand_wrapper_if_needed<'a>(
         #[cfg(not(feature = "fuzz"))]
         {
             #[allow(deprecated)]
-            wrapper_state.realloc(new_size, false)?;
+            wrapper_state.resize(new_size)?;
         }
     }
 
-    let wrapper_state_info: &AccountInfo = wrapper_state_account_info.info;
-    let wrapper_data: &mut [u8] = &mut wrapper_state_info.try_borrow_mut_data().unwrap();
+    let wrapper_state_info: &AccountView = wrapper_state_account_info.info;
+    let wrapper_data: &mut [u8] = &mut wrapper_state_info.try_borrow_mut().unwrap();
     expand_wrapper(wrapper_data);
 
     Ok(())
@@ -112,7 +112,7 @@ pub fn expand_wrapper(wrapper_data: &mut [u8]) {
 }
 
 fn does_need_expand(wrapper_state: &WrapperStateAccountInfo) -> bool {
-    let wrapper_data: Ref<[u8]> = wrapper_state.info.try_borrow_data().unwrap();
+    let wrapper_data: Ref<[u8]> = wrapper_state.info.try_borrow().unwrap();
     let (fixed_data, _dynamic_data) = wrapper_data.split_at(size_of::<ManifestWrapperUserFixed>());
 
     let wrapper_fixed: &ManifestWrapperUserFixed = get_helper(fixed_data, 0);
@@ -120,7 +120,7 @@ fn does_need_expand(wrapper_state: &WrapperStateAccountInfo) -> bool {
 }
 
 pub(crate) fn check_signer(wrapper_state: &WrapperStateAccountInfo, owner_key: &Pubkey) {
-    let mut wrapper_data: RefMut<[u8]> = wrapper_state.info.try_borrow_mut_data().unwrap();
+    let mut wrapper_data: RefMut<[u8]> = wrapper_state.info.try_borrow_mut().unwrap();
     let (header_bytes, _wrapper_dynamic_data) =
         wrapper_data.split_at_mut(size_of::<ManifestWrapperUserFixed>());
     let header: &ManifestWrapperUserFixed =
@@ -133,10 +133,10 @@ pub(crate) fn sync_fast(
     market: &ManifestAccountInfo<MarketFixed>,
     market_info_index: DataIndex,
 ) -> ProgramResult {
-    let market_data: Ref<[u8]> = market.try_borrow_data()?;
+    let market_data: Ref<[u8]> = market.try_borrow()?;
     let market_ref = get_dynamic_account::<MarketFixed>(&market_data);
 
-    let mut wrapper_data: RefMut<[u8]> = wrapper_state.info.try_borrow_mut_data()?;
+    let mut wrapper_data: RefMut<[u8]> = wrapper_state.info.try_borrow_mut()?;
     let (fixed_data, wrapper_dynamic_data) =
         wrapper_data.split_at_mut(size_of::<ManifestWrapperUserFixed>());
 
@@ -232,7 +232,7 @@ pub(crate) fn get_market_info_index_for_market(
     wrapper_state: &WrapperStateAccountInfo,
     market: &Pubkey,
 ) -> DataIndex {
-    let mut wrapper_data: RefMut<[u8]> = wrapper_state.info.try_borrow_mut_data().unwrap();
+    let mut wrapper_data: RefMut<[u8]> = wrapper_state.info.try_borrow_mut().unwrap();
     let (fixed_data, wrapper_dynamic_data) =
         wrapper_data.split_at_mut(size_of::<ManifestWrapperUserFixed>());
 
@@ -252,7 +252,7 @@ pub(crate) fn get_market_info_index_for_market(
 /// Validation for wrapper account
 #[derive(Clone)]
 pub struct WrapperStateAccountInfo<'a> {
-    pub(crate) info: &'a AccountInfo,
+    pub(crate) info: &'a AccountView,
 }
 pub type MarketInfosTree<'a> = RedBlackTree<'a, MarketInfo>;
 pub type MarketInfosTreeReadOnly<'a> = RedBlackTreeReadOnly<'a, MarketInfo>;
@@ -263,7 +263,7 @@ pub const WRAPPER_USER_DISCRIMINANT: u64 = 1;
 
 impl<'a> WrapperStateAccountInfo<'a> {
     #[inline(always)]
-    fn _new_unchecked(info: &'a AccountInfo) -> Result<WrapperStateAccountInfo<'a>, ProgramError> {
+    fn _new_unchecked(info: &'a AccountView) -> Result<WrapperStateAccountInfo<'a>, ProgramError> {
         require!(
             info.owner_pubkey() == &crate::ID,
             ProgramError::IllegalOwner,
@@ -272,10 +272,10 @@ impl<'a> WrapperStateAccountInfo<'a> {
         Ok(Self { info })
     }
 
-    pub fn new(info: &'a AccountInfo) -> Result<WrapperStateAccountInfo<'a>, ProgramError> {
+    pub fn new(info: &'a AccountView) -> Result<WrapperStateAccountInfo<'a>, ProgramError> {
         let wrapper_state: WrapperStateAccountInfo<'a> = Self::_new_unchecked(info)?;
 
-        let market_bytes: Ref<[u8]> = info.try_borrow_data()?;
+        let market_bytes: Ref<[u8]> = info.try_borrow()?;
         let (header_bytes, _) = market_bytes.split_at(size_of::<ManifestWrapperUserFixed>());
         let header: &ManifestWrapperUserFixed =
             get_helper::<ManifestWrapperUserFixed>(header_bytes, 0_u32);
@@ -289,13 +289,13 @@ impl<'a> WrapperStateAccountInfo<'a> {
         Ok(wrapper_state)
     }
 
-    pub fn new_init(info: &'a AccountInfo) -> Result<WrapperStateAccountInfo<'a>, ProgramError> {
+    pub fn new_init(info: &'a AccountView) -> Result<WrapperStateAccountInfo<'a>, ProgramError> {
         require!(
             info.is_signer(),
             ProgramError::MissingRequiredSignature,
             "Wrapper state must sign initialization",
         )?;
-        let market_bytes: Ref<[u8]> = info.try_borrow_data()?;
+        let market_bytes: Ref<[u8]> = info.try_borrow()?;
         let (header_bytes, _) = market_bytes.split_at(size_of::<ManifestWrapperUserFixed>());
         let header: &ManifestWrapperUserFixed =
             get_helper::<ManifestWrapperUserFixed>(header_bytes, 0_u32);
@@ -315,7 +315,7 @@ impl<'a> WrapperStateAccountInfo<'a> {
 }
 
 impl<'a> Deref for WrapperStateAccountInfo<'a> {
-    type Target = AccountInfo;
+    type Target = AccountView;
 
     fn deref(&self) -> &Self::Target {
         self.info

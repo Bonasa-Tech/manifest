@@ -1,12 +1,12 @@
-use crate::validation::AccountInfoExt;
-use pinocchio::{account_info::RefMut, ProgramResult};
+use crate::validation::AccountViewExt;
+use pinocchio::{account::RefMut, ProgramResult};
 
 use crate::{
     logs::{emit_stack, ClaimSeatLog},
     state::{MarketFixed, MarketRefMut},
     validation::{loaders::ClaimSeatContext, ManifestAccountInfo, Signer},
 };
-use pinocchio::account_info::AccountInfo;
+use pinocchio::account::AccountView;
 use solana_program::pubkey::Pubkey;
 
 use super::shared::{expand_market_if_needed, get_mut_dynamic_account};
@@ -17,7 +17,7 @@ use early_panic::early_panic;
 #[cfg_attr(all(feature = "certora", not(feature = "certora-test")), early_panic)]
 pub(crate) fn process_claim_seat(
     _program_id: &Pubkey,
-    accounts: &[AccountInfo],
+    accounts: &[AccountView],
     _data: &[u8],
 ) -> ProgramResult {
     let claim_seat_context: ClaimSeatContext = ClaimSeatContext::load(accounts)?;
@@ -36,7 +36,7 @@ pub(crate) fn process_claim_seat_internal<'a>(
     market: &ManifestAccountInfo<'a, MarketFixed>,
     payer: &Signer<'a>,
 ) -> ProgramResult {
-    let market_data: &mut RefMut<[u8]> = &mut market.try_borrow_mut_data()?;
+    let market_data: &mut RefMut<[u8]> = &mut market.try_borrow_mut()?;
     let mut dynamic_account: MarketRefMut = get_mut_dynamic_account(market_data);
     dynamic_account.claim_seat(payer.pubkey())?;
 

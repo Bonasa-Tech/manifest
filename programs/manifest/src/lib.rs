@@ -18,10 +18,7 @@ pub mod deps {
 pub mod certora;
 
 use hypertree::trace;
-use pinocchio::{
-    account_info::AccountInfo, program_error::ProgramError, pubkey::Pubkey as Address,
-    ProgramResult,
-};
+use pinocchio::{account::AccountView, address::Address, error::ProgramError, ProgramResult};
 use program::{
     batch_update::process_batch_update, claim_seat::process_claim_seat,
     create_market::process_create_market, deposit::process_deposit,
@@ -102,7 +99,7 @@ pinocchio::program_entrypoint!(process_instruction, { crate::entrypoint::MAX_ACC
 
 pub fn process_instruction(
     program_id_raw: &Address,
-    accounts: &[AccountInfo],
+    accounts: &[AccountView],
     instruction_data: &[u8],
 ) -> ProgramResult {
     let program_id: &Pubkey = crate::validation::as_pubkey(program_id_raw);

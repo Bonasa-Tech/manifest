@@ -11,12 +11,13 @@
 //! an arithmetic overflow or a `?` on a checked operation -- and never from a
 //! deliberate `require!`. That is exactly the property the original rules
 //! state.
-use crate::{validation::AccountInfoExt, *};
+use crate::{validation::AccountViewExt, *};
 use cvt::{cvt_assert, cvt_assume};
 use cvt_macros::rule;
 use nondet::*;
+use pinocchio::account::RefMut;
 
-use solana_program::{account_info::AccountInfo, entrypoint::ProgramResult};
+use solana_program::{account::AccountView, entrypoint::ProgramResult};
 
 use crate::{
     certora::spec::{
@@ -139,14 +140,14 @@ fn cvt_assume_coalesce_arithmetic_does_not_overflow<const IS_BID: bool>(
 pub fn place_single_order_global_no_revert_check<const IS_BID: bool>() {
     cvt_static_initializer!();
 
-    let acc_infos: [AccountInfo; 16] = acc_infos_with_mem_layout!();
-    let trader: &AccountInfo = &acc_infos[0];
-    let market_info: &AccountInfo = &acc_infos[1];
-    let maker_trader: &AccountInfo = &acc_infos[7];
-    let vault_base_token: &AccountInfo = &acc_infos[8];
-    let vault_quote_token: &AccountInfo = &acc_infos[9];
-    let global_info: &AccountInfo = &acc_infos[10];
-    let global_vault_token: &AccountInfo = &acc_infos[11];
+    let acc_infos: [AccountView; 16] = acc_infos_with_mem_layout!();
+    let trader: &AccountView = &acc_infos[0];
+    let market_info: &AccountView = &acc_infos[1];
+    let maker_trader: &AccountView = &acc_infos[7];
+    let vault_base_token: &AccountView = &acc_infos[8];
+    let vault_quote_token: &AccountView = &acc_infos[9];
+    let global_info: &AccountView = &acc_infos[10];
+    let global_vault_token: &AccountView = &acc_infos[11];
 
     let maker_order_index: DataIndex = cvt_assume_global_market_preconditions::<IS_BID>(
         market_info,
@@ -156,7 +157,7 @@ pub fn place_single_order_global_no_revert_check<const IS_BID: bool>() {
         maker_trader,
     );
 
-    let market_vault_token: &AccountInfo = if IS_BID {
+    let market_vault_token: &AccountView = if IS_BID {
         vault_base_token
     } else {
         vault_quote_token
@@ -226,14 +227,14 @@ pub fn rule_place_single_order_global_no_revert_ask() {
 pub fn cancel_global_order_no_revert_check<const IS_BID: bool>() {
     cvt_static_initializer!();
 
-    let acc_infos: [AccountInfo; 16] = acc_infos_with_mem_layout!();
-    let trader: &AccountInfo = &acc_infos[0];
-    let market_info: &AccountInfo = &acc_infos[1];
-    let maker_trader: &AccountInfo = &acc_infos[7];
-    let vault_base_token: &AccountInfo = &acc_infos[8];
-    let vault_quote_token: &AccountInfo = &acc_infos[9];
-    let global_info: &AccountInfo = &acc_infos[10];
-    let global_vault_token: &AccountInfo = &acc_infos[11];
+    let acc_infos: [AccountView; 16] = acc_infos_with_mem_layout!();
+    let trader: &AccountView = &acc_infos[0];
+    let market_info: &AccountView = &acc_infos[1];
+    let maker_trader: &AccountView = &acc_infos[7];
+    let vault_base_token: &AccountView = &acc_infos[8];
+    let vault_quote_token: &AccountView = &acc_infos[9];
+    let global_info: &AccountView = &acc_infos[10];
+    let global_vault_token: &AccountView = &acc_infos[11];
 
     let order_index: DataIndex = cvt_assume_global_market_preconditions::<IS_BID>(
         market_info,
@@ -243,7 +244,7 @@ pub fn cancel_global_order_no_revert_check<const IS_BID: bool>() {
         maker_trader,
     );
 
-    let market_vault_token: &AccountInfo = if IS_BID {
+    let market_vault_token: &AccountView = if IS_BID {
         vault_base_token
     } else {
         vault_quote_token
@@ -260,8 +261,7 @@ pub fn cancel_global_order_no_revert_check<const IS_BID: bool>() {
             IS_BID,
         );
 
-    let market_data: &mut std::cell::RefMut<&mut [u8]> =
-        &mut market_info.try_borrow_mut_data().unwrap();
+    let market_data: &mut std::cell::RefMut<&mut [u8]> = &mut market_info.try_borrow_mut().unwrap();
     let mut dynamic_account: MarketRefMut = get_mut_dynamic_account(market_data);
     let result: ProgramResult =
         dynamic_account.cancel_order_by_index(order_index, &global_trade_accounts_opts);
@@ -285,14 +285,14 @@ pub fn rule_cancel_global_order_no_revert_ask() {
 pub fn rest_remaining_global_no_revert_check<const IS_BID: bool>() {
     cvt_static_initializer!();
 
-    let acc_infos: [AccountInfo; 16] = acc_infos_with_mem_layout!();
-    let trader: &AccountInfo = &acc_infos[0];
-    let market_info: &AccountInfo = &acc_infos[1];
-    let maker_trader: &AccountInfo = &acc_infos[7];
-    let vault_base_token: &AccountInfo = &acc_infos[8];
-    let vault_quote_token: &AccountInfo = &acc_infos[9];
-    let global_info: &AccountInfo = &acc_infos[10];
-    let global_vault_token: &AccountInfo = &acc_infos[11];
+    let acc_infos: [AccountView; 16] = acc_infos_with_mem_layout!();
+    let trader: &AccountView = &acc_infos[0];
+    let market_info: &AccountView = &acc_infos[1];
+    let maker_trader: &AccountView = &acc_infos[7];
+    let vault_base_token: &AccountView = &acc_infos[8];
+    let vault_quote_token: &AccountView = &acc_infos[9];
+    let global_info: &AccountView = &acc_infos[10];
+    let global_vault_token: &AccountView = &acc_infos[11];
 
     let _maker_order_index: DataIndex = cvt_assume_market_preconditions::<IS_BID>(
         market_info,
@@ -303,7 +303,7 @@ pub fn rest_remaining_global_no_revert_check<const IS_BID: bool>() {
     );
 
     // The trader rests their own global order, backed by quote when it is a bid.
-    let market_vault_token: &AccountInfo = if IS_BID {
+    let market_vault_token: &AccountView = if IS_BID {
         vault_quote_token
     } else {
         vault_base_token
@@ -332,8 +332,7 @@ pub fn rest_remaining_global_no_revert_check<const IS_BID: bool>() {
         current_slot: Some(nondet()),
     };
 
-    let market_data: &mut std::cell::RefMut<&mut [u8]> =
-        &mut market_info.try_borrow_mut_data().unwrap();
+    let market_data: &mut std::cell::RefMut<&mut [u8]> = &mut market_info.try_borrow_mut().unwrap();
     let mut dynamic_account: MarketRefMut = get_mut_dynamic_account(market_data);
     let result = dynamic_account.certora_rest_remaining(
         args,
@@ -365,12 +364,12 @@ pub fn rule_rest_remaining_global_no_revert_ask() {
 pub fn reverse_coalesce_no_revert_check<const IS_BID: bool, const IS_TIGHT: bool>() {
     cvt_static_initializer!();
 
-    let acc_infos: [AccountInfo; 16] = acc_infos_with_mem_layout!();
-    let trader: &AccountInfo = &acc_infos[0];
-    let market_info: &AccountInfo = &acc_infos[1];
-    let maker_trader: &AccountInfo = &acc_infos[7];
-    let vault_base_token: &AccountInfo = &acc_infos[8];
-    let vault_quote_token: &AccountInfo = &acc_infos[9];
+    let acc_infos: [AccountView; 16] = acc_infos_with_mem_layout!();
+    let trader: &AccountView = &acc_infos[0];
+    let market_info: &AccountView = &acc_infos[1];
+    let maker_trader: &AccountView = &acc_infos[7];
+    let vault_base_token: &AccountView = &acc_infos[8];
+    let vault_quote_token: &AccountView = &acc_infos[9];
 
     let (maker_order_index, coalesce_order_index) =
         cvt_assume_reverse_coalesce_preconditions::<IS_BID, IS_TIGHT>(
@@ -434,12 +433,12 @@ pub fn rule_reverse_coalesce_no_revert_ask() {
 fn global_deposit_withdraw_no_revert_check<const IS_DEPOSIT: bool>() {
     cvt_static_initializer!();
 
-    let acc_infos: [AccountInfo; 16] = acc_infos_with_mem_layout!();
-    let used_acc_infos: &[AccountInfo] = &acc_infos[..6];
-    let trader: &AccountInfo = &used_acc_infos[0];
-    let global_info: &AccountInfo = &used_acc_infos[1];
-    let global_vault_token: &AccountInfo = &used_acc_infos[3];
-    let trader_token: &AccountInfo = &used_acc_infos[4];
+    let acc_infos: [AccountView; 16] = acc_infos_with_mem_layout!();
+    let used_acc_infos: &[AccountView] = &acc_infos[..6];
+    let trader: &AccountView = &used_acc_infos[0];
+    let global_info: &AccountView = &used_acc_infos[1];
+    let global_vault_token: &AccountView = &used_acc_infos[3];
+    let trader_token: &AccountView = &used_acc_infos[4];
 
     cvt_assume!(global_info.owner_pubkey() == &crate::id());
     create_global!(global_info);

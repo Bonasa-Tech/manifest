@@ -1,9 +1,12 @@
 use bytemuck::Pod;
 use hypertree::{get_helper, Get};
-use pinocchio::{account_info::AccountInfo, program_error::ProgramError, ProgramResult};
+use pinocchio::{
+    account::{AccountView, Ref},
+    error::ProgramError,
+    ProgramResult,
+};
 
-use crate::validation::AccountInfoExt;
-use pinocchio::account_info::Ref;
+use crate::validation::AccountViewExt;
 use solana_program::pubkey::Pubkey;
 use std::{mem::size_of, ops::Deref};
 
@@ -12,7 +15,7 @@ use crate::require;
 /// Validation for manifest accounts.
 #[derive(Clone)]
 pub struct ManifestAccountInfo<'a, T: ManifestAccount + Pod + Clone> {
-    pub info: &'a AccountInfo,
+    pub info: &'a AccountView,
 
     phantom: std::marker::PhantomData<T>,
 }
@@ -22,10 +25,10 @@ impl<'a, T: ManifestAccount + Get + Pod + Clone> ManifestAccountInfo<'a, T> {
         all(feature = "certora", not(feature = "certora-test")),
         early_panic::early_panic
     )]
-    pub fn new(info: &'a AccountInfo) -> Result<ManifestAccountInfo<'a, T>, ProgramError> {
+    pub fn new(info: &'a AccountView) -> Result<ManifestAccountInfo<'a, T>, ProgramError> {
         verify_owned_by_manifest(info.owner_pubkey())?;
 
-        let bytes: Ref<[u8]> = info.try_borrow_data()?;
+        let bytes: Ref<[u8]> = info.try_borrow()?;
         let (header_bytes, _) = bytes.split_at(size_of::<T>());
         let header: &T = get_helper::<T>(header_bytes, 0_u32);
         header.verify_discriminant()?;
@@ -36,7 +39,7 @@ impl<'a, T: ManifestAccount + Get + Pod + Clone> ManifestAccountInfo<'a, T> {
         })
     }
 
-    pub fn new_init(info: &'a AccountInfo) -> Result<ManifestAccountInfo<'a, T>, ProgramError> {
+    pub fn new_init(info: &'a AccountView) -> Result<ManifestAccountInfo<'a, T>, ProgramError> {
         verify_owned_by_manifest(info.owner_pubkey())?;
         verify_uninitialized::<T>(info)?;
         Ok(Self {
@@ -46,7 +49,7 @@ impl<'a, T: ManifestAccount + Get + Pod + Clone> ManifestAccountInfo<'a, T> {
     }
 
     pub fn get_fixed(&self) -> Result<Ref<'_, T>, ProgramError> {
-        let data: Ref<[u8]> = self.info.try_borrow_data()?;
+        let data: Ref<[u8]> = self.info.try_borrow()?;
         Ok(Ref::map(data, |data| {
             return get_helper::<T>(data, 0_u32);
         }))
@@ -54,7 +57,7 @@ impl<'a, T: ManifestAccount + Get + Pod + Clone> ManifestAccountInfo<'a, T> {
 }
 
 impl<'a, T: ManifestAccount + Pod + Clone> Deref for ManifestAccountInfo<'a, T> {
-    type Target = AccountInfo;
+    type Target = AccountView;
 
     fn deref(&self) -> &Self::Target {
         self.info
@@ -76,8 +79,8 @@ fn verify_owned_by_manifest(owner: &Pubkey) -> ProgramResult {
     Ok(())
 }
 
-fn verify_uninitialized<T: Pod + ManifestAccount>(info: &AccountInfo) -> ProgramResult {
-    let bytes: Ref<[u8]> = info.try_borrow_data()?;
+fn verify_uninitialized<T: Pod + ManifestAccount>(info: &AccountView) -> ProgramResult {
+    let bytes: Ref<[u8]> = info.try_borrow()?;
     require!(
         size_of::<T>() == bytes.len(),
         ProgramError::InvalidAccountData,

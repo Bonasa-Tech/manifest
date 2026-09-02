@@ -1,7 +1,7 @@
-use manifest::validation::{next_account_info, AccountInfoExt, Program, Signer};
+use manifest::validation::{next_account_info, AccountViewExt, Program, Signer};
 use pinocchio::{
-    account_info::{AccountInfo, RefMut},
-    program_error::ProgramError,
+    account::{AccountView, RefMut},
+    error::ProgramError,
     sysvars::Sysvar,
     ProgramResult,
 };
@@ -11,10 +11,10 @@ use crate::loader::WrapperStateAccountInfo;
 
 pub(crate) fn process_collect(
     _program_id: &Pubkey,
-    accounts: &[AccountInfo],
+    accounts: &[AccountView],
     _data: &[u8],
 ) -> ProgramResult {
-    let account_iter: &mut std::slice::Iter<AccountInfo> = &mut accounts.iter();
+    let account_iter: &mut std::slice::Iter<AccountView> = &mut accounts.iter();
     let wrapper_state: WrapperStateAccountInfo =
         WrapperStateAccountInfo::new(next_account_info(account_iter)?)?;
     let _system_program: Program =
@@ -22,7 +22,7 @@ pub(crate) fn process_collect(
     let collector: Signer = Signer::new(next_account_info(account_iter)?)?;
 
     let rent: pinocchio::sysvars::rent::Rent = pinocchio::sysvars::rent::Rent::get()?;
-    let minimum_balance: u64 = rent.minimum_balance(wrapper_state.data_len());
+    let minimum_balance: u64 = rent.try_minimum_balance(wrapper_state.data_len())?;
     let current_balance: u64 = wrapper_state.lamports();
 
     let lamports_diff: u64 = current_balance.saturating_sub(minimum_balance);
@@ -39,14 +39,18 @@ pub(crate) fn process_collect(
     // The System Program cannot debit a data-bearing account that it does not
     // own. This program owns wrapper_state, so it must move excess lamports by
     // mutating both balances directly while preserving the rent exemption.
-    let mut wrapper_lamports: RefMut<u64> = wrapper_state.info.try_borrow_mut_lamports()?;
-    let mut collector_lamports: RefMut<u64> = collector.info.try_borrow_mut_lamports()?;
-    *wrapper_lamports = current_balance
-        .checked_sub(lamports_diff)
-        .ok_or(ProgramError::ArithmeticOverflow)?;
-    *collector_lamports = collector_lamports
-        .checked_add(lamports_diff)
-        .ok_or(ProgramError::ArithmeticOverflow)?;
+    wrapper_state.info.set_lamports(
+        current_balance
+            .checked_sub(lamports_diff)
+            .ok_or(ProgramError::ArithmeticOverflow)?,
+    );
+    collector.info.set_lamports(
+        collector
+            .info
+            .lamports()
+            .checked_add(lamports_diff)
+            .ok_or(ProgramError::ArithmeticOverflow)?,
+    );
 
     Ok(())
 }

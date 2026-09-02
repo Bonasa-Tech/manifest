@@ -1,5 +1,5 @@
-use crate::validation::AccountInfoExt;
-use pinocchio::{account_info::RefMut, program_error::ProgramError, ProgramResult};
+use crate::validation::AccountViewExt;
+use pinocchio::{account::RefMut, error::ProgramError, ProgramResult};
 
 #[cfg(not(feature = "certora"))]
 use crate::program::invoke_signed;
@@ -163,11 +163,11 @@ pub(crate) fn settle_global_gas_refunds(
         let refund_lamports: u64 = GAS_DEPOSIT_LAMPORTS.checked_mul(num_refunds).unwrap();
         // Both accounts belong to this program here, so the lamports move by
         // writing the balances rather than asking the system program.
-        *global.try_borrow_mut_lamports()? -= refund_lamports;
-        *gas_receiver_opt
-            .as_ref()
-            .unwrap()
-            .try_borrow_mut_lamports()? += refund_lamports;
+        global.set_lamports(global.lamports() - refund_lamports);
+        {
+            let receiver = gas_receiver_opt.as_ref().unwrap();
+            receiver.set_lamports(receiver.lamports() + refund_lamports);
+        }
     }
 
     Ok(())
@@ -183,7 +183,7 @@ pub(crate) fn try_to_add_to_global(
         ..
     } = global_trade_accounts;
 
-    let global_data: &mut RefMut<[u8]> = &mut global.try_borrow_mut_data()?;
+    let global_data: &mut RefMut<[u8]> = &mut global.try_borrow_mut()?;
     let mut global_dynamic_account: GlobalRefMut = get_mut_dynamic_account(global_data);
     global_dynamic_account.add_order(resting_order, gas_payer_opt.as_ref().unwrap().pubkey())
 }
@@ -254,7 +254,7 @@ pub(crate) fn pay_global_gas_prepayment(
         gas_payer_opt,
         ..
     } = global_trade_accounts;
-    let payer_info: &AccountInfo = gas_payer_opt.as_ref().unwrap().info;
+    let payer_info: &AccountView = gas_payer_opt.as_ref().unwrap().info;
 
     let lamports: u64 = GAS_DEPOSIT_LAMPORTS
         .checked_mul(num_gas_prepayments)
@@ -307,7 +307,7 @@ pub(crate) fn can_back_order<'a>(
     let global_trade_accounts: &GlobalTradeAccounts = global_trade_accounts_opt.as_ref().unwrap();
     let GlobalTradeAccounts { global, .. } = global_trade_accounts;
 
-    let global_data: &mut RefMut<[u8]> = &mut global.try_borrow_mut_data().unwrap();
+    let global_data: &mut RefMut<[u8]> = &mut global.try_borrow_mut().unwrap();
     let global_dynamic_account: GlobalRefMut = get_mut_dynamic_account(global_data);
 
     let num_deposited_atoms: GlobalAtoms =
@@ -344,7 +344,7 @@ pub(crate) fn try_to_reduce_global_tokens<'a>(
         ..
     } = global_trade_accounts;
 
-    let global_data: &mut RefMut<[u8]> = &mut global.try_borrow_mut_data()?;
+    let global_data: &mut RefMut<[u8]> = &mut global.try_borrow_mut()?;
     let mut global_dynamic_account: GlobalRefMut = get_mut_dynamic_account(global_data);
 
     let num_deposited_atoms: GlobalAtoms =
@@ -396,7 +396,7 @@ pub(crate) fn try_to_reduce_global_tokens<'a>(
 
         // Prevent transfer from global to market vault if a token has a non-zero fee.
         let mint_account_info: &MintAccountInfo = mint_opt.as_ref().unwrap();
-        if StateWithExtensions::<Mint>::unpack(&mint_account_info.info.try_borrow_data()?)
+        if StateWithExtensions::<Mint>::unpack(&mint_account_info.info.try_borrow()?)
             .map_err(to_program_error)?
             .get_extension::<TransferFeeConfig>()
             .is_ok_and(|f| f.get_epoch_fee(get_now_epoch()).transfer_fee_basis_points != 0.into())
@@ -410,7 +410,7 @@ pub(crate) fn try_to_reduce_global_tokens<'a>(
             })?;
             return Ok(false);
         }
-        if StateWithExtensions::<Mint>::unpack(&mint_account_info.info.try_borrow_data()?)
+        if StateWithExtensions::<Mint>::unpack(&mint_account_info.info.try_borrow()?)
             .map_err(to_program_error)?
             .get_extension::<TransferHook>()
             .is_ok_and(|f| f.program_id.0 != Pubkey::default())
@@ -497,7 +497,7 @@ pub(crate) fn transfer_global_tokens<'a>(
         ..
     } = global_trade_accounts;
 
-    let global_data: &mut RefMut<[u8]> = &mut global.try_borrow_mut_data()?;
+    let global_data: &mut RefMut<[u8]> = &mut global.try_borrow_mut()?;
     let global_dynamic_account: GlobalRefMut = get_mut_dynamic_account(global_data);
 
     let mint_key: Pubkey = *global_dynamic_account.fixed.get_mint();

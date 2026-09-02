@@ -1,14 +1,14 @@
 use crate::certora::hooks::*;
 use hook_macro::cvt_hook_end;
 use nondet::nondet;
-use pinocchio::{program_error::ProgramError, ProgramResult};
+use pinocchio::{error::ProgramError, ProgramResult};
 
 use crate::{
     state::{AddOrderToMarketArgs, AddOrderToMarketResult, MarketRefMut},
     validation::loaders::GlobalTradeAccounts,
 };
 use hypertree::DataIndex;
-use solana_program::program_error::ProgramError;
+use solana_program::error::ProgramError;
 
 #[cfg_attr(feature = "certora", cvt_hook_end(cancel_order_was_called()))]
 pub fn mock_cancel_order(

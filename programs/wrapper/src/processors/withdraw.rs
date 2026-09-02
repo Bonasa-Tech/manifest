@@ -1,5 +1,5 @@
-use manifest::validation::{next_account_info, AccountInfoExt};
-use pinocchio::{account_info::Ref, ProgramResult};
+use manifest::validation::{next_account_info, AccountViewExt};
+use pinocchio::{account::Ref, ProgramResult};
 
 use borsh::{BorshDeserialize, BorshSerialize};
 use hypertree::DataIndex;
@@ -10,7 +10,7 @@ use manifest::{
 };
 
 use manifest::validation::{Program, Signer};
-use pinocchio::account_info::AccountInfo;
+use pinocchio::account::AccountView;
 use solana_program::pubkey::Pubkey;
 
 use crate::loader::{check_signer, WrapperStateAccountInfo};
@@ -30,17 +30,17 @@ impl WrapperWithdrawParams {
 
 pub(crate) fn process_withdraw(
     _program_id: &Pubkey,
-    accounts: &[AccountInfo],
+    accounts: &[AccountView],
     data: &[u8],
 ) -> ProgramResult {
-    let account_iter: &mut std::slice::Iter<AccountInfo> = &mut accounts.iter();
+    let account_iter: &mut std::slice::Iter<AccountView> = &mut accounts.iter();
     let manifest_program: Program =
         Program::new(next_account_info(account_iter)?, &manifest::id())?;
     let owner: Signer = Signer::new(next_account_info(account_iter)?)?;
     let market: ManifestAccountInfo<MarketFixed> =
         ManifestAccountInfo::<MarketFixed>::new(next_account_info(account_iter)?)?;
-    let trader_token_account: &AccountInfo = next_account_info(account_iter)?;
-    let vault: &AccountInfo = next_account_info(account_iter)?;
+    let trader_token_account: &AccountView = next_account_info(account_iter)?;
+    let vault: &AccountView = next_account_info(account_iter)?;
     let token_program: TokenProgram = TokenProgram::new(next_account_info(account_iter)?)?;
     let wrapper_state: WrapperStateAccountInfo =
         WrapperStateAccountInfo::new(next_account_info(account_iter)?)?;
@@ -52,7 +52,7 @@ pub(crate) fn process_withdraw(
         let market_fixed: Ref<MarketFixed> = market.get_fixed()?;
         let base_mint: &Pubkey = market_fixed.get_base_mint();
         let quote_mint: &Pubkey = market_fixed.get_quote_mint();
-        if &trader_token_account.try_borrow_data()?[0..32] == base_mint.as_ref() {
+        if &trader_token_account.try_borrow()?[0..32] == base_mint.as_ref() {
             *base_mint
         } else {
             *quote_mint

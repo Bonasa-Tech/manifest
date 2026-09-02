@@ -17,7 +17,10 @@ env:
   CARGO_TERM_COLOR: always
   SOLANA_VERSION: '2.2.20'
   SVM_ARCH: 'v2'
-  RUST_TOOLCHAIN: '1.86.0'
+  RUST_TOOLCHAIN: '1.89.0'
+  # pinocchio's account view crates need rustc 1.89, and platform
+  # tools v1.57 is the first that ships one new enough (1.95).
+  PLATFORM_TOOLS: 'v1.57'
 
 jobs:
   format:
@@ -85,10 +88,10 @@ jobs:
 
       - name: Build all deps
         run: |
-          cargo build-sbf --arch=${{ env.SVM_ARCH }} -- -p manifest-dex -p wrapper -p ui-wrapper
+          cargo build-sbf --arch=${{ env.SVM_ARCH }} --tools-version ${{ env.PLATFORM_TOOLS }} -- -p manifest-dex -p wrapper -p ui-wrapper
 
       - name: Run sbf tests
-        run: cargo test-sbf --arch=${{ env.SVM_ARCH }} --features "test,test-sbf" -- --test-threads 1
+        run: cargo test-sbf --arch=${{ env.SVM_ARCH }} --tools-version ${{ env.PLATFORM_TOOLS }} --features "test,test-sbf" -- --test-threads 1
 
   coverage:
     name: Coverage

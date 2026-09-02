@@ -1,4 +1,4 @@
-use pinocchio::account_info::{AccountInfo, Ref, RefMut};
+use pinocchio::account::{AccountView, Ref, RefMut};
 use std::mem::size_of;
 
 use crate::{
@@ -12,25 +12,25 @@ use crate::{
 use bytemuck::Pod;
 use core::mem::MaybeUninit;
 use pinocchio::instruction::{
-    AccountMeta as PinocchioAccountMeta, Instruction as PinocchioInstruction, Seed,
-    Signer as PinocchioSigner,
+    cpi::{Seed, Signer as PinocchioSigner},
+    InstructionAccount as PinocchioAccountMeta, InstructionView as PinocchioInstruction,
 };
 
-use crate::validation::{as_raw_key, AccountInfoExt};
+use crate::validation::{as_raw_key, AccountViewExt};
 use hypertree::{get_helper, get_mut_helper, DataIndex, Get, RBNode};
 #[cfg(not(feature = "certora"))]
 use pinocchio::sysvars::Sysvar;
-use pinocchio::{program_error::ProgramError, ProgramResult};
+use pinocchio::{error::ProgramError, ProgramResult};
 use solana_program::instruction::Instruction;
 
 use super::batch_update::MarketDataTreeNodeType;
 
 pub(crate) fn expand_market_if_needed<'a, T: ManifestAccount + Pod + Clone>(
-    payer: &AccountInfo,
+    payer: &AccountView,
     market_account_info: &ManifestAccountInfo<'a, T>,
 ) -> ProgramResult {
     let need_expand: bool = {
-        let market_data: &Ref<[u8]> = &market_account_info.try_borrow_data()?;
+        let market_data: &Ref<[u8]> = &market_account_info.try_borrow()?;
         let fixed: &MarketFixed = get_helper::<MarketFixed>(market_data, 0_u32);
         !fixed.has_free_block()
     };
@@ -38,7 +38,7 @@ pub(crate) fn expand_market_if_needed<'a, T: ManifestAccount + Pod + Clone>(
     if !need_expand {
         return Ok(());
     }
-    // Convert the AccountInfo into a signer. The checks for writable and signer
+    // Convert the AccountView into a signer. The checks for writable and signer
     // are done this late so that in the case where it is not required, it can
     // work.
     expand_market(&Signer::new_payer(payer)?, market_account_info)
@@ -94,15 +94,15 @@ fn expand_dynamic<'a, T: ManifestAccount + Pod + Clone>(
 ) -> ProgramResult {
     // Account types were already validated, so do not need to reverify that the
     // accounts are in order: payer, expandable_account, ...
-    let expandable_account: &AccountInfo = manifest_account.info;
+    let expandable_account: &AccountView = manifest_account.info;
     let new_size: usize = expandable_account.data_len() + block_size;
 
     let rent: pinocchio::sysvars::rent::Rent = pinocchio::sysvars::rent::Rent::get()?;
-    let new_minimum_balance: u64 = rent.minimum_balance(new_size);
-    let old_minimum_balance: u64 = rent.minimum_balance(expandable_account.data_len());
+    let new_minimum_balance: u64 = rent.try_minimum_balance(new_size)?;
+    let old_minimum_balance: u64 = rent.try_minimum_balance(expandable_account.data_len())?;
     let lamports_diff: u64 = new_minimum_balance.saturating_sub(old_minimum_balance);
 
-    let payer: &AccountInfo = payer.info;
+    let payer: &AccountView = payer.info;
 
     invoke(
         &solana_program::system_instruction::transfer(
@@ -126,29 +126,29 @@ fn expand_dynamic<'a, T: ManifestAccount + Pod + Clone>(
     #[cfg(not(feature = "fuzz"))]
     {
         #[allow(deprecated)]
-        expandable_account.realloc(new_size, false)?;
+        expandable_account.resize(new_size)?;
     }
     Ok(())
 }
 
-fn expand_market_fixed(expandable_account: &AccountInfo) -> ProgramResult {
-    let market_data: &mut RefMut<[u8]> = &mut expandable_account.try_borrow_mut_data()?;
+fn expand_market_fixed(expandable_account: &AccountView) -> ProgramResult {
+    let market_data: &mut RefMut<[u8]> = &mut expandable_account.try_borrow_mut()?;
     let mut dynamic_account: DynamicAccount<&mut MarketFixed, &mut [u8]> =
         get_mut_dynamic_account(market_data);
     dynamic_account.market_expand()?;
     Ok(())
 }
 
-fn expand_market_fixed_n(expandable_account: &AccountInfo, n: u32) -> ProgramResult {
-    let market_data: &mut RefMut<[u8]> = &mut expandable_account.try_borrow_mut_data()?;
+fn expand_market_fixed_n(expandable_account: &AccountView, n: u32) -> ProgramResult {
+    let market_data: &mut RefMut<[u8]> = &mut expandable_account.try_borrow_mut()?;
     let mut dynamic_account: DynamicAccount<&mut MarketFixed, &mut [u8]> =
         get_mut_dynamic_account(market_data);
     dynamic_account.market_expand_n(n)?;
     Ok(())
 }
 
-fn expand_global_fixed(expandable_account: &AccountInfo) -> ProgramResult {
-    let global_data: &mut RefMut<[u8]> = &mut expandable_account.try_borrow_mut_data()?;
+fn expand_global_fixed(expandable_account: &AccountView) -> ProgramResult {
+    let global_data: &mut RefMut<[u8]> = &mut expandable_account.try_borrow_mut()?;
     let mut dynamic_account: DynamicAccount<&mut GlobalFixed, &mut [u8]> =
         get_mut_dynamic_account(global_data);
     dynamic_account.global_expand()?;
@@ -276,8 +276,8 @@ fn verify_trader_index_hint(
 /// here pass what they have, so the matching happens here.
 fn with_pinocchio_instruction<R>(
     ix: &Instruction,
-    account_infos: &[&AccountInfo],
-    call: impl FnOnce(&PinocchioInstruction, &[&AccountInfo]) -> R,
+    account_infos: &[&AccountView],
+    call: impl FnOnce(&PinocchioInstruction, &[&AccountView]) -> R,
 ) -> Result<R, ProgramError> {
     const MAX_CPI_ACCOUNTS: usize = 16;
     require!(
@@ -290,7 +290,7 @@ fn with_pinocchio_instruction<R>(
 
     let mut metas: [MaybeUninit<PinocchioAccountMeta>; MAX_CPI_ACCOUNTS] =
         [const { MaybeUninit::uninit() }; MAX_CPI_ACCOUNTS];
-    let mut ordered: [MaybeUninit<&AccountInfo>; MAX_CPI_ACCOUNTS] =
+    let mut ordered: [MaybeUninit<&AccountView>; MAX_CPI_ACCOUNTS] =
         [const { MaybeUninit::uninit() }; MAX_CPI_ACCOUNTS];
 
     // Call sites that already pass exactly the instruction's accounts, in its
@@ -300,11 +300,11 @@ fn with_pinocchio_instruction<R>(
         && account_infos
             .iter()
             .zip(ix.accounts.iter())
-            .all(|(info, account)| info.key() == as_raw_key(&account.pubkey));
+            .all(|(info, account)| info.address() == as_raw_key(&account.pubkey));
 
     for (index, account) in ix.accounts.iter().enumerate() {
         metas[index].write(PinocchioAccountMeta {
-            pubkey: as_raw_key(&account.pubkey),
+            address: as_raw_key(&account.pubkey),
             is_writable: account.is_writable,
             is_signer: account.is_signer,
         });
@@ -317,12 +317,12 @@ fn with_pinocchio_instruction<R>(
             ordered[index].write(&account_infos[index]);
             continue;
         }
-        let wanted: &[u8; 32] = as_raw_key(&account.pubkey);
+        let wanted: &[u8; 32] = as_raw_key(&account.pubkey).as_array();
         let wanted_head: u64 = u64::from_le_bytes(wanted[..8].try_into().unwrap());
-        let found: &&AccountInfo = account_infos
+        let found: &&AccountView = account_infos
             .iter()
             .find(|info| {
-                let key: &[u8; 32] = info.key();
+                let key: &[u8; 32] = info.address().as_array();
                 u64::from_le_bytes(key[..8].try_into().unwrap()) == wanted_head && key == wanted
             })
             .ok_or(ProgramError::NotEnoughAccountKeys)?;
@@ -333,7 +333,7 @@ fn with_pinocchio_instruction<R>(
     // written, and that length is within the arrays by the check above.
     let metas: &[PinocchioAccountMeta] =
         unsafe { core::slice::from_raw_parts(metas.as_ptr().cast(), ix.accounts.len()) };
-    let ordered: &[&AccountInfo] =
+    let ordered: &[&AccountView] =
         unsafe { core::slice::from_raw_parts(ordered.as_ptr().cast(), ix.accounts.len()) };
 
     Ok(call(
@@ -352,7 +352,7 @@ fn with_pinocchio_instruction<R>(
 /// in the shape the `*_seeds_with_bump!` macros produce.
 pub fn invoke_signed(
     ix: &Instruction,
-    account_infos: &[&AccountInfo],
+    account_infos: &[&AccountView],
     seeds: &[&[&[u8]]],
 ) -> ProgramResult {
     const MAX_SEEDS: usize = 8;
@@ -376,7 +376,7 @@ pub fn invoke_signed(
     let signer: PinocchioSigner = PinocchioSigner::from(written);
 
     with_pinocchio_instruction(ix, account_infos, |pinocchio_ix, ordered| {
-        pinocchio::cpi::slice_invoke_signed(pinocchio_ix, ordered, &[signer])
+        pinocchio::cpi::invoke_signed_with_slice(pinocchio_ix, ordered, &[signer])
     })?
 }
 
@@ -388,10 +388,10 @@ pub fn invoke_signed(
 /// key, metas and data rather than owning them, so the translation is one
 /// stack array of metas and no copying of the instruction data.
 ///
-/// Accounts arrive as `&[&AccountInfo]` because that is what pinocchio's CPI
+/// Accounts arrive as `&[&AccountView]` because that is what pinocchio's CPI
 /// takes; the slice form avoids the const generic count at every call site.
-pub fn invoke(ix: &Instruction, account_infos: &[&AccountInfo]) -> ProgramResult {
+pub fn invoke(ix: &Instruction, account_infos: &[&AccountView]) -> ProgramResult {
     with_pinocchio_instruction(ix, account_infos, |pinocchio_ix, ordered| {
-        pinocchio::cpi::slice_invoke(pinocchio_ix, ordered)
+        pinocchio::cpi::invoke_with_slice(pinocchio_ix, ordered)
     })?
 }

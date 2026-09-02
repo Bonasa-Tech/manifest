@@ -14,11 +14,11 @@ use manifest::{
     quantities::{BaseAtoms, QuoteAtoms, QuoteAtomsPerBaseAtom, WrapperU64},
     require,
     state::{claimed_seat::ClaimedSeat, DynamicAccount, MarketFixed, MarketRef, OrderType},
-    validation::{next_account_info, AccountInfoExt, ManifestAccountInfo, Program, Signer},
+    validation::{next_account_info, AccountViewExt, ManifestAccountInfo, Program, Signer},
 };
 use pinocchio::{
-    account_info::{AccountInfo, Ref, RefMut},
-    program_error::ProgramError,
+    account::{AccountView, Ref, RefMut},
+    error::ProgramError,
     sysvars::Sysvar,
     ProgramResult,
 };
@@ -100,7 +100,7 @@ fn expand_market_if_needed<'a>(
     manifest_program: &Program<'a>,
     system_program: &Program<'a>,
 ) -> ProgramResult {
-    let market_data: Ref<[u8]> = market.try_borrow_data()?;
+    let market_data: Ref<[u8]> = market.try_borrow()?;
     let dynamic_account: MarketRef = get_dynamic_account(&market_data);
     // Check for two free blocks, bc. there needs to be always one free block
     // after every operation.
@@ -127,7 +127,7 @@ fn get_or_create_trader_index<'a>(
     system_program: &Program<'a>,
 ) -> Result<DataIndex, ProgramError> {
     let trader_index: DataIndex = {
-        let market_data: &Ref<[u8]> = &market.try_borrow_data()?;
+        let market_data: &Ref<[u8]> = &market.try_borrow()?;
         let dynamic_account: MarketRef = get_dynamic_account(market_data);
         dynamic_account.get_trader_index(owner.pubkey())
     };
@@ -149,7 +149,7 @@ fn get_or_create_trader_index<'a>(
         )?;
 
         // Fetch newly assigned trader index after claiming core seat.
-        let market_data: &Ref<[u8]> = &mut market.try_borrow_data()?;
+        let market_data: &Ref<[u8]> = &mut market.try_borrow()?;
         let dynamic_account: MarketRef = get_dynamic_account(market_data);
         Ok(dynamic_account.get_trader_index(owner.pubkey()))
     }
@@ -169,7 +169,7 @@ fn get_or_create_market_info<'a>(
         // needed for modifying user orders for insufficient funds.
         sync_fast(&wrapper_state, &market, market_info_index)?;
 
-        let wrapper_data: Ref<[u8]> = wrapper_state.info.try_borrow_data()?;
+        let wrapper_data: Ref<[u8]> = wrapper_state.info.try_borrow()?;
         let (_fixed_data, wrapper_dynamic_data) =
             wrapper_data.split_at(size_of::<ManifestWrapperUserFixed>());
 
@@ -182,8 +182,8 @@ fn get_or_create_market_info<'a>(
         expand_wrapper_if_needed(&wrapper_state, &payer, &system_program)?;
 
         // Load the market_infos tree and insert a new one.
-        let wrapper_state_info: &AccountInfo = wrapper_state.info;
-        let mut wrapper_data: RefMut<[u8]> = wrapper_state_info.try_borrow_mut_data()?;
+        let wrapper_state_info: &AccountView = wrapper_state.info;
+        let mut wrapper_data: RefMut<[u8]> = wrapper_state_info.try_borrow_mut()?;
         let (fixed_data, wrapper_dynamic_data) =
             wrapper_data.split_at_mut(size_of::<ManifestWrapperUserFixed>());
         let wrapper_fixed: &mut ManifestWrapperUserFixed = get_mut_helper(fixed_data, 0);
@@ -191,7 +191,7 @@ fn get_or_create_market_info<'a>(
         market_info.quote_volume = {
             // Sync volume from core seat to prevent double billing if seat
             // existed before wrapper invocation
-            let market_data: &Ref<[u8]> = &market.try_borrow_data()?;
+            let market_data: &Ref<[u8]> = &market.try_borrow()?;
             let dynamic_account: MarketRef = get_dynamic_account(market_data);
             let claimed_seat: &ClaimedSeat =
                 get_helper::<RBNode<ClaimedSeat>>(dynamic_account.dynamic, trader_index)
@@ -220,21 +220,21 @@ fn get_or_create_market_info<'a>(
 
 pub(crate) fn process_place_order(
     _program_id: &Pubkey,
-    accounts: &[AccountInfo],
+    accounts: &[AccountView],
     data: &[u8],
 ) -> ProgramResult {
-    let account_iter: &mut std::slice::Iter<AccountInfo> = &mut accounts.iter();
+    let account_iter: &mut std::slice::Iter<AccountView> = &mut accounts.iter();
     let wrapper_state: WrapperStateAccountInfo =
         WrapperStateAccountInfo::new(next_account_info(account_iter)?)?;
     let owner: Signer = Signer::new(next_account_info(account_iter)?)?;
-    let trader_token_account: &AccountInfo = next_account_info(account_iter)?;
+    let trader_token_account: &AccountView = next_account_info(account_iter)?;
     let market: ManifestAccountInfo<MarketFixed> =
         ManifestAccountInfo::<MarketFixed>::new(next_account_info(account_iter)?)?;
-    let vault: &AccountInfo = next_account_info(account_iter)?;
-    let mint: &AccountInfo = next_account_info(account_iter)?;
+    let vault: &AccountView = next_account_info(account_iter)?;
+    let mint: &AccountView = next_account_info(account_iter)?;
     let system_program: Program =
         Program::new(next_account_info(account_iter)?, &system_program::id())?;
-    let token_program: &AccountInfo = next_account_info(account_iter)?;
+    let token_program: &AccountView = next_account_info(account_iter)?;
     let manifest_program: Program =
         Program::new(next_account_info(account_iter)?, &manifest::id())?;
     let payer: Signer = Signer::new(next_account_info(account_iter)?)?;
@@ -286,7 +286,7 @@ pub(crate) fn process_place_order(
 
     // Adjust deposited amount for TransferFee if possible.
     let deposit_amount_atoms = if *mint.owner_pubkey() == spl_token_2022::id() {
-        let mint_data: Ref<[u8]> = mint.try_borrow_data()?;
+        let mint_data: Ref<[u8]> = mint.try_borrow()?;
         let deposit_mint: StateWithExtensions<'_, Mint> =
             StateWithExtensions::<Mint>::unpack(&mint_data)
                 .map_err(manifest::validation::to_program_error)?;
@@ -398,7 +398,7 @@ pub(crate) fn process_place_order(
     if order_index != NIL {
         expand_wrapper_if_needed(&wrapper_state, &payer, &system_program)?;
 
-        let mut wrapper_data: RefMut<[u8]> = wrapper_state.info.try_borrow_mut_data().unwrap();
+        let mut wrapper_data: RefMut<[u8]> = wrapper_state.info.try_borrow_mut().unwrap();
         let wrapper: DynamicAccount<&mut ManifestWrapperUserFixed, &mut [u8]> =
             get_mut_dynamic_account(&mut wrapper_data);
 

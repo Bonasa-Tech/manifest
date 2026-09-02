@@ -7,7 +7,7 @@ use crate::quantities::{QuoteAtoms, WrapperU64};
 use borsh::{BorshDeserialize, BorshSerialize};
 use bytemuck::{Pod, Zeroable};
 use hypertree::{DataIndex, PodBool};
-use pinocchio::program_error::ProgramError;
+use pinocchio::error::ProgramError;
 use shank::ShankType;
 use static_assertions::const_assert_eq;
 use std::cmp::Ordering;

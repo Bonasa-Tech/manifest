@@ -1,10 +1,10 @@
-use crate::{get_trader_balance, get_trader_index, validation::AccountInfoExt};
+use crate::{get_trader_balance, get_trader_index, validation::AccountViewExt};
 use cvt::{cvt_assert, cvt_assume};
 use cvt_macros::rule;
 use nondet::{acc_infos_with_mem_layout, nondet};
 
 use crate::*;
-use solana_program::account_info::AccountInfo;
+use solana_program::account::AccountView;
 
 use solana_cvt::token::spl_token_account_get_amount;
 
@@ -22,9 +22,9 @@ use state::cvt_assume_main_trader_has_seat;
 pub fn rule_update_balance() {
     crate::certora::spec::verification_utils::init_static();
 
-    let acc_infos: [AccountInfo; 16] = acc_infos_with_mem_layout!();
-    let trader: &AccountInfo = &acc_infos[0];
-    let market: &AccountInfo = &acc_infos[1];
+    let acc_infos: [AccountView; 16] = acc_infos_with_mem_layout!();
+    let trader: &AccountView = &acc_infos[0];
+    let market: &AccountView = &acc_infos[1];
 
     cvt_assume_main_trader_has_seat(trader.pubkey());
 
@@ -52,15 +52,15 @@ pub fn rule_deposit_deposits() {
     // fee-bearing executions are covered by `rule_deposit_deposits_with_fee`.
     crate::certora::spec::verification_utils::init_static();
 
-    let acc_infos: [AccountInfo; 16] = acc_infos_with_mem_layout!();
-    let used_acc_infos: &[AccountInfo] = &acc_infos[..6];
-    let trader: &AccountInfo = &used_acc_infos[0];
-    let market: &AccountInfo = &used_acc_infos[1];
-    let trader_token: &AccountInfo = &used_acc_infos[2];
-    let vault_token: &AccountInfo = &used_acc_infos[3];
+    let acc_infos: [AccountView; 16] = acc_infos_with_mem_layout!();
+    let used_acc_infos: &[AccountView] = &acc_infos[..6];
+    let trader: &AccountView = &used_acc_infos[0];
+    let market: &AccountView = &used_acc_infos[1];
+    let trader_token: &AccountView = &used_acc_infos[2];
+    let vault_token: &AccountView = &used_acc_infos[3];
 
     // Unrelated trader
-    let unrelated_trader: &AccountInfo = &acc_infos[7];
+    let unrelated_trader: &AccountView = &acc_infos[7];
 
     cvt_assume_main_trader_has_seat(trader.pubkey());
 
@@ -140,15 +140,15 @@ pub fn rule_deposit_deposits_with_fee() {
 
     crate::certora::spec::verification_utils::init_static();
 
-    let acc_infos: [AccountInfo; 16] = acc_infos_with_mem_layout!();
-    let used_acc_infos: &[AccountInfo] = &acc_infos[..6];
-    let trader: &AccountInfo = &used_acc_infos[0];
-    let market: &AccountInfo = &used_acc_infos[1];
-    let trader_token: &AccountInfo = &used_acc_infos[2];
-    let vault_token: &AccountInfo = &used_acc_infos[3];
+    let acc_infos: [AccountView; 16] = acc_infos_with_mem_layout!();
+    let used_acc_infos: &[AccountView] = &acc_infos[..6];
+    let trader: &AccountView = &used_acc_infos[0];
+    let market: &AccountView = &used_acc_infos[1];
+    let trader_token: &AccountView = &used_acc_infos[2];
+    let vault_token: &AccountView = &used_acc_infos[3];
 
     // Unrelated trader
-    let unrelated_trader: &AccountInfo = &acc_infos[7];
+    let unrelated_trader: &AccountView = &acc_infos[7];
 
     cvt_assume_main_trader_has_seat(trader.pubkey());
 

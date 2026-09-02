@@ -358,7 +358,7 @@ impl ManifestAccount for GlobalFixed {
         // Check the discriminant to make sure it is a global account.
         require!(
             self.discriminant == GLOBAL_FIXED_DISCRIMINANT,
-            pinocchio::program_error::ProgramError::InvalidAccountData,
+            pinocchio::error::ProgramError::InvalidAccountData,
             "Invalid market discriminant actual: {} expected: {}",
             self.discriminant,
             GLOBAL_FIXED_DISCRIMINANT
@@ -483,7 +483,7 @@ impl<Fixed: DerefOrBorrow<GlobalFixed>, Dynamic: DerefOrBorrow<[u8]>>
 impl<Fixed: DerefOrBorrowMut<GlobalFixed>, Dynamic: DerefOrBorrowMut<[u8]>>
     DynamicAccount<Fixed, Dynamic>
 {
-    fn borrow_mut_global(&mut self) -> GlobalRefMut {
+    fn borrow_mut_global(&mut self) -> GlobalRefMut<'_> {
         GlobalRefMut {
             fixed: self.fixed.deref_or_borrow_mut(),
             dynamic: self.dynamic.deref_or_borrow_mut(),
@@ -794,7 +794,7 @@ fn get_deposit_index(
     fixed: &GlobalFixed,
     dynamic: &[u8],
     trader: &Pubkey,
-) -> Result<DataIndex, pinocchio::program_error::ProgramError> {
+) -> Result<DataIndex, pinocchio::error::ProgramError> {
     let global_trader_tree: GlobalTraderTreeReadOnly =
         GlobalTraderTreeReadOnly::new(dynamic, fixed.global_traders_root_index, NIL);
     let global_trader_index: DataIndex =

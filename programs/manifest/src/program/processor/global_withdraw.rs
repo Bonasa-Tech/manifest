@@ -1,8 +1,8 @@
-use crate::validation::{io_to_program_error, to_program_error, AccountInfoExt};
-use pinocchio::{account_info::RefMut, ProgramResult};
+use crate::validation::{io_to_program_error, to_program_error, AccountViewExt};
+use pinocchio::{account::RefMut, ProgramResult};
 
 use borsh::{BorshDeserialize, BorshSerialize};
-use pinocchio::account_info::AccountInfo;
+use pinocchio::account::AccountView;
 use solana_program::pubkey::Pubkey;
 
 use crate::{
@@ -39,7 +39,7 @@ impl GlobalWithdrawParams {
 
 pub(crate) fn process_global_withdraw(
     program_id: &Pubkey,
-    accounts: &[AccountInfo],
+    accounts: &[AccountView],
     data: &[u8],
 ) -> ProgramResult {
     let params: GlobalWithdrawParams =
@@ -50,7 +50,7 @@ pub(crate) fn process_global_withdraw(
 #[cfg_attr(all(feature = "certora", not(feature = "certora-test")), early_panic)]
 pub(crate) fn process_global_withdraw_core(
     _program_id: &Pubkey,
-    accounts: &[AccountInfo],
+    accounts: &[AccountView],
     params: GlobalWithdrawParams,
 ) -> ProgramResult {
     let global_withdraw_context: GlobalWithdrawContext = GlobalWithdrawContext::load(accounts)?;
@@ -65,7 +65,7 @@ pub(crate) fn process_global_withdraw_core(
         token_program,
     } = global_withdraw_context;
 
-    let global_data: &mut RefMut<[u8]> = &mut global.try_borrow_mut_data()?;
+    let global_data: &mut RefMut<[u8]> = &mut global.try_borrow_mut()?;
     let mut global_dynamic_account: GlobalRefMut = get_mut_dynamic_account(global_data);
     global_dynamic_account.withdraw_global(payer.pubkey(), GlobalAtoms::new(amount_atoms))?;
 

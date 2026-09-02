@@ -1,10 +1,10 @@
-use crate::validation::{to_program_error, AccountInfoExt};
+use crate::validation::{to_program_error, AccountViewExt};
 use pinocchio::{
-    account_info::AccountInfo,
+    account::AccountView,
     sysvars::{rent::Rent, Sysvar},
     ProgramResult,
 };
-use std::{cell::Ref, mem::size_of};
+use std::mem::size_of;
 
 #[cfg(not(feature = "certora"))]
 use crate::validation::get_global_address;
@@ -29,7 +29,7 @@ use spl_token_2022::{
 
 pub(crate) fn process_create_market(
     _program_id: &Pubkey,
-    accounts: &[AccountInfo],
+    accounts: &[AccountView],
     _data: &[u8],
 ) -> ProgramResult {
     trace!("process_create_market accs={}", accounts.len());
@@ -45,8 +45,12 @@ pub(crate) fn process_create_market(
         base_vault_bump,
         quote_vault_bump,
         system_program,
-        token_program,
-        token_program_22,
+        // Validated on load; the CPIs below name the accounts the
+        // instruction names, and a program is not one of them.
+        token_program: _,
+        // Validated on load; the CPIs below name the accounts the
+        // instruction names, and a program is not one of them.
+        token_program_22: _,
     } = create_market_context;
 
     require!(
@@ -57,7 +61,7 @@ pub(crate) fn process_create_market(
 
     for mint in [base_mint.as_ref(), quote_mint.as_ref()] {
         if *mint.owner_pubkey() == spl_token_2022::id() {
-            let mint_data: pinocchio::account_info::Ref<[u8]> = mint.try_borrow_data()?;
+            let mint_data: pinocchio::account::Ref<[u8]> = mint.try_borrow()?;
             let pool_mint: StateWithExtensions<'_, Mint> =
                 StateWithExtensions::<Mint>::unpack(&mint_data).map_err(to_program_error)?;
             // Closable mints can be replaced with different ones, breaking some saved info on the market.
@@ -106,7 +110,7 @@ pub(crate) fn process_create_market(
             ];
 
             if is_mint_22 {
-                let mint_data: pinocchio::account_info::Ref<[u8]> = mint.try_borrow_data()?;
+                let mint_data: pinocchio::account::Ref<[u8]> = mint.try_borrow()?;
                 let mint_with_extension: PodStateWithExtensions<'_, PodMint> =
                     PodStateWithExtensions::<PodMint>::unpack(&mint_data).unwrap();
                 let mint_extensions: Vec<ExtensionType> = mint_with_extension
@@ -191,7 +195,7 @@ pub(crate) fn process_create_market(
         }
         assert_eq!(market.data_len(), size_of::<MarketFixed>());
 
-        let market_bytes: &mut [u8] = &mut market.try_borrow_mut_data()?[..];
+        let market_bytes: &mut [u8] = &mut market.try_borrow_mut()?[..];
         *get_mut_helper::<MarketFixed>(market_bytes, 0_u32) = empty_market_fixed;
 
         emit_stack(CreateMarketLog {

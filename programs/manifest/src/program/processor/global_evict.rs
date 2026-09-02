@@ -1,6 +1,6 @@
-use crate::validation::{io_to_program_error, to_program_error, AccountInfoExt};
+use crate::validation::{io_to_program_error, to_program_error, AccountViewExt};
 use pinocchio::{
-    account_info::RefMut,
+    account::RefMut,
     sysvars::{rent::Rent, Sysvar},
     ProgramResult,
 };
@@ -8,7 +8,7 @@ use pinocchio::{
 #[cfg(not(feature = "certora"))]
 use crate::program::invoke_signed;
 use borsh::{BorshDeserialize, BorshSerialize};
-use pinocchio::account_info::AccountInfo;
+use pinocchio::account::AccountView;
 use solana_program::{program_pack::Pack, pubkey::Pubkey};
 #[cfg(not(feature = "certora"))]
 use spl_token::state::Account;
@@ -50,7 +50,7 @@ impl GlobalEvictParams {
 
 pub(crate) fn process_global_evict(
     program_id: &Pubkey,
-    accounts: &[AccountInfo],
+    accounts: &[AccountView],
     data: &[u8],
 ) -> ProgramResult {
     let params: GlobalEvictParams =
@@ -61,7 +61,7 @@ pub(crate) fn process_global_evict(
 #[cfg_attr(all(feature = "certora", not(feature = "certora-test")), early_panic)]
 pub(crate) fn process_global_evict_core(
     _program_id: &Pubkey,
-    accounts: &[AccountInfo],
+    accounts: &[AccountView],
     params: GlobalEvictParams,
 ) -> ProgramResult {
     let global_evict_context: GlobalEvictContext = GlobalEvictContext::load(accounts)?;
@@ -83,7 +83,7 @@ pub(crate) fn process_global_evict_core(
     // 1. Withdraw for the evictee
     // 2. Evict the seat on the global account and claim
     // 3. Deposit for the evictor
-    let global_data: &mut RefMut<[u8]> = &mut global.try_borrow_mut_data()?;
+    let global_data: &mut RefMut<[u8]> = &mut global.try_borrow_mut()?;
     let mut global_dynamic_account: GlobalRefMut = get_mut_dynamic_account(global_data);
     let evictee_balance: GlobalAtoms =
         global_dynamic_account.get_balance_atoms(&evictee_token.get_owner());
@@ -194,7 +194,7 @@ fn charge_eviction_fee<'a>(
         &solana_program::system_instruction::transfer(
             &payer.pubkey(),
             &global.pubkey(),
-            rent.minimum_balance(Account::LEN as usize) * 2 + 10000 * GAS_DEPOSIT_LAMPORTS,
+            rent.try_minimum_balance(Account::LEN as usize)? * 2 + 10000 * GAS_DEPOSIT_LAMPORTS,
         ),
         &[payer.info, global.info],
     )?;

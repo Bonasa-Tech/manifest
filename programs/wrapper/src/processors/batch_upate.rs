@@ -15,10 +15,10 @@ use manifest::{
         utils::get_now_slot, DynamicAccount, MarketFixed, OrderType, RestingOrder,
         MARKET_FIXED_SIZE, NO_EXPIRATION_LAST_VALID_SLOT,
     },
-    validation::{next_account_info, AccountInfoExt, ManifestAccountInfo, Program, Signer},
+    validation::{next_account_info, AccountViewExt, ManifestAccountInfo, Program, Signer},
 };
 use pinocchio::{
-    account_info::{AccountInfo, Ref, RefMut},
+    account::{AccountView, Ref, RefMut},
     ProgramResult,
 };
 use solana_program::{
@@ -117,7 +117,7 @@ fn prepare_cancel_all(
 ) {
     let mut remaining_cancel_all_scans: usize =
         EXPECTED_ORDER_BATCH_SIZE.saturating_sub(matcher.core_cancels.len());
-    let market_data: Ref<[u8]> = market.try_borrow_data().unwrap();
+    let market_data: Ref<[u8]> = market.try_borrow().unwrap();
     let market_ref: DynamicAccount<&MarketFixed, &[u8]> =
         get_dynamic_account::<MarketFixed>(&market_data);
     let is_known = |order_sequence_number: u64, core_cancels: &Vec<CancelOrderParams>| {
@@ -173,7 +173,7 @@ fn prepare_orders(
     market: &ManifestAccountInfo<MarketFixed>,
     now_slot: u32,
 ) -> (Vec<PlaceOrderParams>, Vec<usize>) {
-    let market_data: Ref<[u8]> = market.try_borrow_data().unwrap();
+    let market_data: Ref<[u8]> = market.try_borrow().unwrap();
     let market_ref: DynamicAccount<&MarketFixed, &[u8]> =
         get_dynamic_account::<MarketFixed>(&market_data);
     let mut best_ask_index: DataIndex = market_ref.get_asks().get_max_index();
@@ -303,13 +303,13 @@ fn prepare_orders(
 ///
 /// CU note: besides the 1,000 CU invoke base cost, the runtime charges every
 /// account passed to a CPI `data_len / 250` CU when it translates the
-/// caller's `AccountInfo`s (`cpi_bytes_per_unit`), whether or not account
+/// caller's `AccountView`s (`cpi_bytes_per_unit`), whether or not account
 /// data direct mapping is enabled; direct mapping only removes the copy of
 /// the data, not the charge. For the market that is 4 CU per KB per batch
 /// update, e.g. about 4,000 CU on a 1 MB market, and the only ways around it
 /// are smaller markets or not going through a CPI.
 fn execute_cpi(
-    accounts: &[AccountInfo],
+    accounts: &[AccountView],
     trader_index_hint: Option<DataIndex>,
     core_cancels: Vec<CancelOrderParams>,
     core_orders: Vec<PlaceOrderParams>,
@@ -346,7 +346,7 @@ fn process_cancels(
     cancel_indices: &[DataIndex],
     market_info_index: DataIndex,
 ) {
-    let mut wrapper_data: RefMut<[u8]> = wrapper_state.info.try_borrow_mut_data().unwrap();
+    let mut wrapper_data: RefMut<[u8]> = wrapper_state.info.try_borrow_mut().unwrap();
     let wrapper: DynamicAccount<&mut ManifestWrapperStateFixed, &mut [u8]> =
         get_mut_dynamic_account(&mut wrapper_data);
     let (orders_root_index, mut num_open_global_orders): (DataIndex, u32) = {
@@ -421,7 +421,7 @@ fn process_orders<'a>(
     }
     ensure_free_slots(wrapper_state, payer, system_program, num_resting)?;
 
-    let mut wrapper_data: RefMut<[u8]> = wrapper_state.info.try_borrow_mut_data().unwrap();
+    let mut wrapper_data: RefMut<[u8]> = wrapper_state.info.try_borrow_mut().unwrap();
     let wrapper: DynamicAccount<&mut ManifestWrapperStateFixed, &mut [u8]> =
         get_mut_dynamic_account(&mut wrapper_data);
     let (mut orders_root_index, mut num_open_global_orders): (DataIndex, u32) = {
@@ -502,10 +502,10 @@ fn collect_fee<'a>(
 
 pub(crate) fn process_batch_update(
     _program_id: &Pubkey,
-    accounts: &[AccountInfo],
+    accounts: &[AccountView],
     data: &[u8],
 ) -> ProgramResult {
-    let account_iter: &mut std::slice::Iter<AccountInfo> = &mut accounts.iter();
+    let account_iter: &mut std::slice::Iter<AccountView> = &mut accounts.iter();
     let wrapper_state: WrapperStateAccountInfo =
         WrapperStateAccountInfo::new(next_account_info(account_iter)?)?;
     let _manifest_program: Program =
@@ -557,7 +557,7 @@ pub(crate) fn process_batch_update(
     )?;
 
     let market_info: MarketInfo = {
-        let wrapper_data: Ref<[u8]> = wrapper_state.info.try_borrow_data()?;
+        let wrapper_data: Ref<[u8]> = wrapper_state.info.try_borrow()?;
         let (_fixed_data, wrapper_dynamic_data) =
             wrapper_data.split_at(size_of::<ManifestWrapperStateFixed>());
         *get_helper::<RBNode<MarketInfo>>(wrapper_dynamic_data, market_info_index).get_value()

@@ -14,9 +14,9 @@
 //! charged by each call accumulates in a ghost that rules read back with
 //! `transfer_fees_charged` to state exact deltas.
 
-use crate::validation::AccountInfoExt;
+use crate::validation::AccountViewExt;
 use solana_cvt::token::{spl_token_account_get_amount, spl_token_account_set_amount};
-use solana_program::{account_info::AccountInfo, entrypoint::ProgramResult};
+use solana_program::{account::AccountView, entrypoint::ProgramResult};
 
 /// Whether transfers may charge a nondeterministic fee. Reset by
 /// `init_static`; havoced in rules that do not initialize statics.
@@ -55,9 +55,9 @@ pub fn transfer_fees_charged() -> u64 {
 /// `solana_cvt` summary: the source covers the amount, self-transfers are
 /// no-ops.
 pub fn spl_token_2022_transfer_with_fee<'a>(
-    src_info: &AccountInfo<'a>,
-    dst_info: &AccountInfo<'a>,
-    _authority_info: &AccountInfo<'a>,
+    src_info: &AccountView<'a>,
+    dst_info: &AccountView<'a>,
+    _authority_info: &AccountView<'a>,
     amount: u64,
 ) -> ProgramResult {
     if src_info.pubkey() != dst_info.pubkey() {

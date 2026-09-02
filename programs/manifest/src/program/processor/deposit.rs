@@ -1,5 +1,5 @@
-use crate::validation::{io_to_program_error, to_program_error, AccountInfoExt};
-use pinocchio::{account_info::RefMut, ProgramResult};
+use crate::validation::{io_to_program_error, to_program_error, AccountViewExt};
+use pinocchio::{account::RefMut, ProgramResult};
 
 use crate::{
     logs::{emit_stack, DepositLog},
@@ -10,7 +10,7 @@ use crate::{
 };
 use borsh::{BorshDeserialize, BorshSerialize};
 use hypertree::DataIndex;
-use pinocchio::account_info::AccountInfo;
+use pinocchio::account::AccountView;
 use solana_program::pubkey::Pubkey;
 
 use super::{get_trader_index_with_hint, shared::get_mut_dynamic_account};
@@ -39,7 +39,7 @@ impl DepositParams {
 
 pub(crate) fn process_deposit(
     program_id: &Pubkey,
-    accounts: &[AccountInfo],
+    accounts: &[AccountView],
     data: &[u8],
 ) -> ProgramResult {
     let params: DepositParams = DepositParams::try_from_slice(data).map_err(io_to_program_error)?;
@@ -49,7 +49,7 @@ pub(crate) fn process_deposit(
 #[cfg_attr(all(feature = "certora", not(feature = "certora-test")), early_panic)]
 pub(crate) fn process_deposit_core(
     _program_id: &Pubkey,
-    accounts: &[AccountInfo],
+    accounts: &[AccountView],
     params: DepositParams,
 ) -> ProgramResult {
     let deposit_context: DepositContext = DepositContext::load(accounts)?;
@@ -69,12 +69,12 @@ pub(crate) fn process_deposit_core(
         mint,
     } = deposit_context;
 
-    let market_data: &mut RefMut<[u8]> = &mut market.try_borrow_mut_data()?;
+    let market_data: &mut RefMut<[u8]> = &mut market.try_borrow_mut()?;
     let mut dynamic_account: MarketRefMut = get_mut_dynamic_account(market_data);
 
     // Validation already verifies that the mint is either base or quote.
     let is_base: bool =
-        &trader_token.try_borrow_data()?[0..32] == dynamic_account.get_base_mint().as_ref();
+        &trader_token.try_borrow()?[0..32] == dynamic_account.get_base_mint().as_ref();
 
     if *vault.owner_pubkey() == spl_token_2022::id() {
         let before_vault_balance_atoms: u64 = vault.get_balance_atoms();

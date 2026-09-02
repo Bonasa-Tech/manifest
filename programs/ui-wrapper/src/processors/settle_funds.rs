@@ -1,7 +1,7 @@
-use manifest::validation::{next_account_info, AccountInfoExt};
+use manifest::validation::{next_account_info, AccountViewExt};
 use pinocchio::{
-    account_info::{AccountInfo, Ref, RefMut},
-    program_error::ProgramError,
+    account::{AccountView, Ref, RefMut},
+    error::ProgramError,
     ProgramResult,
 };
 
@@ -48,28 +48,28 @@ impl WrapperSettleFundsParams {
 
 pub(crate) fn process_settle_funds(
     _program_id: &Pubkey,
-    accounts: &[AccountInfo],
+    accounts: &[AccountView],
     data: &[u8],
 ) -> ProgramResult {
-    let account_iter: &mut std::slice::Iter<AccountInfo> = &mut accounts.iter();
+    let account_iter: &mut std::slice::Iter<AccountView> = &mut accounts.iter();
     let wrapper_state: WrapperStateAccountInfo =
         WrapperStateAccountInfo::new(next_account_info(account_iter)?)?;
     let owner: Signer = Signer::new(next_account_info(account_iter)?)?;
-    let trader_token_account_base: &AccountInfo = next_account_info(account_iter)?;
-    let trader_token_account_quote: &AccountInfo = next_account_info(account_iter)?;
+    let trader_token_account_base: &AccountView = next_account_info(account_iter)?;
+    let trader_token_account_quote: &AccountView = next_account_info(account_iter)?;
     let market: ManifestAccountInfo<MarketFixed> =
         ManifestAccountInfo::<MarketFixed>::new(next_account_info(account_iter)?)?;
-    let vault_base: &AccountInfo = next_account_info(account_iter)?;
-    let vault_quote: &AccountInfo = next_account_info(account_iter)?;
-    let mint_base: &AccountInfo = next_account_info(account_iter)?;
-    let mint_quote: &AccountInfo = next_account_info(account_iter)?;
-    let token_program_base: &AccountInfo = next_account_info(account_iter)?;
-    let token_program_quote: &AccountInfo = next_account_info(account_iter)?;
+    let vault_base: &AccountView = next_account_info(account_iter)?;
+    let vault_quote: &AccountView = next_account_info(account_iter)?;
+    let mint_base: &AccountView = next_account_info(account_iter)?;
+    let mint_quote: &AccountView = next_account_info(account_iter)?;
+    let token_program_base: &AccountView = next_account_info(account_iter)?;
+    let token_program_quote: &AccountView = next_account_info(account_iter)?;
     let manifest_program: Program =
         Program::new(next_account_info(account_iter)?, &manifest::id())?;
     let fee_authority: Signer = Signer::new(next_account_info(account_iter)?)?;
-    let platform_token_account: &AccountInfo = next_account_info(account_iter)?;
-    let referrer_token_account: Result<&AccountInfo, ProgramError> =
+    let platform_token_account: &AccountView = next_account_info(account_iter)?;
+    let referrer_token_account: Result<&AccountView, ProgramError> =
         next_account_info(account_iter);
 
     check_signer(&wrapper_state, owner.pubkey());
@@ -82,7 +82,7 @@ pub(crate) fn process_settle_funds(
     // Do an initial sync to update withdrawable balances and volume traded for fee calculation.
     sync_fast(&wrapper_state, &market, market_info_index)?;
 
-    let mut wrapper_data: RefMut<[u8]> = wrapper_state.info.try_borrow_mut_data()?;
+    let mut wrapper_data: RefMut<[u8]> = wrapper_state.info.try_borrow_mut()?;
     let mut wrapper: DynamicAccount<&mut ManifestWrapperUserFixed, &mut [u8]> =
         get_mut_dynamic_account(&mut wrapper_data);
 
@@ -123,7 +123,7 @@ pub(crate) fn process_settle_funds(
     drop(wrapper_data);
 
     let quote_mint_decimals = {
-        let market_data: Ref<[u8]> = market.try_borrow_data()?;
+        let market_data: Ref<[u8]> = market.try_borrow()?;
         let dynamic_account: MarketRef = get_dynamic_account(&market_data);
         dynamic_account.fixed.get_quote_mint_decimals()
     };
@@ -294,7 +294,7 @@ pub(crate) fn process_settle_funds(
 
     // Updating after the authenticated transfers makes the accounting
     // invariant explicit: fee volume is cleared only after payment succeeds.
-    let mut wrapper_data: RefMut<[u8]> = wrapper_state.info.try_borrow_mut_data()?;
+    let mut wrapper_data: RefMut<[u8]> = wrapper_state.info.try_borrow_mut()?;
     let mut wrapper: DynamicAccount<&mut ManifestWrapperUserFixed, &mut [u8]> =
         get_mut_dynamic_account(&mut wrapper_data);
     let market_info: &mut MarketInfo =

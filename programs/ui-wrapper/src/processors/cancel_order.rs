@@ -1,7 +1,7 @@
-use manifest::validation::{next_account_info, AccountInfoExt};
+use manifest::validation::{next_account_info, AccountViewExt};
 use pinocchio::{
-    account_info::{AccountInfo, Ref, RefMut},
-    program_error::ProgramError,
+    account::{AccountView, Ref, RefMut},
+    error::ProgramError,
     sysvars::Sysvar,
     ProgramResult,
 };
@@ -43,21 +43,21 @@ impl WrapperCancelOrderParams {
 
 pub(crate) fn process_cancel_order(
     _program_id: &Pubkey,
-    accounts: &[AccountInfo],
+    accounts: &[AccountView],
     data: &[u8],
 ) -> ProgramResult {
-    let account_iter: &mut std::slice::Iter<AccountInfo> = &mut accounts.iter();
+    let account_iter: &mut std::slice::Iter<AccountView> = &mut accounts.iter();
     let wrapper_state: WrapperStateAccountInfo =
         WrapperStateAccountInfo::new(next_account_info(account_iter)?)?;
     let owner: Signer = Signer::new(next_account_info(account_iter)?)?;
-    let trader_token_account: &AccountInfo = next_account_info(account_iter)?;
+    let trader_token_account: &AccountView = next_account_info(account_iter)?;
     let market: ManifestAccountInfo<MarketFixed> =
         ManifestAccountInfo::<MarketFixed>::new(next_account_info(account_iter)?)?;
-    let vault: &AccountInfo = next_account_info(account_iter)?;
-    let mint: &AccountInfo = next_account_info(account_iter)?;
+    let vault: &AccountView = next_account_info(account_iter)?;
+    let mint: &AccountView = next_account_info(account_iter)?;
     let system_program: Program =
         Program::new(next_account_info(account_iter)?, &system_program::id())?;
-    let token_program: &AccountInfo = next_account_info(account_iter)?;
+    let token_program: &AccountView = next_account_info(account_iter)?;
     let manifest_program: Program =
         Program::new(next_account_info(account_iter)?, &manifest::id())?;
 
@@ -69,7 +69,7 @@ pub(crate) fn process_cancel_order(
         .map_err(manifest::validation::io_to_program_error)?;
 
     // prepare cancel
-    let wrapper_data: Ref<[u8]> = wrapper_state.info.try_borrow_data()?;
+    let wrapper_data: Ref<[u8]> = wrapper_state.info.try_borrow()?;
     let wrapper: DynamicAccount<&ManifestWrapperUserFixed, &[u8]> =
         get_dynamic_account(&wrapper_data);
 
@@ -120,7 +120,7 @@ pub(crate) fn process_cancel_order(
     )?;
 
     // Process the order result
-    let mut wrapper_data: RefMut<[u8]> = wrapper_state.info.try_borrow_mut_data().unwrap();
+    let mut wrapper_data: RefMut<[u8]> = wrapper_state.info.try_borrow_mut().unwrap();
     let wrapper: DynamicAccount<&mut ManifestWrapperUserFixed, &mut [u8]> =
         get_mut_dynamic_account(&mut wrapper_data);
 
@@ -149,7 +149,7 @@ pub(crate) fn process_cancel_order(
     // A partial fill can occur after the wrapper's previous synchronization;
     // overwriting quote_volume here would make a later settlement observe a
     // zero delta and permanently skip the platform/referrer fee for that fill.
-    let market_data = market.info.try_borrow_data()?;
+    let market_data = market.info.try_borrow()?;
     let market_ref = get_dynamic_account::<MarketFixed>(&market_data);
     let claimed_seat: &ClaimedSeat =
         get_helper::<RBNode<ClaimedSeat>>(market_ref.dynamic, market_info.trader_index).get_value();

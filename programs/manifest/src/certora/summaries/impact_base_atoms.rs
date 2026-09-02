@@ -3,7 +3,7 @@ use crate::{
     state::{DerefOrBorrow, DynamicAccount, MarketFixed},
     validation::loaders::GlobalTradeAccounts,
 };
-use pinocchio::program_error::ProgramError;
+use pinocchio::error::ProgramError;
 
 use nondet::*;
 

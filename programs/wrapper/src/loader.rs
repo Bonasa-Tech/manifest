@@ -2,23 +2,23 @@ use std::{mem::size_of, ops::Deref};
 
 use crate::wrapper_state::ManifestWrapperStateFixed;
 use hypertree::get_helper;
-use manifest::{require, validation::AccountInfoExt};
+use manifest::{require, validation::AccountViewExt};
 use pinocchio::{
-    account_info::{AccountInfo, Ref, RefMut},
-    program_error::ProgramError,
+    account::{AccountView, Ref, RefMut},
+    error::ProgramError,
 };
 use solana_program::pubkey::Pubkey;
 
 #[derive(Clone)]
 pub struct WrapperStateAccountInfo<'a> {
-    pub(crate) info: &'a AccountInfo,
+    pub(crate) info: &'a AccountView,
 }
 
 pub const WRAPPER_STATE_DISCRIMINANT: u64 = 1;
 
 impl<'a> WrapperStateAccountInfo<'a> {
     #[inline(always)]
-    fn _new_unchecked(info: &'a AccountInfo) -> Result<WrapperStateAccountInfo<'a>, ProgramError> {
+    fn _new_unchecked(info: &'a AccountView) -> Result<WrapperStateAccountInfo<'a>, ProgramError> {
         require!(
             info.owner_pubkey() == &crate::ID,
             ProgramError::IllegalOwner,
@@ -27,10 +27,10 @@ impl<'a> WrapperStateAccountInfo<'a> {
         Ok(Self { info })
     }
 
-    pub fn new(info: &'a AccountInfo) -> Result<WrapperStateAccountInfo<'a>, ProgramError> {
+    pub fn new(info: &'a AccountView) -> Result<WrapperStateAccountInfo<'a>, ProgramError> {
         let wrapper_state: WrapperStateAccountInfo<'a> = Self::_new_unchecked(info)?;
 
-        let wrapper_bytes: Ref<[u8]> = info.try_borrow_data()?;
+        let wrapper_bytes: Ref<[u8]> = info.try_borrow()?;
         let (header_bytes, _) = wrapper_bytes.split_at(size_of::<ManifestWrapperStateFixed>());
         let header: &ManifestWrapperStateFixed =
             get_helper::<ManifestWrapperStateFixed>(header_bytes, 0_u32);
@@ -44,13 +44,13 @@ impl<'a> WrapperStateAccountInfo<'a> {
         Ok(wrapper_state)
     }
 
-    pub fn new_init(info: &'a AccountInfo) -> Result<WrapperStateAccountInfo<'a>, ProgramError> {
+    pub fn new_init(info: &'a AccountView) -> Result<WrapperStateAccountInfo<'a>, ProgramError> {
         require!(
             info.is_signer(),
             ProgramError::MissingRequiredSignature,
             "Wrapper state must sign initialization",
         )?;
-        let wrapper_bytes: Ref<[u8]> = info.try_borrow_data()?;
+        let wrapper_bytes: Ref<[u8]> = info.try_borrow()?;
         let (header_bytes, _) = wrapper_bytes.split_at(size_of::<ManifestWrapperStateFixed>());
         let header: &ManifestWrapperStateFixed =
             get_helper::<ManifestWrapperStateFixed>(header_bytes, 0_u32);
@@ -70,7 +70,7 @@ impl<'a> WrapperStateAccountInfo<'a> {
 }
 
 impl<'a> Deref for WrapperStateAccountInfo<'a> {
-    type Target = AccountInfo;
+    type Target = AccountView;
 
     fn deref(&self) -> &Self::Target {
         self.info
@@ -78,7 +78,7 @@ impl<'a> Deref for WrapperStateAccountInfo<'a> {
 }
 
 pub(crate) fn check_signer(wrapper_state: &WrapperStateAccountInfo, owner_key: &Pubkey) {
-    let mut wrapper_data: RefMut<[u8]> = wrapper_state.info.try_borrow_mut_data().unwrap();
+    let mut wrapper_data: RefMut<[u8]> = wrapper_state.info.try_borrow_mut().unwrap();
     let (header_bytes, _wrapper_dynamic_data) =
         wrapper_data.split_at_mut(size_of::<ManifestWrapperStateFixed>());
     let header: &ManifestWrapperStateFixed =

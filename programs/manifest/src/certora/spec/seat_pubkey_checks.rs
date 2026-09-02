@@ -22,12 +22,13 @@
 //! `remove_from_global`, `try_to_add_to_global`, `transfer_global_tokens`)
 //! are exercised by the preservation induction too.
 use super::verification_utils::init_static;
-use crate::{validation::AccountInfoExt, *};
+use crate::{validation::AccountViewExt, *};
 use cvt::{cvt_assert, cvt_assume};
 use cvt_macros::rule;
 use nondet::*;
+use pinocchio::account::RefMut;
 
-use solana_program::account_info::AccountInfo;
+use solana_program::account::AccountView;
 
 use crate::{
     certora::spec::{no_funds_loss_util::*, place_order_checks::place_single_order_nondet_inputs},
@@ -72,7 +73,7 @@ fn cvt_assert_seat_pubkeys_unchanged(old: (Pubkey, Pubkey)) {
 pub fn rule_claim_seat_writes_trader_pubkey() {
     init_static();
 
-    let market_info: AccountInfo = nondet();
+    let market_info: AccountView = nondet();
     create_empty_market!(market_info);
 
     let trader1_key: Pubkey = *main_trader_pk();
@@ -113,7 +114,7 @@ pub fn rule_claim_seat_writes_trader_pubkey() {
 pub fn rule_seat_pubkey_preserved_by_release_seat() {
     init_static();
 
-    let market_info: AccountInfo = nondet();
+    let market_info: AccountView = nondet();
     create_empty_market!(market_info);
 
     let trader_key: Pubkey = *main_trader_pk();
@@ -123,7 +124,7 @@ pub fn rule_seat_pubkey_preserved_by_release_seat() {
 
     {
         let market_data: &mut std::cell::RefMut<&mut [u8]> =
-            &mut market_info.try_borrow_mut_data().unwrap();
+            &mut market_info.try_borrow_mut().unwrap();
         let mut dynamic_account: MarketRefMut = get_mut_dynamic_account(market_data);
         dynamic_account.release_seat(&trader_key).unwrap();
     }
@@ -144,16 +145,16 @@ pub fn rule_seat_pubkey_preserved_by_release_seat() {
 fn seat_pubkey_preserved_by_deposit_or_withdraw_check<const IS_DEPOSIT: bool>() {
     cvt_static_initializer!();
 
-    let acc_infos: [AccountInfo; 16] = acc_infos_with_mem_layout!();
-    let used_acc_infos: &[AccountInfo] = &acc_infos[..6];
-    let trader: &AccountInfo = &used_acc_infos[0];
-    let market_info: &AccountInfo = &used_acc_infos[1];
-    let trader_token: &AccountInfo = &used_acc_infos[2];
-    let vault_token: &AccountInfo = &used_acc_infos[3];
+    let acc_infos: [AccountView; 16] = acc_infos_with_mem_layout!();
+    let used_acc_infos: &[AccountView] = &acc_infos[..6];
+    let trader: &AccountView = &used_acc_infos[0];
+    let market_info: &AccountView = &used_acc_infos[1];
+    let trader_token: &AccountView = &used_acc_infos[2];
+    let vault_token: &AccountView = &used_acc_infos[3];
 
-    let maker_trader: &AccountInfo = &acc_infos[7];
-    let vault_base_token: &AccountInfo = &acc_infos[8];
-    let vault_quote_token: &AccountInfo = &acc_infos[9];
+    let maker_trader: &AccountView = &acc_infos[7];
+    let vault_base_token: &AccountView = &acc_infos[8];
+    let vault_quote_token: &AccountView = &acc_infos[9];
 
     // the IS_BID parameter only shapes the resting maker order, which these
     // rules do not touch
@@ -208,12 +209,12 @@ pub fn rule_seat_pubkey_preserved_by_withdraw() {
 fn seat_pubkey_preserved_by_matching_check<const IS_BID: bool>() {
     cvt_static_initializer!();
 
-    let acc_infos: [AccountInfo; 16] = acc_infos_with_mem_layout!();
-    let trader: &AccountInfo = &acc_infos[0];
-    let market_info: &AccountInfo = &acc_infos[1];
-    let maker_trader: &AccountInfo = &acc_infos[7];
-    let vault_base_token: &AccountInfo = &acc_infos[8];
-    let vault_quote_token: &AccountInfo = &acc_infos[9];
+    let acc_infos: [AccountView; 16] = acc_infos_with_mem_layout!();
+    let trader: &AccountView = &acc_infos[0];
+    let market_info: &AccountView = &acc_infos[1];
+    let maker_trader: &AccountView = &acc_infos[7];
+    let vault_base_token: &AccountView = &acc_infos[8];
+    let vault_quote_token: &AccountView = &acc_infos[9];
 
     let maker_order_index: DataIndex = cvt_assume_market_preconditions::<IS_BID>(
         market_info,
@@ -256,12 +257,12 @@ pub fn rule_seat_pubkey_preserved_by_matching_ask() {
 fn seat_pubkey_preserved_by_rest_remaining_check<const IS_BID: bool>() {
     cvt_static_initializer!();
 
-    let acc_infos: [AccountInfo; 16] = acc_infos_with_mem_layout!();
-    let trader: &AccountInfo = &acc_infos[0];
-    let market_info: &AccountInfo = &acc_infos[1];
-    let maker_trader: &AccountInfo = &acc_infos[7];
-    let vault_base_token: &AccountInfo = &acc_infos[8];
-    let vault_quote_token: &AccountInfo = &acc_infos[9];
+    let acc_infos: [AccountView; 16] = acc_infos_with_mem_layout!();
+    let trader: &AccountView = &acc_infos[0];
+    let market_info: &AccountView = &acc_infos[1];
+    let maker_trader: &AccountView = &acc_infos[7];
+    let vault_base_token: &AccountView = &acc_infos[8];
+    let vault_quote_token: &AccountView = &acc_infos[9];
 
     let _maker_order_index: DataIndex = cvt_assume_market_preconditions::<IS_BID>(
         market_info,
@@ -313,12 +314,12 @@ pub fn rule_seat_pubkey_preserved_by_rest_remaining_ask() {
 fn seat_pubkey_preserved_by_cancel_check<const IS_BID: bool>() {
     cvt_static_initializer!();
 
-    let acc_infos: [AccountInfo; 16] = acc_infos_with_mem_layout!();
-    let trader: &AccountInfo = &acc_infos[0];
-    let market_info: &AccountInfo = &acc_infos[1];
-    let maker_trader: &AccountInfo = &acc_infos[2];
-    let vault_base_token: &AccountInfo = &acc_infos[3];
-    let vault_quote_token: &AccountInfo = &acc_infos[4];
+    let acc_infos: [AccountView; 16] = acc_infos_with_mem_layout!();
+    let trader: &AccountView = &acc_infos[0];
+    let market_info: &AccountView = &acc_infos[1];
+    let maker_trader: &AccountView = &acc_infos[2];
+    let vault_base_token: &AccountView = &acc_infos[3];
+    let vault_quote_token: &AccountView = &acc_infos[4];
 
     let maker_order_index: DataIndex = cvt_assume_market_preconditions::<IS_BID>(
         market_info,
@@ -359,14 +360,14 @@ fn seat_pubkey_preserved_by_matching_global_check<const IS_BID: bool>() {
 
     cvt_static_initializer!();
 
-    let acc_infos: [AccountInfo; 16] = acc_infos_with_mem_layout!();
-    let trader: &AccountInfo = &acc_infos[0];
-    let market_info: &AccountInfo = &acc_infos[1];
-    let maker_trader: &AccountInfo = &acc_infos[7];
-    let vault_base_token: &AccountInfo = &acc_infos[8];
-    let vault_quote_token: &AccountInfo = &acc_infos[9];
-    let global_info: &AccountInfo = &acc_infos[10];
-    let global_vault_token: &AccountInfo = &acc_infos[11];
+    let acc_infos: [AccountView; 16] = acc_infos_with_mem_layout!();
+    let trader: &AccountView = &acc_infos[0];
+    let market_info: &AccountView = &acc_infos[1];
+    let maker_trader: &AccountView = &acc_infos[7];
+    let vault_base_token: &AccountView = &acc_infos[8];
+    let vault_quote_token: &AccountView = &acc_infos[9];
+    let global_info: &AccountView = &acc_infos[10];
+    let global_vault_token: &AccountView = &acc_infos[11];
 
     // -- the maker order on the book is a global order
     let maker_order_index: DataIndex = cvt_assume_global_market_preconditions::<IS_BID>(
@@ -378,7 +379,7 @@ fn seat_pubkey_preserved_by_matching_global_check<const IS_BID: bool>() {
     );
 
     // a global maker facing a taker bid is an ask, backed by base
-    let market_vault_token: &AccountInfo = if IS_BID {
+    let market_vault_token: &AccountView = if IS_BID {
         vault_base_token
     } else {
         vault_quote_token
@@ -433,14 +434,14 @@ fn seat_pubkey_preserved_by_cancel_global_check<const IS_BID: bool>() {
 
     cvt_static_initializer!();
 
-    let acc_infos: [AccountInfo; 16] = acc_infos_with_mem_layout!();
-    let trader: &AccountInfo = &acc_infos[0];
-    let market_info: &AccountInfo = &acc_infos[1];
-    let maker_trader: &AccountInfo = &acc_infos[7];
-    let vault_base_token: &AccountInfo = &acc_infos[8];
-    let vault_quote_token: &AccountInfo = &acc_infos[9];
-    let global_info: &AccountInfo = &acc_infos[10];
-    let global_vault_token: &AccountInfo = &acc_infos[11];
+    let acc_infos: [AccountView; 16] = acc_infos_with_mem_layout!();
+    let trader: &AccountView = &acc_infos[0];
+    let market_info: &AccountView = &acc_infos[1];
+    let maker_trader: &AccountView = &acc_infos[7];
+    let vault_base_token: &AccountView = &acc_infos[8];
+    let vault_quote_token: &AccountView = &acc_infos[9];
+    let global_info: &AccountView = &acc_infos[10];
+    let global_vault_token: &AccountView = &acc_infos[11];
 
     // -- the order to cancel is a global order
     let order_index: DataIndex = cvt_assume_global_market_preconditions::<IS_BID>(
@@ -451,7 +452,7 @@ fn seat_pubkey_preserved_by_cancel_global_check<const IS_BID: bool>() {
         maker_trader,
     );
 
-    let market_vault_token: &AccountInfo = if IS_BID {
+    let market_vault_token: &AccountView = if IS_BID {
         vault_base_token
     } else {
         vault_quote_token
@@ -494,14 +495,14 @@ fn seat_pubkey_preserved_by_rest_remaining_global_check<const IS_BID: bool>() {
 
     cvt_static_initializer!();
 
-    let acc_infos: [AccountInfo; 16] = acc_infos_with_mem_layout!();
-    let trader: &AccountInfo = &acc_infos[0];
-    let market_info: &AccountInfo = &acc_infos[1];
-    let maker_trader: &AccountInfo = &acc_infos[7];
-    let vault_base_token: &AccountInfo = &acc_infos[8];
-    let vault_quote_token: &AccountInfo = &acc_infos[9];
-    let global_info: &AccountInfo = &acc_infos[10];
-    let global_vault_token: &AccountInfo = &acc_infos[11];
+    let acc_infos: [AccountView; 16] = acc_infos_with_mem_layout!();
+    let trader: &AccountView = &acc_infos[0];
+    let market_info: &AccountView = &acc_infos[1];
+    let maker_trader: &AccountView = &acc_infos[7];
+    let vault_base_token: &AccountView = &acc_infos[8];
+    let vault_quote_token: &AccountView = &acc_infos[9];
+    let global_info: &AccountView = &acc_infos[10];
+    let global_vault_token: &AccountView = &acc_infos[11];
 
     let _maker_order_index: DataIndex = cvt_assume_market_preconditions::<IS_BID>(
         market_info,
@@ -513,7 +514,7 @@ fn seat_pubkey_preserved_by_rest_remaining_global_check<const IS_BID: bool>() {
 
     // The order being rested is the trader's own global order, backed with
     // base when it is an ask and quote when it is a bid.
-    let market_vault_token: &AccountInfo = if !IS_BID {
+    let market_vault_token: &AccountView = if !IS_BID {
         vault_base_token
     } else {
         vault_quote_token

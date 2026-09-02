@@ -1,9 +1,9 @@
-use crate::validation::{io_to_program_error, AccountInfoExt};
-use pinocchio::{account_info::RefMut, ProgramResult};
+use crate::validation::{io_to_program_error, AccountViewExt};
+use pinocchio::{account::RefMut, ProgramResult};
 
 use borsh::{BorshDeserialize, BorshSerialize};
 use hypertree::{get_helper, trace, DataIndex, RBNode};
-use pinocchio::account_info::AccountInfo;
+use pinocchio::account::AccountView;
 use solana_program::pubkey::Pubkey;
 
 use crate::{
@@ -30,7 +30,7 @@ impl GlobalCleanParams {
 
 pub(crate) fn process_global_clean(
     _program_id: &Pubkey,
-    accounts: &[AccountInfo],
+    accounts: &[AccountView],
     data: &[u8],
 ) -> ProgramResult {
     trace!("process_global_clean accs={}", accounts.len());
@@ -59,10 +59,10 @@ pub(crate) fn process_global_clean(
     let GlobalCleanParams { order_index } =
         GlobalCleanParams::try_from_slice(data).map_err(io_to_program_error)?;
 
-    let market_data: &mut RefMut<[u8]> = &mut market.try_borrow_mut_data()?;
+    let market_data: &mut RefMut<[u8]> = &mut market.try_borrow_mut()?;
     let mut market_dynamic_account: MarketRefMut = get_mut_dynamic_account(market_data);
 
-    let global_data: &mut RefMut<[u8]> = &mut global.try_borrow_mut_data()?;
+    let global_data: &mut RefMut<[u8]> = &mut global.try_borrow_mut()?;
     let global_dynamic_account: GlobalRefMut = get_mut_dynamic_account(global_data);
 
     // Get the resting order and do some checks to make sure the order index is
