@@ -1,6 +1,6 @@
 use crate::validation::AccountViewExt;
 use pinocchio::{
-    account::{AccountView, RefMut},
+    account::RefMut,
     error::ProgramError,
     ProgramResult,
 };
