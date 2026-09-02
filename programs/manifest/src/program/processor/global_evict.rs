@@ -1,4 +1,5 @@
 use pinocchio::account_info::RefMut;
+use pinocchio::sysvars::{rent::Rent, Sysvar};
 use crate::validation::io_to_program_error;
 use crate::validation::to_program_error;
 use crate::validation::AccountInfoExt;
@@ -8,7 +9,8 @@ use borsh::{BorshDeserialize, BorshSerialize};
 use pinocchio::account_info::AccountInfo;
 use solana_program::pubkey::Pubkey;
 #[cfg(not(feature = "certora"))]
-use solana_program::{program::invoke_signed, program_pack::Pack, rent::Rent, sysvar::Sysvar};
+use crate::program::invoke_signed;
+use solana_program::program_pack::Pack;
 #[cfg(not(feature = "certora"))]
 use spl_token::state::Account;
 

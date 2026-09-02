@@ -13,7 +13,8 @@ use crate::{
 use bytemuck::Pod;
 use core::mem::MaybeUninit;
 use pinocchio::instruction::{
-    AccountMeta as PinocchioAccountMeta, Instruction as PinocchioInstruction,
+    AccountMeta as PinocchioAccountMeta, Instruction as PinocchioInstruction, Seed,
+    Signer as PinocchioSigner,
 };
 
 use crate::validation::as_raw_key;
@@ -22,7 +23,7 @@ use pinocchio::ProgramResult;
 use pinocchio::program_error::ProgramError;
 use hypertree::{get_helper, get_mut_helper, DataIndex, Get, RBNode};
 #[cfg(not(feature = "certora"))]
-use solana_program::sysvar::Sysvar;
+use pinocchio::sysvars::Sysvar;
 use solana_program::{
     instruction::Instruction,
     };
@@ -101,7 +102,7 @@ fn expand_dynamic<'a, T: ManifestAccount + Pod + Clone>(
     let expandable_account: &AccountInfo = manifest_account.info;
     let new_size: usize = expandable_account.data_len() + block_size;
 
-    let rent: solana_program::rent::Rent = solana_program::rent::Rent::get()?;
+    let rent: pinocchio::sysvars::rent::Rent = pinocchio::sysvars::rent::Rent::get()?;
     let new_minimum_balance: u64 = rent.minimum_balance(new_size);
     let old_minimum_balance: u64 = rent.minimum_balance(expandable_account.data_len());
     let lamports_diff: u64 = new_minimum_balance.saturating_sub(old_minimum_balance);
@@ -267,17 +268,17 @@ fn verify_trader_index_hint(
     Ok(())
 }
 
-/// Calls another program.
+/// Builds pinocchio's borrowed instruction from a `solana_program` one and
+/// hands it to `call`, which does the actual CPI.
 ///
 /// The instruction is still built with the `solana_program` builders, which
-/// are what the SPL and system program crates hand out, and is translated to
-/// pinocchio's borrowed form here: its `Instruction` points at the caller's
-/// key, metas and data rather than owning them, so the translation is one
-/// stack array of metas and no copying of the instruction data.
-///
-/// Accounts arrive as `&[&AccountInfo]` because that is what pinocchio's CPI
-/// takes; the slice form avoids the const generic count at every call site.
-pub fn invoke(ix: &Instruction, account_infos: &[&AccountInfo]) -> ProgramResult {
+/// are what the SPL and system program crates hand out. pinocchio's
+/// `Instruction` points at the caller's key, metas and data rather than owning
+/// them, so this is one stack array of metas and no copy of the data.
+fn with_pinocchio_instruction<R>(
+    ix: &Instruction,
+    call: impl FnOnce(&PinocchioInstruction) -> R,
+) -> Result<R, ProgramError> {
     const MAX_CPI_ACCOUNTS: usize = 16;
     require!(
         ix.accounts.len() <= MAX_CPI_ACCOUNTS,
@@ -298,16 +299,62 @@ pub fn invoke(ix: &Instruction, account_infos: &[&AccountInfo]) -> ProgramResult
     }
     // SAFETY: the first `ix.accounts.len()` entries were just written, and
     // that length is within the array by the check above.
-    let metas: &[PinocchioAccountMeta] = unsafe {
-        core::slice::from_raw_parts(metas.as_ptr().cast(), ix.accounts.len())
-    };
+    let metas: &[PinocchioAccountMeta] =
+        unsafe { core::slice::from_raw_parts(metas.as_ptr().cast(), ix.accounts.len()) };
 
-    pinocchio::cpi::slice_invoke(
-        &PinocchioInstruction {
-            program_id: as_raw_key(&ix.program_id),
-            accounts: metas,
-            data: &ix.data,
-        },
-        account_infos,
-    )
+    Ok(call(&PinocchioInstruction {
+        program_id: as_raw_key(&ix.program_id),
+        accounts: metas,
+        data: &ix.data,
+    }))
+}
+
+/// Calls another program, signing for a program derived address.
+///
+/// `seeds` are the same byte slices the address was derived from, bump
+/// included, in the shape the `*_seeds_with_bump!` macros produce.
+pub fn invoke_signed(
+    ix: &Instruction,
+    account_infos: &[&AccountInfo],
+    seeds: &[&[&[u8]]],
+) -> ProgramResult {
+    const MAX_SEEDS: usize = 8;
+    require!(
+        seeds.len() == 1 && seeds[0].len() <= MAX_SEEDS,
+        ProgramError::InvalidArgument,
+        "CPI signing for {} addresses with up to {} seeds is not supported",
+        seeds.len(),
+        MAX_SEEDS,
+    )?;
+
+    let mut seed_array: [MaybeUninit<Seed>; MAX_SEEDS] =
+        [const { MaybeUninit::uninit() }; MAX_SEEDS];
+    for (slot, seed) in seed_array.iter_mut().zip(seeds[0].iter()) {
+        slot.write(Seed::from(*seed));
+    }
+    // SAFETY: the first `seeds[0].len()` entries were just written, and that
+    // length is within the array by the check above.
+    let written: &[Seed] =
+        unsafe { core::slice::from_raw_parts(seed_array.as_ptr().cast(), seeds[0].len()) };
+    let signer: PinocchioSigner = PinocchioSigner::from(written);
+
+    with_pinocchio_instruction(ix, |pinocchio_ix| {
+        pinocchio::cpi::slice_invoke_signed(pinocchio_ix, account_infos, &[signer])
+    })?
+}
+
+/// Calls another program.
+///
+/// The instruction is still built with the `solana_program` builders, which
+/// are what the SPL and system program crates hand out, and is translated to
+/// pinocchio's borrowed form here: its `Instruction` points at the caller's
+/// key, metas and data rather than owning them, so the translation is one
+/// stack array of metas and no copying of the instruction data.
+///
+/// Accounts arrive as `&[&AccountInfo]` because that is what pinocchio's CPI
+/// takes; the slice form avoids the const generic count at every call site.
+pub fn invoke(ix: &Instruction, account_infos: &[&AccountInfo]) -> ProgramResult {
+    with_pinocchio_instruction(ix, |pinocchio_ix| {
+        pinocchio::cpi::slice_invoke(pinocchio_ix, account_infos)
+    })?
 }

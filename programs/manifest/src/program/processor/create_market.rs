@@ -1,4 +1,5 @@
 use std::{cell::Ref, mem::size_of};
+use pinocchio::sysvars::{rent::Rent, Sysvar};
 use pinocchio::account_info::AccountInfo;
 use crate::validation::AccountInfoExt;
 use pinocchio::ProgramResult;
@@ -16,8 +17,7 @@ use crate::{
 use hypertree::{get_mut_helper, trace};
 use solana_program::{
     program_pack::Pack, pubkey::Pubkey,
-    rent::Rent, sysvar::Sysvar,
-};
+    };
 use spl_token_2022::{
     extension::{
         mint_close_authority::MintCloseAuthority, permanent_delegate::PermanentDelegate,
@@ -59,7 +59,7 @@ pub(crate) fn process_create_market(
         if *mint.owner_pubkey() == spl_token_2022::id() {
             let mint_data: Ref<[u8]> = mint.try_borrow_data()?;
             let pool_mint: StateWithExtensions<'_, Mint> =
-                StateWithExtensions::<Mint>::unpack(&mint_data)?;
+                StateWithExtensions::<Mint>::unpack(&mint_data).map_err(to_program_error)?;
             // Closable mints can be replaced with different ones, breaking some saved info on the market.
             if let Ok(extension) = pool_mint.get_extension::<MintCloseAuthority>() {
                 let close_authority: Option<Pubkey> = extension.close_authority.into();

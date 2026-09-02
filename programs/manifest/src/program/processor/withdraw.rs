@@ -17,7 +17,7 @@ use pinocchio::account_info::AccountInfo;
 use solana_program::pubkey::Pubkey;
 
 #[cfg(not(feature = "certora"))]
-use {crate::market_vault_seeds_with_bump, solana_program::program::invoke_signed};
+use crate::{market_vault_seeds_with_bump, program::invoke_signed};
 
 #[cfg(feature = "certora")]
 use {

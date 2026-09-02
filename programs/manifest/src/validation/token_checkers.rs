@@ -17,7 +17,7 @@ impl<'a> MintAccountInfo<'a> {
     pub fn new(info: &'a AccountInfo) -> Result<MintAccountInfo<'a>, ProgramError> {
         check_spl_token_program_account(info.owner_pubkey())?;
 
-        let mint: Mint = StateWithExtensions::<Mint>::unpack(&info.try_borrow_data()?)?.base;
+        let mint: Mint = StateWithExtensions::<Mint>::unpack(&info.try_borrow_data()?).map_err(to_program_error)?.base;
 
         Ok(Self { mint, info })
     }

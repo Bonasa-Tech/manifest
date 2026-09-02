@@ -1,6 +1,5 @@
 use solana_program::{
-    keccak, program::invoke_signed,
-    pubkey::Pubkey, rent::Rent, system_instruction,
+    keccak, pubkey::Pubkey, rent::Rent, system_instruction,
 };
 
 /// Canonical discriminant of the given struct. It is the hash of program ID and

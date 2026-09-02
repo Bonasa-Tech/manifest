@@ -18,9 +18,9 @@ use crate::{
 };
 use hypertree::{DataIndex, NIL};
 #[cfg(not(feature = "certora"))]
-use solana_program::program::invoke_signed;
+use crate::program::invoke_signed;
 #[cfg(not(feature = "no-clock"))]
-use solana_program::sysvar::Sysvar;
+use pinocchio::sysvars::Sysvar;
 use solana_program::{pubkey::Pubkey};
 #[cfg(not(feature = "certora"))]
 use spl_token_2022::{
@@ -152,7 +152,7 @@ pub(crate) fn settle_global_gas_refunds(
         // `from` must not carry data
         //
         // if let Some(system_program) = &global_trade_accounts.system_program {
-        //     solana_program::program::invoke_signed(
+        //     crate::program::invoke_signed(
         //         &solana_program::system_instruction::transfer(
         //             &global.pubkey(),
         //             &trader.info.pubkey(),

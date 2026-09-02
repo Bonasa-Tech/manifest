@@ -1,4 +1,5 @@
 use std::{cell::Ref, mem::size_of};
+use pinocchio::sysvars::{rent::Rent, Sysvar};
 use pinocchio::account_info::AccountInfo;
 use crate::validation::AccountInfoExt;
 use pinocchio::ProgramResult;
@@ -14,8 +15,7 @@ use crate::{
 use hypertree::{get_mut_helper, trace};
 use solana_program::{
     program_pack::Pack, pubkey::Pubkey,
-    rent::Rent, system_instruction, sysvar::Sysvar,
-};
+    system_instruction, };
 use spl_token_2022::{
     extension::{BaseStateWithExtensions, ExtensionType, PodStateWithExtensions},
     pod::PodMint,
@@ -52,7 +52,7 @@ pub(crate) fn process_global_create(
             ];
 
             if global.info.lamports() > 0 {
-                solana_program::program::invoke_signed(
+                crate::program::invoke_signed(
                     &system_instruction::transfer(
                         global.info.pubkey(),
                         payer.info.pubkey(),
@@ -110,7 +110,7 @@ pub(crate) fn process_global_create(
             let rent: Rent = Rent::get()?;
 
             if global_vault.info.lamports() > 0 {
-                solana_program::program::invoke_signed(
+                crate::program::invoke_signed(
                     &system_instruction::transfer(
                         global_vault.info.pubkey(),
                         payer.info.pubkey(),

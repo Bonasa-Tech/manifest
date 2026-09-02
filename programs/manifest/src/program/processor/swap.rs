@@ -625,7 +625,7 @@ fn spl_token_transfer_from_vault_to_trader<'a>(
     vault_bump: u8,
     mint_pubkey: &Pubkey,
 ) -> ProgramResult {
-    solana_program::program::invoke_signed(
+    crate::program::invoke_signed(
         &spl_token::instruction::transfer(
             token_program.pubkey(),
             vault.pubkey(),
@@ -670,7 +670,7 @@ fn spl_token_2022_transfer_from_vault_to_trader<'a>(
     market_key: &Pubkey,
     vault_bump: u8,
 ) -> ProgramResult {
-    solana_program::program::invoke_signed(
+    crate::program::invoke_signed(
         &spl_token_2022::instruction::transfer_checked(
             token_program.pubkey(),
             vault.pubkey(),
@@ -736,7 +736,7 @@ fn calculate_post_fee_amount<'a>(
     };
 
     let mint_data = mint_info.info.try_borrow_data()?;
-    let mint_state = StateWithExtensions::<Mint>::unpack(&mint_data)?;
+    let mint_state = StateWithExtensions::<Mint>::unpack(&mint_data).map_err(to_program_error)?;
 
     // Check for TransferFeeConfig extension
     if let Ok(fee_config) = mint_state.get_extension::<TransferFeeConfig>() {
@@ -795,7 +795,7 @@ fn calculate_pre_fee_amount<'a>(
     };
 
     let mint_data = mint_info.info.try_borrow_data()?;
-    let mint_state = StateWithExtensions::<Mint>::unpack(&mint_data)?;
+    let mint_state = StateWithExtensions::<Mint>::unpack(&mint_data).map_err(to_program_error)?;
 
     // Check for TransferFeeConfig extension
     if let Ok(fee_config) = mint_state.get_extension::<TransferFeeConfig>() {
