@@ -17,16 +17,25 @@ use manifest::{
     },
     validation::{
         get_global_address, get_global_vault_address, get_vault_address,
-        loaders::GlobalTradeAccounts, ManifestAccount, ManifestAccountInfo,
+        loaders::GlobalTradeAccounts, ManifestAccount, ManifestAccountInfo, OwnedAccount,
     },
 };
 use solana_program::{
     account_info::AccountInfo, instruction::AccountMeta, pubkey::Pubkey, system_program,
 };
-use std::{cell::RefCell, collections::HashSet, mem::size_of, rc::Rc};
+use pinocchio::account::AccountView;
+use std::{collections::HashSet, mem::size_of};
 
+/// Lays out an account the way the runtime would, so this quoter can run the
+/// program's own matching code over bytes it fetched rather than a copy of
+/// that logic.
+///
+/// The program reads accounts as pointers into the runtime's memory, so there
+/// is nothing to build a view from off chain until one is laid out; that is
+/// what `OwnedAccount` does. Two bindings come out: the owned buffer, which
+/// has to stay alive, and the view into it.
 macro_rules! dynamic_value_opt_to_account_info {
-    ( $name:ident, $value_opt:expr, $fixed_size:expr, $type:ident, $key:expr ) => {
+    ( $owned:ident, $name:ident, $value_opt:expr, $fixed_size:expr, $type:ident, $key:expr ) => {
         let mut data_vec: Vec<u8> = Vec::new();
         if $value_opt.is_some() {
             let mut header_bytes: [u8; $fixed_size] = [0; $fixed_size];
@@ -35,17 +44,8 @@ macro_rules! dynamic_value_opt_to_account_info {
             data_vec.append(&mut $value_opt.as_ref().unwrap().dynamic.clone());
         }
 
-        let mut lamports: u64 = 0;
-        let $name: AccountInfo<'_> = AccountInfo {
-            key: &$key,
-            lamports: Rc::new(RefCell::new(&mut lamports)),
-            data: Rc::new(RefCell::new(&mut data_vec[..])),
-            owner: &manifest::ID,
-            rent_epoch: 0,
-            is_signer: false,
-            is_writable: false,
-            executable: false,
-        };
+        let $owned: OwnedAccount = OwnedAccount::new(&$key, &manifest::ID, 0, &data_vec);
+        let $name: AccountView = $owned.view();
     };
 }
 
@@ -247,6 +247,7 @@ impl Amm for ManifestMarket {
         }
 
         dynamic_value_opt_to_account_info!(
+            quote_global_account_info_owned,
             quote_global_account_info,
             self.quote_global,
             GLOBAL_FIXED_SIZE,
@@ -273,6 +274,7 @@ impl Amm for ManifestMarket {
             };
 
         dynamic_value_opt_to_account_info!(
+            base_global_account_info_owned,
             base_global_account_info,
             self.base_global,
             GLOBAL_FIXED_SIZE,
@@ -439,8 +441,14 @@ mod test {
     const TRADER_KEY: Pubkey = pubkey!("GCtjtH2ehL6BZTjismuZ8JhQnuM6U3bmtxVoFyiHMHGc");
 
     macro_rules! mint_account_info {
-        ($name:ident, $decimals:expr) => {
-            let mut lamports: u64 = 0;
+        ($owned:ident, $name:ident, $decimals:expr) => {
+            let key: Pubkey = if $decimals == 9 {
+                BASE_MINT_KEY
+            } else {
+                QUOTE_MINT_KEY
+            };
+            let $owned: OwnedAccount = OwnedAccount::new(&key, &spl_token::id(), 0, &[]);
+            let view: AccountView = $owned.view();
             let $name: MintAccountInfo = MintAccountInfo {
                 mint: Mint {
                     mint_authority: None.into(),
@@ -449,20 +457,7 @@ mod test {
                     is_initialized: true,
                     freeze_authority: None.into(),
                 },
-                info: &AccountInfo {
-                    key: if $decimals == 9 {
-                        &BASE_MINT_KEY
-                    } else {
-                        &QUOTE_MINT_KEY
-                    },
-                    lamports: Rc::new(RefCell::new(&mut lamports)),
-                    data: Rc::new(RefCell::new(&mut [])),
-                    owner: &Pubkey::new_unique(),
-                    rent_epoch: 0,
-                    is_signer: false,
-                    is_writable: false,
-                    executable: false,
-                },
+                info: &view,
             };
         };
     }
@@ -487,26 +482,23 @@ mod test {
     }
 
     macro_rules! signer {
-        ( $name:ident) => {
-            let mut lamports: u64 = 1_000_000_000;
-            let account_info: AccountInfo<'_> = AccountInfo {
-                key: &TRADER_KEY,
-                lamports: Rc::new(RefCell::new(&mut lamports)),
-                data: Rc::new(RefCell::new(&mut [])),
-                owner: &manifest::ID,
-                rent_epoch: 0,
-                is_signer: true,
-                is_writable: false,
-                executable: false,
-            };
-            let $name = Signer::new(&account_info).expect("valid signer");
+        ( $owned:ident, $name:ident) => {
+            let mut $owned: OwnedAccount = OwnedAccount::new(
+                &TRADER_KEY,
+                &solana_program::system_program::id(),
+                1_000_000_000,
+                &[],
+            );
+            $owned.set_signer(true);
+            let view: AccountView = $owned.view();
+            let $name = Signer::new(&view).expect("valid signer");
         };
     }
 
     #[test]
     fn test_jupiter_global_with_global_orders() {
-        mint_account_info!(base_mint, 9);
-        mint_account_info!(quote_mint, 6);
+        mint_account_info!(base_mint_owned, base_mint, 9);
+        mint_account_info!(quote_mint_owned, quote_mint, 6);
         let quote_global_key: Pubkey = get_global_address(&QUOTE_MINT_KEY).0;
 
         let mut quote_global_value: DynamicAccount<GlobalFixed, Vec<u8>> = GlobalValue {
@@ -526,15 +518,16 @@ mod test {
         // Clone so the consumed bytes are available for the global trade
         // accounts later when quoting.
         dynamic_value_opt_to_account_info!(
+            quote_global_account_info_owned,
             quote_global_account_info,
             Some(quote_global_value.clone()),
             GLOBAL_FIXED_SIZE,
             GlobalFixed,
             quote_global_key
         );
-        signer!(gas_payer_account_info);
+        signer!(gas_payer_account_info_owned, gas_payer_account_info);
 
-        let quote_global_trade_accounts: Option<GlobalTradeAccounts<'_, '_>> =
+        let quote_global_trade_accounts: Option<GlobalTradeAccounts<'_>> =
             Some(GlobalTradeAccounts {
                 mint_opt: None,
                 global: ManifestAccountInfo::new(&quote_global_account_info).unwrap(),

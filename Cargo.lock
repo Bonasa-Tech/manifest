@@ -2795,6 +2795,7 @@ dependencies = [
  "hypertree",
  "jupiter-amm-interface",
  "manifest-dex",
+ "pinocchio",
  "solana-account",
  "solana-program",
  "spl-token 8.0.0",

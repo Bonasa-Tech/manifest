@@ -1,3 +1,5 @@
+pub mod offchain_account;
+pub use offchain_account::*;
 pub mod account_bridge;
 pub use account_bridge::*;
 pub mod loaders;
