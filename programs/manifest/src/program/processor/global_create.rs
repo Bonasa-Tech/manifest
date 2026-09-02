@@ -1,4 +1,5 @@
 use std::{cell::Ref, mem::size_of};
+use pinocchio::account_info::AccountInfo;
 use crate::validation::AccountInfoExt;
 use pinocchio::ProgramResult;
 
@@ -12,7 +13,7 @@ use crate::{
 };
 use hypertree::{get_mut_helper, trace};
 use solana_program::{
-    account_info::AccountInfo, program_pack::Pack, pubkey::Pubkey,
+    program_pack::Pack, pubkey::Pubkey,
     rent::Rent, system_instruction, sysvar::Sysvar,
 };
 use spl_token_2022::{
@@ -151,10 +152,10 @@ pub(crate) fn process_global_create(
                         global_vault.as_ref().key,
                     )?,
                     &[
-                        payer.as_ref().clone(),
-                        global_vault.as_ref().clone(),
-                        global_mint.as_ref().clone(),
-                        token_program.as_ref().clone(),
+                        payer.as_ref(),
+                        global_vault.as_ref(),
+                        global_mint.as_ref(),
+                        token_program.as_ref(),
                     ],
                 )?;
             } else {
@@ -176,10 +177,10 @@ pub(crate) fn process_global_create(
                         global_vault.as_ref().key,
                     )?,
                     &[
-                        payer.as_ref().clone(),
-                        global_vault.as_ref().clone(),
-                        global_mint.as_ref().clone(),
-                        token_program.as_ref().clone(),
+                        payer.as_ref(),
+                        global_vault.as_ref(),
+                        global_mint.as_ref(),
+                        token_program.as_ref(),
                     ],
                 )?;
             }

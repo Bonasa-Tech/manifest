@@ -7,7 +7,7 @@ use pinocchio::program_error::ProgramError;
 use crate::{
     global_vault_seeds_with_bump,
     program::invoke,
-    validation::{MintAccountInfo, TokenProgram},
+    validation::{to_program_error, MintAccountInfo, TokenProgram},
 };
 use crate::{
     logs::{emit_stack, GlobalCleanupLog},
@@ -518,12 +518,12 @@ pub(crate) fn transfer_global_tokens<'a>(
                 &[],
                 total_atoms.as_u64(),
                 mint_account_info.mint.decimals,
-            )?,
+            ).map_err(to_program_error)?,
             &[
-                token_program.as_ref().clone(),
-                global_vault.as_ref().clone(),
-                mint_account_info.as_ref().clone(),
-                market_vault.as_ref().clone(),
+                token_program.as_ref(),
+                global_vault.as_ref(),
+                mint_account_info.as_ref(),
+                market_vault.as_ref(),
             ],
             global_vault_seeds_with_bump!(&mint_key, global_vault_bump),
         )?;
@@ -536,11 +536,11 @@ pub(crate) fn transfer_global_tokens<'a>(
                 global_vault.pubkey(),
                 &[],
                 total_atoms.as_u64(),
-            )?,
+            ).map_err(to_program_error)?,
             &[
-                token_program.as_ref().clone(),
-                global_vault.as_ref().clone(),
-                market_vault.as_ref().clone(),
+                token_program.as_ref(),
+                global_vault.as_ref(),
+                market_vault.as_ref(),
             ],
             global_vault_seeds_with_bump!(&mint_key, global_vault_bump),
         )?;

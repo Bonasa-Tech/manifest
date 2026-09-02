@@ -7,7 +7,8 @@ use crate::{
     state::{MarketFixed, MarketRefMut},
     validation::{loaders::ClaimSeatContext, ManifestAccountInfo, Signer},
 };
-use solana_program::{account_info::AccountInfo, pubkey::Pubkey};
+use pinocchio::account_info::AccountInfo;
+use solana_program::pubkey::Pubkey;
 
 use super::shared::{expand_market_if_needed, get_mut_dynamic_account};
 

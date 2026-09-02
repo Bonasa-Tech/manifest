@@ -1,9 +1,12 @@
 use pinocchio::account_info::RefMut;
+use crate::validation::io_to_program_error;
+use crate::validation::to_program_error;
 use crate::validation::AccountInfoExt;
 use pinocchio::ProgramResult;
 
 use borsh::{BorshDeserialize, BorshSerialize};
-use solana_program::{account_info::AccountInfo, pubkey::Pubkey};
+use pinocchio::account_info::AccountInfo;
+use solana_program::pubkey::Pubkey;
 #[cfg(not(feature = "certora"))]
 use solana_program::{program::invoke_signed, program_pack::Pack, rent::Rent, sysvar::Sysvar};
 #[cfg(not(feature = "certora"))]
@@ -49,7 +52,7 @@ pub(crate) fn process_global_evict(
     accounts: &[AccountInfo],
     data: &[u8],
 ) -> ProgramResult {
-    let params: GlobalEvictParams = GlobalEvictParams::try_from_slice(data)?;
+    let params: GlobalEvictParams = GlobalEvictParams::try_from_slice(data).map_err(io_to_program_error)?;
     process_global_evict_core(program_id, accounts, params)
 }
 
@@ -234,12 +237,12 @@ fn spl_token_transfer_from_global_vault_to_evictee<'a>(
                 &[],
                 amount_atoms,
                 mint.mint.decimals,
-            )?,
+            ).map_err(to_program_error)?,
             &[
-                token_program.as_ref().clone(),
-                evictee_token.as_ref().clone(),
-                mint.as_ref().clone(),
-                global_vault.as_ref().clone(),
+                token_program.as_ref(),
+                evictee_token.as_ref(),
+                mint.as_ref(),
+                global_vault.as_ref(),
             ],
             global_vault_seeds_with_bump!(mint.info.pubkey(), bump),
         )?;
@@ -252,11 +255,11 @@ fn spl_token_transfer_from_global_vault_to_evictee<'a>(
                 global_vault.pubkey(),
                 &[],
                 amount_atoms,
-            )?,
+            ).map_err(to_program_error)?,
             &[
-                token_program.as_ref().clone(),
-                global_vault.as_ref().clone(),
-                evictee_token.as_ref().clone(),
+                token_program.as_ref(),
+                global_vault.as_ref(),
+                evictee_token.as_ref(),
             ],
             global_vault_seeds_with_bump!(mint.info.pubkey(), bump),
         )?;
@@ -315,13 +318,13 @@ fn spl_token_transfer_from_evictor_to_global_vault<'a>(
                 &[],
                 amount_atoms,
                 mint.mint.decimals,
-            )?,
+            ).map_err(to_program_error)?,
             &[
-                token_program.as_ref().clone(),
-                trader_token.as_ref().clone(),
-                mint.as_ref().clone(),
-                global_vault.as_ref().clone(),
-                payer.as_ref().clone(),
+                token_program.as_ref(),
+                trader_token.as_ref(),
+                mint.as_ref(),
+                global_vault.as_ref(),
+                payer.as_ref(),
             ],
         )?;
     } else {
@@ -333,12 +336,12 @@ fn spl_token_transfer_from_evictor_to_global_vault<'a>(
                 payer.pubkey(),
                 &[],
                 amount_atoms,
-            )?,
+            ).map_err(to_program_error)?,
             &[
-                token_program.as_ref().clone(),
-                trader_token.as_ref().clone(),
-                global_vault.as_ref().clone(),
-                payer.as_ref().clone(),
+                token_program.as_ref(),
+                trader_token.as_ref(),
+                global_vault.as_ref(),
+                payer.as_ref(),
             ],
         )?;
     }

@@ -1,4 +1,6 @@
 use pinocchio::account_info::RefMut;
+use pinocchio::account_info::AccountInfo;
+use crate::validation::io_to_program_error;
 use crate::validation::AccountInfoExt;
 use pinocchio::ProgramResult;
 use pinocchio::program_error::ProgramError;
@@ -18,7 +20,7 @@ use borsh::{BorshDeserialize, BorshSerialize};
 
 use hypertree::{get_helper, trace, DataIndex, RBNode};
 use solana_program::{
-    account_info::AccountInfo, pubkey::Pubkey,
+    pubkey::Pubkey,
 };
 
 use super::{expand_market_if_needed, shared::get_mut_dynamic_account};
@@ -161,7 +163,7 @@ pub(crate) fn process_batch_update(
     accounts: &[AccountInfo],
     data: &[u8],
 ) -> ProgramResult {
-    let params: BatchUpdateParams = BatchUpdateParams::try_from_slice(data)?;
+    let params: BatchUpdateParams = BatchUpdateParams::try_from_slice(data).map_err(io_to_program_error)?;
     process_batch_update_core(program_id, accounts, params)
 }
 

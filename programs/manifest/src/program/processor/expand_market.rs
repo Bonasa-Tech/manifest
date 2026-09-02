@@ -1,4 +1,5 @@
-use solana_program::{account_info::AccountInfo, pubkey::Pubkey};
+use pinocchio::account_info::AccountInfo;
+use solana_program::pubkey::Pubkey;
 use pinocchio::ProgramResult;
 
 use crate::{

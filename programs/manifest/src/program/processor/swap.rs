@@ -1,4 +1,6 @@
 use pinocchio::account_info::RefMut;
+use crate::validation::io_to_program_error;
+use crate::validation::to_program_error;
 use crate::validation::AccountInfoExt;
 use pinocchio::ProgramResult;
 
@@ -20,7 +22,8 @@ use crate::{
 };
 use borsh::{BorshDeserialize, BorshSerialize};
 use hypertree::{trace, DataIndex, NIL};
-use solana_program::{account_info::AccountInfo, pubkey::Pubkey};
+use pinocchio::account_info::AccountInfo;
+use solana_program::pubkey::Pubkey;
 
 use super::shared::get_mut_dynamic_account;
 
@@ -96,7 +99,7 @@ pub(crate) fn process_swap(
     accounts: &[AccountInfo],
     data: &[u8],
 ) -> ProgramResult {
-    let params = SwapParams::try_from_slice(data)?;
+    let params = SwapParams::try_from_slice(data).map_err(io_to_program_error)?;
     process_swap_core(program_id, accounts, params)
 }
 
@@ -542,12 +545,12 @@ fn spl_token_transfer_from_trader_to_vault<'a>(
             owner.pubkey(),
             &[],
             amount,
-        )?,
+        ).map_err(to_program_error)?,
         &[
-            token_program.as_ref().clone(),
-            trader_account.as_ref().clone(),
-            vault.as_ref().clone(),
-            owner.as_ref().clone(),
+            token_program.as_ref(),
+            trader_account.as_ref(),
+            vault.as_ref(),
+            owner.as_ref(),
         ],
     )
 }
@@ -585,13 +588,13 @@ fn spl_token_2022_transfer_from_trader_to_vault<'a>(
             &[],
             amount,
             decimals,
-        )?,
+        ).map_err(to_program_error)?,
         &[
-            token_program.as_ref().clone(),
-            trader_account.as_ref().clone(),
-            vault.as_ref().clone(),
+            token_program.as_ref(),
+            trader_account.as_ref(),
+            vault.as_ref(),
             mint.unwrap().as_ref().clone(),
-            owner.as_ref().clone(),
+            owner.as_ref(),
         ],
     )
 }
@@ -630,11 +633,11 @@ fn spl_token_transfer_from_vault_to_trader<'a>(
             vault.pubkey(),
             &[],
             amount,
-        )?,
+        ).map_err(to_program_error)?,
         &[
-            token_program.as_ref().clone(),
-            vault.as_ref().clone(),
-            trader_account.as_ref().clone(),
+            token_program.as_ref(),
+            vault.as_ref(),
+            trader_account.as_ref(),
         ],
         market_vault_seeds_with_bump!(market_key, mint_pubkey, vault_bump),
     )
@@ -677,12 +680,12 @@ fn spl_token_2022_transfer_from_vault_to_trader<'a>(
             &[],
             amount,
             decimals,
-        )?,
+        ).map_err(to_program_error)?,
         &[
-            token_program.as_ref().clone(),
-            vault.as_ref().clone(),
+            token_program.as_ref(),
+            vault.as_ref(),
             mint.unwrap().as_ref().clone(),
-            trader_account.as_ref().clone(),
+            trader_account.as_ref(),
         ],
         market_vault_seeds_with_bump!(market_key, mint_pubkey, vault_bump),
     )

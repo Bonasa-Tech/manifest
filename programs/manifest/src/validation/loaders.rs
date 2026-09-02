@@ -74,17 +74,17 @@ impl<'a> CreateMarketContext<'a> {
         let quote_vault: EmptyAccount = EmptyAccount::new(next_account_info(account_iter)?)?;
 
         let (expected_base_vault, base_vault_bump) =
-            get_vault_address(market.pubkey(), base_mint.info.key());
+            get_vault_address(market.pubkey(), base_mint.info.pubkey());
         let (expected_quote_vault, quote_vault_bump) =
-            get_vault_address(market.pubkey(), quote_mint.info.key());
+            get_vault_address(market.pubkey(), quote_mint.info.pubkey());
 
         require!(
-            expected_base_vault == *base_vault.info.key(),
+            expected_base_vault == *base_vault.info.pubkey(),
             ManifestError::IncorrectAccount,
             "Incorrect base vault account",
         )?;
         require!(
-            expected_quote_vault == *quote_vault.info.key(),
+            expected_quote_vault == *quote_vault.info.pubkey(),
             ManifestError::IncorrectAccount,
             "Incorrect quote vault account",
         )?;
@@ -372,7 +372,7 @@ impl<'a> SwapContext<'a> {
                 "Optional base mint does not match the market base mint",
             )?;
             require!(
-                current_account_info.owner_pubkey() == token_program_base.info.key(),
+                current_account_info.owner_pubkey() == token_program_base.info.pubkey(),
                 ProgramError::IncorrectProgramId,
                 "Base mint owner does not match the base token program",
             )?;
@@ -408,7 +408,7 @@ impl<'a> SwapContext<'a> {
                 "Optional quote mint does not match the market quote mint",
             )?;
             require!(
-                current_account_info.owner_pubkey() == token_program_quote.info.key(),
+                current_account_info.owner_pubkey() == token_program_quote.info.pubkey(),
                 ProgramError::IncorrectProgramId,
                 "Quote mint owner does not match the quote token program",
             )?;
@@ -417,12 +417,12 @@ impl<'a> SwapContext<'a> {
         }
 
         require!(
-            *token_program_base.info.key() != spl_token_2022::id() || base_mint.is_some(),
+            *token_program_base.info.pubkey() != spl_token_2022::id() || base_mint.is_some(),
             ManifestError::IncorrectAccount,
             "Token-2022 base transfers require the validated market base mint",
         )?;
         require!(
-            *token_program_quote.info.key() != spl_token_2022::id() || quote_mint.is_some(),
+            *token_program_quote.info.pubkey() != spl_token_2022::id() || quote_mint.is_some(),
             ManifestError::IncorrectAccount,
             "Token-2022 quote transfers require the validated market quote mint",
         )?;
@@ -461,7 +461,7 @@ impl<'a> SwapContext<'a> {
                 };
                 // Assert that the global itself is at the expected address,
                 // see `verify_market_global`.
-                verify_market_global(&market, index, global_mint_key, global.info.key())?;
+                verify_market_global(&market, index, global_mint_key, global.info.pubkey())?;
 
                 drop(global_data);
                 global_trade_accounts_opts[index] = Some(GlobalTradeAccounts {
@@ -488,7 +488,7 @@ impl<'a> SwapContext<'a> {
                     } else {
                         None
                     },
-                    market: *market.info.key(),
+                    market: *market.info.pubkey(),
                     system_program: None,
                     num_deferred_gas_refunds: Cell::new(0),
                 });
@@ -586,11 +586,11 @@ impl<'a> BatchUpdateContext<'a> {
                 if next_account_info_or.is_ok() {
                     let mint: MintAccountInfo<'a> =
                         MintAccountInfo::new(next_account_info_or?)?;
-                    let (index, expected_market_vault_address) = if base_mint == *mint.info.key() {
+                    let (index, expected_market_vault_address) = if base_mint == *mint.info.pubkey() {
                         (0, &base_vault)
                     } else {
                         require!(
-                            quote_mint == *mint.info.key(),
+                            quote_mint == *mint.info.pubkey(),
                             ManifestError::MissingGlobal,
                             "Unexpected global mint",
                         )?;
@@ -617,7 +617,7 @@ impl<'a> BatchUpdateContext<'a> {
                     let global: ManifestAccountInfo<'a, GlobalFixed> = global_or.unwrap();
                     // Assert that the global itself is at the expected address,
                     // see `verify_market_global`.
-                    verify_market_global(&market, index, mint.info.key(), global.info.key())?;
+                    verify_market_global(&market, index, mint.info.pubkey(), global.info.pubkey())?;
                     let global_data: Ref<[u8]> = global.try_borrow_data()?;
                     let global_fixed: &GlobalFixed = get_helper::<GlobalFixed>(&global_data, 0_u32);
                     let expected_global_vault_address: &Pubkey = global_fixed.get_vault();
@@ -625,7 +625,7 @@ impl<'a> BatchUpdateContext<'a> {
                     let global_vault: TokenAccountInfo<'a> =
                         TokenAccountInfo::new_with_owner_and_key(
                             next_account_info(account_iter)?,
-                            mint.info.key(),
+                            mint.info.pubkey(),
                             &expected_global_vault_address,
                             &expected_global_vault_address,
                         )?;
@@ -634,7 +634,7 @@ impl<'a> BatchUpdateContext<'a> {
                     let market_vault: TokenAccountInfo<'a> =
                         TokenAccountInfo::new_with_owner_and_key(
                             next_account_info(account_iter)?,
-                            mint.info.key(),
+                            mint.info.pubkey(),
                             &expected_market_vault_address,
                             &expected_market_vault_address,
                         )?;
@@ -650,7 +650,7 @@ impl<'a> BatchUpdateContext<'a> {
                         system_program: Some(system_program.clone()),
                         gas_payer_opt: Some(payer.clone()),
                         gas_receiver_opt: Some(payer.clone()),
-                        market: *market.info.key(),
+                        market: *market.info.pubkey(),
                         num_deferred_gas_refunds: Cell::new(0),
                     })
                 };
@@ -770,8 +770,8 @@ impl<'a> GlobalCreateContext<'a> {
         let global_mint: MintAccountInfo = MintAccountInfo::new(next_account_info(account_iter)?)?;
         let global_vault: EmptyAccount = EmptyAccount::new(next_account_info(account_iter)?)?;
 
-        let (expected_global_key, global_bump) = get_global_address(global_mint.info.key());
-        assert_eq!(expected_global_key, *global.info.key());
+        let (expected_global_key, global_bump) = get_global_address(global_mint.info.pubkey());
+        assert_eq!(expected_global_key, *global.info.pubkey());
 
         let token_program: TokenProgram = TokenProgram::new(next_account_info(account_iter)?)?;
         Ok(Self {
@@ -808,7 +808,7 @@ impl<'a> GlobalAddTraderContext<'a> {
         // `is_global_address` for why that is as strong as deriving it.
         require!(
             is_global_address(
-                global.info.key(),
+                global.info.pubkey(),
                 global_mint_key,
                 global_fixed.get_global_bump()
             ),
@@ -855,7 +855,7 @@ impl<'a> GlobalDepositContext<'a> {
         // `is_global_address` for why that is as strong as deriving it.
         require!(
             is_global_address(
-                global.info.key(),
+                global.info.pubkey(),
                 global_mint_key,
                 global_fixed.get_global_bump()
             ),
@@ -867,7 +867,7 @@ impl<'a> GlobalDepositContext<'a> {
 
         let global_vault: TokenAccountInfo = TokenAccountInfo::new_with_owner_and_key(
             next_account_info(account_iter)?,
-            mint.info.key(),
+            mint.info.pubkey(),
             &expected_global_vault_address,
             &expected_global_vault_address,
         )?;
@@ -875,7 +875,7 @@ impl<'a> GlobalDepositContext<'a> {
 
         let token_account_info: &AccountInfo = next_account_info(account_iter)?;
         let trader_token: TokenAccountInfo =
-            TokenAccountInfo::new_with_owner(token_account_info, mint.info.key(), payer.pubkey())?;
+            TokenAccountInfo::new_with_owner(token_account_info, mint.info.pubkey(), payer.pubkey())?;
         let token_program: TokenProgram = TokenProgram::new(next_account_info(account_iter)?)?;
         Ok(Self {
             payer,
@@ -916,7 +916,7 @@ impl<'a> GlobalWithdrawContext<'a> {
         // `is_global_address` for why that is as strong as deriving it.
         require!(
             is_global_address(
-                global.info.key(),
+                global.info.pubkey(),
                 global_mint_key,
                 global_fixed.get_global_bump()
             ),
@@ -928,7 +928,7 @@ impl<'a> GlobalWithdrawContext<'a> {
 
         let global_vault: TokenAccountInfo = TokenAccountInfo::new_with_owner_and_key(
             next_account_info(account_iter)?,
-            mint.info.key(),
+            mint.info.pubkey(),
             &expected_global_vault_address,
             &expected_global_vault_address,
         )?;
@@ -936,7 +936,7 @@ impl<'a> GlobalWithdrawContext<'a> {
 
         let token_account_info: &AccountInfo = next_account_info(account_iter)?;
         let trader_token: TokenAccountInfo =
-            TokenAccountInfo::new_with_owner(token_account_info, mint.info.key(), payer.pubkey())?;
+            TokenAccountInfo::new_with_owner(token_account_info, mint.info.pubkey(), payer.pubkey())?;
         let token_program: TokenProgram = TokenProgram::new(next_account_info(account_iter)?)?;
         Ok(Self {
             payer,
@@ -979,7 +979,7 @@ impl<'a> GlobalEvictContext<'a> {
         // `is_global_address` for why that is as strong as deriving it.
         require!(
             is_global_address(
-                global.info.key(),
+                global.info.pubkey(),
                 global_mint_key,
                 global_fixed.get_global_bump()
             ),
@@ -991,7 +991,7 @@ impl<'a> GlobalEvictContext<'a> {
 
         let global_vault: TokenAccountInfo = TokenAccountInfo::new_with_owner_and_key(
             next_account_info(account_iter)?,
-            mint.info.key(),
+            mint.info.pubkey(),
             &expected_global_vault_address,
             &expected_global_vault_address,
         )?;
@@ -999,10 +999,10 @@ impl<'a> GlobalEvictContext<'a> {
 
         let token_account_info: &AccountInfo = next_account_info(account_iter)?;
         let trader_token: TokenAccountInfo =
-            TokenAccountInfo::new_with_owner(token_account_info, mint.info.key(), payer.pubkey())?;
+            TokenAccountInfo::new_with_owner(token_account_info, mint.info.pubkey(), payer.pubkey())?;
         let token_account_info: &AccountInfo = next_account_info(account_iter)?;
         let evictee_token: TokenAccountInfo =
-            TokenAccountInfo::new(token_account_info, mint.info.key())?;
+            TokenAccountInfo::new(token_account_info, mint.info.pubkey())?;
         let token_program: TokenProgram = TokenProgram::new(next_account_info(account_iter)?)?;
         let _system_program: Program =
             Program::new(next_account_info(account_iter)?, &system_program::id())?;
@@ -1046,7 +1046,7 @@ impl<'a> GlobalCleanContext<'a> {
         // `is_global_address` for why that is as strong as deriving it.
         require!(
             is_global_address(
-                global.info.key(),
+                global.info.pubkey(),
                 global_mint_key,
                 global_fixed.get_global_bump()
             ),

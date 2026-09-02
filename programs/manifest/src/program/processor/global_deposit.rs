@@ -1,9 +1,12 @@
 use pinocchio::account_info::RefMut;
+use crate::validation::io_to_program_error;
+use crate::validation::to_program_error;
 use crate::validation::AccountInfoExt;
 use pinocchio::ProgramResult;
 
 use borsh::{BorshDeserialize, BorshSerialize};
-use solana_program::{account_info::AccountInfo, pubkey::Pubkey};
+use pinocchio::account_info::AccountInfo;
+use solana_program::pubkey::Pubkey;
 
 use crate::{
     logs::{emit_stack, GlobalDepositLog},
@@ -45,7 +48,7 @@ pub(crate) fn process_global_deposit(
     accounts: &[AccountInfo],
     data: &[u8],
 ) -> ProgramResult {
-    let params: GlobalDepositParams = GlobalDepositParams::try_from_slice(data)?;
+    let params: GlobalDepositParams = GlobalDepositParams::try_from_slice(data).map_err(io_to_program_error)?;
     process_global_deposit_core(program_id, accounts, params)
 }
 
@@ -127,12 +130,12 @@ fn spl_token_transfer_from_trader_to_global_vault<'a>(
             payer.pubkey(),
             &[],
             amount_atoms,
-        )?,
+        ).map_err(to_program_error)?,
         &[
-            token_program.as_ref().clone(),
-            trader_token_account.as_ref().clone(),
-            global_vault.as_ref().clone(),
-            payer.as_ref().clone(),
+            token_program.as_ref(),
+            trader_token_account.as_ref(),
+            global_vault.as_ref(),
+            payer.as_ref(),
         ],
     )
 }
@@ -174,13 +177,13 @@ fn spl_token_2022_transfer_from_trader_to_global_vault<'a>(
             &[],
             amount_atoms,
             mint.mint.decimals,
-        )?,
+        ).map_err(to_program_error)?,
         &[
-            token_program.as_ref().clone(),
-            trader_token_account.as_ref().clone(),
-            mint.as_ref().clone(),
-            global_vault.as_ref().clone(),
-            payer.as_ref().clone(),
+            token_program.as_ref(),
+            trader_token_account.as_ref(),
+            mint.as_ref(),
+            global_vault.as_ref(),
+            payer.as_ref(),
         ],
     )
 }

@@ -1,5 +1,5 @@
 use solana_program::{
-    account_info::AccountInfo, keccak, program::invoke_signed,
+    keccak, program::invoke_signed,
     pubkey::Pubkey, rent::Rent, system_instruction,
 };
 

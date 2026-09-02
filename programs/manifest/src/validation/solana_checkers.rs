@@ -17,11 +17,11 @@ impl<'a> Program<'a> {
         expected_program_id: &Pubkey,
     ) -> Result<Program<'a>, ProgramError> {
         require!(
-            info.key() == expected_program_id,
+            info.pubkey() == expected_program_id,
             ProgramError::IncorrectProgramId,
             "Incorrect program id expected {:?} actual {:?}",
             expected_program_id,
-            info.key()
+            info.pubkey()
         )?;
         Ok(Self { info })
     }
@@ -41,10 +41,10 @@ pub struct TokenProgram<'a> {
 impl<'a> TokenProgram<'a> {
     pub fn new(info: &'a AccountInfo) -> Result<TokenProgram<'a>, ProgramError> {
         require!(
-            *info.key() == spl_token::id() || *info.key() == spl_token_2022::id(),
+            *info.pubkey() == spl_token::id() || *info.pubkey() == spl_token_2022::id(),
             ProgramError::IncorrectProgramId,
             "Incorrect token program id: {:?}",
-            info.key()
+            info.pubkey()
         )?;
         Ok(Self { info })
     }
@@ -75,7 +75,7 @@ impl<'a> Signer<'a> {
             info.is_signer(),
             ProgramError::MissingRequiredSignature,
             "Missing required signature for {:?}",
-            info.key()
+            info.pubkey()
         )?;
         Ok(Self { info })
     }
@@ -85,13 +85,13 @@ impl<'a> Signer<'a> {
             info.is_writable(),
             ProgramError::InvalidInstructionData,
             "Payer is not writable. Key {:?}",
-            info.key()
+            info.pubkey()
         )?;
         require!(
             info.is_signer(),
             ProgramError::MissingRequiredSignature,
             "Missing required signature for payer {:?}",
-            info.key()
+            info.pubkey()
         )?;
         Ok(Self { info })
     }
@@ -122,13 +122,13 @@ impl<'a> EmptyAccount<'a> {
             info.data_is_empty(),
             ProgramError::InvalidAccountData,
             "Account must be uninitialized {:?}",
-            info.key()
+            info.pubkey()
         )?;
         require!(
             info.owner() == &system_program::id(),
             ProgramError::IllegalOwner,
             "Empty accounts must be owned by the system program {:?}",
-            info.key()
+            info.pubkey()
         )?;
         Ok(Self { info })
     }

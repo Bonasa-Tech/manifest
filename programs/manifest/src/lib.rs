@@ -100,10 +100,11 @@ declare_id!("MNFSTqtC93rEfYHB6hF82sKdZpUDFWkViLByLd1k1Ms");
 pinocchio::program_entrypoint!(process_instruction, { crate::entrypoint::MAX_ACCOUNTS });
 
 pub fn process_instruction(
-    program_id: &Address,
+    program_id_raw: &Address,
     accounts: &[AccountInfo],
     instruction_data: &[u8],
 ) -> ProgramResult {
+    let program_id: &Pubkey = crate::validation::as_pubkey(program_id_raw);
     let (tag, data) = instruction_data
         .split_first()
         .ok_or(ProgramError::InvalidInstructionData)?;

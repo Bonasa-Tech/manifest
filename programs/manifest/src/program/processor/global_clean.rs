@@ -1,10 +1,12 @@
 use pinocchio::account_info::RefMut;
+use crate::validation::io_to_program_error;
 use crate::validation::AccountInfoExt;
 use pinocchio::ProgramResult;
 
 use borsh::{BorshDeserialize, BorshSerialize};
 use hypertree::{get_helper, trace, DataIndex, RBNode};
-use solana_program::{account_info::AccountInfo, pubkey::Pubkey};
+use pinocchio::account_info::AccountInfo;
+use solana_program::pubkey::Pubkey;
 
 use crate::{
     program::{batch_update::MarketDataTreeNodeType, get_mut_dynamic_account},
@@ -56,7 +58,7 @@ pub(crate) fn process_global_clean(
         num_deferred_gas_refunds: std::cell::Cell::new(0),
     };
 
-    let GlobalCleanParams { order_index } = GlobalCleanParams::try_from_slice(data)?;
+    let GlobalCleanParams { order_index } = GlobalCleanParams::try_from_slice(data).map_err(io_to_program_error)?;
 
     let market_data: &mut RefMut<[u8]> = &mut market.try_borrow_mut_data()?;
     let mut market_dynamic_account: MarketRefMut = get_mut_dynamic_account(market_data);

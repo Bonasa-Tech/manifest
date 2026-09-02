@@ -1,4 +1,5 @@
 use pinocchio::account_info::{Ref, RefMut};
+use pinocchio::account_info::AccountInfo;
 use std::mem::size_of;
 
 use crate::{
@@ -23,7 +24,7 @@ use hypertree::{get_helper, get_mut_helper, DataIndex, Get, RBNode};
 #[cfg(not(feature = "certora"))]
 use solana_program::sysvar::Sysvar;
 use solana_program::{
-    account_info::AccountInfo, instruction::Instruction,
+    instruction::Instruction,
     };
 
 use super::batch_update::MarketDataTreeNodeType;

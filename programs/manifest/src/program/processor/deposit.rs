@@ -1,4 +1,6 @@
 use pinocchio::account_info::RefMut;
+use crate::validation::io_to_program_error;
+use crate::validation::to_program_error;
 use crate::validation::AccountInfoExt;
 use pinocchio::ProgramResult;
 
@@ -11,7 +13,8 @@ use crate::{
 };
 use borsh::{BorshDeserialize, BorshSerialize};
 use hypertree::DataIndex;
-use solana_program::{account_info::AccountInfo, pubkey::Pubkey};
+use pinocchio::account_info::AccountInfo;
+use solana_program::pubkey::Pubkey;
 
 use super::{get_trader_index_with_hint, shared::get_mut_dynamic_account};
 
@@ -42,7 +45,7 @@ pub(crate) fn process_deposit(
     accounts: &[AccountInfo],
     data: &[u8],
 ) -> ProgramResult {
-    let params: DepositParams = DepositParams::try_from_slice(data)?;
+    let params: DepositParams = DepositParams::try_from_slice(data).map_err(io_to_program_error)?;
     process_deposit_core(program_id, accounts, params)
 }
 
@@ -146,12 +149,12 @@ fn spl_token_transfer_from_trader_to_vault<'a>(
             payer.pubkey(),
             &[],
             amount,
-        )?,
+        ).map_err(to_program_error)?,
         &[
-            token_program.as_ref().clone(),
-            trader_account.as_ref().clone(),
-            vault.as_ref().clone(),
-            payer.as_ref().clone(),
+            token_program.as_ref(),
+            trader_account.as_ref(),
+            vault.as_ref(),
+            payer.as_ref(),
         ],
     )
 }
@@ -189,13 +192,13 @@ fn spl_token_2022_transfer_from_trader_to_vault<'a>(
             &[],
             amount,
             decimals,
-        )?,
+        ).map_err(to_program_error)?,
         &[
-            token_program.as_ref().clone(),
-            trader_account.as_ref().clone(),
-            vault.as_ref().clone(),
+            token_program.as_ref(),
+            trader_account.as_ref(),
+            vault.as_ref(),
             mint.unwrap().as_ref().clone(),
-            payer.as_ref().clone(),
+            payer.as_ref(),
         ],
     )
 }
