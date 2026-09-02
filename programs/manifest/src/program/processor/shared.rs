@@ -297,15 +297,38 @@ fn with_pinocchio_instruction<R>(
     let mut ordered: [MaybeUninit<&AccountInfo>; MAX_CPI_ACCOUNTS] =
         [const { MaybeUninit::uninit() }; MAX_CPI_ACCOUNTS];
 
+    // Call sites that already pass exactly the instruction's accounts, in its
+    // order, skip the matching below: that is pinocchio's own contract, and
+    // the token and system CPIs here are written to it.
+    let positional: bool = account_infos.len() == ix.accounts.len()
+        && account_infos
+            .iter()
+            .zip(ix.accounts.iter())
+            .all(|(info, account)| info.key() == as_raw_key(&account.pubkey));
+
     for (index, account) in ix.accounts.iter().enumerate() {
         metas[index].write(PinocchioAccountMeta {
             pubkey: as_raw_key(&account.pubkey),
             is_writable: account.is_writable,
             is_signer: account.is_signer,
         });
+        // Keys are compared eight bytes at a time, and almost always differ in
+        // the first eight, so this is one integer compare per candidate rather
+        // than a 32 byte one. Worth it: this runs for every account of every
+        // CPI, and the whole point of the account type below it is that
+        // reading a field is a load.
+        if positional {
+            ordered[index].write(&account_infos[index]);
+            continue;
+        }
+        let wanted: &[u8; 32] = as_raw_key(&account.pubkey);
+        let wanted_head: u64 = u64::from_le_bytes(wanted[..8].try_into().unwrap());
         let found: &&AccountInfo = account_infos
             .iter()
-            .find(|info| info.pubkey() == &account.pubkey)
+            .find(|info| {
+                let key: &[u8; 32] = info.key();
+                u64::from_le_bytes(key[..8].try_into().unwrap()) == wanted_head && key == wanted
+            })
             .ok_or(ProgramError::NotEnoughAccountKeys)?;
         ordered[index].write(found);
     }

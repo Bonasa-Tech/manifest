@@ -19,7 +19,7 @@ no-entrypoint = []
 cpi = ["no-entrypoint"]
 default = []
 trace = [ "manifest-dex/trace" ]
-test = []
+test = ["manifest-dex/test"]
 test-sbf = []
 
 [dependencies]

@@ -150,12 +150,8 @@ fn spl_token_transfer_from_trader_to_vault<'a>(
             &[],
             amount,
         ).map_err(to_program_error)?,
-        &[
-            token_program.as_ref(),
-            trader_account.as_ref(),
-            vault.as_ref(),
-            payer.as_ref(),
-        ],
+        // spl_token::transfer names source, destination, authority.
+        &[trader_account.as_ref(), vault.as_ref(), payer.as_ref()],
     )
 }
 #[cfg(feature = "certora")]
@@ -193,11 +189,11 @@ fn spl_token_2022_transfer_from_trader_to_vault<'a>(
             amount,
             decimals,
         ).map_err(to_program_error)?,
+        // transfer_checked names source, mint, destination, authority.
         &[
-            token_program.as_ref(),
             trader_account.as_ref(),
-            vault.as_ref(),
             mint.unwrap().as_ref(),
+            vault.as_ref(),
             payer.as_ref(),
         ],
     )

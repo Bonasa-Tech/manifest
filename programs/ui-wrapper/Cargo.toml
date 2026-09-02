@@ -19,7 +19,7 @@ no-entrypoint = []
 cpi = ["no-entrypoint"]
 default = ["trace"]
 trace = [ "hypertree/fuzz", "hypertree/trace", "manifest-dex/trace" ]
-test = []
+test = ["manifest-dex/test"]
 test-sbf = []
 
 [dependencies]
