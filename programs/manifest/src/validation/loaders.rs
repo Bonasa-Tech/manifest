@@ -14,21 +14,13 @@ use solana_program::{
 
 use crate::validation::AccountInfoExt;
 
-/// pinocchio has no `next_account_info`; the runtime hands over a slice and
-/// the loaders below walk it in order, same as before.
-fn next_account_info<'a>(
-    iter: &mut Iter<'a, AccountInfo>,
-) -> Result<&'a AccountInfo, ProgramError> {
-    iter.next().ok_or(ProgramError::NotEnoughAccountKeys)
-}
-
 use crate::{
     program::ManifestError,
     require,
     state::{GlobalFixed, MarketFixed},
     validation::{
-        get_global_address, is_global_address, EmptyAccount, MintAccountInfo, Program, Signer,
-        TokenAccountInfo,
+        get_global_address, is_global_address, next_account_info, EmptyAccount, MintAccountInfo,
+        Program, Signer, TokenAccountInfo,
     },
 };
 

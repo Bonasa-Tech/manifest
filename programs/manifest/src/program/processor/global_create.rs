@@ -29,7 +29,7 @@ pub(crate) fn process_global_create(
     _data: &[u8],
 ) -> ProgramResult {
     {
-        trace!("process_global_create accs={accounts:?}");
+        trace!("process_global_create accs={}", accounts.len());
         let global_create_context: GlobalCreateContext = GlobalCreateContext::load(accounts)?;
 
         let GlobalCreateContext {

@@ -30,6 +30,7 @@ shank = "0.4.2"
 spl-token = { workspace = true, features = ["no-entrypoint"] }
 spl-token-2022 = { workspace = true, features = ["no-entrypoint"] }
 solana-program = { workspace = true }
+pinocchio = { workspace = true }
 borsh = { workspace = true }
 bytemuck = { workspace = true }
 num_enum = { workspace = true }

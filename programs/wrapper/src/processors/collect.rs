@@ -1,14 +1,16 @@
 use manifest::validation::{Program, Signer};
+use pinocchio::sysvars::Sysvar;
+use manifest::validation::next_account_info;
+use manifest::validation::AccountInfoExt;
+use pinocchio::ProgramResult;
+use pinocchio::program_error::ProgramError;
+use pinocchio::account_info::AccountInfo;
 use solana_program::{
-    account_info::{next_account_info, AccountInfo},
-    entrypoint::ProgramResult,
-    program_error::ProgramError,
     pubkey,
     pubkey::Pubkey,
     system_program,
-    sysvar::Sysvar,
-};
-use std::cell::RefMut;
+    };
+use pinocchio::account_info::RefMut;
 
 use crate::loader::WrapperStateAccountInfo;
 
@@ -24,7 +26,7 @@ pub(crate) fn process_collect(
         Program::new(next_account_info(account_iter)?, &system_program::id())?;
     let collector: Signer = Signer::new(next_account_info(account_iter)?)?;
 
-    let rent: solana_program::rent::Rent = solana_program::rent::Rent::get()?;
+    let rent: pinocchio::sysvars::rent::Rent = pinocchio::sysvars::rent::Rent::get()?;
     let minimum_balance: u64 = rent.minimum_balance(wrapper_state.data_len());
     let current_balance: u64 = wrapper_state.lamports();
 
@@ -35,19 +37,19 @@ pub(crate) fn process_collect(
     const COLLECTOR: Pubkey = pubkey!("B6dmr2UAn2wgjdm3T4N1Vjd8oPYRRTguByW7AEngkeL6");
     #[cfg(feature = "test")]
     const COLLECTOR: Pubkey = pubkey!("2iXtA8oeZqUU5pofxK971TCEvFGfems2AcDRaZHKD2pQ");
-    if *collector.key != COLLECTOR {
+    if *collector.pubkey() != COLLECTOR {
         return Err(ProgramError::InvalidArgument);
     }
 
     // The System Program cannot debit a data-bearing account that it does not
     // own. This program owns wrapper_state, so it must move excess lamports by
     // mutating both balances directly while preserving the rent exemption.
-    let mut wrapper_lamports: RefMut<&mut u64> = wrapper_state.info.try_borrow_mut_lamports()?;
-    let mut collector_lamports: RefMut<&mut u64> = collector.info.try_borrow_mut_lamports()?;
-    **wrapper_lamports = current_balance
+    let mut wrapper_lamports: RefMut<u64> = wrapper_state.info.try_borrow_mut_lamports()?;
+    let mut collector_lamports: RefMut<u64> = collector.info.try_borrow_mut_lamports()?;
+    *wrapper_lamports = current_balance
         .checked_sub(lamports_diff)
         .ok_or(ProgramError::ArithmeticOverflow)?;
-    **collector_lamports = collector_lamports
+    *collector_lamports = collector_lamports
         .checked_add(lamports_diff)
         .ok_or(ProgramError::ArithmeticOverflow)?;
 

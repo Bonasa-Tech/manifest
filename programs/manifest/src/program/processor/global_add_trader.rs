@@ -22,7 +22,7 @@ pub(crate) fn process_global_add_trader(
     accounts: &[AccountInfo],
     _data: &[u8],
 ) -> ProgramResult {
-    trace!("process_global_add_trader accs={accounts:?}");
+    trace!("process_global_add_trader accs={}", accounts.len());
     let global_add_trader_context: GlobalAddTraderContext = GlobalAddTraderContext::load(accounts)?;
 
     let GlobalAddTraderContext { payer, global, .. } = global_add_trader_context;

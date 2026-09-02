@@ -33,7 +33,7 @@ pub(crate) fn process_create_market(
     accounts: &[AccountInfo],
     _data: &[u8],
 ) -> ProgramResult {
-    trace!("process_create_market accs={accounts:?}");
+    trace!("process_create_market accs={}", accounts.len());
     let create_market_context: CreateMarketContext = CreateMarketContext::load(accounts)?;
 
     let CreateMarketContext {

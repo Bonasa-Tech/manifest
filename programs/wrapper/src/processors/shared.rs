@@ -1,13 +1,16 @@
-use std::{
-    cell::{Ref, RefMut},
-    mem::size_of,
-};
+use std::mem::size_of;
+use pinocchio::sysvars::{rent::Rent, Sysvar};
+use pinocchio::account_info::{Ref, RefMut};
 
 use crate::{
     loader::WrapperStateAccountInfo, market_info::MarketInfo, open_order::WrapperOpenOrder,
     processors::batch_upate::WrapperCancelOrderParams, wrapper_state::ManifestWrapperStateFixed,
 };
 use bytemuck::{Pod, Zeroable};
+use manifest::validation::AccountInfoExt;
+use pinocchio::account_info::AccountInfo;
+use pinocchio::ProgramResult;
+use pinocchio::program_error::ProgramError;
 use hypertree::{
     convert_red_black_tree_to_linked_list, get_helper, get_mut_helper, trace, DataIndex, FreeList,
     FreeListNode, HyperTreeReadOperations, HyperTreeWriteOperations, LinkedList,
@@ -22,14 +25,7 @@ use manifest::{
     },
     validation::{ManifestAccountInfo, Program, Signer},
 };
-use solana_program::{
-    account_info::AccountInfo,
-    entrypoint::ProgramResult,
-    program_error::ProgramError,
-    pubkey::Pubkey,
-    system_instruction,
-    sysvar::{rent::Rent, Sysvar},
-};
+use solana_program::{pubkey::Pubkey, system_instruction};
 use static_assertions::const_assert_eq;
 
 // Layout note on the wrapper's use of hypertree.
@@ -113,10 +109,10 @@ const_assert_eq!(
 
 /// Makes sure the wrapper has a free slot, expanding by
 /// [`WRAPPER_EXPAND_BLOCKS`] when it has none.
-pub(crate) fn expand_wrapper_if_needed<'a, 'info>(
-    wrapper_state_account_info: &WrapperStateAccountInfo<'a, 'info>,
-    payer: &Signer<'a, 'info>,
-    system_program: &Program<'a, 'info>,
+pub(crate) fn expand_wrapper_if_needed<'a>(
+    wrapper_state_account_info: &WrapperStateAccountInfo<'a>,
+    payer: &Signer<'a>,
+    system_program: &Program<'a>,
 ) -> ProgramResult {
     ensure_free_slots(wrapper_state_account_info, payer, system_program, 1)
 }
@@ -124,10 +120,10 @@ pub(crate) fn expand_wrapper_if_needed<'a, 'info>(
 /// Makes sure at least `needed` free slots exist, growing the wrapper once
 /// (one system transfer CPI and one realloc) by a multiple of
 /// [`WRAPPER_EXPAND_BLOCKS`] if not.
-pub(crate) fn ensure_free_slots<'a, 'info>(
-    wrapper_state_account_info: &WrapperStateAccountInfo<'a, 'info>,
-    payer: &Signer<'a, 'info>,
-    system_program: &Program<'a, 'info>,
+pub(crate) fn ensure_free_slots<'a>(
+    wrapper_state_account_info: &WrapperStateAccountInfo<'a>,
+    payer: &Signer<'a>,
+    system_program: &Program<'a>,
     needed: usize,
 ) -> ProgramResult {
     let free: usize = count_free_slots(wrapper_state_account_info, needed);
@@ -140,7 +136,7 @@ pub(crate) fn ensure_free_slots<'a, 'info>(
     {
         let wrapper_state: &AccountInfo = wrapper_state_account_info.info;
 
-        let wrapper_data: Ref<&mut [u8]> = wrapper_state.try_borrow_data()?;
+        let wrapper_data: Ref<[u8]> = wrapper_state.try_borrow_data()?;
         let old_size: usize = wrapper_data.len();
         let new_size: usize = old_size + WRAPPER_BLOCK_SIZE * blocks;
         drop(wrapper_data);
@@ -149,24 +145,24 @@ pub(crate) fn ensure_free_slots<'a, 'info>(
         let old_minimum_balance: u64 = rent.minimum_balance(old_size);
         let lamports_diff: u64 = new_minimum_balance.saturating_sub(old_minimum_balance);
         invoke(
-            &system_instruction::transfer(payer.key, wrapper_state.key, lamports_diff),
+            &system_instruction::transfer(payer.pubkey(), wrapper_state.pubkey(), lamports_diff),
             &[
-                payer.info.clone(),
-                wrapper_state.clone(),
-                system_program.info.clone(),
+                payer.info,
+                wrapper_state,
+                system_program.info,
             ],
         )?;
         trace!(
             "expand_if_needed -> realloc {} {:?}",
             new_size,
-            wrapper_state.key
+            wrapper_state.pubkey()
         );
 
         #[cfg(feature = "fuzz")]
         {
             solana_program::program::invoke(
-                &system_instruction::allocate(wrapper_state.key, new_size as u64),
-                &[wrapper_state.clone(), system_program.info.clone()],
+                &system_instruction::allocate(wrapper_state.pubkey(), new_size as u64),
+                &[wrapper_state.clone(), system_program.info],
             )?;
         }
         #[cfg(not(feature = "fuzz"))]
@@ -186,7 +182,7 @@ pub(crate) fn ensure_free_slots<'a, 'info>(
 
 /// Number of free slots, counting at most `limit` of them.
 fn count_free_slots(wrapper_state: &WrapperStateAccountInfo, limit: usize) -> usize {
-    let wrapper_data: Ref<&mut [u8]> = wrapper_state.info.try_borrow_data().unwrap();
+    let wrapper_data: Ref<[u8]> = wrapper_state.info.try_borrow_data().unwrap();
     let (fixed_data, dynamic_data) = wrapper_data.split_at(size_of::<ManifestWrapperStateFixed>());
     let wrapper_fixed: &ManifestWrapperStateFixed = get_helper(fixed_data, 0);
     let mut index: DataIndex = wrapper_fixed.free_list_head_index;
@@ -253,7 +249,7 @@ pub(crate) fn sync(
     market: &ManifestAccountInfo<MarketFixed>,
 ) -> ProgramResult {
     let market_info_index: DataIndex =
-        get_market_info_index_for_market(wrapper_state, market.info.key);
+        get_market_info_index_for_market(wrapper_state, market.info.pubkey());
     sync_fast(
         wrapper_state,
         market,
@@ -391,11 +387,11 @@ pub(crate) fn sync_fast(
     orders_exact: bool,
     mut matcher: Option<&mut CancelMatcher>,
 ) -> ProgramResult {
-    let market_data: Ref<'_, &mut [u8]> = market.try_borrow_data()?;
+    let market_data: Ref<[u8]> = market.try_borrow_data()?;
     let market_ref = get_dynamic_account::<MarketFixed>(&market_data);
     let market_sequence_number: u64 = market_ref.fixed.get_order_sequence_number();
 
-    let mut wrapper_data: RefMut<&mut [u8]> = wrapper_state.info.try_borrow_mut_data()?;
+    let mut wrapper_data: RefMut<[u8]> = wrapper_state.info.try_borrow_mut_data()?;
     let (fixed_data, wrapper_dynamic_data) =
         wrapper_data.split_at_mut(size_of::<ManifestWrapperStateFixed>());
     ensure_orders_list(wrapper_dynamic_data, market_info_index);
@@ -512,7 +508,7 @@ pub(crate) fn get_market_info_index_for_market(
     wrapper_state: &WrapperStateAccountInfo,
     market: &Pubkey,
 ) -> DataIndex {
-    let mut wrapper_data: RefMut<&mut [u8]> = wrapper_state.info.try_borrow_mut_data().unwrap();
+    let mut wrapper_data: RefMut<[u8]> = wrapper_state.info.try_borrow_mut_data().unwrap();
     let (fixed_data, wrapper_dynamic_data) =
         wrapper_data.split_at_mut(size_of::<ManifestWrapperStateFixed>());
 
@@ -535,7 +531,7 @@ pub(crate) fn get_trader_index_hint_for_market(
 ) -> Result<Option<DataIndex>, ProgramError> {
     let market_info_index: DataIndex = get_market_info_index_for_market(wrapper_state, market_key);
 
-    let wrapper_data: Ref<&mut [u8]> = wrapper_state.info.try_borrow_data()?;
+    let wrapper_data: Ref<[u8]> = wrapper_state.info.try_borrow_data()?;
     let (_fixed_data, wrapper_dynamic_data) =
         wrapper_data.split_at(size_of::<ManifestWrapperStateFixed>());
     let market_info: MarketInfo =

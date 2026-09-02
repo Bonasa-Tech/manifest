@@ -1,9 +1,14 @@
 use std::{
-    cell::{Ref, RefMut},
     mem::size_of,
 };
 
 use borsh::{BorshDeserialize, BorshSerialize};
+use pinocchio::account_info::{Ref, RefMut};
+use manifest::validation::next_account_info;
+use manifest::validation::AccountInfoExt;
+use pinocchio::account_info::AccountInfo;
+use pinocchio::ProgramResult;
+use pinocchio::program_error::ProgramError;
 use hypertree::{
     get_helper, get_mut_helper, trace, DataIndex, FreeList, HyperTreeReadOperations,
     HyperTreeWriteOperations, RBNode, NIL,
@@ -20,8 +25,6 @@ use manifest::{
     validation::{ManifestAccountInfo, Program, Signer},
 };
 use solana_program::{
-    account_info::{next_account_info, AccountInfo},
-    entrypoint::ProgramResult,
     instruction::{AccountMeta, Instruction},
     program::get_return_data,
     program_error::ProgramError,
@@ -95,42 +98,42 @@ impl Into<PlaceOrderParams> for WrapperPlaceOrderParams {
 // Call expand so core has enough free space and owner doesn't get charged
 // rent on a subsequent operation. This allows to keep payer and owner
 // separate in the case of PDA owners.
-fn expand_market_if_needed<'a, 'info>(
-    market: &ManifestAccountInfo<'a, 'info, MarketFixed>,
-    payer: &Signer<'a, 'info>,
-    manifest_program: &Program<'a, 'info>,
-    system_program: &Program<'a, 'info>,
+fn expand_market_if_needed<'a>(
+    market: &ManifestAccountInfo<'a, MarketFixed>,
+    payer: &Signer<'a>,
+    manifest_program: &Program<'a>,
+    system_program: &Program<'a>,
 ) -> ProgramResult {
-    let market_data: Ref<'_, &mut [u8]> = market.try_borrow_data()?;
+    let market_data: Ref<[u8]> = market.try_borrow_data()?;
     let dynamic_account: MarketRef = get_dynamic_account(&market_data);
     // Check for two free blocks, bc. there needs to be always one free block
     // after every operation.
     if !dynamic_account.has_two_free_blocks() {
         drop(market_data);
         invoke(
-            &expand_market_instruction(market.key, payer.key),
+            &expand_market_instruction(market.pubkey(), payer.pubkey()),
             &[
-                manifest_program.info.clone(),
-                payer.info.clone(),
-                market.info.clone(),
-                system_program.info.clone(),
+                manifest_program.info,
+                payer.info,
+                market.info,
+                system_program.info,
             ],
         )?
     }
     Ok(())
 }
 
-fn get_or_create_trader_index<'a, 'info>(
-    market: &ManifestAccountInfo<'a, 'info, MarketFixed>,
-    owner: &Signer<'a, 'info>,
-    payer: &Signer<'a, 'info>,
-    manifest_program: &Program<'a, 'info>,
-    system_program: &Program<'a, 'info>,
+fn get_or_create_trader_index<'a>(
+    market: &ManifestAccountInfo<'a, MarketFixed>,
+    owner: &Signer<'a>,
+    payer: &Signer<'a>,
+    manifest_program: &Program<'a>,
+    system_program: &Program<'a>,
 ) -> Result<DataIndex, ProgramError> {
     let trader_index: DataIndex = {
-        let market_data: &Ref<&mut [u8]> = &market.try_borrow_data()?;
+        let market_data: &Ref<[u8]> = &market.try_borrow_data()?;
         let dynamic_account: MarketRef = get_dynamic_account(market_data);
-        dynamic_account.get_trader_index(owner.key)
+        dynamic_account.get_trader_index(owner.pubkey())
     };
 
     if trader_index != NIL {
@@ -140,36 +143,36 @@ fn get_or_create_trader_index<'a, 'info>(
         // Need to intialize a new seat on core.
         expand_market_if_needed(market, payer, manifest_program, system_program)?;
         invoke(
-            &claim_seat_instruction(market.key, owner.key),
+            &claim_seat_instruction(market.pubkey(), owner.pubkey()),
             &[
-                manifest_program.info.clone(),
-                owner.info.clone(),
-                market.info.clone(),
-                system_program.info.clone(),
+                manifest_program.info,
+                owner.info,
+                market.info,
+                system_program.info,
             ],
         )?;
 
         // Fetch newly assigned trader index after claiming core seat.
-        let market_data: &Ref<&mut [u8]> = &mut market.try_borrow_data()?;
+        let market_data: &Ref<[u8]> = &mut market.try_borrow_data()?;
         let dynamic_account: MarketRef = get_dynamic_account(market_data);
-        Ok(dynamic_account.get_trader_index(owner.key))
+        Ok(dynamic_account.get_trader_index(owner.pubkey()))
     }
 }
 
-fn get_or_create_market_info<'a, 'info>(
-    wrapper_state: &WrapperStateAccountInfo<'a, 'info>,
-    market: &ManifestAccountInfo<'a, 'info, MarketFixed>,
-    payer: &Signer<'a, 'info>,
-    system_program: &Program<'a, 'info>,
+fn get_or_create_market_info<'a>(
+    wrapper_state: &WrapperStateAccountInfo<'a>,
+    market: &ManifestAccountInfo<'a, MarketFixed>,
+    payer: &Signer<'a>,
+    system_program: &Program<'a>,
     trader_index: u32,
 ) -> Result<(MarketInfo, DataIndex), ProgramError> {
-    let market_info_index: DataIndex = get_market_info_index_for_market(&wrapper_state, market.key);
+    let market_info_index: DataIndex = get_market_info_index_for_market(&wrapper_state, market.pubkey());
     if market_info_index != NIL {
         // Do an initial sync to get all existing orders and balances fresh. This is
         // needed for modifying user orders for insufficient funds.
         sync_fast(&wrapper_state, &market, market_info_index)?;
 
-        let wrapper_data: Ref<&mut [u8]> = wrapper_state.info.try_borrow_data()?;
+        let wrapper_data: Ref<[u8]> = wrapper_state.info.try_borrow_data()?;
         let (_fixed_data, wrapper_dynamic_data) =
             wrapper_data.split_at(size_of::<ManifestWrapperUserFixed>());
 
@@ -183,15 +186,15 @@ fn get_or_create_market_info<'a, 'info>(
 
         // Load the market_infos tree and insert a new one.
         let wrapper_state_info: &AccountInfo = wrapper_state.info;
-        let mut wrapper_data: RefMut<&mut [u8]> = wrapper_state_info.try_borrow_mut_data()?;
+        let mut wrapper_data: RefMut<[u8]> = wrapper_state_info.try_borrow_mut_data()?;
         let (fixed_data, wrapper_dynamic_data) =
             wrapper_data.split_at_mut(size_of::<ManifestWrapperUserFixed>());
         let wrapper_fixed: &mut ManifestWrapperUserFixed = get_mut_helper(fixed_data, 0);
-        let mut market_info: MarketInfo = MarketInfo::new_empty(*market.key, trader_index);
+        let mut market_info: MarketInfo = MarketInfo::new_empty(*market.pubkey(), trader_index);
         market_info.quote_volume = {
             // Sync volume from core seat to prevent double billing if seat
             // existed before wrapper invocation
-            let market_data: &Ref<&mut [u8]> = &market.try_borrow_data()?;
+            let market_data: &Ref<[u8]> = &market.try_borrow_data()?;
             let dynamic_account: MarketRef = get_dynamic_account(market_data);
             let claimed_seat: &ClaimedSeat =
                 get_helper::<RBNode<ClaimedSeat>>(dynamic_account.dynamic, trader_index)
@@ -239,7 +242,7 @@ pub(crate) fn process_place_order(
         Program::new(next_account_info(account_iter)?, &manifest::id())?;
     let payer: Signer = Signer::new(next_account_info(account_iter)?)?;
 
-    check_signer(&wrapper_state, owner.key);
+    check_signer(&wrapper_state, owner.pubkey());
 
     // Ensure ClaimedSeat in core and MarketInfo in wrapper are allocated.
     // Syncs MarketInfo from ClaimedSeat to calculate required deposits.
@@ -255,7 +258,7 @@ pub(crate) fn process_place_order(
     let remaining_base_atoms: BaseAtoms = market_info.base_balance;
     let remaining_quote_atoms: QuoteAtoms = market_info.quote_balance;
 
-    let order = WrapperPlaceOrderParams::try_from_slice(data)?;
+    let order = WrapperPlaceOrderParams::try_from_slice(data).map_err(manifest::validation::io_to_program_error)?;
     let base_atoms = BaseAtoms::new(order.base_atoms);
     let price = QuoteAtomsPerBaseAtom::try_from_mantissa_and_exponent(
         order.price_mantissa,
@@ -265,7 +268,7 @@ pub(crate) fn process_place_order(
     let missing_amount_atoms: u64 = if order.is_bid {
         // Core CPI verifies token account / vault consistency with mint.
         require!(
-            mint.key.eq(market.get_fixed()?.get_quote_mint()),
+            mint.pubkey().eq(market.get_fixed()?.get_quote_mint()),
             InvalidDepositAccounts,
             "expected market.quote_mint as deposit mint"
         )?;
@@ -276,7 +279,7 @@ pub(crate) fn process_place_order(
     } else {
         // Core CPI verifies token account / vault consistency with mint.
         require!(
-            mint.key.eq(market.get_fixed()?.get_base_mint()),
+            mint.pubkey().eq(market.get_fixed()?.get_base_mint()),
             InvalidDepositAccounts,
             "expected market.base_mint as deposit mint"
         )?;
@@ -284,10 +287,10 @@ pub(crate) fn process_place_order(
     };
 
     // Adjust deposited amount for TransferFee if possible.
-    let deposit_amount_atoms = if *mint.owner == spl_token_2022::id() {
-        let mint_data: Ref<'_, &mut [u8]> = mint.data.borrow();
+    let deposit_amount_atoms = if *mint.owner_pubkey() == spl_token_2022::id() {
+        let mint_data: Ref<[u8]> = mint.try_borrow_data()?;
         let deposit_mint: StateWithExtensions<'_, Mint> =
-            StateWithExtensions::<Mint>::unpack(&mint_data)?;
+            StateWithExtensions::<Mint>::unpack(&mint_data).map_err(manifest::validation::to_program_error)?;
 
         if let Ok(extension) = deposit_mint.get_extension::<TransferHook>() {
             if !extension.program_id.0.eq(&Pubkey::default()) {
@@ -298,7 +301,7 @@ pub(crate) fn process_place_order(
         }
 
         if let Ok(extension) = deposit_mint.get_extension::<TransferFeeConfig>() {
-            let epoch_fee = extension.get_epoch_fee(Clock::get()?.epoch);
+            let epoch_fee = extension.get_epoch_fee(pinocchio::sysvars::clock::Clock::get()?.epoch);
             epoch_fee
                 .calculate_pre_fee_amount(missing_amount_atoms)
                 .unwrap()
@@ -311,27 +314,27 @@ pub(crate) fn process_place_order(
 
     trace!(
         "deposit amount:{deposit_amount_atoms} to cover missing: {missing_amount_atoms} mint:{:?}",
-        mint.key
+        mint.pubkey()
     );
     if deposit_amount_atoms > 0 {
         invoke(
             &deposit_instruction(
-                market.key,
-                owner.key,
-                mint.key,
+                market.pubkey(),
+                owner.pubkey(),
+                mint.pubkey(),
                 deposit_amount_atoms,
-                trader_token_account.key,
-                *token_program.key,
+                trader_token_account.pubkey(),
+                *token_program.pubkey(),
                 Some(trader_index),
             ),
             &[
-                manifest_program.info.clone(),
-                owner.info.clone(),
-                market.info.clone(),
-                trader_token_account.clone(),
-                vault.clone(),
-                token_program.clone(),
-                mint.clone(),
+                manifest_program.info,
+                owner.info,
+                market.info,
+                trader_token_account,
+                vault,
+                token_program,
+                mint,
             ],
         )?;
     }
@@ -345,15 +348,15 @@ pub(crate) fn process_place_order(
 
         let mut account_metas = Vec::with_capacity(13);
         account_metas.extend_from_slice(&[
-            AccountMeta::new(*owner.key, true),
-            AccountMeta::new(*market.key, false),
+            AccountMeta::new(*owner.pubkey(), true),
+            AccountMeta::new(*market.pubkey(), false),
             AccountMeta::new_readonly(system_program::id(), false),
         ]);
         account_metas.extend(accounts[10..].iter().map(|ai| {
-            if ai.is_writable {
-                AccountMeta::new(*ai.key, ai.is_signer)
+            if ai.is_writable() {
+                AccountMeta::new(*ai.pubkey(), ai.is_signer())
             } else {
-                AccountMeta::new_readonly(*ai.key, ai.is_signer)
+                AccountMeta::new_readonly(*ai.pubkey(), ai.is_signer())
             }
         }));
 
@@ -363,21 +366,21 @@ pub(crate) fn process_place_order(
             data: [
                 ManifestInstruction::BatchUpdate.to_vec(),
                 BatchUpdateParams::new(Some(trader_index), vec![], vec![core_place])
-                    .try_to_vec()?,
+                    .try_to_vec().map_err(manifest::validation::io_to_program_error)?,
             ]
             .concat(),
         };
 
         let mut account_infos = Vec::with_capacity(18);
         account_infos.extend_from_slice(&[
-            system_program.info.clone(),
-            manifest_program.info.clone(),
-            owner.info.clone(),
-            market.info.clone(),
+            system_program.info,
+            manifest_program.info,
+            owner.info,
+            market.info,
         ]);
         account_infos.extend_from_slice(&accounts[10..]);
 
-        invoke(&ix, &account_infos)?;
+        invoke(&ix, &account_infos.iter().collect::<Vec<_>>())?;
     }
 
     // Process the order result
@@ -394,7 +397,7 @@ pub(crate) fn process_place_order(
     if order_index != NIL {
         expand_wrapper_if_needed(&wrapper_state, &payer, &system_program)?;
 
-        let mut wrapper_data: RefMut<&mut [u8]> = wrapper_state.info.try_borrow_mut_data().unwrap();
+        let mut wrapper_data: RefMut<[u8]> = wrapper_state.info.try_borrow_mut_data().unwrap();
         let wrapper: DynamicAccount<&mut ManifestWrapperUserFixed, &mut [u8]> =
             get_mut_dynamic_account(&mut wrapper_data);
 

@@ -35,7 +35,7 @@ pub(crate) fn process_global_clean(
     accounts: &[AccountInfo],
     data: &[u8],
 ) -> ProgramResult {
-    trace!("process_global_clean accs={accounts:?}");
+    trace!("process_global_clean accs={}", accounts.len());
     let global_clean_context: GlobalCleanContext = GlobalCleanContext::load(accounts)?;
 
     let GlobalCleanContext {

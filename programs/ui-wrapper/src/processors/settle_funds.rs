@@ -1,4 +1,9 @@
-use std::cell::{Ref, RefMut};
+use pinocchio::account_info::{Ref, RefMut};
+use manifest::validation::next_account_info;
+use manifest::validation::AccountInfoExt;
+use pinocchio::account_info::AccountInfo;
+use pinocchio::ProgramResult;
+use pinocchio::program_error::ProgramError;
 
 use borsh::{BorshDeserialize, BorshSerialize};
 use hypertree::{get_mut_helper, trace, DataIndex, RBNode};
@@ -10,9 +15,6 @@ use manifest::{
     validation::{ManifestAccountInfo, Program, Signer},
 };
 use solana_program::{
-    account_info::{next_account_info, AccountInfo},
-    entrypoint::ProgramResult,
-    program_error::ProgramError,
     pubkey,
     pubkey::Pubkey,
 };
@@ -73,16 +75,16 @@ pub(crate) fn process_settle_funds(
     let referrer_token_account: Result<&AccountInfo, ProgramError> =
         next_account_info(account_iter);
 
-    check_signer(&wrapper_state, owner.key);
-    if *fee_authority.key != FEE_AUTHORITY {
+    check_signer(&wrapper_state, owner.pubkey());
+    if *fee_authority.pubkey() != FEE_AUTHORITY {
         return Err(ProgramError::InvalidArgument);
     }
-    let market_info_index: DataIndex = get_market_info_index_for_market(&wrapper_state, market.key);
+    let market_info_index: DataIndex = get_market_info_index_for_market(&wrapper_state, market.pubkey());
 
     // Do an initial sync to update withdrawable balances and volume traded for fee calculation.
     sync_fast(&wrapper_state, &market, market_info_index)?;
 
-    let mut wrapper_data: RefMut<&mut [u8]> = wrapper_state.info.try_borrow_mut_data()?;
+    let mut wrapper_data: RefMut<[u8]> = wrapper_state.info.try_borrow_mut_data()?;
     let mut wrapper: DynamicAccount<&mut ManifestWrapperUserFixed, &mut [u8]> =
         get_mut_dynamic_account(&mut wrapper_data);
 
@@ -94,7 +96,7 @@ pub(crate) fn process_settle_funds(
     let WrapperSettleFundsParams {
         fee_mantissa,
         platform_fee_percent,
-    } = WrapperSettleFundsParams::try_from_slice(data)?;
+    } = WrapperSettleFundsParams::try_from_slice(data).map_err(manifest::validation::io_to_program_error)?;
     let fee_mantissa = (fee_mantissa as u128).min(FEE_DENOMINATOR);
     if fee_mantissa == 0 {
         return Err(ProgramError::InvalidArgument);
@@ -122,7 +124,7 @@ pub(crate) fn process_settle_funds(
     drop(wrapper_data);
 
     let quote_mint_decimals = {
-        let market_data: Ref<&mut [u8]> = market.try_borrow_data()?;
+        let market_data: Ref<[u8]> = market.try_borrow_data()?;
         let dynamic_account: MarketRef = get_dynamic_account(&market_data);
         dynamic_account.fixed.get_quote_mint_decimals()
     };
@@ -132,44 +134,44 @@ pub(crate) fn process_settle_funds(
     // Settle withdrawable base tokens.
     invoke(
         &withdraw_instruction(
-            market.key,
-            owner.key,
-            mint_base.key,
+            market.pubkey(),
+            owner.pubkey(),
+            mint_base.pubkey(),
             base_balance.as_u64(),
-            trader_token_account_base.key,
-            *token_program_base.key,
+            trader_token_account_base.pubkey(),
+            *token_program_base.pubkey(),
             Some(trader_index),
         ),
         &[
-            market.info.clone(),
-            owner.info.clone(),
-            mint_base.clone(),
-            trader_token_account_base.clone(),
-            vault_base.clone(),
-            token_program_base.clone(),
-            manifest_program.info.clone(),
+            market.info,
+            owner.info,
+            mint_base,
+            trader_token_account_base,
+            vault_base,
+            token_program_base,
+            manifest_program.info,
         ],
     )?;
 
     // Settle withdrawable quote tokens.
     invoke(
         &withdraw_instruction(
-            market.key,
-            owner.key,
-            mint_quote.key,
+            market.pubkey(),
+            owner.pubkey(),
+            mint_quote.pubkey(),
             quote_balance.as_u64(),
-            trader_token_account_quote.key,
-            *token_program_quote.key,
+            trader_token_account_quote.pubkey(),
+            *token_program_quote.pubkey(),
             Some(trader_index),
         ),
         &[
-            market.info.clone(),
-            owner.info.clone(),
-            mint_quote.clone(),
-            trader_token_account_quote.clone(),
-            vault_quote.clone(),
-            token_program_quote.clone(),
-            manifest_program.info.clone(),
+            market.info,
+            owner.info,
+            mint_quote,
+            trader_token_account_quote,
+            vault_quote,
+            token_program_quote,
+            manifest_program.info,
         ],
     )?;
 
@@ -185,50 +187,50 @@ pub(crate) fn process_settle_funds(
 
     trace!("platform_fee_atoms:{platform_fee_atoms}");
 
-    if *token_program_quote.key == spl_token_2022::id() {
+    if *token_program_quote.pubkey() == spl_token_2022::id() {
         invoke(
             &spl_token_2022::instruction::transfer_checked(
-                token_program_quote.key,
-                trader_token_account_quote.key,
-                mint_quote.key,
-                platform_token_account.key,
-                owner.key,
+                token_program_quote.pubkey(),
+                trader_token_account_quote.pubkey(),
+                mint_quote.pubkey(),
+                platform_token_account.pubkey(),
+                owner.pubkey(),
                 &[],
                 platform_fee_atoms,
                 quote_mint_decimals,
-            )?,
+            ).map_err(manifest::validation::to_program_error)?,
             &[
-                token_program_quote.as_ref().clone(),
-                trader_token_account_quote.as_ref().clone(),
-                mint_quote.as_ref().clone(),
-                platform_token_account.as_ref().clone(),
-                owner.as_ref().clone(),
+                token_program_quote.as_ref(),
+                trader_token_account_quote.as_ref(),
+                mint_quote.as_ref(),
+                platform_token_account.as_ref(),
+                owner.as_ref(),
             ],
         )?;
     } else {
         invoke(
             &spl_token::instruction::transfer(
-                token_program_quote.key,
-                trader_token_account_quote.key,
-                platform_token_account.key,
-                owner.key,
+                token_program_quote.pubkey(),
+                trader_token_account_quote.pubkey(),
+                platform_token_account.pubkey(),
+                owner.pubkey(),
                 &[],
                 platform_fee_atoms,
-            )?,
+            ).map_err(manifest::validation::to_program_error)?,
             &[
-                token_program_quote.clone(),
-                trader_token_account_quote.clone(),
-                platform_token_account.clone(),
-                owner.info.clone(),
+                token_program_quote,
+                trader_token_account_quote,
+                platform_token_account,
+                owner.info,
             ],
         )?;
     }
 
     emit_stack(PlatformFeeLog {
-        market: *market.key,
-        user: *owner.key,
-        mint: *mint_quote.key,
-        platform_token_account: *platform_token_account.key,
+        market: *market.pubkey(),
+        user: *owner.pubkey(),
+        mint: *mint_quote.pubkey(),
+        platform_token_account: *platform_token_account.pubkey(),
         platform_fee: platform_fee_atoms,
     })?;
 
@@ -236,50 +238,50 @@ pub(crate) fn process_settle_funds(
         // saturating_sub not needed, but doesn't hurt
         let referrer_fee_atoms = (fee_atoms as u64).saturating_sub(platform_fee_atoms);
 
-        if *token_program_quote.key == spl_token_2022::id() {
+        if *token_program_quote.pubkey() == spl_token_2022::id() {
             invoke(
                 &spl_token_2022::instruction::transfer_checked(
-                    token_program_quote.key,
-                    trader_token_account_quote.key,
-                    mint_quote.key,
-                    referrer_token_account.key,
-                    owner.key,
+                    token_program_quote.pubkey(),
+                    trader_token_account_quote.pubkey(),
+                    mint_quote.pubkey(),
+                    referrer_token_account.pubkey(),
+                    owner.pubkey(),
                     &[],
                     referrer_fee_atoms,
                     quote_mint_decimals,
-                )?,
+                ).map_err(manifest::validation::to_program_error)?,
                 &[
-                    token_program_quote.as_ref().clone(),
-                    trader_token_account_quote.as_ref().clone(),
-                    mint_quote.as_ref().clone(),
-                    referrer_token_account.as_ref().clone(),
-                    owner.as_ref().clone(),
+                    token_program_quote.as_ref(),
+                    trader_token_account_quote.as_ref(),
+                    mint_quote.as_ref(),
+                    referrer_token_account.as_ref(),
+                    owner.as_ref(),
                 ],
             )?;
         } else {
             invoke(
                 &spl_token::instruction::transfer(
-                    token_program_quote.key,
-                    trader_token_account_quote.key,
-                    referrer_token_account.key,
-                    owner.key,
+                    token_program_quote.pubkey(),
+                    trader_token_account_quote.pubkey(),
+                    referrer_token_account.pubkey(),
+                    owner.pubkey(),
                     &[],
                     referrer_fee_atoms,
-                )?,
+                ).map_err(manifest::validation::to_program_error)?,
                 &[
-                    token_program_quote.clone(),
-                    trader_token_account_quote.clone(),
-                    referrer_token_account.clone(),
-                    owner.info.clone(),
+                    token_program_quote,
+                    trader_token_account_quote,
+                    referrer_token_account,
+                    owner.info,
                 ],
             )?;
         }
 
         emit_stack(ReferrerFeeLog {
-            market: *market.key,
-            user: *owner.key,
-            mint: *mint_quote.key,
-            referrer_token_account: *referrer_token_account.key,
+            market: *market.pubkey(),
+            user: *owner.pubkey(),
+            mint: *mint_quote.pubkey(),
+            referrer_token_account: *referrer_token_account.pubkey(),
             referrer_fee: referrer_fee_atoms,
         })?;
     }
@@ -289,7 +291,7 @@ pub(crate) fn process_settle_funds(
 
     // Updating after the authenticated transfers makes the accounting
     // invariant explicit: fee volume is cleared only after payment succeeds.
-    let mut wrapper_data: RefMut<&mut [u8]> = wrapper_state.info.try_borrow_mut_data()?;
+    let mut wrapper_data: RefMut<[u8]> = wrapper_state.info.try_borrow_mut_data()?;
     let mut wrapper: DynamicAccount<&mut ManifestWrapperUserFixed, &mut [u8]> =
         get_mut_dynamic_account(&mut wrapper_data);
     let market_info: &mut MarketInfo =

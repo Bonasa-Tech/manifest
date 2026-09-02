@@ -1,8 +1,10 @@
 use hypertree::get_mut_helper;
+use manifest::validation::next_account_info;
+use manifest::validation::AccountInfoExt;
+use pinocchio::account_info::AccountInfo;
+use pinocchio::ProgramResult;
 use manifest::validation::{Program, Signer};
 use solana_program::{
-    account_info::{next_account_info, AccountInfo},
-    entrypoint::ProgramResult,
     pubkey::Pubkey,
     system_program,
 };
@@ -28,7 +30,7 @@ pub(crate) fn process_create_wrapper(
     // Initialize wrapper state.
     {
         let empty_market_fixed: ManifestWrapperUserFixed =
-            ManifestWrapperUserFixed::new_empty(owner.key);
+            ManifestWrapperUserFixed::new_empty(owner.pubkey());
         let market_bytes: &mut [u8] = &mut wrapper_state.try_borrow_mut_data()?[..];
         *get_mut_helper::<ManifestWrapperUserFixed>(market_bytes, 0_u32) = empty_market_fixed;
     }

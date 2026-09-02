@@ -1,4 +1,5 @@
 use crate::{wrapper_user::ManifestWrapperUserFixed, ManifestWrapperInstruction};
+use pinocchio::sysvars::{rent::Rent, Sysvar};
 use solana_program::{
     instruction::{AccountMeta, Instruction},
     pubkey::Pubkey,

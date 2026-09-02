@@ -15,6 +15,16 @@
 use pinocchio::{account_info::AccountInfo, program_error::ProgramError, pubkey::Pubkey as RawKey};
 use solana_program::pubkey::Pubkey;
 
+/// Takes the next account from the runtime's slice.
+///
+/// pinocchio has no equivalent of `solana_program`'s `next_account_info`; the
+/// loaders walk the slice in order the same way they always did.
+pub fn next_account_info<'a>(
+    iter: &mut core::slice::Iter<'a, AccountInfo>,
+) -> Result<&'a AccountInfo, ProgramError> {
+    iter.next().ok_or(ProgramError::NotEnoughAccountKeys)
+}
+
 /// Reinterprets a raw runtime key as a `Pubkey`.
 ///
 /// Sound because `Pubkey` is a `#[repr(transparent)]` newtype over the same

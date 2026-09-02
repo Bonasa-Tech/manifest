@@ -1,4 +1,9 @@
-use std::cell::{Ref, RefMut};
+use pinocchio::account_info::{Ref, RefMut};
+use manifest::validation::next_account_info;
+use manifest::validation::AccountInfoExt;
+use pinocchio::account_info::AccountInfo;
+use pinocchio::ProgramResult;
+use pinocchio::program_error::ProgramError;
 
 use borsh::{BorshDeserialize, BorshSerialize};
 use hypertree::{
@@ -14,14 +19,10 @@ use manifest::{
     validation::{ManifestAccountInfo, Program, Signer},
 };
 use solana_program::{
-    account_info::{next_account_info, AccountInfo},
     clock::Clock,
-    entrypoint::ProgramResult,
-    program_error::ProgramError,
     pubkey::Pubkey,
     system_program,
-    sysvar::Sysvar,
-};
+    };
 
 use crate::{
     market_info::MarketInfo, open_order::WrapperOpenOrder,
@@ -63,13 +64,13 @@ pub(crate) fn process_cancel_order(
     let manifest_program: Program =
         Program::new(next_account_info(account_iter)?, &manifest::id())?;
 
-    check_signer(&wrapper_state, owner.key);
-    let market_info_index: DataIndex = get_market_info_index_for_market(&wrapper_state, market.key);
+    check_signer(&wrapper_state, owner.pubkey());
+    let market_info_index: DataIndex = get_market_info_index_for_market(&wrapper_state, market.pubkey());
 
-    let cancel = WrapperCancelOrderParams::try_from_slice(data)?;
+    let cancel = WrapperCancelOrderParams::try_from_slice(data).map_err(manifest::validation::io_to_program_error)?;
 
     // prepare cancel
-    let wrapper_data: Ref<&mut [u8]> = wrapper_state.info.try_borrow_data()?;
+    let wrapper_data: Ref<[u8]> = wrapper_state.info.try_borrow_data()?;
     let wrapper: DynamicAccount<&ManifestWrapperUserFixed, &[u8]> =
         get_dynamic_account(&wrapper_data);
 
@@ -96,8 +97,8 @@ pub(crate) fn process_cancel_order(
 
     invoke(
         &batch_update_instruction(
-            market.key,
-            owner.key,
+            market.pubkey(),
+            owner.pubkey(),
             Some(trader_index),
             vec![core_cancel],
             vec![],
@@ -107,20 +108,20 @@ pub(crate) fn process_cancel_order(
             None,
         ),
         &[
-            owner.info.clone(),
-            system_program.info.clone(),
-            manifest_program.info.clone(),
-            owner.info.clone(),
-            market.info.clone(),
-            trader_token_account.clone(),
-            vault.clone(),
-            token_program.clone(),
-            mint.clone(),
+            owner.info,
+            system_program.info,
+            manifest_program.info,
+            owner.info,
+            market.info,
+            trader_token_account,
+            vault,
+            token_program,
+            mint,
         ],
     )?;
 
     // Process the order result
-    let mut wrapper_data: RefMut<&mut [u8]> = wrapper_state.info.try_borrow_mut_data().unwrap();
+    let mut wrapper_data: RefMut<[u8]> = wrapper_state.info.try_borrow_mut_data().unwrap();
     let wrapper: DynamicAccount<&mut ManifestWrapperUserFixed, &mut [u8]> =
         get_mut_dynamic_account(&mut wrapper_data);
 
@@ -149,7 +150,7 @@ pub(crate) fn process_cancel_order(
     // A partial fill can occur after the wrapper's previous synchronization;
     // overwriting quote_volume here would make a later settlement observe a
     // zero delta and permanently skip the platform/referrer fee for that fill.
-    let market_data = market.info.data.borrow();
+    let market_data = market.info.try_borrow_data()?;
     let market_ref = get_dynamic_account::<MarketFixed>(&market_data);
     let claimed_seat: &ClaimedSeat =
         get_helper::<RBNode<ClaimedSeat>>(market_ref.dynamic, market_info.trader_index).get_value();
@@ -162,7 +163,7 @@ pub(crate) fn process_cancel_order(
         .quote_volume_unpaid
         .saturating_add(quote_volume_difference);
     market_info.quote_volume = claimed_seat.quote_volume;
-    market_info.last_updated_slot = Clock::get().unwrap().slot as u32;
+    market_info.last_updated_slot = pinocchio::sysvars::clock::Clock::get().unwrap().slot as u32;
 
     // add node to freelist
     let mut free_list: FreeList<UnusedWrapperFreeListPadding> =

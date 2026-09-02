@@ -1,4 +1,7 @@
-use std::cell::Ref;
+use pinocchio::account_info::Ref;
+use manifest::validation::next_account_info;
+use manifest::validation::AccountInfoExt;
+use pinocchio::ProgramResult;
 
 use borsh::{BorshDeserialize, BorshSerialize};
 use hypertree::DataIndex;
@@ -9,9 +12,8 @@ use manifest::{
 };
 
 use manifest::validation::{Program, Signer};
+use pinocchio::account_info::AccountInfo;
 use solana_program::{
-    account_info::{next_account_info, AccountInfo},
-    entrypoint::ProgramResult,
     pubkey::Pubkey,
 };
 
@@ -46,7 +48,7 @@ pub(crate) fn process_deposit(
     let token_program: TokenProgram = TokenProgram::new(next_account_info(account_iter)?)?;
     let wrapper_state: WrapperStateAccountInfo =
         WrapperStateAccountInfo::new(next_account_info(account_iter)?)?;
-    check_signer(&wrapper_state, owner.key);
+    check_signer(&wrapper_state, owner.pubkey());
     let mint_account_info: MintAccountInfo =
         MintAccountInfo::new(next_account_info(account_iter)?)?;
 
@@ -61,30 +63,30 @@ pub(crate) fn process_deposit(
         }
     };
 
-    let WrapperDepositParams { amount_atoms } = WrapperDepositParams::try_from_slice(data)?;
+    let WrapperDepositParams { amount_atoms } = WrapperDepositParams::try_from_slice(data).map_err(manifest::validation::io_to_program_error)?;
 
     let trader_index_hint: Option<DataIndex> =
-        get_trader_index_hint_for_market(&wrapper_state, &market.info.key)?;
+        get_trader_index_hint_for_market(&wrapper_state, &market.info.pubkey())?;
 
     // Call the deposit CPI.
     invoke(
         &deposit_instruction(
-            market.key,
-            owner.key,
+            market.pubkey(),
+            owner.pubkey(),
             &mint,
             amount_atoms,
-            trader_token_account.key,
-            *token_program.key,
+            trader_token_account.pubkey(),
+            *token_program.pubkey(),
             trader_index_hint,
         ),
         &[
-            manifest_program.info.clone(),
-            owner.info.clone(),
-            market.info.clone(),
-            trader_token_account.clone(),
-            vault.clone(),
-            token_program.info.clone(),
-            mint_account_info.info.clone(),
+            manifest_program.info,
+            owner.info,
+            market.info,
+            trader_token_account,
+            vault,
+            token_program.info,
+            mint_account_info.info,
         ],
     )?;
 
