@@ -6,15 +6,15 @@ use solana_program::{
 use std::ops::Deref;
 
 #[derive(Clone)]
-pub struct Program<'a, 'info> {
+pub struct Program<'a> {
     pub info: &'a AccountInfo,
 }
 
-impl<'a, 'info> Program<'a, 'info> {
+impl<'a> Program<'a> {
     pub fn new(
         info: &'a AccountInfo,
         expected_program_id: &Pubkey,
-    ) -> Result<Program<'a, 'info>, ProgramError> {
+    ) -> Result<Program<'a>, ProgramError> {
         require!(
             info.key() == expected_program_id,
             ProgramError::IncorrectProgramId,
@@ -26,19 +26,19 @@ impl<'a, 'info> Program<'a, 'info> {
     }
 }
 
-impl<'a, 'info> AsRef<AccountInfo> for Program<'a, 'info> {
+impl<'a> AsRef<AccountInfo> for Program<'a> {
     fn as_ref(&self) -> &AccountInfo {
         self.info
     }
 }
 
 #[derive(Clone)]
-pub struct TokenProgram<'a, 'info> {
+pub struct TokenProgram<'a> {
     pub info: &'a AccountInfo,
 }
 
-impl<'a, 'info> TokenProgram<'a, 'info> {
-    pub fn new(info: &'a AccountInfo) -> Result<TokenProgram<'a, 'info>, ProgramError> {
+impl<'a> TokenProgram<'a> {
+    pub fn new(info: &'a AccountInfo) -> Result<TokenProgram<'a>, ProgramError> {
         require!(
             *info.key() == spl_token::id() || *info.key() == spl_token_2022::id(),
             ProgramError::IncorrectProgramId,
@@ -49,13 +49,13 @@ impl<'a, 'info> TokenProgram<'a, 'info> {
     }
 }
 
-impl<'a, 'info> AsRef<AccountInfo> for TokenProgram<'a, 'info> {
+impl<'a> AsRef<AccountInfo> for TokenProgram<'a> {
     fn as_ref(&self) -> &AccountInfo {
         self.info
     }
 }
 
-impl<'a, 'info> Deref for TokenProgram<'a, 'info> {
+impl<'a> Deref for TokenProgram<'a> {
     type Target = AccountInfo;
 
     fn deref(&self) -> &Self::Target {
@@ -64,12 +64,12 @@ impl<'a, 'info> Deref for TokenProgram<'a, 'info> {
 }
 
 #[derive(Clone)]
-pub struct Signer<'a, 'info> {
+pub struct Signer<'a> {
     pub info: &'a AccountInfo,
 }
 
-impl<'a, 'info> Signer<'a, 'info> {
-    pub fn new(info: &'a AccountInfo) -> Result<Signer<'a, 'info>, ProgramError> {
+impl<'a> Signer<'a> {
+    pub fn new(info: &'a AccountInfo) -> Result<Signer<'a>, ProgramError> {
         require!(
             info.is_signer(),
             ProgramError::MissingRequiredSignature,
@@ -79,7 +79,7 @@ impl<'a, 'info> Signer<'a, 'info> {
         Ok(Self { info })
     }
 
-    pub fn new_payer(info: &'a AccountInfo) -> Result<Signer<'a, 'info>, ProgramError> {
+    pub fn new_payer(info: &'a AccountInfo) -> Result<Signer<'a>, ProgramError> {
         require!(
             info.is_writable(),
             ProgramError::InvalidInstructionData,
@@ -96,13 +96,13 @@ impl<'a, 'info> Signer<'a, 'info> {
     }
 }
 
-impl<'a, 'info> AsRef<AccountInfo> for Signer<'a, 'info> {
+impl<'a> AsRef<AccountInfo> for Signer<'a> {
     fn as_ref(&self) -> &AccountInfo {
         self.info
     }
 }
 
-impl<'a, 'info> Deref for Signer<'a, 'info> {
+impl<'a> Deref for Signer<'a> {
     type Target = AccountInfo;
 
     fn deref(&self) -> &Self::Target {
@@ -111,12 +111,12 @@ impl<'a, 'info> Deref for Signer<'a, 'info> {
 }
 
 #[derive(Clone)]
-pub struct EmptyAccount<'a, 'info> {
+pub struct EmptyAccount<'a> {
     pub info: &'a AccountInfo,
 }
 
-impl<'a, 'info> EmptyAccount<'a, 'info> {
-    pub fn new(info: &'a AccountInfo) -> Result<EmptyAccount<'a, 'info>, ProgramError> {
+impl<'a> EmptyAccount<'a> {
+    pub fn new(info: &'a AccountInfo) -> Result<EmptyAccount<'a>, ProgramError> {
         require!(
             info.data_is_empty(),
             ProgramError::InvalidAccountData,
@@ -133,7 +133,7 @@ impl<'a, 'info> EmptyAccount<'a, 'info> {
     }
 }
 
-impl<'a, 'info> AsRef<AccountInfo> for EmptyAccount<'a, 'info> {
+impl<'a> AsRef<AccountInfo> for EmptyAccount<'a> {
     fn as_ref(&self) -> &AccountInfo {
         self.info
     }

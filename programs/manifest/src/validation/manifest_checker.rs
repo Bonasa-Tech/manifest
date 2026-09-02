@@ -11,20 +11,20 @@ use crate::require;
 
 /// Validation for manifest accounts.
 #[derive(Clone)]
-pub struct ManifestAccountInfo<'a, 'info, T: ManifestAccount + Pod + Clone> {
+pub struct ManifestAccountInfo<'a, T: ManifestAccount + Pod + Clone> {
     pub info: &'a AccountInfo,
 
     phantom: std::marker::PhantomData<T>,
 }
 
-impl<'a, 'info, T: ManifestAccount + Get + Pod + Clone> ManifestAccountInfo<'a, 'info, T> {
+impl<'a, T: ManifestAccount + Get + Pod + Clone> ManifestAccountInfo<'a, T> {
     #[cfg_attr(
         all(feature = "certora", not(feature = "certora-test")),
         early_panic::early_panic
     )]
     pub fn new(
         info: &'a AccountInfo,
-    ) -> Result<ManifestAccountInfo<'a, 'info, T>, ProgramError> {
+    ) -> Result<ManifestAccountInfo<'a, T>, ProgramError> {
         verify_owned_by_manifest(info.owner())?;
 
         let bytes: Ref<&mut [u8]> = info.try_borrow_data()?;
@@ -40,7 +40,7 @@ impl<'a, 'info, T: ManifestAccount + Get + Pod + Clone> ManifestAccountInfo<'a, 
 
     pub fn new_init(
         info: &'a AccountInfo,
-    ) -> Result<ManifestAccountInfo<'a, 'info, T>, ProgramError> {
+    ) -> Result<ManifestAccountInfo<'a, T>, ProgramError> {
         verify_owned_by_manifest(info.owner())?;
         verify_uninitialized::<T>(info)?;
         Ok(Self {
@@ -57,7 +57,7 @@ impl<'a, 'info, T: ManifestAccount + Get + Pod + Clone> ManifestAccountInfo<'a, 
     }
 }
 
-impl<'a, 'info, T: ManifestAccount + Pod + Clone> Deref for ManifestAccountInfo<'a, 'info, T> {
+impl<'a, T: ManifestAccount + Pod + Clone> Deref for ManifestAccountInfo<'a, T> {
     type Target = AccountInfo;
 
     fn deref(&self) -> &Self::Target {

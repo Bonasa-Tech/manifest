@@ -1,44 +1,45 @@
-use crate::require;
-use solana_program::{account_info::AccountInfo, program_error::ProgramError, pubkey::Pubkey};
+use crate::{require, validation::AccountInfoExt};
+use pinocchio::account_info::AccountInfo;
+use solana_program::{program_error::ProgramError, pubkey::Pubkey};
 use spl_token_2022::{
     check_spl_token_program_account, extension::StateWithExtensions, state::Mint,
 };
 use std::ops::Deref;
 
 #[derive(Clone)]
-pub struct MintAccountInfo<'a, 'info> {
+pub struct MintAccountInfo<'a> {
     pub mint: Mint,
     pub info: &'a AccountInfo,
 }
 
-impl<'a, 'info> MintAccountInfo<'a, 'info> {
-    pub fn new(info: &'a AccountInfo) -> Result<MintAccountInfo<'a, 'info>, ProgramError> {
-        check_spl_token_program_account(info.owner())?;
+impl<'a> MintAccountInfo<'a> {
+    pub fn new(info: &'a AccountInfo) -> Result<MintAccountInfo<'a>, ProgramError> {
+        check_spl_token_program_account(info.owner_pubkey())?;
 
-        let mint: Mint = StateWithExtensions::<Mint>::unpack(&info.data.borrow())?.base;
+        let mint: Mint = StateWithExtensions::<Mint>::unpack(&info.try_borrow_data()?)?.base;
 
         Ok(Self { mint, info })
     }
 }
 
-impl<'a, 'info> AsRef<AccountInfo> for MintAccountInfo<'a, 'info> {
+impl<'a> AsRef<AccountInfo> for MintAccountInfo<'a> {
     fn as_ref(&self) -> &AccountInfo {
         self.info
     }
 }
 
 #[derive(Clone)]
-pub struct TokenAccountInfo<'a, 'info> {
+pub struct TokenAccountInfo<'a> {
     pub info: &'a AccountInfo,
 }
 
-impl<'a, 'info> TokenAccountInfo<'a, 'info> {
+impl<'a> TokenAccountInfo<'a> {
     pub fn new(
         info: &'a AccountInfo,
         mint: &Pubkey,
-    ) -> Result<TokenAccountInfo<'a, 'info>, ProgramError> {
+    ) -> Result<TokenAccountInfo<'a>, ProgramError> {
         require!(
-            info.owner() == &spl_token::id() || info.owner() == &spl_token_2022::id(),
+            info.owned_by(&spl_token::id()) || info.owned_by(&spl_token_2022::id()),
             ProgramError::IllegalOwner,
             "Token account must be owned by the Token Program",
         )?;
@@ -71,7 +72,7 @@ impl<'a, 'info> TokenAccountInfo<'a, 'info> {
         info: &'a AccountInfo,
         mint: &Pubkey,
         owner: &Pubkey,
-    ) -> Result<TokenAccountInfo<'a, 'info>, ProgramError> {
+    ) -> Result<TokenAccountInfo<'a>, ProgramError> {
         let token_account_info = Self::new(info, mint)?;
         // The owner key is found at offset 32 of the token account
         require!(
@@ -87,24 +88,24 @@ impl<'a, 'info> TokenAccountInfo<'a, 'info> {
         mint: &Pubkey,
         owner: &Pubkey,
         key: &Pubkey,
-    ) -> Result<TokenAccountInfo<'a, 'info>, ProgramError> {
+    ) -> Result<TokenAccountInfo<'a>, ProgramError> {
         require!(
-            info.key() == key,
+            info.pubkey() == key,
             ProgramError::InvalidInstructionData,
             "Invalid pubkey for Token Account {:?}",
-            info.key()
+            info.pubkey()
         )?;
         Self::new_with_owner(info, mint, owner)
     }
 }
 
-impl<'a, 'info> AsRef<AccountInfo> for TokenAccountInfo<'a, 'info> {
+impl<'a> AsRef<AccountInfo> for TokenAccountInfo<'a> {
     fn as_ref(&self) -> &AccountInfo {
         self.info
     }
 }
 
-impl<'a, 'info> Deref for TokenAccountInfo<'a, 'info> {
+impl<'a> Deref for TokenAccountInfo<'a> {
     type Target = AccountInfo;
 
     fn deref(&self) -> &Self::Target {
