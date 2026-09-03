@@ -235,21 +235,20 @@ pub struct QuoteAtomsPerBaseAtom {
 // has no native support for u128 math and requires us only to be 8 byte
 // aligned.
 #[cfg(not(feature = "certora"))]
+/// The little endian split of a u128 into its low and high words.
+///
+/// Done with shifts rather than by reinterpreting the bytes. A `u128` may
+/// need 16 byte alignment while `[u64; 2]` guarantees only 8, so the pointer
+/// version had to go through an unaligned read, and that made the compiler
+/// round the value through the stack instead of keeping it in the register
+/// pair it already occupies. These conversions sit under every price
+/// comparison and every piece of price arithmetic, so that round trip was
+/// paid at every level of every orderbook tree descent.
 const fn u128_to_u64_slice(a: u128) -> [u64; 2] {
-    unsafe {
-        let ptr: *const u128 = &a;
-        *ptr.cast::<[u64; 2]>()
-    }
+    [a as u64, (a >> 64) as u64]
 }
-pub(crate) fn u64_slice_to_u128(a: [u64; 2]) -> u128 {
-    // `[u64; 2]` guarantees only 8-byte alignment, while Rust may require
-    // 16-byte alignment for `u128` even on SBF. The runtime supports the
-    // underlying 8-byte loads, but the Rust pointer dereference must still be
-    // explicitly unaligned to avoid undefined behavior.
-    unsafe {
-        let ptr: *const [u64; 2] = &a;
-        ptr.cast::<u128>().read_unaligned()
-    }
+pub(crate) const fn u64_slice_to_u128(a: [u64; 2]) -> u128 {
+    ((a[1] as u128) << 64) | (a[0] as u128)
 }
 
 #[cfg(not(feature = "certora"))]
@@ -770,7 +769,14 @@ impl QuoteAtomsPerBaseAtom {
 impl Ord for QuoteAtomsPerBaseAtom {
     #[inline(always)]
     fn cmp(&self, other: &Self) -> Ordering {
-        (u64_slice_to_u128(self.inner)).cmp(&u64_slice_to_u128(other.inner))
+        // `inner` is the little endian u64 split of the u128, so comparing the
+        // high word and then the low word is the same ordering as comparing
+        // the u128 itself, and it keeps both operands in registers.
+        // `u64_slice_to_u128` takes the array by value and reads it back
+        // through an unaligned u128 pointer, which costs a stack round trip.
+        // This comparison runs at every level of every orderbook tree descent,
+        // so that round trip is paid once per level per order.
+        (self.inner[1], self.inner[0]).cmp(&(other.inner[1], other.inner[0]))
     }
 }
 
@@ -1097,4 +1103,84 @@ fn test_debug() {
             inner: u128_to_u64_slice(123 * D18 / 100),
         }
     );
+}
+
+#[cfg(test)]
+mod price_ordering_tests {
+    use super::*;
+
+    /// The word wise comparison in `Ord for QuoteAtomsPerBaseAtom` has to
+    /// agree with comparing the u128 it stands for, including across the
+    /// 64 bit boundary where only the high word separates two prices.
+    #[test]
+    fn word_wise_price_order_matches_u128() {
+        let interesting: [u128; 14] = [
+            0,
+            1,
+            2,
+            u64::MAX as u128 - 1,
+            u64::MAX as u128,
+            u64::MAX as u128 + 1,
+            u64::MAX as u128 + 2,
+            1u128 << 64,
+            (1u128 << 64) | 1,
+            (1u128 << 64) | (u64::MAX as u128),
+            2u128 << 64,
+            u128::MAX - 1,
+            u128::MAX,
+            D18,
+        ];
+        for left in interesting.iter() {
+            for right in interesting.iter() {
+                let a: QuoteAtomsPerBaseAtom = QuoteAtomsPerBaseAtom {
+                    inner: u128_to_u64_slice(*left),
+                };
+                let b: QuoteAtomsPerBaseAtom = QuoteAtomsPerBaseAtom {
+                    inner: u128_to_u64_slice(*right),
+                };
+                assert_eq!(
+                    a.cmp(&b),
+                    left.cmp(right),
+                    "comparing {left} against {right}"
+                );
+                assert_eq!(a == b, left == right, "equality of {left} and {right}");
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod word_split_tests {
+    use super::*;
+
+    /// The shift based split has to be the same little endian split the byte
+    /// reinterpretation produced, in both directions, or every stored price
+    /// changes meaning.
+    #[test]
+    fn split_and_join_round_trip() {
+        let interesting: [u128; 10] = [
+            0,
+            1,
+            u64::MAX as u128,
+            u64::MAX as u128 + 1,
+            1u128 << 64,
+            (1u128 << 64) | 0xdead_beef,
+            u128::MAX,
+            D18,
+            D18 * 1_000,
+            0x0123_4567_89ab_cdef_fedc_ba98_7654_3210,
+        ];
+        for value in interesting.iter() {
+            let words: [u64; 2] = u128_to_u64_slice(*value);
+            assert_eq!(words[0], *value as u64, "low word of {value}");
+            assert_eq!(words[1], (*value >> 64) as u64, "high word of {value}");
+            assert_eq!(u64_slice_to_u128(words), *value, "round trip of {value}");
+            // What the pointer reinterpretation did, on a little endian target.
+            let reinterpreted: [u64; 2] = unsafe {
+                let ptr: *const u128 = value;
+                *ptr.cast::<[u64; 2]>()
+            };
+            assert_eq!(words, reinterpreted, "byte order for {value}");
+        }
+    }
 }
