@@ -390,6 +390,65 @@ pub fn invoke_signed(
 ///
 /// Accounts arrive as `&[&AccountView]` because that is what pinocchio's CPI
 /// takes; the slice form avoids the const generic count at every call site.
+/// Calls `program_id` with `data`, passing exactly `accounts` in the order
+/// given and taking each account's writable and signer flags from this
+/// program's own view of it.
+///
+/// This is what forwarding an instruction to another program looks like when
+/// the caller already holds the accounts it wants to pass. Going through a
+/// `solana_program::Instruction` to say the same thing copies every address
+/// into an `AccountMeta` only for [`with_pinocchio_instruction`] to borrow it
+/// back out again; pinocchio's metas point at the addresses the accounts
+/// already carry.
+pub fn invoke_passthrough(
+    program_id: &solana_program::pubkey::Pubkey,
+    accounts: &[AccountView],
+    data: &[u8],
+) -> ProgramResult {
+    const MAX_CPI_ACCOUNTS: usize = 16;
+    require!(
+        accounts.len() <= MAX_CPI_ACCOUNTS,
+        ProgramError::InvalidArgument,
+        "CPI with {} accounts, more than the {} supported",
+        accounts.len(),
+        MAX_CPI_ACCOUNTS,
+    )?;
+
+    let mut metas: [MaybeUninit<PinocchioAccountMeta>; MAX_CPI_ACCOUNTS] =
+        [const { MaybeUninit::uninit() }; MAX_CPI_ACCOUNTS];
+    // pinocchio wants the accounts as a slice of references; this is that
+    // slice, on the stack, rather than a heap vector of pointers.
+    let mut borrowed: [MaybeUninit<&AccountView>; MAX_CPI_ACCOUNTS] =
+        [const { MaybeUninit::uninit() }; MAX_CPI_ACCOUNTS];
+    for ((meta, slot), account) in metas
+        .iter_mut()
+        .zip(borrowed.iter_mut())
+        .zip(accounts.iter())
+    {
+        meta.write(PinocchioAccountMeta {
+            address: account.address(),
+            is_writable: account.is_writable(),
+            is_signer: account.is_signer(),
+        });
+        slot.write(account);
+    }
+    // SAFETY: the first `accounts.len()` entries of both arrays were just
+    // written, and that length is within them by the check above.
+    let metas: &[PinocchioAccountMeta] =
+        unsafe { core::slice::from_raw_parts(metas.as_ptr().cast(), accounts.len()) };
+    let borrowed: &[&AccountView] =
+        unsafe { core::slice::from_raw_parts(borrowed.as_ptr().cast(), accounts.len()) };
+
+    pinocchio::cpi::invoke_with_slice(
+        &PinocchioInstruction {
+            program_id: as_raw_key(program_id),
+            accounts: metas,
+            data,
+        },
+        borrowed,
+    )
+}
+
 pub fn invoke(ix: &Instruction, account_infos: &[&AccountView]) -> ProgramResult {
     with_pinocchio_instruction(ix, account_infos, |pinocchio_ix, ordered| {
         pinocchio::cpi::invoke_with_slice(pinocchio_ix, ordered)

@@ -8,7 +8,7 @@ use hypertree::{
 use manifest::{
     program::{
         batch_update::{BatchUpdateParams, CancelOrderParams, PlaceOrderParams},
-        get_mut_dynamic_account, invoke, ManifestInstruction,
+        get_mut_dynamic_account, invoke, invoke_passthrough, ManifestInstruction,
     },
     quantities::{BaseAtoms, QuoteAtoms, QuoteAtomsPerBaseAtom, WrapperU64},
     state::{
@@ -21,7 +21,6 @@ use pinocchio::{
     ProgramResult,
 };
 use solana_program::{
-    instruction::{AccountMeta, Instruction},
     program::get_return_data,
     pubkey::Pubkey,
     system_program,
@@ -195,17 +194,6 @@ fn execute_cpi(
     core_cancels: Vec<CancelOrderParams>,
     core_orders: Vec<PlaceOrderParams>,
 ) -> ProgramResult {
-    let mut acc_metas: Vec<AccountMeta> = Vec::with_capacity(accounts.len());
-    // First two accounts are for wrapper and manifest program itself the
-    // remainder is passed through directly to manifest.
-    acc_metas.extend(accounts[2..].iter().map(|ai| {
-        if ai.is_writable() {
-            AccountMeta::new(*ai.pubkey(), ai.is_signer())
-        } else {
-            AccountMeta::new_readonly(*ai.pubkey(), ai.is_signer())
-        }
-    }));
-
     // Serialize straight into one buffer, sized for what goes in it. Building
     // the discriminant and the params as their own vectors and concatenating
     // them allocated three times and copied the params twice.
@@ -217,17 +205,10 @@ fn execute_cpi(
         .serialize(&mut data)
         .map_err(manifest::validation::io_to_program_error)?;
 
-    let ix: Instruction = Instruction {
-        program_id: manifest::id(),
-        accounts: acc_metas,
-        data,
-    };
-
-    // Exactly the instruction's accounts, in its order. That is pinocchio's
-    // CPI contract, and passing it lets `invoke` skip matching each meta
-    // against the list by key. The manifest program account at index 1 does
-    // not belong here: the runtime resolves the callee from `program_id`.
-    invoke(&ix, &accounts[2..].iter().collect::<Vec<_>>())
+    // The first two accounts are this program's state and the manifest
+    // program itself; the rest are passed through to manifest as they stand,
+    // with the flags this program sees on them.
+    invoke_passthrough(&manifest::id(), &accounts[2..], &data)
 }
 
 /// Removes the cancelled orders from the wrapper's open orders.
