@@ -53,7 +53,6 @@ pub const RBTREE_OVERHEAD_BYTES: usize = 16;
 //    fn get_parent_index<V: Payload>(&self, index: DataIndex) -> DataIndex;
 //    fn is_left_child<V: Payload>(&self, index: DataIndex) -> bool;
 //    fn is_right_child<V: Payload>(&self, index: DataIndex) -> bool;
-//    fn get_node<V: Payload>(&'a self, index: DataIndex) -> &RBNode<V>;
 //    fn get_child_index<V: Payload>(&self, index: DataIndex) -> DataIndex;
 //    fn is_internal<V: Payload>(&self, index: DataIndex) -> bool;
 //    fn get_sibling_index<V: Payload>(&self, index: DataIndex, parent_index: DataIndex)
@@ -294,7 +293,6 @@ pub trait RedBlackTreeReadOperationsHelpers<'a> {
     fn get_parent_index<V: Payload>(&self, index: DataIndex) -> DataIndex;
     fn is_left_child<V: Payload>(&self, index: DataIndex) -> bool;
     fn is_right_child<V: Payload>(&self, index: DataIndex) -> bool;
-    fn get_node<V: Payload>(&'a self, index: DataIndex) -> &'a RBNode<V>;
     fn get_child_index<V: Payload>(&self, index: DataIndex) -> DataIndex;
     fn is_internal<V: Payload>(&self, index: DataIndex) -> bool;
     fn get_sibling_index<V: Payload>(&self, index: DataIndex, parent_index: DataIndex)
@@ -311,7 +309,6 @@ pub(crate) trait RedBlackTreeReadOperationsHelpers<'a> {
     fn get_parent_index<V: Payload>(&self, index: DataIndex) -> DataIndex;
     fn is_left_child<V: Payload>(&self, index: DataIndex) -> bool;
     fn is_right_child<V: Payload>(&self, index: DataIndex) -> bool;
-    fn get_node<V: Payload>(&'a self, index: DataIndex) -> &'a RBNode<V>;
     fn get_child_index<V: Payload>(&self, index: DataIndex) -> DataIndex;
     fn is_internal<V: Payload>(&self, index: DataIndex) -> bool;
     fn get_sibling_index<V: Payload>(&self, index: DataIndex, parent_index: DataIndex)
@@ -380,12 +377,6 @@ where
         let parent_index: DataIndex = self.get_parent_index::<V>(index);
         self.get_right_index::<V>(parent_index) == index
     }
-    fn get_node<V: Payload>(&'a self, index: DataIndex) -> &'a RBNode<V> {
-        debug_assert_ne!(index, NIL);
-        let node: &RBNode<V> = get_helper::<RBNode<V>>(self.data(), index);
-        node
-    }
-
     fn get_child_index<V: Payload>(&self, index: DataIndex) -> DataIndex {
         debug_assert_ne!(index, NIL);
         // Assert that there are not both. This is getting the unique child.
@@ -1156,7 +1147,7 @@ impl<'a, V: Payload> HyperTreeWriteOperations<'a, V> for RedBlackTree<'a, V> {
             self.max_index = index;
         }
 
-        self.insert_node_no_fix(new_node, index);
+        self.insert_node_no_fix(&new_node, index);
 
         // Avoid recursion by doing a loop here.
         let mut node_to_fix: DataIndex = index;
@@ -1365,9 +1356,20 @@ impl<'a, V: Payload> RedBlackTree<'a, V> {
 
     /// Insert a node into the subtree without fixing. This node could be a leaf
     /// or a subtree itself.
-    fn insert_node_no_fix(&mut self, node_to_insert: RBNode<V>, new_node_index: DataIndex) {
+    ///
+    /// The node is taken by reference. `RBNode<RestingOrder>` is eighty bytes
+    /// and this runs for every order placed, so taking it by value copied it
+    /// onto the stack a second time on the way in.
+    fn insert_node_no_fix(&mut self, node_to_insert: &RBNode<V>, new_node_index: DataIndex) {
         let mut current_parent: &RBNode<V> = get_helper::<RBNode<V>>(self.data, self.root_index);
         let mut current_parent_index: DataIndex = self.root_index;
+
+        // Which side of `current_parent` the new node belongs on, once the
+        // walk stops. The comparison that stopped the walk already decided it,
+        // so it is recorded here rather than read and compared a second time
+        // after the walk; only stopping at a node with no children at all
+        // leaves it undecided.
+        let mut insert_on_right: Option<bool> = None;
 
         // Keep trying to walk while there are children. Breaks when there isnt
         // the expected child or at a leaf.
@@ -1380,6 +1382,7 @@ impl<'a, V: Payload> RedBlackTree<'a, V> {
                         current_parent = get_helper::<RBNode<V>>(self.data, right_index);
                         current_parent_index = right_index;
                     } else {
+                        insert_on_right = Some(true);
                         break;
                     }
                 }
@@ -1390,6 +1393,7 @@ impl<'a, V: Payload> RedBlackTree<'a, V> {
                         current_parent = get_helper::<RBNode<V>>(self.data, left_index);
                         current_parent_index = left_index;
                     } else {
+                        insert_on_right = Some(false);
                         break;
                     }
                 }
@@ -1401,13 +1405,18 @@ impl<'a, V: Payload> RedBlackTree<'a, V> {
                         current_parent = get_helper::<RBNode<V>>(self.data, left_index);
                         current_parent_index = left_index;
                     } else {
+                        insert_on_right = Some(false);
                         break;
                     }
                 }
             }
         }
-        // We ended at a leaf and need to add below.
-        if *self.get_node(current_parent_index) < node_to_insert {
+        // We ended at a leaf and need to add below. `current_parent` is still
+        // the node the walk stopped on, so the undecided case compares against
+        // it rather than fetching it again.
+        let insert_on_right: bool =
+            insert_on_right.unwrap_or_else(|| *current_parent < *node_to_insert);
+        if insert_on_right {
             self.set_right_index::<V>(current_parent_index, new_node_index);
         } else {
             self.set_left_index::<V>(current_parent_index, new_node_index);
@@ -1416,7 +1425,7 @@ impl<'a, V: Payload> RedBlackTree<'a, V> {
         // Put the leaf in the tree and update its parent.
         {
             let new_node: &mut RBNode<V> = get_mut_helper::<RBNode<V>>(self.data, new_node_index);
-            *new_node = node_to_insert;
+            *new_node = *node_to_insert;
             new_node.parent = current_parent_index;
         }
     }
