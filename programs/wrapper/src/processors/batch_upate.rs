@@ -218,7 +218,11 @@ fn execute_cpi(
         .concat(),
     };
 
-    invoke(&ix, &accounts[1..].iter().collect::<Vec<_>>())
+    // Exactly the instruction's accounts, in its order. That is pinocchio's
+    // CPI contract, and passing it lets `invoke` skip matching each meta
+    // against the list by key. The manifest program account at index 1 does
+    // not belong here: the runtime resolves the callee from `program_id`.
+    invoke(&ix, &accounts[2..].iter().collect::<Vec<_>>())
 }
 
 /// Removes the cancelled orders from the wrapper's open orders.

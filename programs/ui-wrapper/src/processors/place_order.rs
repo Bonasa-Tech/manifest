@@ -371,13 +371,12 @@ pub(crate) fn process_place_order(
             .concat(),
         };
 
-        let mut account_infos = Vec::with_capacity(18);
-        account_infos.extend_from_slice(&[
-            system_program.info,
-            manifest_program.info,
-            owner.info,
-            market.info,
-        ]);
+        // The instruction's accounts, in its order, which is pinocchio's CPI
+        // contract and lets `invoke` skip matching each meta against the list
+        // by key. The manifest program account is not one of them: the runtime
+        // resolves the callee from `program_id`.
+        let mut account_infos = Vec::with_capacity(16);
+        account_infos.extend_from_slice(&[owner.info, market.info, system_program.info]);
         account_infos.extend(accounts[10..].iter());
 
         invoke(&ix, &account_infos)?;
