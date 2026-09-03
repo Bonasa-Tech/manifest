@@ -400,6 +400,45 @@ pub fn invoke_signed(
 /// into an `AccountMeta` only for [`with_pinocchio_instruction`] to borrow it
 /// back out again; pinocchio's metas point at the addresses the accounts
 /// already carry.
+/// [`invoke_passthrough`] for accounts the caller holds as references.
+pub fn invoke_passthrough_refs(
+    program_id: &solana_program::pubkey::Pubkey,
+    accounts: &[&AccountView],
+    data: &[u8],
+) -> ProgramResult {
+    const MAX_CPI_ACCOUNTS: usize = 16;
+    require!(
+        accounts.len() <= MAX_CPI_ACCOUNTS,
+        ProgramError::InvalidArgument,
+        "CPI with {} accounts, more than the {} supported",
+        accounts.len(),
+        MAX_CPI_ACCOUNTS,
+    )?;
+
+    let mut metas: [MaybeUninit<PinocchioAccountMeta>; MAX_CPI_ACCOUNTS] =
+        [const { MaybeUninit::uninit() }; MAX_CPI_ACCOUNTS];
+    for (meta, account) in metas.iter_mut().zip(accounts.iter()) {
+        meta.write(PinocchioAccountMeta {
+            address: account.address(),
+            is_writable: account.is_writable(),
+            is_signer: account.is_signer(),
+        });
+    }
+    // SAFETY: the first `accounts.len()` entries were just written, and that
+    // length is within the array by the check above.
+    let metas: &[PinocchioAccountMeta] =
+        unsafe { core::slice::from_raw_parts(metas.as_ptr().cast(), accounts.len()) };
+
+    pinocchio::cpi::invoke_with_slice(
+        &PinocchioInstruction {
+            program_id: as_raw_key(program_id),
+            accounts: metas,
+            data,
+        },
+        accounts,
+    )
+}
+
 pub fn invoke_passthrough(
     program_id: &solana_program::pubkey::Pubkey,
     accounts: &[AccountView],

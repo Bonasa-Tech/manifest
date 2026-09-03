@@ -8,7 +8,8 @@ use hypertree::{
 use manifest::{
     program::{
         batch_update::{BatchUpdateParams, CancelOrderParams, PlaceOrderParams},
-        get_mut_dynamic_account, invoke, invoke_passthrough, ManifestInstruction,
+        get_mut_dynamic_account, invoke_passthrough, invoke_passthrough_refs,
+        ManifestInstruction,
     },
     quantities::{BaseAtoms, QuoteAtoms, QuoteAtomsPerBaseAtom, WrapperU64},
     state::{
@@ -359,13 +360,17 @@ fn collect_fee<'a>(
     payer: &Signer<'a>,
     wrapper_state: &WrapperStateAccountInfo<'a>,
 ) -> ProgramResult {
-    invoke(
-        &solana_program::system_instruction::transfer(
-            payer.as_ref().pubkey(),
-            wrapper_state.pubkey(),
-            manifest::state::GAS_DEPOSIT_LAMPORTS,
-        ),
+    // The system program's transfer, encoded directly. Building it through
+    // `system_instruction::transfer` bincode encodes the instruction enum and
+    // allocates a vector for the data and another for the account metas, and
+    // this runs on every batch update.
+    let mut data: [u8; 12] = [0; 12];
+    data[0] = 2;
+    data[4..].copy_from_slice(&manifest::state::GAS_DEPOSIT_LAMPORTS.to_le_bytes());
+    invoke_passthrough_refs(
+        &system_program::id(),
         &[payer.as_ref(), wrapper_state.info],
+        &data,
     )?;
 
     Ok(())
