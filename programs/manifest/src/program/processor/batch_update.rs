@@ -363,7 +363,7 @@ pub(crate) fn process_batch_update_core(
             let add_order_to_market_result: AddOrderToMarketResult = batch_place_order(
                 &mut dynamic_account,
                 AddOrderToMarketArgs {
-                    market: market_pubkey,
+                    market: &market_pubkey,
                     trader_index,
                     num_base_atoms: base_atoms,
                     price,
