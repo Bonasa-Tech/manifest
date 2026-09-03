@@ -206,16 +206,21 @@ fn execute_cpi(
         }
     }));
 
+    // Serialize straight into one buffer, sized for what goes in it. Building
+    // the discriminant and the params as their own vectors and concatenating
+    // them allocated three times and copied the params twice.
+    let mut data: Vec<u8> = Vec::with_capacity(
+        1 + 5 + 4 + core_cancels.len() * 13 + 4 + core_orders.len() * 19,
+    );
+    data.push(ManifestInstruction::BatchUpdate as u8);
+    BatchUpdateParams::new(trader_index_hint, core_cancels, core_orders)
+        .serialize(&mut data)
+        .map_err(manifest::validation::io_to_program_error)?;
+
     let ix: Instruction = Instruction {
         program_id: manifest::id(),
         accounts: acc_metas,
-        data: [
-            ManifestInstruction::BatchUpdate.to_vec(),
-            BatchUpdateParams::new(trader_index_hint, core_cancels, core_orders)
-                .try_to_vec()
-                .map_err(manifest::validation::io_to_program_error)?,
-        ]
-        .concat(),
+        data,
     };
 
     // Exactly the instruction's accounts, in its order. That is pinocchio's
