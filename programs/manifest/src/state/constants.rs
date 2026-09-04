@@ -1,4 +1,5 @@
 use hypertree::RBTREE_OVERHEAD_BYTES;
+use static_assertions::const_assert_eq;
 
 pub const MARKET_FIXED_SIZE: usize = 256;
 pub const GLOBAL_FIXED_SIZE: usize = 96;
@@ -47,3 +48,10 @@ pub const GAS_DEPOSIT_LAMPORTS: u64 = 5_000;
 pub const MAX_GLOBAL_SEATS: u16 = 4;
 #[cfg(not(feature = "test"))]
 pub const MAX_GLOBAL_SEATS: u16 = 999;
+
+// Given Solana's eight-byte-aligned account-data base, these block sizes
+// preserve alignment at every node boundary. Safe byte-slice helpers still
+// validate their effective address because arbitrary slices need not share
+// that base alignment.
+const_assert_eq!(MARKET_BLOCK_SIZE % 8, 0);
+const_assert_eq!(GLOBAL_BLOCK_SIZE % 8, 0);

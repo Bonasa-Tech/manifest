@@ -89,6 +89,11 @@ pub const WRAPPER_BLOCK_PAYLOAD_SIZE: usize = 80;
 pub const BLOCK_HEADER_SIZE: usize = 16;
 pub const WRAPPER_BLOCK_SIZE: usize = WRAPPER_BLOCK_PAYLOAD_SIZE + BLOCK_HEADER_SIZE;
 
+// Given Solana's eight-byte-aligned account-data base, this block size
+// preserves alignment at every node boundary. Safe byte-slice helpers still
+// validate arbitrary input bases; see `hypertree::get_helper`.
+const_assert_eq!(WRAPPER_BLOCK_SIZE % 8, 0);
+
 // This is the maximum number of order ids/cancels assembled for one core CPI;
 // it is not a market traversal budget. Bounded traversals have their own
 // explicit step quotas and persistent progress state.
