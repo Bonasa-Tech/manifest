@@ -12,60 +12,44 @@ pub unsafe trait Get: Copy {}
 
 /// Read a struct of type T in an array of data at a given index.
 ///
-/// This is the safe entry point for arbitrary byte slices, including buffers
-/// received from RPC. Account block layouts can prove that their offsets
-/// preserve alignment, but they cannot prove that an arbitrary slice's base
-/// address is aligned.
+/// Native callers may pass arbitrary byte slices (including RPC buffers), so
+/// native builds check the effective address at runtime. Solana release builds
+/// deliberately omit that check: the program only calls this with account data
+/// supplied by the runtime, whose base is eight-byte aligned, and at offsets
+/// formed from eight-byte-aligned fixed headers and block sizes. Every `Get`
+/// type used by the program has alignment at most eight.
+///
+/// Solana callers must preserve that account-data invariant. Passing an
+/// arbitrary or shifted slice to this safe function on Solana could create a
+/// misaligned reference and cause undefined behavior.
 #[inline(always)]
 pub fn get_helper<T: Get>(data: &[u8], index: DataIndex) -> &T {
     let index_usize: usize = index as usize;
     let bytes: &[u8] = &data[index_usize..index_usize + size_of::<T>()];
+    #[cfg(not(target_os = "solana"))]
     assert_eq!((bytes.as_ptr() as usize) % std::mem::align_of::<T>(), 0);
-    // SAFETY: `Get` supplies the validity contract and the alignment and range
-    // are checked above. The returned reference is tied to `data`.
-    unsafe { get_helper_unchecked(data, index) }
+    #[cfg(target_os = "solana")]
+    debug_assert_eq!((bytes.as_ptr() as usize) % std::mem::align_of::<T>(), 0);
+    // SAFETY: `Get` supplies the validity contract. Native builds check
+    // alignment above; Solana builds rely on the documented account-data and
+    // block-layout invariant. The slice operation checks the range, and the
+    // returned reference is tied to `data`.
+    unsafe { &*bytes.as_ptr().cast::<T>() }
 }
 
 /// Read a struct of type T in an array of data at a given index.
+///
+/// On Solana, this has the same account-data alignment requirement as
+/// [`get_helper`].
 #[inline(always)]
 pub fn get_mut_helper<T: Get>(data: &mut [u8], index: DataIndex) -> &mut T {
     let index_usize: usize = index as usize;
     let bytes: &mut [u8] = &mut data[index_usize..index_usize + size_of::<T>()];
+    #[cfg(not(target_os = "solana"))]
     assert_eq!((bytes.as_ptr() as usize) % std::mem::align_of::<T>(), 0);
-    // SAFETY: `Get` supplies the validity contract and the alignment and range
-    // are checked above. The exclusive reference is tied to `data`.
-    unsafe { get_mut_helper_unchecked(data, index) }
-}
-
-/// Read a struct without checking the alignment of its address.
-///
-/// Bounds are still checked.
-///
-/// # Safety
-/// `data.as_ptr().add(index as usize)` must be aligned for `T`.
-#[inline(always)]
-pub unsafe fn get_helper_unchecked<T: Get>(data: &[u8], index: DataIndex) -> &T {
-    let index_usize: usize = index as usize;
-    let bytes: &[u8] = &data[index_usize..index_usize + size_of::<T>()];
+    #[cfg(target_os = "solana")]
     debug_assert_eq!((bytes.as_ptr() as usize) % std::mem::align_of::<T>(), 0);
-    // SAFETY: The caller supplies the alignment; `Get` supplies validity; the
-    // slice above checks the range. The returned reference is tied to `data`.
-    unsafe { &*bytes.as_ptr().cast::<T>() }
-}
-
-/// Mutably read a struct without checking the alignment of its address.
-///
-/// Bounds are still checked.
-///
-/// # Safety
-/// `data.as_ptr().add(index as usize)` must be aligned for `T`.
-#[inline(always)]
-pub unsafe fn get_mut_helper_unchecked<T: Get>(data: &mut [u8], index: DataIndex) -> &mut T {
-    let index_usize: usize = index as usize;
-    let bytes: &mut [u8] = &mut data[index_usize..index_usize + size_of::<T>()];
-    debug_assert_eq!((bytes.as_ptr() as usize) % std::mem::align_of::<T>(), 0);
-    // SAFETY: The caller supplies the alignment; `Get` supplies validity; the
-    // slice above checks the range. The exclusive reference is tied to `data`.
+    // SAFETY: As above, with exclusive access inherited from `data`.
     unsafe { &mut *bytes.as_mut_ptr().cast::<T>() }
 }
 
