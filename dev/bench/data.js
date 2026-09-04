@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1788306555522,
+  "lastUpdate": 1788542695709,
   "repoUrl": "https://github.com/Bonasa-Tech/manifest",
   "entries": {
     "CU Benchmark": [
@@ -13229,6 +13229,72 @@ window.BENCHMARK_DATA = {
           {
             "name": "MFX_99",
             "value": 3351,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "cyrbritt@gmail.com",
+            "name": "Britt Cyr",
+            "username": "brittcyr"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "10bce5b8b4e5680ad787e07909c067628db81ca6",
+          "message": "Make zero-copy alignment assumptions explicit and keep safe checks (#700)\n\n* Rely on the block layout for node alignment instead of checking it\n\nget_helper and get_mut_helper asserted the node's alignment on every\ncall. Every index into an account's dynamic data is a block boundary,\nthe block sizes are multiples of eight, the fixed header before them is\ntoo, and the runtime hands out account data aligned to sixteen, so the\nproperty holds by construction. The block sizes now assert that where\nthey are defined, and the check stays in debug builds and the tests.\n\nA tree walk reads a node per step and a batch update makes many walks,\nso this was paid thousands of times per transaction. Replaying recorded\nmainnet order flow: CU per order p50 1,711 to 1,553, p95 2,903 to 2,668,\np99 3,351 to 3,052, 7.7% less compute in total. No transaction in the\nreplay got worse.\n\n* Keep safe alignment checks for byte slices\n\n* Keep alignment checks off the Solana hot path",
+          "timestamp": "2026-09-04T10:18:25-07:00",
+          "tree_id": "56008ae3f2c6a253a432b7bf3e23001a9c34ceb8",
+          "url": "https://github.com/Bonasa-Tech/manifest/commit/10bce5b8b4e5680ad787e07909c067628db81ca6"
+        },
+        "date": 1788542693688,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "PHX_50",
+            "value": 6897,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "PHX_95",
+            "value": 13208,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "PHX_99",
+            "value": 13902,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_50",
+            "value": 1554,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_95",
+            "value": 2668,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_99",
+            "value": 3054,
             "range": "",
             "unit": "CU",
             "extra": ""
