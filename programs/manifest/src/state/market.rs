@@ -838,7 +838,7 @@ impl<Fixed: DerefOrBorrow<MarketFixed>, Dynamic: DerefOrBorrow<[u8]>>
         ClaimedSeatTreeReadOnly::new(dynamic, fixed.claimed_seats_root_index, NIL)
     }
 
-    pub fn get_bids(&self) -> BooksideReadOnly {
+    pub fn get_bids(&self) -> BooksideReadOnly<'_> {
         let DynamicAccount { dynamic, fixed } = self.borrow_market();
         BooksideReadOnly::new(
             dynamic,
@@ -847,7 +847,7 @@ impl<Fixed: DerefOrBorrow<MarketFixed>, Dynamic: DerefOrBorrow<[u8]>>
         )
     }
 
-    pub fn get_asks(&self) -> BooksideReadOnly {
+    pub fn get_asks(&self) -> BooksideReadOnly<'_> {
         let DynamicAccount { dynamic, fixed } = self.borrow_market();
         BooksideReadOnly::new(
             dynamic,
@@ -933,7 +933,7 @@ impl<
         Dynamic: DerefOrBorrowMut<[u8]> + DerefOrBorrow<[u8]>,
     > DynamicAccount<Fixed, Dynamic>
 {
-    fn borrow_mut(&mut self) -> MarketRefMut {
+    fn borrow_mut(&mut self) -> MarketRefMut<'_> {
         MarketRefMut {
             fixed: self.fixed.deref_or_borrow_mut(),
             dynamic: self.dynamic.deref_or_borrow_mut(),

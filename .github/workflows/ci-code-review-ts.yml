@@ -17,6 +17,8 @@ env:
   CARGO_TERM_COLOR: always
   SOLANA_VERSION: '2.2.12'
   RUST_TOOLCHAIN: '1.86.0'
+  # Matches the SBF compiler the Rust workflow builds the programs with.
+  PLATFORM_TOOLS: 'v1.57'
 
 jobs:
   format:
@@ -111,7 +113,7 @@ jobs:
 
       - name: Start validator
         run: |
-          cargo build-sbf
+          cargo build-sbf --tools-version ${{ env.PLATFORM_TOOLS }}
           solana-test-validator --bpf-program MNFSTqtC93rEfYHB6hF82sKdZpUDFWkViLByLd1k1Ms target/deploy/manifest.so --bpf-program UMnFStVeG1ecZFc2gc5K3vFy3sMpotq8C91mXBQDGwh target/deploy/ui_wrapper.so --bpf-program wMNFSTkir3HgyZTsB7uqu3i7FA73grFCptPXgrZjksL target/deploy/wrapper.so  >/dev/null 2>&1 &
           echo "Started test validator, sleeping for 15 seconds before starting"
           sleep 15
