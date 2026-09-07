@@ -772,8 +772,8 @@ impl Ord for QuoteAtomsPerBaseAtom {
         // `inner` is the little endian u64 split of the u128, so comparing the
         // high word and then the low word is the same ordering as comparing
         // the u128 itself, and it keeps both operands in registers.
-        // `u64_slice_to_u128` takes the array by value and reads it back
-        // through an unaligned u128 pointer, which costs a stack round trip.
+        // The old conversion took the array by value and materialized the
+        // u128 through an unaligned read, which cost a stack round trip.
         // This comparison runs at every level of every orderbook tree descent,
         // so that round trip is paid once per level per order.
         (self.inner[1], self.inner[0]).cmp(&(other.inner[1], other.inner[0]))

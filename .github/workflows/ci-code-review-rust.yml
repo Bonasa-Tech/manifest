@@ -18,7 +18,8 @@ env:
   SOLANA_VERSION: '2.2.20'
   SVM_ARCH: 'v2'
   RUST_TOOLCHAIN: '1.86.0'
-  # The SBF programs are built with platform tools v1.57, which ships a newer
+  # Must match workspace.metadata.solana.tools-version. The SBF programs are
+  # built with platform tools v1.57, which ships a newer
   # rustc (1.95) than the default. Same source, better codegen: measured on
   # the replay benchmark it is worth about 4% of MFX compute per order. The
   # host toolchain above is unchanged; this only selects the SBF compiler.
@@ -50,7 +51,7 @@ jobs:
       - name: Cache dependencies
         uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
-          shared-key: "solana-${{ env.SOLANA_VERSION }}"
+          shared-key: "solana-${{ env.SOLANA_VERSION }}-platform-tools-${{ env.PLATFORM_TOOLS }}"
 
       - name: Set Rust version
         run: |
@@ -77,7 +78,7 @@ jobs:
       - name: Cache dependencies
         uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
-          shared-key: "solana-${{ env.SOLANA_VERSION }}"
+          shared-key: "solana-${{ env.SOLANA_VERSION }}-platform-tools-${{ env.PLATFORM_TOOLS }}"
 
       - name: Set Rust version
         run: |

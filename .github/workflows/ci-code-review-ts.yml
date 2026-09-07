@@ -17,7 +17,7 @@ env:
   CARGO_TERM_COLOR: always
   SOLANA_VERSION: '2.2.12'
   RUST_TOOLCHAIN: '1.86.0'
-  # Matches the SBF compiler the Rust workflow builds the programs with.
+  # Must match workspace.metadata.solana.tools-version.
   PLATFORM_TOOLS: 'v1.57'
 
 jobs:
@@ -94,7 +94,7 @@ jobs:
       - name: Cache dependencies
         uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
-          shared-key: "solana-${{ env.SOLANA_VERSION }}"
+          shared-key: "solana-${{ env.SOLANA_VERSION }}-platform-tools-${{ env.PLATFORM_TOOLS }}"
 
       - name: Set Rust version
         run: rustup toolchain install ${{ env.RUST_TOOLCHAIN }}

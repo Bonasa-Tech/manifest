@@ -10,6 +10,12 @@ members = [
   "programs/ui-wrapper",
 ]
 
+# Keep every SBF entry point on the compiler used for CU measurements,
+# including local builds, the private benchmark harness, and verifiable builds.
+# cargo-build-sbf and cargo-test-sbf read this workspace setting automatically.
+[workspace.metadata.solana]
+tools-version = "v1.57"
+
 [workspace.lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = [
   'cfg(colored)',
