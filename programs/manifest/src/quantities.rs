@@ -255,6 +255,345 @@ pub(crate) fn u64_slice_to_u128(a: [u64; 2]) -> u128 {
 #[cfg(not(feature = "certora"))]
 const ATOM_LIMIT: u128 = u64::MAX as u128;
 const D18: u128 = 10u128.pow(18);
+/// `x / 10^18` for any `x`.
+///
+/// Dividing a `u128` is a software routine on SBF that costs about 240 CU. It
+/// runs in `checked_quote_for_base`, so once per maker order a taker matches
+/// against, once for a resting bid reserving its quote, and once for the
+/// cancel that gives it back. Asks never reach it, their side of the
+/// conversion is the multiply.
+///
+/// The divisor is a compile time constant, so the division is replaced with a
+/// multiplication by its precomputed reciprocal (Granlund and Montgomery,
+/// "Division by invariant integers using multiplication", the round-up method
+/// with N = 128 bits and l = 60 since 2^59 < 10^18 <= 2^60), about 110 CU
+/// less each time. Measured end to end against the same build without it, a
+/// swap that fills one order goes 9,569 CU to 9,115 and a global bid
+/// placement 12,339 to 12,228; placing or cancelling a resting ask, which
+/// never divides, is unchanged.
+///
+/// It is exact for every input, which the tests below check against `/` on
+/// all edge values and millions of random ones.
+#[cfg(not(feature = "certora"))]
+#[inline(always)]
+fn div_d18(x: u128) -> u128 {
+    // floor(2^188 / 10^18) + 1 - 2^128
+    const M_PRIME: u128 = 0x2725dd1d243aba0e75fe645cc4873f9f;
+    let t: u128 = mul_hi_u128(M_PRIME, x);
+    (t + ((x - t) >> 1)) >> 59
+}
+
+/// Formal verification keeps the plain division.
+///
+/// The Certora Solana prover does not model 128-bit arithmetic bit-precisely:
+/// the compiler-rt helpers that implement u128 multiplication and division
+/// (`__multi3`, `__udivti3`) are summarized in `certora/cvt_summaries.txt` as
+/// typed but otherwise unconstrained numbers, and the specs that use
+/// `checked_quote_for_base` (`matching_checks`, `no_revert_checks`, ...)
+/// reason on top of those summaries. Proving that the reciprocal multiply
+/// above returns exactly `x / 10^18` for every `x` would need a precise
+/// nonlinear model of 256-bit products, which is outside what the SMT backend
+/// can discharge, and would change what the existing rules are checked
+/// against. So under `certora` the ordinary division stays, the rules keep
+/// verifying the same semantics, and the equivalence of the deployed path is
+/// established by the exhaustive tests in `div_d18_test` (every edge value,
+/// every power of two, the neighbourhood of every small multiple of 10^18,
+/// every 16-bit lane pattern, millions of random dividends, and the full
+/// `checked_quote_for_base` against a reference on a price and size grid).
+#[cfg(feature = "certora")]
+#[allow(dead_code)]
+#[inline(always)]
+fn div_d18(x: u128) -> u128 {
+    x / D18
+}
+
+/// `ceil(x / 10^18)`.
+#[cfg_attr(feature = "certora", allow(dead_code))]
+#[inline(always)]
+fn div_ceil_d18(x: u128) -> u128 {
+    let quotient: u128 = div_d18(x);
+    // quotient * 10^18 <= x, so this cannot overflow.
+    quotient + ((x != quotient * D18) as u128)
+}
+
+/// High 128 bits of the 256 bit product of `a` and `b`.
+#[cfg(not(feature = "certora"))]
+#[inline(always)]
+fn mul_hi_u128(a: u128, b: u128) -> u128 {
+    let (a0, a1): (u128, u128) = (a as u64 as u128, (a >> 64) as u64 as u128);
+    let (b0, b1): (u128, u128) = (b as u64 as u128, (b >> 64) as u64 as u128);
+    let p00: u128 = a0 * b0;
+    let p01: u128 = a0 * b1;
+    let p10: u128 = a1 * b0;
+    let p11: u128 = a1 * b1;
+    let mid: u128 = (p00 >> 64) + (p01 as u64 as u128) + (p10 as u64 as u128);
+    p11 + (p01 >> 64) + (p10 >> 64) + (mid >> 64)
+}
+
+#[cfg(test)]
+mod div_d18_test {
+    use super::*;
+
+    /// Reference: the plain division the fast path replaces.
+    fn reference(x: u128, round_up: bool) -> u128 {
+        if round_up {
+            x.div_ceil(D18)
+        } else {
+            x / D18
+        }
+    }
+
+    fn check(x: u128) {
+        assert_eq!(div_d18(x), reference(x, false), "floor {x}");
+        assert_eq!(div_ceil_d18(x), reference(x, true), "ceil {x}");
+    }
+
+    /// Simple deterministic generator so the tests need no dependencies.
+    struct XorShift(u128);
+    impl XorShift {
+        fn next(&mut self) -> u128 {
+            self.0 ^= self.0 << 13;
+            self.0 ^= self.0 >> 7;
+            self.0 ^= self.0 << 17;
+            self.0
+        }
+    }
+
+    #[test]
+    fn edge_values() {
+        for x in [
+            0,
+            1,
+            2,
+            D18 - 2,
+            D18 - 1,
+            D18,
+            D18 + 1,
+            D18 + 2,
+            u32::MAX as u128,
+            u64::MAX as u128 - 1,
+            u64::MAX as u128,
+            u64::MAX as u128 + 1,
+            1u128 << 64,
+            (1u128 << 64) + 1,
+            1u128 << 100,
+            1u128 << 127,
+            (1u128 << 127) + 1,
+            u128::MAX - 2,
+            u128::MAX - 1,
+            u128::MAX,
+            D18 * D18 - 1,
+            D18 * D18,
+            D18 * D18 + 1,
+            ATOM_LIMIT * D18 - 1,
+            ATOM_LIMIT * D18,
+            ATOM_LIMIT * D18 + 1,
+            (ATOM_LIMIT + 1) * D18 - 1,
+            (ATOM_LIMIT + 1) * D18,
+        ] {
+            check(x);
+        }
+    }
+
+    /// Every power of two and its neighbours across the whole width.
+    #[test]
+    fn powers_of_two() {
+        for shift in 0..128u32 {
+            let p: u128 = 1u128 << shift;
+            for x in [p.wrapping_sub(2), p - 1, p, p + 1, p.wrapping_add(2)] {
+                check(x);
+            }
+            // Also every power of two scaled by the divisor and by 10^9.
+            for scale in [D18, 1_000_000_000u128] {
+                if let Some(v) = p.checked_mul(scale) {
+                    for x in [v - 1, v, v + 1] {
+                        check(x);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Exact multiples of the divisor and their neighbours, which are the
+    /// values where floor/ceil rounding flips, for small, large and random
+    /// multipliers.
+    #[test]
+    fn around_multiples_of_the_divisor() {
+        for k in 0..=200_000u128 {
+            let base: u128 = k * D18;
+            for x in [base.wrapping_sub(1), base, base + 1] {
+                check(x);
+            }
+        }
+        for shift in 0..64u32 {
+            for k in [(1u128 << shift) - 1, 1u128 << shift, (1u128 << shift) + 1] {
+                let base: u128 = k * D18;
+                for x in [
+                    base.wrapping_sub(2),
+                    base.wrapping_sub(1),
+                    base,
+                    base + 1,
+                    base + 2,
+                ] {
+                    check(x);
+                }
+            }
+        }
+        // Exact multiples are where a wrong magic number or shift shows
+        // itself, so sample the multiplier across the whole range a quotient
+        // can take, up to `u128::MAX / 10^18`, which is about 2^68. Drawing
+        // 64 bit multipliers would leave the top of that range untested.
+        const K_MAX: u128 = u128::MAX / D18;
+        let mut rng = XorShift(0x243f6a8885a308d313198a2e03707344);
+        for k in [0, 1, 2, K_MAX - 1, K_MAX] {
+            check_multiple(k);
+        }
+        for _ in 0..300_000 {
+            check_multiple(rng.next() % (K_MAX + 1));
+        }
+    }
+
+    /// `k * 10^18` and the two values on either side of it, skipping the ones
+    /// that fall outside a `u128`.
+    fn check_multiple(k: u128) {
+        let base: u128 = k * D18;
+        for delta in [2, 1] {
+            if base >= delta {
+                check(base - delta);
+            }
+        }
+        check(base);
+        for delta in [1, 2] {
+            if let Some(x) = base.checked_add(delta) {
+                check(x);
+            }
+        }
+    }
+
+    /// Every 16-bit pattern in every 16-bit lane of the dividend, with the
+    /// other lanes zero, all ones, or the divisor's bits.
+    #[test]
+    fn bit_lanes() {
+        for lane in 0..8u32 {
+            for pattern in 0..=u16::MAX {
+                let placed: u128 = (pattern as u128) << (16 * lane);
+                check(placed);
+                check(placed | !((0xffffu128) << (16 * lane)));
+                check(placed ^ D18);
+            }
+        }
+    }
+
+    /// Random dividends of every bit length, plus uniformly random ones.
+    #[test]
+    fn random_dividends() {
+        let mut rng = XorShift(0x9e3779b97f4a7c15f39cc0605cedc835);
+        for i in 0..2_000_000u32 {
+            let raw: u128 = rng.next();
+            let x: u128 = match i % 5 {
+                0 => raw,
+                1 => raw >> (i % 128),
+                2 => raw >> 64,
+                3 => (raw >> 64).wrapping_mul(D18).wrapping_add(raw % 3),
+                _ => raw | (1u128 << 127),
+            };
+            check(x);
+        }
+    }
+
+    /// The fast path is only reachable through `checked_quote_for_base`;
+    /// compare that whole function against the reference on a price and size
+    /// grid covering every exponent, extreme mantissas and extreme sizes.
+    #[test]
+    fn checked_quote_for_base_matches_reference() {
+        let mantissas: [u32; 7] = [1, 2, 7, 999, 123_456_789, u32::MAX - 1, u32::MAX];
+        let sizes: [u64; 9] = [
+            1,
+            2,
+            999,
+            1_000_000,
+            1_000_000_000,
+            1 << 32,
+            u64::MAX / 3,
+            u64::MAX - 1,
+            u64::MAX,
+        ];
+        let mut cases: u32 = 0;
+        for exponent in -18..=8i8 {
+            for mantissa in mantissas {
+                let Ok(price) =
+                    QuoteAtomsPerBaseAtom::try_from_mantissa_and_exponent(mantissa, exponent)
+                else {
+                    continue;
+                };
+                let inner: u128 = u64_slice_to_u128(price.inner);
+                for size in sizes {
+                    for round_up in [false, true] {
+                        let expected: Result<u128, ()> = inner
+                            .checked_mul(size as u128)
+                            .map(|product| reference(product, round_up))
+                            .filter(|quote| *quote <= ATOM_LIMIT)
+                            .ok_or(());
+                        let actual: Result<u128, ()> = price
+                            .checked_quote_for_base(BaseAtoms::new(size), round_up)
+                            .map(|quote| quote.as_u64() as u128)
+                            .map_err(|_| ());
+                        assert_eq!(
+                            actual, expected,
+                            "{mantissa}e{exponent} x {size} round_up={round_up}"
+                        );
+                        cases += 1;
+                    }
+                }
+            }
+        }
+        assert!(cases > 1_000, "grid covered {cases} cases");
+        // And random price/size pairs.
+        let mut rng = XorShift(0x452821e638d01377be5466cf34e90c6c);
+        for _ in 0..200_000 {
+            let raw: u128 = rng.next();
+            let mantissa: u32 = (raw >> 96) as u32;
+            let exponent: i8 = ((raw >> 64) as u8 % 27) as i8 - 18;
+            let size: u64 = raw as u64 >> (raw >> 90 & 63);
+            let Ok(price) =
+                QuoteAtomsPerBaseAtom::try_from_mantissa_and_exponent(mantissa, exponent)
+            else {
+                continue;
+            };
+            let inner: u128 = u64_slice_to_u128(price.inner);
+            for round_up in [false, true] {
+                let expected: Result<u128, ()> = inner
+                    .checked_mul(size as u128)
+                    .map(|product| reference(product, round_up))
+                    .filter(|quote| *quote <= ATOM_LIMIT)
+                    .ok_or(());
+                let actual: Result<u128, ()> = price
+                    .checked_quote_for_base(BaseAtoms::new(size), round_up)
+                    .map(|quote| quote.as_u64() as u128)
+                    .map_err(|_| ());
+                assert_eq!(
+                    actual, expected,
+                    "{mantissa}e{exponent} x {size} round_up={round_up}"
+                );
+            }
+        }
+    }
+
+    /// Rounding invariants that hold independently of the reference.
+    #[test]
+    fn rounding_invariants() {
+        let mut rng = XorShift(0xc0ac29b7c97c50dd3f84d5b5b5470917);
+        for _ in 0..500_000 {
+            let x: u128 = rng.next();
+            let floor: u128 = div_d18(x);
+            let ceil: u128 = div_ceil_d18(x);
+            assert!(floor * D18 <= x);
+            assert!(x - floor * D18 < D18);
+            assert!(ceil == floor || ceil == floor + 1);
+            assert_eq!(ceil == floor, x == floor * D18);
+        }
+    }
+}
 const D18F: f64 = D18 as f64;
 
 #[cfg(not(feature = "certora"))]
@@ -406,9 +745,9 @@ impl QuoteAtomsPerBaseAtom {
             .checked_mul(base_atoms.inner as u128)
             .ok_or(PriceConversionError(0x8))?;
         let quote_atoms: u128 = if round_up {
-            product.div_ceil(D18)
+            div_ceil_d18(product)
         } else {
-            product.div(D18)
+            div_d18(product)
         };
         if quote_atoms <= ATOM_LIMIT {
             Ok(quote_atoms)

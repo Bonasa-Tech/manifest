@@ -260,12 +260,26 @@ const run = async () => {
           10_000,
           'offset',
         ),
-        fromSlot: req.query.fromSlot
-          ? parseInt(req.query.fromSlot as string)
-          : undefined,
-        toSlot: req.query.toSlot
-          ? parseInt(req.query.toSlot as string)
-          : undefined,
+        fromSlot:
+          req.query.fromSlot === undefined
+            ? undefined
+            : parseBoundedQueryInteger(
+                req.query.fromSlot,
+                0,
+                0,
+                Number.MAX_SAFE_INTEGER,
+                'fromSlot',
+              ),
+        toSlot:
+          req.query.toSlot === undefined
+            ? undefined
+            : parseBoundedQueryInteger(
+                req.query.toSlot,
+                0,
+                0,
+                Number.MAX_SAFE_INTEGER,
+                'toSlot',
+              ),
       };
 
       const result = await statsServer.getCompleteFillsFromDatabase(options);
@@ -560,13 +574,18 @@ const run = async () => {
     (async () => {
       // eslint-disable-next-line no-constant-condition
       while (true) {
+        let retryDelayMs: number = ONE_HOUR_SEC * 1_000;
         try {
-          await tvlMonitor.checkAndAlert();
-          await sleep(ONE_HOUR_SEC * 1_000);
+          const hasComparableBaseline: boolean =
+            await tvlMonitor.checkAndAlert();
+          if (!hasComparableBaseline) {
+            retryDelayMs = 5_000;
+          }
         } catch (error) {
           console.error('Error in TVL monitoring:', error);
-          await sleep(5_000);
+          retryDelayMs = 5_000;
         }
+        await sleep(retryDelayMs);
       }
     })(),
     // Hourly volume monitoring - alerts on 25% volume changes and large fills

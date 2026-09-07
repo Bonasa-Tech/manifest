@@ -92,7 +92,10 @@ export class VolumeMonitor {
       return;
     }
 
-    // Finalize any old transactions before processing new fill
+    // Accepted operational tradeoff: finalization is driven by later fills.
+    // Production markets trade continuously, so an isolated final transaction
+    // is not expected to remain buffered for a meaningful period. Add a timer
+    // and shutdown flush if this monitor is ever used on an illiquid market.
     await this.finalizeOldTransactions();
 
     // Buffer this fill by transaction signature
@@ -239,11 +242,22 @@ export class VolumeMonitor {
       `[View on Solscan](${solscanLink}) | [View Market](${marketLink})`,
     );
 
-    await sendDiscordNotification(this.discordWebhookUrl, message.join('\n'), {
-      title: '💰 Large Transaction Alert',
-      color: 0xffd700, // Gold color
-      timestamp: true,
-    });
+    try {
+      await sendDiscordNotification(
+        this.discordWebhookUrl,
+        message.join('\n'),
+        {
+          title: '💰 Large Transaction Alert',
+          color: 0xffd700, // Gold color
+          timestamp: true,
+        },
+      );
+    } catch (error: unknown) {
+      // Monitoring state must advance even when Discord rate-limits or is
+      // unavailable. The fill has already been observed and should not poison
+      // the transaction aggregation loop.
+      console.error('Failed to send large transaction alert:', error);
+    }
   }
 
   /**
@@ -307,11 +321,17 @@ export class VolumeMonitor {
       `Change: ${percentChange > 0 ? '+' : ''}${(percentChange * 100).toFixed(1)}%`,
     ].join('\n');
 
-    await sendDiscordNotification(this.discordWebhookUrl, message, {
-      title: `${emoji} Hourly Volume Alert`,
-      color: percentChange > 0 ? 0x00ff00 : 0xff0000,
-      timestamp: true,
-    });
+    try {
+      await sendDiscordNotification(this.discordWebhookUrl, message, {
+        title: `${emoji} Hourly Volume Alert`,
+        color: percentChange > 0 ? 0x00ff00 : 0xff0000,
+        timestamp: true,
+      });
+    } catch (error: unknown) {
+      // Do not retain the previous hour merely because alert delivery failed;
+      // doing so would make later deltas span multiple hours and re-alert.
+      console.error('Failed to send hourly volume alert:', error);
+    }
   }
 
   /**

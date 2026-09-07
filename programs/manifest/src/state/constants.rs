@@ -49,8 +49,9 @@ pub const MAX_GLOBAL_SEATS: u16 = 4;
 #[cfg(not(feature = "test"))]
 pub const MAX_GLOBAL_SEATS: u16 = 999;
 
-// `get_helper` reads a node at a block boundary and relies on that boundary
-// being aligned for the node type, which holds because every block size is a
-// multiple of eight.
+// Given Solana's eight-byte-aligned account-data base, these block sizes
+// preserve alignment at every node boundary. Safe byte-slice helpers still
+// validate their effective address because arbitrary slices need not share
+// that base alignment.
 const_assert_eq!(MARKET_BLOCK_SIZE % 8, 0);
 const_assert_eq!(GLOBAL_BLOCK_SIZE % 8, 0);

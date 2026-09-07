@@ -655,7 +655,10 @@
             "type": "u64"
           },
           {
-            "name": "lastUpdatedSlot",
+            "name": "cancelAllScanCursor",
+            "docs": [
+              "Reserved for on-chain byte-layout compatibility."
+            ],
             "type": "u32"
           },
           {

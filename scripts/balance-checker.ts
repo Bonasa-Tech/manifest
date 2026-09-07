@@ -21,23 +21,30 @@ if (!RPC_URL) {
 async function sendDiscordMessage(content: string): Promise<void> {
   if (!DISCORD_WEBHOOK_URL) return;
 
-  try {
-    const response = await fetch(DISCORD_WEBHOOK_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ content }),
-    });
-    if (!response.ok) {
-      console.error(
-        `Failed to send Discord message: ${response.status} ${response.statusText}`,
-      );
-    }
-  } catch (error) {
-    console.error('Error sending Discord message:', error);
+  const response = await fetch(DISCORD_WEBHOOK_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ content }),
+  });
+  if (!response.ok) {
+    throw new Error(
+      `Failed to send Discord message: ${response.status} ${response.statusText}`,
+    );
   }
 }
 
-const run = async () => {
+async function sendDiscordMessageBestEffort(
+  content: string,
+  description: string,
+): Promise<void> {
+  try {
+    await sendDiscordMessage(content);
+  } catch (error) {
+    console.error(`Failed to send ${description}:`, error);
+  }
+}
+
+const run = async (): Promise<void> => {
   const connection: Connection = new Connection(RPC_URL);
   const marketPks: PublicKey[] =
     await ManifestClient.listMarketPublicKeys(connection);
@@ -153,6 +160,7 @@ const run = async () => {
   console.log(`Found ${globalPublicKeys.length} global accounts`);
 
   const mismatchedGlobals: string[] = [];
+  const uncheckedGlobals: string[] = [];
   // Check global account balances
   for (const globalAccount of globalAccounts) {
     try {
@@ -223,25 +231,53 @@ const run = async () => {
         mismatchedGlobals.push(mint.toBase58());
       }
     } catch (error) {
-      console.log(
+      console.error(
         `Error checking global ${globalAccount.pubkey.toBase58()}: ${error}`,
       );
+      uncheckedGlobals.push(globalAccount.pubkey.toBase58());
     }
   }
 
-  if (mismatchedMarkets.length > 0 || mismatchedGlobals.length > 0) {
-    const details: string[] = [];
-    if (mismatchedMarkets.length > 0) {
-      details.push(`Markets: ${mismatchedMarkets.join(', ')}`);
-    }
-    if (mismatchedGlobals.length > 0) {
-      details.push(`Globals: ${mismatchedGlobals.join(', ')}`);
-    }
-    const detailsStr = details.join('; ');
-    await sendDiscordMessage(
+  const hasMismatch: boolean =
+    mismatchedMarkets.length > 0 || mismatchedGlobals.length > 0;
+  const mismatchDetails: string[] = [];
+  if (mismatchedMarkets.length > 0) {
+    mismatchDetails.push(`Markets: ${mismatchedMarkets.join(', ')}`);
+  }
+  if (mismatchedGlobals.length > 0) {
+    mismatchDetails.push(`Globals: ${mismatchedGlobals.join(', ')}`);
+  }
+  const detailsStr: string = mismatchDetails.join('; ');
+  if (hasMismatch) {
+    console.error(`Balance mismatch detected! ${detailsStr}`);
+    await sendDiscordMessageBestEffort(
       `**Balance Checker Alert**\nBalance mismatch detected! ${detailsStr}`,
+      'balance-mismatch alert',
     );
-    throw new Error(`Balance mismatch detected: ${detailsStr}`);
+  }
+
+  if (uncheckedGlobals.length > 0) {
+    const uncheckedDetails: string = uncheckedGlobals.join(', ');
+    console.error(
+      `Balance verification incomplete for globals: ${uncheckedDetails}`,
+    );
+    await sendDiscordMessageBestEffort(
+      `**Balance Checker Incomplete**\nCould not verify ${uncheckedGlobals.length} global account(s): ${uncheckedGlobals.join(', ')}`,
+      'incomplete-scan alert',
+    );
+  }
+
+  if (hasMismatch || uncheckedGlobals.length > 0) {
+    const failures: string[] = [];
+    if (hasMismatch) {
+      failures.push(`balance mismatch detected (${detailsStr})`);
+    }
+    if (uncheckedGlobals.length > 0) {
+      failures.push(
+        `${uncheckedGlobals.length} global account(s) could not be checked`,
+      );
+    }
+    throw new Error(`Balance verification failed: ${failures.join('; ')}`);
   }
 
   await sendDiscordMessage(
@@ -251,8 +287,12 @@ const run = async () => {
 
 run().catch(async (e) => {
   console.error('fatal error', e);
-  await sendDiscordMessage(
-    `**Balance Checker Error**\nFatal error occurred: ${e.message || e}`,
-  );
+  try {
+    await sendDiscordMessage(
+      `**Balance Checker Error**\nFatal error occurred: ${e.message || e}`,
+    );
+  } catch (notificationError) {
+    console.error('Failed to send fatal-error notification', notificationError);
+  }
   throw e;
 });

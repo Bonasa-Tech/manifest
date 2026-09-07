@@ -60,7 +60,7 @@ function wrapperBuffer(market: PublicKey, layout: number): Buffer {
     baseBalance: new BN(0),
     quoteBalance: new BN(0),
     quoteVolume: new BN(0),
-    lastUpdatedSlot: 0,
+    cancelAllScanCursor: 0,
     numOpenGlobalOrders: 0,
     lastSyncedOrderSequenceNumber: new BN(0),
   });

@@ -368,7 +368,10 @@ const parseTransactionForFills = async (
     }
 
     const messages = tx.meta.logMessages;
-    const programDatas = extractProgramDataLogs(messages, PROGRAM_ID.toBase58());
+    const programDatas = extractProgramDataLogs(
+      messages,
+      PROGRAM_ID.toBase58(),
+    );
 
     if (programDatas.length === 0) {
       return { fills, hasTruncatedLogs }; // No program data logs
@@ -918,6 +921,10 @@ const run = async () => {
   console.log(`Using stats server: ${statsServerUrl}`);
 
   try {
+    // Trust boundary: this verifier intentionally treats the stats service as
+    // the authoritative market inventory. It detects chain/database drift for
+    // markets the service reports; it is not an independent audit of whether
+    // the service omitted an entire market.
     // Fetch all market tickers
     const tickersResponse = await fetch(`${statsServerUrl}/tickers`);
     if (!tickersResponse.ok) {
@@ -1075,7 +1082,10 @@ const run = async () => {
           },
           (error) => {
             failedMarkets.push(market.ticker_id);
-            console.error(`Verification failed for ${market.ticker_id}:`, error);
+            console.error(
+              `Verification failed for ${market.ticker_id}:`,
+              error,
+            );
             pending.delete(p);
           },
         );
@@ -1088,7 +1098,9 @@ const run = async () => {
 
     // Attempt to backfill any missing_in_db mismatches
     if (failedMarkets.length > 0) {
-      console.error(`Verification failed for ${failedMarkets.length} market(s): ${failedMarkets.join(', ')}`);
+      console.error(
+        `Verification failed for ${failedMarkets.length} market(s): ${failedMarkets.join(', ')}`,
+      );
       process.exit(1);
     } else if (allMismatches.length > 0) {
       const missingInDbMismatches = allMismatches.filter(

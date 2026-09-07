@@ -385,7 +385,8 @@ export class ManifestStatsServer {
 
     // Get current acquisition value
     const currentValue = acquisitionValues.get(baseMint) || 0;
-    const usdcValue = safeAtomsToNumber(quoteAtoms) / 10 ** market.quoteDecimals();
+    const usdcValue =
+      safeAtomsToNumber(quoteAtoms) / 10 ** market.quoteDecimals();
 
     if (baseAtomsDelta > 0) {
       acquisitionValues.set(baseMint, currentValue + usdcValue);
@@ -473,12 +474,20 @@ export class ManifestStatsServer {
 - Time: ${new Date().toISOString()}
 `;
 
-      await sendDiscordNotification(this.discordWebhookUrl, message, {
-        title: '🚨 Database Error Detected',
-        timestamp: true,
-      });
-
-      console.error('Discord alert sent for database error');
+      try {
+        await sendDiscordNotification(this.discordWebhookUrl, message, {
+          title: '🚨 Database Error Detected',
+          timestamp: true,
+        });
+        console.error('Discord alert sent for database error');
+      } catch (notificationError: unknown) {
+        // Error reporting must never mask the database error or interrupt a
+        // transaction rollback owned by the caller.
+        console.error(
+          'Failed to send Discord database alert:',
+          notificationError,
+        );
+      }
     }
   }
 
@@ -794,7 +803,9 @@ export class ManifestStatsServer {
       this.updateTraderPosition(
         actualTaker,
         baseMint,
-        takerIsBuy ? safeAtomsToNumber(baseAtoms) : -safeAtomsToNumber(baseAtoms),
+        takerIsBuy
+          ? safeAtomsToNumber(baseAtoms)
+          : -safeAtomsToNumber(baseAtoms),
         safeAtomsToNumber(quoteAtoms),
         marketObject,
       );
@@ -802,7 +813,9 @@ export class ManifestStatsServer {
       this.updateTraderPosition(
         maker,
         baseMint,
-        takerIsBuy ? -safeAtomsToNumber(baseAtoms) : safeAtomsToNumber(baseAtoms),
+        takerIsBuy
+          ? -safeAtomsToNumber(baseAtoms)
+          : safeAtomsToNumber(baseAtoms),
         safeAtomsToNumber(quoteAtoms),
         marketObject,
       );
@@ -810,7 +823,8 @@ export class ManifestStatsServer {
       const { solPrice } = this.getSolAndBtcPrices();
       if (solPrice > 0) {
         const notionalVolume =
-          (safeAtomsToNumber(quoteAtoms) / 10 ** marketObject.quoteDecimals()) * solPrice;
+          (safeAtomsToNumber(quoteAtoms) / 10 ** marketObject.quoteDecimals()) *
+          solPrice;
 
         this.addTraderNotionalVolume(actualTaker, 'taker', notionalVolume);
         this.addTraderNotionalVolume(maker, 'maker', notionalVolume);
@@ -846,7 +860,10 @@ export class ManifestStatsServer {
       onMessage: async (message: unknown) => {
         const fill: FillLogResult = message as FillLogResult;
         await this.fillMutex.runExclusive(async () => {
-          // Track slot for database persistence
+          // Accepted recovery model: live persistence can fail after this
+          // cursor advances, but the scheduled trade-verification job compares
+          // chain history with fills_complete and backfills missing signatures.
+          // Keep that job enabled whenever live ingestion is enabled.
           this.lastFillSlot = Math.max(this.lastFillSlot, fill.slot);
 
           // Immediately save to recent fill
@@ -1468,7 +1485,7 @@ export class ManifestStatsServer {
     const now: number = Date.now();
     const lastLoadMs: number =
       this.orderbookMarketLastLoadMs.get(marketPk) ?? 0;
-    let market: Market | undefined = this.markets.get(marketPk);
+    const market: Market | undefined = this.markets.get(marketPk);
 
     // Cached and still within the freshness window: serve it as-is.
     if (
@@ -1823,7 +1840,7 @@ export class ManifestStatsServer {
 
   async getVolume() {
     // Get normalized SOL and BTC prices
-    const { solPrice, cbbtcPrice } = this.getSolAndBtcPrices();
+    const { solPrice } = this.getSolAndBtcPrices();
 
     // Serve the cached lifetime volume. It's refreshed in the background on
     // each checkpoint advance; kick off a one-time populate if no refresh has
@@ -1995,7 +2012,9 @@ export class ManifestStatsServer {
   /**
    * Get array of recent fills.
    */
-  getRecentFills(market: string) {
+  getRecentFills(market: string): {
+    [market: string]: FillLogResult[] | undefined;
+  } {
     return { [market]: this.fillLogResults.get(market) };
   }
 
@@ -2020,15 +2039,56 @@ export class ManifestStatsServer {
       throw new RangeError('offset must be an integer between 0 and 10000');
     }
 
-    // Apply default slot filter only if no efficient index filter is present
-    const hasEfficientFilter = market || signature || taker || maker;
+    for (const [name, value] of [
+      ['fromSlot', options.fromSlot],
+      ['toSlot', toSlot],
+    ] as const) {
+      if (value !== undefined && (!Number.isSafeInteger(value) || value < 0)) {
+        throw new RangeError(`${name} must be a non-negative safe integer`);
+      }
+    }
+    if (
+      options.fromSlot !== undefined &&
+      toSlot !== undefined &&
+      options.fromSlot > toSlot
+    ) {
+      throw new RangeError('fromSlot must be less than or equal to toSlot');
+    }
+
+    // Apply default slot filter only if no efficient index filter is present.
+    const hasNonWalletEfficientFilter: boolean = Boolean(
+      market || signature || taker || maker,
+    );
+    const hasEfficientFilter: boolean = Boolean(
+      hasNonWalletEfficientFilter || wallet,
+    );
     let { fromSlot } = options;
+    let currentSlot: number | undefined;
+    const getCurrentSlot = async (): Promise<number> => {
+      if (currentSlot === undefined) {
+        currentSlot = await this.connection.getSlot();
+      }
+      return currentSlot;
+    };
+    let effectiveToSlot: number | undefined = toSlot;
     if (fromSlot === undefined && !hasEfficientFilter) {
       console.log(
         `[completeFills] Query without efficient filter, applying default slot range. Options: ${JSON.stringify(options)}`,
       );
-      const currentSlot = await this.connection.getSlot();
-      fromSlot = Math.max(0, currentSlot - SLOTS_PER_DAY);
+      fromSlot = Math.max(0, (await getCurrentSlot()) - SLOTS_PER_DAY);
+    }
+
+    // Wallet-only queries default to one day ending at the caller's toSlot (or
+    // the current slot). Explicit ranges remain available for historical
+    // pagination and use the split taker/maker index scans below.
+    if (wallet && !hasNonWalletEfficientFilter) {
+      effectiveToSlot ??= await getCurrentSlot();
+      if (fromSlot === undefined) {
+        fromSlot = Math.max(0, effectiveToSlot - SLOTS_PER_DAY);
+      }
+      if (fromSlot > effectiveToSlot) {
+        throw new RangeError('fromSlot must be less than or equal to toSlot');
+      }
     }
 
     try {
@@ -2051,13 +2111,11 @@ export class ManifestStatsServer {
         params.push(maker);
       }
 
-      // wallet matches either taker OR maker
+      // Wallet uses two independently bounded index scans below rather than a
+      // single OR predicate that would require sorting the full match set.
+      let walletParamIndex: number | undefined;
       if (wallet) {
-        // Explicit fromSlot values intentionally support complete wallet
-        // history. If this becomes expensive at larger retention, split this
-        // into indexed taker and maker scans and merge their ordered results
-        // instead of changing the API's all-history semantics.
-        conditions.push(`(taker = $${paramIndex} OR maker = $${paramIndex})`);
+        walletParamIndex = paramIndex;
         params.push(wallet);
         paramIndex++;
       }
@@ -2067,14 +2125,14 @@ export class ManifestStatsServer {
         params.push(signature);
       }
 
-      if (fromSlot) {
+      if (fromSlot !== undefined) {
         conditions.push(`slot >= $${paramIndex++}`);
         params.push(fromSlot);
       }
 
-      if (toSlot) {
+      if (effectiveToSlot !== undefined) {
         conditions.push(`slot <= $${paramIndex++}`);
-        params.push(toSlot);
+        params.push(effectiveToSlot);
       }
 
       const whereClause =
@@ -2099,8 +2157,8 @@ export class ManifestStatsServer {
       //   market -> idx_fills_complete_market_slot (market, slot DESC)
       // For very common filter values the planner instead walks idx_fills_complete_slot
       // (slot) backward and filters — also cheap, since the first LIMIT rows match quickly.
-      // For wallet (taker OR maker), signature-only, or no filter there is no pre-sorted
-      // index, so a sort is unavoidable regardless of the column chosen.
+      // Wallet scans the maker and taker indexes separately, bounds each side
+      // to LIMIT+OFFSET, then merges those small result sets.
       //
       // We deliberately do NOT order by timestamp: it is the row's insert time, not the
       // on-chain time, so backfilled rows land out of chronological order. slot is
@@ -2108,14 +2166,48 @@ export class ManifestStatsServer {
       // across all filter types. (A timestamp ordering would also only be index-backed for
       // the market filter, via idx_fills_complete_market_timestamp, and force a sort for
       // maker/taker.)
-      const dataQuery = `
-      ${queries.SELECT_FILLS_COMPLETE_DATA_BASE}
-      ${whereClause}
-      ORDER BY slot DESC
-      LIMIT $${paramIndex++} OFFSET $${paramIndex++}
-    `;
-
-      params.push(limit, offset);
+      let dataQuery: string;
+      if (walletParamIndex !== undefined) {
+        const sharedConditions: string =
+          conditions.length > 0 ? `AND ${conditions.join(' AND ')}` : '';
+        const branchLimitParamIndex: number = paramIndex++;
+        const limitParamIndex: number = paramIndex++;
+        const offsetParamIndex: number = paramIndex++;
+        dataQuery = `
+          WITH wallet_fills AS (
+            (
+              SELECT fill_data, slot
+              FROM fills_complete
+              WHERE taker = $${walletParamIndex} ${sharedConditions}
+              ORDER BY slot DESC
+              LIMIT $${branchLimitParamIndex}
+            )
+            UNION ALL
+            (
+              SELECT fill_data, slot
+              FROM fills_complete
+              WHERE maker = $${walletParamIndex}
+                AND taker <> $${walletParamIndex}
+                ${sharedConditions}
+              ORDER BY slot DESC
+              LIMIT $${branchLimitParamIndex}
+            )
+          )
+          SELECT fill_data
+          FROM wallet_fills
+          ORDER BY slot DESC
+          LIMIT $${limitParamIndex} OFFSET $${offsetParamIndex}
+        `;
+        params.push(limit + offset, limit, offset);
+      } else {
+        dataQuery = `
+          ${queries.SELECT_FILLS_COMPLETE_DATA_BASE}
+          ${whereClause}
+          ORDER BY slot DESC
+          LIMIT $${paramIndex++} OFFSET $${paramIndex++}
+        `;
+        params.push(limit, offset);
+      }
       const dataResult = await this.executeQueryWithMetrics(
         'SELECT_FILLS_DATA',
         async () => this.pool.query(dataQuery, params),
@@ -2129,6 +2221,10 @@ export class ManifestStatsServer {
         fills,
         total: 0,
         hasMore: true,
+        effectiveSlotRange: {
+          fromSlot: fromSlot ?? null,
+          toSlot: effectiveToSlot ?? null,
+        },
       };
     } catch (error) {
       console.error('Error querying complete fills:', error);
@@ -2384,7 +2480,6 @@ export class ManifestStatsServer {
       return checkpointId;
     } catch (error: any) {
       console.error('Error saving checkpoint:', error);
-      await this.sendDatabaseErrorAlert(error);
 
       if (client) {
         try {
@@ -2397,6 +2492,7 @@ export class ManifestStatsServer {
           console.error('Error during checkpoint rollback:', rollbackError);
         }
       }
+      await this.sendDatabaseErrorAlert(error);
       throw error;
     } finally {
       if (client) {
@@ -2480,7 +2576,6 @@ export class ManifestStatsServer {
       console.log('Volume and market data saved successfully');
     } catch (error: any) {
       console.error('Error saving volume and market data:', error);
-      await this.sendDatabaseErrorAlert(error);
 
       if (client) {
         try {
@@ -2493,6 +2588,7 @@ export class ManifestStatsServer {
           console.error('Error during volume data rollback:', rollbackError);
         }
       }
+      await this.sendDatabaseErrorAlert(error);
       throw error;
     } finally {
       if (client) {
@@ -2624,7 +2720,6 @@ export class ManifestStatsServer {
       console.log('Trader data saved successfully');
     } catch (error: any) {
       console.error('Error saving trader data:', error);
-      await this.sendDatabaseErrorAlert(error);
 
       if (client) {
         try {
@@ -2637,6 +2732,7 @@ export class ManifestStatsServer {
           console.error('Error during trader data rollback:', rollbackError);
         }
       }
+      await this.sendDatabaseErrorAlert(error);
       throw error;
     } finally {
       if (client) {
@@ -2702,7 +2798,6 @@ export class ManifestStatsServer {
       console.log('Old checkpoints cleaned up successfully');
     } catch (error: any) {
       console.error('Error cleaning up old checkpoints:', error);
-      await this.sendDatabaseErrorAlert(error);
 
       if (client) {
         try {
@@ -2715,6 +2810,7 @@ export class ManifestStatsServer {
           console.error('Error during cleanup rollback:', rollbackError);
         }
       }
+      await this.sendDatabaseErrorAlert(error);
       throw error;
     } finally {
       if (client) {

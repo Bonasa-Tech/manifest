@@ -48,6 +48,7 @@ import { getVaultAddress } from './utils/market';
 import { genAccDiscriminator } from './utils/discriminator';
 import { getGlobalAddress, getGlobalVaultAddress } from './utils/global';
 import { Global } from './global';
+import { toBigInt, tokenAmountToAtoms } from './utils/numbers';
 
 export interface SetupData {
   setupNeeded: boolean;
@@ -251,13 +252,16 @@ export class ManifestClient {
    * Get all market program accounts. This is expensive RPC load..
    *
    * @param connection Connection
+   * @param dataSlice Optional account-data slice for fixed-field consumers.
    * @returns GetProgramAccountsResponse
    */
   public static async getMarketProgramAccounts(
     connection: Connection,
+    dataSlice?: { offset: number; length: number },
   ): Promise<GetProgramAccountsResponse> {
     const accounts: GetProgramAccountsResponse =
       await connection.getProgramAccounts(PROGRAM_ID, {
+        ...(dataSlice === undefined ? {} : { dataSlice }),
         filters: [
           {
             memcmp: {
@@ -814,21 +818,9 @@ export class ManifestClient {
    */
   public async reload(): Promise<void> {
     await Promise.all([
-      () => {
-        if (this.wrapper) {
-          return this.wrapper.reload(this.connection);
-        }
-      },
-      () => {
-        if (this.baseGlobal) {
-          return this.baseGlobal.reload(this.connection);
-        }
-      },
-      () => {
-        if (this.quoteGlobal) {
-          return this.quoteGlobal.reload(this.connection);
-        }
-      },
+      this.wrapper?.reload(this.connection),
+      this.baseGlobal?.reload(this.connection),
+      this.quoteGlobal?.reload(this.connection),
       this.market.reload(this.connection),
     ]);
   }
@@ -868,7 +860,9 @@ export class ManifestClient {
    *
    * @param payer PublicKey of the trader
    * @param mint PublicKey for deposit mint. Must be either the base or quote
-   * @param amountTokens Number of tokens to deposit.
+   * @param amountTokens Number of tokens to deposit. Values between atom
+   * boundaries are rounded to the nearest atom; use depositAtomsIx for exact
+   * integer sizing.
    *
    * @returns TransactionInstruction
    */
@@ -876,6 +870,24 @@ export class ManifestClient {
     payer: PublicKey,
     mint: PublicKey,
     amountTokens: number,
+  ): TransactionInstruction {
+    const mintDecimals: number =
+      this.market.quoteMint().toBase58() === mint.toBase58()
+        ? this.market.quoteDecimals()
+        : this.market.baseDecimals();
+    const amountAtoms: bignum = tokenAmountToAtoms(
+      amountTokens,
+      mintDecimals,
+      'round',
+    );
+    return this.depositAtomsIx(payer, mint, amountAtoms);
+  }
+
+  /** Build a deposit from an exact integer atom amount. */
+  public depositAtomsIx(
+    payer: PublicKey,
+    mint: PublicKey,
+    amountAtoms: bignum,
   ): TransactionInstruction {
     if (!this.wrapper || !this.payer) {
       throw new Error('Read only');
@@ -890,12 +902,6 @@ export class ManifestClient {
       true,
       is22 ? TOKEN_2022_PROGRAM_ID : TOKEN_PROGRAM_ID,
     );
-    const mintDecimals =
-      this.market.quoteMint().toBase58() === mint.toBase58()
-        ? this.market.quoteDecimals()
-        : this.market.baseDecimals();
-    const amountAtoms = Math.round(amountTokens * 10 ** mintDecimals);
-
     return createDepositInstruction(
       {
         market: this.market.address,
@@ -920,7 +926,8 @@ export class ManifestClient {
    *
    * @param payer PublicKey of the trader
    * @param mint PublicKey for withdraw mint. Must be either the base or quote
-   * @param amountTokens Number of tokens to withdraw.
+   * @param amountTokens Number of tokens to withdraw. Values between atom
+   * boundaries are rounded down; use withdrawAtomsIx for exact integer sizing.
    *
    * @returns TransactionInstruction
    */
@@ -928,6 +935,24 @@ export class ManifestClient {
     payer: PublicKey,
     mint: PublicKey,
     amountTokens: number,
+  ): TransactionInstruction {
+    const mintDecimals: number =
+      this.market.quoteMint().toBase58() === mint.toBase58()
+        ? this.market.quoteDecimals()
+        : this.market.baseDecimals();
+    const amountAtoms: bignum = tokenAmountToAtoms(
+      amountTokens,
+      mintDecimals,
+      'floor',
+    );
+    return this.withdrawAtomsIx(payer, mint, amountAtoms);
+  }
+
+  /** Build a withdrawal from an exact integer atom amount. */
+  public withdrawAtomsIx(
+    payer: PublicKey,
+    mint: PublicKey,
+    amountAtoms: bignum,
   ): TransactionInstruction {
     if (!this.wrapper || !this.payer) {
       throw new Error('Read only');
@@ -942,12 +967,6 @@ export class ManifestClient {
       true,
       is22 ? TOKEN_2022_PROGRAM_ID : TOKEN_PROGRAM_ID,
     );
-    const mintDecimals =
-      this.market.quoteMint().toBase58() === mint.toBase58()
-        ? this.market.quoteDecimals()
-        : this.market.baseDecimals();
-    const amountAtoms = Math.floor(amountTokens * 10 ** mintDecimals);
-
     return createWithdrawInstruction(
       {
         market: this.market.address,
@@ -978,28 +997,28 @@ export class ManifestClient {
     }
     const withdrawInstructions: TransactionInstruction[] = [];
 
-    const baseBalance = this.market.getWithdrawableBalanceTokens(
+    const baseBalanceAtoms: bignum = this.market.getWithdrawableBalanceAtoms(
       this.payer,
       true,
     );
-    if (baseBalance > 0) {
-      const baseWithdrawIx = this.withdrawIx(
+    if (toBigInt(baseBalanceAtoms) > 0n) {
+      const baseWithdrawIx: TransactionInstruction = this.withdrawAtomsIx(
         this.payer,
         this.market.baseMint(),
-        baseBalance,
+        baseBalanceAtoms,
       );
       withdrawInstructions.push(baseWithdrawIx);
     }
 
-    const quoteBalance = this.market.getWithdrawableBalanceTokens(
+    const quoteBalanceAtoms: bignum = this.market.getWithdrawableBalanceAtoms(
       this.payer,
       false,
     );
-    if (quoteBalance > 0) {
-      const quoteWithdrawIx = this.withdrawIx(
+    if (toBigInt(quoteBalanceAtoms) > 0n) {
+      const quoteWithdrawIx: TransactionInstruction = this.withdrawAtomsIx(
         this.payer,
         this.market.quoteMint(),
-        quoteBalance,
+        quoteBalanceAtoms,
       );
       withdrawInstructions.push(quoteWithdrawIx);
     }
@@ -1636,11 +1655,12 @@ export class ManifestClient {
   }
 
   /**
-   * CancelAll instruction. Cancels all orders on a market. This is discouraged
-   * outside of circuit breaker usage because it is less efficient and does not
-   * cancel global cleanly. Use batchUpdate instead. This also does not cancel
-   * any orders not placed through the wrapper, which includes reverse orders
-   * that were reversed.
+   * CancelAll instruction. Cancels up to one core batch of wrapper-tracked
+   * orders. Repeat until the wrapper has no open orders when more than one
+   * batch is present. Orders placed directly through the Manifest program are
+   * intentionally not searched for; cancel them by sequence number/index or
+   * reload the market and use cancelAllOnCoreIx(). Global cancellation can
+   * abandon its gas prepayment.
    *
    * @returns TransactionInstruction
    */
@@ -1669,8 +1689,29 @@ export class ManifestClient {
   }
 
   /**
-   * CancelAllOnCore instruction. Cancels all orders on a market directly on the core program,
-   * including reverse orders and global orders with rent prepayment.
+   * Whether the wrapper's latest reloaded view has no tracked orders left for
+   * this market. Despite its legacy name, this does not inspect or make any
+   * claim about orders placed directly through the Manifest program.
+   *
+   * Call reload() after confirming cancelAllIx() before reading this value.
+   */
+  public isCancelAllScanComplete(): boolean {
+    if (!this.wrapper) {
+      throw new Error('Read only');
+    }
+    const marketInfo: WrapperMarketInfo | null =
+      this.wrapper.marketInfoForMarket(this.market.address);
+    if (marketInfo === null) {
+      throw new Error('Wrapper has no market info for this market');
+    }
+    return marketInfo.orders.length === 0;
+  }
+
+  /**
+   * CancelAllOnCore instruction. Cancels all orders visible in the currently
+   * loaded market snapshot directly on the core program, including reverse
+   * orders and global orders with rent prepayment. Reload the market first when
+   * completeness matters.
    *
    * @returns TransactionInstruction[]
    */
@@ -2000,7 +2041,8 @@ export class ManifestClient {
    * @param connection Connection to pull mint info
    * @param payer PublicKey of the trader
    * @param globalMint PublicKey for global mint deposit.
-   * @param amountTokens Number of tokens to deposit.
+   * @param amountTokens Number of tokens to deposit. Values between atom
+   * boundaries are rounded to the nearest atom.
    *
    * @returns Promise<TransactionInstruction>
    */
@@ -2026,8 +2068,12 @@ export class ManifestClient {
       true,
       is22 ? TOKEN_2022_PROGRAM_ID : TOKEN_PROGRAM_ID,
     );
-    const mintDecimals = mint.decimals;
-    const amountAtoms = Math.round(amountTokens * 10 ** mintDecimals);
+    const mintDecimals: number = mint.decimals;
+    const amountAtoms: bignum = tokenAmountToAtoms(
+      amountTokens,
+      mintDecimals,
+      'round',
+    );
 
     return createGlobalDepositInstruction(
       {
@@ -2052,7 +2098,8 @@ export class ManifestClient {
    * @param connection Connection to pull mint info
    * @param payer PublicKey of the trader
    * @param globalMint PublicKey for global mint withdraw.
-   * @param amountTokens Number of tokens to withdraw.
+   * @param amountTokens Number of tokens to withdraw. Values between atom
+   * boundaries are rounded to the nearest atom.
    *
    * @returns Promise<TransactionInstruction>
    */
@@ -2078,8 +2125,12 @@ export class ManifestClient {
       true,
       is22 ? TOKEN_2022_PROGRAM_ID : TOKEN_PROGRAM_ID,
     );
-    const mintDecimals = mint.decimals;
-    const amountAtoms = Math.round(amountTokens * 10 ** mintDecimals);
+    const mintDecimals: number = mint.decimals;
+    const amountAtoms: bignum = tokenAmountToAtoms(
+      amountTokens,
+      mintDecimals,
+      'round',
+    );
 
     return createGlobalWithdrawInstruction(
       {
@@ -2180,8 +2231,13 @@ function toWrapperPlaceOrderParams(
     priceQuoteAtomsPerBaseAtoms,
     maxExponent,
   );
-  const numBaseAtoms: bignum = Math.floor(
-    wrapperPlaceOrderParamsExternal.numBaseTokens * baseAtomsPerToken,
+  // Preserve the SDK's historical order-sizing behavior explicitly: a UI
+  // amount between atom boundaries sizes down rather than placing more base
+  // than the caller's budget-derived value requested.
+  const numBaseAtoms: bignum = tokenAmountToAtoms(
+    wrapperPlaceOrderParamsExternal.numBaseTokens,
+    market.baseDecimals(),
+    'floor',
   );
 
   return {

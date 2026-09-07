@@ -7,6 +7,10 @@ import express from 'express';
 import cors from 'cors';
 import { USDC_MINT, STABLECOIN_MINTS } from './stats_utils/constants';
 import { createExpensiveQueryAdmission } from './stats_utils/httpAdmission';
+import {
+  parseOptionalUnixTimestamp,
+  validateUnixTimestampRange,
+} from './stats_utils/httpValidation';
 
 // Configuration constants
 const SNAPSHOT_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
@@ -332,7 +336,11 @@ export class MarketMakerLeaderboard {
         ]),
       ];
 
-      for (let batchStart: number = 0; batchStart < allOrders.length; batchStart += ORDERS_PER_INSERT) {
+      for (
+        let batchStart: number = 0;
+        batchStart < allOrders.length;
+        batchStart += ORDERS_PER_INSERT
+      ) {
         const orderBatch: (string | number)[][] = allOrders.slice(
           batchStart,
           batchStart + ORDERS_PER_INSERT,
@@ -400,7 +408,10 @@ export class MarketMakerLeaderboard {
         try {
           await this.saveSnapshot(snapshot);
         } catch (error) {
-          console.error(`Failed to save snapshot for ${snapshot.market}:`, error);
+          console.error(
+            `Failed to save snapshot for ${snapshot.market}:`,
+            error,
+          );
         }
       }
 
@@ -479,11 +490,11 @@ const setupAPI = (monitor: MarketMakerLeaderboard) => {
         fallback: number,
         maximum: number,
         name: string,
-      ) => {
+      ): number => {
         if (value === undefined) return fallback;
         const parsed = Number(value);
         if (!Number.isSafeInteger(parsed) || parsed < 1 || parsed > maximum)
-          throw new Error(
+          throw new RangeError(
             `${name} must be an integer between 1 and ${maximum}`,
           );
         return parsed;
@@ -492,12 +503,39 @@ const setupAPI = (monitor: MarketMakerLeaderboard) => {
       const snapshotLimit = boundedInt(req.query.limit, 100, 500, 'limit');
       const page = boundedInt(req.query.page, 1, 1_000, 'page');
       const offset = (page - 1) * snapshotLimit;
-      const startTime = req.query.start
-        ? new Date(parseInt(req.query.start as string) * 1000)
+      if (offset > 10_000) {
+        throw new RangeError(
+          'page is too deep; narrow the time range or request at most 10000 prior snapshots',
+        );
+      }
+      const requestedStartTimestamp: number | undefined =
+        parseOptionalUnixTimestamp(req.query.start, 'start');
+      const requestedEndTimestamp: number | undefined =
+        parseOptionalUnixTimestamp(req.query.end, 'end');
+      const maximumRangeSeconds: number = 31 * 24 * 60 * 60;
+      const hasExplicitRange: boolean =
+        requestedStartTimestamp !== undefined ||
+        requestedEndTimestamp !== undefined;
+      const implicitEndTimestamp: number = Math.floor(Date.now() / 1000);
+      const endTimestamp: number | undefined = hasExplicitRange
+        ? (requestedEndTimestamp ?? implicitEndTimestamp)
         : undefined;
-      const endTime = req.query.end
-        ? new Date(parseInt(req.query.end as string) * 1000)
-        : undefined;
+      const startTimestamp: number | undefined =
+        endTimestamp === undefined
+          ? undefined
+          : (requestedStartTimestamp ??
+            Math.max(1, endTimestamp - maximumRangeSeconds));
+      validateUnixTimestampRange(
+        startTimestamp,
+        endTimestamp,
+        maximumRangeSeconds,
+      );
+      const startTime: Date | undefined =
+        startTimestamp === undefined
+          ? undefined
+          : new Date(startTimestamp * 1000);
+      const endTime: Date | undefined =
+        endTimestamp === undefined ? undefined : new Date(endTimestamp * 1000);
       const market = req.query.market as string;
       const trader = req.query.trader as string;
 
@@ -675,6 +713,10 @@ const setupAPI = (monitor: MarketMakerLeaderboard) => {
       });
     } catch (error) {
       console.error('Error getting snapshots:', error);
+      if (error instanceof RangeError) {
+        res.status(400).json({ error: error.message });
+        return;
+      }
       res.status(500).json({ error: 'Internal server error' });
     }
   });
