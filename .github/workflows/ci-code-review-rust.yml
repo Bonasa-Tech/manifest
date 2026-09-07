@@ -17,7 +17,9 @@ env:
   CARGO_TERM_COLOR: always
   SOLANA_VERSION: '2.2.20'
   SVM_ARCH: 'v2'
-  RUST_TOOLCHAIN: '1.86.0'
+  # pinocchio's account view crates need rustc 1.89 to build, so the host
+  # toolchain moves up with them.
+  RUST_TOOLCHAIN: '1.89.0'
   # Must match workspace.metadata.solana.tools-version. The SBF programs are
   # built with platform tools v1.57, which ships a newer
   # rustc (1.95) than the default. Same source, better codegen: measured on
@@ -59,7 +61,11 @@ jobs:
           rustup component add clippy
 
       - name: Run clippy
-        run: cargo clippy --workspace --exclude fixed --exclude checked_math -- --no-deps --deny=warnings --allow=clippy::style --allow=clippy::complexity --allow=clippy::manual-retain --allow=clippy::crate-in-macro-def --allow=clippy::result-large-err --allow=clippy::derive_partial_eq_without_eq --allow=clippy::multiple-bound-locations --allow=unexpected-cfgs
+        # The certora/solana-cvt crates are vendored from Certora and are
+        # path dependencies, which makes them implicit workspace members.
+        # They are excluded rather than held to this repository's lint
+        # policy, so the fork stays diffable against upstream.
+        run: cargo clippy --workspace --exclude fixed --exclude checked_math --exclude calltrace --exclude cvt --exclude cvt-macros --exclude derive_nondet --exclude early-panic --exclude hook_macro --exclude nondet --exclude solana_cvt --exclude stubs --exclude vectors -- --no-deps --deny=warnings --allow=clippy::style --allow=clippy::complexity --allow=clippy::manual-retain --allow=clippy::crate-in-macro-def --allow=clippy::result-large-err --allow=clippy::derive_partial_eq_without_eq --allow=clippy::multiple-bound-locations --allow=unexpected-cfgs
 
       # The prover itself only runs on main (ci-certora.yml), so nothing else
       # on a pull request compiles the code behind the certora feature, which
@@ -134,11 +140,40 @@ jobs:
       - name: Install cargo-llvm-cov
         uses: taiki-e/install-action@faf6515f98a6da02430741fd0af1094fde82286d # cargo-llvm-cov
 
-      # split coverage test runs to avoid enabling no-clock feature during unit tests
-      # and to handle packages with/without test features separately
-      - name: Generate code coverage
+      # The tests below drive the on-chain programs through BanksClient.
+      # pinocchio compiles its syscalls to nothing off chain, so they load the
+      # compiled programs instead of running the entrypoint natively, and need
+      # them built first.
+      #
+      # `--features test` because the host tests are run with it, and it
+      # selects a different fee collector; a program built without it rejects
+      # the collector the tests use. One program per invocation because
+      # building them together unifies features, and the wrapper's
+      # `manifest-dex/no-entrypoint` would then strip manifest's entrypoint
+      # and leave every instruction failing as UnsupportedProgramId.
+      # One program per invocation, from its own directory. Selecting a
+      # package with `-p` from the workspace root makes cargo-build-sbf look
+      # for the artifact under the wrong name and fail with "Unable to get
+      # file metadata"; building them together instead unifies features, and
+      # the wrapper's `manifest-dex/no-entrypoint` would strip manifest's
+      # entrypoint and leave every instruction failing as UnsupportedProgramId.
+      - name: Build the programs for the integration tests
         run: |
-          cargo llvm-cov --no-report --workspace --exclude manifest-jupiter --exclude manifest-client --features test  -- --nocapture --test-threads 1
+          (cd programs/manifest && cargo build-sbf --arch=${{ env.SVM_ARCH }} --tools-version ${{ env.PLATFORM_TOOLS }} --features test)
+          (cd programs/wrapper && cargo build-sbf --arch=${{ env.SVM_ARCH }} --tools-version ${{ env.PLATFORM_TOOLS }} --features test)
+          (cd programs/ui-wrapper && cargo build-sbf --arch=${{ env.SVM_ARCH }} --tools-version ${{ env.PLATFORM_TOOLS }} --features test)
+
+      # split coverage test runs to avoid enabling no-clock feature during unit tests
+      # and to handle packages with/without test features separately.
+      # The certora/solana-cvt crates are vendored from Certora and are path
+      # dependencies, which makes them implicit workspace members; their tests
+      # need tooling this job does not have, so they are excluded here as they
+      # are for clippy.
+      - name: Generate code coverage
+        env:
+          SBF_OUT_DIR: ${{ github.workspace }}/target/deploy
+        run: |
+          cargo llvm-cov --no-report --workspace --exclude manifest-jupiter --exclude manifest-client --exclude calltrace --exclude cvt --exclude cvt-macros --exclude derive_nondet --exclude early-panic --exclude hook_macro --exclude nondet --exclude solana_cvt --exclude stubs --exclude vectors --features test  -- --nocapture --test-threads 1
           cargo llvm-cov --no-report --package manifest-jupiter --features test  -- --nocapture --test-threads 1
           cargo llvm-cov --no-report --package manifest-client -- --nocapture --test-threads 1
           cargo llvm-cov report --lcov --output-path lcov.info

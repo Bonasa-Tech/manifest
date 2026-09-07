@@ -1,0 +1,13 @@
+[package]
+name = "solana_cvt"
+version = "0.3.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+solana-program = "2.2"
+pinocchio = "0.10.2"
+cvt = { path = "../cvt" }
+nondet = { path = "../nondet" }
+arrayref = "0.3.7"

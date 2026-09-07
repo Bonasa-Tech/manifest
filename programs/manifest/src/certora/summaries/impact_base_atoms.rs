@@ -3,7 +3,7 @@ use crate::{
     state::{DerefOrBorrow, DynamicAccount, MarketFixed},
     validation::loaders::GlobalTradeAccounts,
 };
-use solana_program::program_error::ProgramError;
+use pinocchio::error::ProgramError;
 
 use nondet::*;
 

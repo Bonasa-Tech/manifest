@@ -670,49 +670,38 @@ where
 {
     /// Lookup the index of a given value.
     fn lookup_index<V: Payload>(&'a self, value: &V) -> DataIndex {
-        if self.root_index() == NIL {
-            return NIL;
-        }
-
+        // One read of the node per level. The field accessors each fetch the
+        // node again, and this descent asked for the value twice, then for a
+        // child's existence, then for the child, so a lookup cost four or five
+        // fetches per level where it needs one. Every insert and every removal
+        // by value walks this.
         let mut current_index: DataIndex = self.root_index();
 
-        while self.get_value::<V>(current_index) != value {
-            if self.get_value::<V>(current_index) > value {
-                if self.has_left::<V>(current_index) {
-                    current_index = self.get_left_index::<V>(current_index);
-                } else {
-                    return NIL;
-                }
-            } else if self.get_value::<V>(current_index) < value {
-                if self.has_right::<V>(current_index) {
-                    current_index = self.get_right_index::<V>(current_index);
-                } else {
-                    return NIL;
-                }
+        while current_index != NIL {
+            let node: &RBNode<V> = get_helper::<RBNode<V>>(self.data(), current_index);
+
+            if node.value == *value {
+                return current_index;
+            }
+            if node.value > *value {
+                current_index = node.left;
+            } else if node.value < *value {
+                current_index = node.right;
             } else {
-                // Check both subtrees for equal keys.
-                let left_lookup: DataIndex = RedBlackTreeReadOnly::<V>::new(
-                    self.data(),
-                    self.get_left_index::<V>(current_index),
-                    NIL,
-                )
-                .lookup_index(value);
+                // Ordered the same but not equal, so an equal key can sit in
+                // either subtree and both have to be searched.
+                let (left_index, right_index): (DataIndex, DataIndex) = (node.left, node.right);
+                let left_lookup: DataIndex =
+                    RedBlackTreeReadOnly::<V>::new(self.data(), left_index, NIL)
+                        .lookup_index(value);
                 if left_lookup != NIL {
                     return left_lookup;
                 }
-                let right_lookup: DataIndex = RedBlackTreeReadOnly::<V>::new(
-                    self.data(),
-                    self.get_right_index::<V>(current_index),
-                    NIL,
-                )
-                .lookup_index(value);
-                if right_lookup != NIL {
-                    return right_lookup;
-                }
-                return NIL;
+                return RedBlackTreeReadOnly::<V>::new(self.data(), right_index, NIL)
+                    .lookup_index(value);
             }
         }
-        current_index
+        NIL
     }
 
     fn lookup_max_index<V: Payload>(&'a self) -> DataIndex {
@@ -745,23 +734,39 @@ where
         if index == NIL {
             return NIL;
         }
-        // Predecessor is below us.
-        if self.get_left_index::<V>(index) != NIL {
-            let mut current_index: DataIndex = self.get_left_index::<V>(index);
-            while self.get_right_index::<V>(current_index) != NIL {
-                current_index = self.get_right_index::<V>(current_index);
+        // A read per node rather than per field. Walking the book takes this
+        // step for every order it passes, and the field accessors fetch the
+        // node again for each field they return.
+        let node: &RBNode<V> = get_helper::<RBNode<V>>(self.data(), index);
+
+        // The predecessor is the rightmost node of the left subtree.
+        if node.left != NIL {
+            let mut current_index: DataIndex = node.left;
+            loop {
+                let current: &RBNode<V> = get_helper::<RBNode<V>>(self.data(), current_index);
+                if current.right == NIL {
+                    return current_index;
+                }
+                current_index = current.right;
             }
-            return current_index;
         }
 
-        // Successor is above, keep going up while we are the left child
+        // Otherwise it is above: climb while this node is a left child.
+        let root_index: DataIndex = self.root_index();
         let mut current_index: DataIndex = index;
-        while self.is_left_child::<V>(current_index) {
-            current_index = self.get_parent_index::<V>(current_index);
+        let mut parent_index: DataIndex = node.parent;
+        while current_index != root_index {
+            let parent: &RBNode<V> = get_helper::<RBNode<V>>(self.data(), parent_index);
+            if parent.left != current_index {
+                break;
+            }
+            current_index = parent_index;
+            parent_index = parent.parent;
         }
-        current_index = self.get_parent_index::<V>(current_index);
-
-        current_index
+        if current_index == root_index {
+            return NIL;
+        }
+        parent_index
     }
 
     /// Get the next index. This walks the tree, so does not care about equal
@@ -770,12 +775,17 @@ where
     /// It should never be called on leaf nodes.
     fn get_next_higher_index<V: Payload>(&'a self, index: DataIndex) -> DataIndex {
         debug_assert!(index != NIL);
-        debug_assert!(self.get_right_index::<V>(index) != NIL);
-        let mut current_index: DataIndex = self.get_right_index::<V>(index);
-        while self.get_left_index::<V>(current_index) != NIL {
-            current_index = self.get_left_index::<V>(current_index);
+        // A read per node, as above.
+        let node: &RBNode<V> = get_helper::<RBNode<V>>(self.data(), index);
+        debug_assert!(node.right != NIL);
+        let mut current_index: DataIndex = node.right;
+        loop {
+            let current: &RBNode<V> = get_helper::<RBNode<V>>(self.data(), current_index);
+            if current.left == NIL {
+                return current_index;
+            }
+            current_index = current.left;
         }
-        current_index
     }
 }
 

@@ -2,8 +2,8 @@ use crate::program::ManifestError;
 use borsh::{BorshDeserialize as Deserialize, BorshSerialize as Serialize};
 use bytemuck::{Pod, Zeroable};
 use hypertree::trace;
+use pinocchio::error::ProgramError;
 use shank::ShankAccount;
-use solana_program::program_error::ProgramError;
 use static_assertions::const_assert;
 use std::{
     cmp::Ordering,

@@ -193,7 +193,8 @@ async fn create_market_with_first_bump_vaults(
         &test_fixture.sol_mint_fixture.key,
         &test_fixture.usdc_mint_fixture.key,
         &payer,
-    )?;
+    )
+    .map_err(|e| anyhow::anyhow!("{e:?}"))?;
     send_tx_with_retry(
         Rc::clone(&test_fixture.context),
         &create_market_ixs,
@@ -256,7 +257,8 @@ async fn cu_create_market_test() -> anyhow::Result<()> {
     let market_keypair: Keypair = market_keypair_with_first_bump_vaults(&base_mint, &quote_mint);
 
     let create_market_ixs: Vec<Instruction> =
-        create_market_instructions(&market_keypair.pubkey(), &base_mint, &quote_mint, &payer)?;
+        create_market_instructions(&market_keypair.pubkey(), &base_mint, &quote_mint, &payer)
+            .map_err(|e| anyhow::anyhow!("{e:?}"))?;
     // Includes the system program create account instruction.
     measure_and_send(
         &test_fixture,
@@ -646,7 +648,8 @@ async fn cu_batch_update_with_globals_test() -> anyhow::Result<()> {
     let market: Pubkey = market_keypair.pubkey();
     send_tx_with_retry(
         Rc::clone(&test_fixture.context),
-        &create_market_instructions(&market, &base_mint, &quote_mint, &payer)?[..],
+        &create_market_instructions(&market, &base_mint, &quote_mint, &payer)
+            .map_err(|e| anyhow::anyhow!("{e:?}"))?[..],
         Some(&payer),
         &[&payer_keypair, &market_keypair],
     )

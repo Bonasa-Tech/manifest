@@ -44,7 +44,9 @@ on:
 env:
   CARGO_TERM_COLOR: always
   SOLANA_VERSION: '2.2.20'
-  RUST_TOOLCHAIN: '1.86.0'
+  # pinocchio's account view crates need rustc 1.89 to build, so the host
+  # toolchain moves up with them.
+  RUST_TOOLCHAIN: '1.89.0'
   # Must match workspace.metadata.solana.tools-version. The benchmark harness
   # builds this checkout from its workspace, so the workspace pin is what
   # selects this SBF compiler for the measured programs.

@@ -55,3 +55,19 @@ pub const MAX_GLOBAL_SEATS: u16 = 999;
 // that base alignment.
 const_assert_eq!(MARKET_BLOCK_SIZE % 8, 0);
 const_assert_eq!(GLOBAL_BLOCK_SIZE % 8, 0);
+
+/// Most accounts an instruction is deserialized for.
+///
+/// Manifest instructions take at most 14 accounts, the wrapper 15 and the ui
+/// wrapper 20. Instructions carrying more than this are rejected by the
+/// runtime rather than silently truncated.
+///
+/// This is all that remains of a hand written entrypoint. `solana_program`'s
+/// macro decoded the runtime's input into a heap allocated `Vec<AccountInfo>`,
+/// reading every field through a running offset; replacing it with a fixed
+/// size stack array and a bump allocator brought that to 185 CU plus 72 per
+/// account, of which about 58 per account was the `Rc<RefCell<_>>` pairs the
+/// `solana_program` account type itself needs. Getting below that needed a
+/// zero copy account type, which is what pinocchio's entrypoint uses: 126 CU
+/// plus 47 per account, measured by `entrypoint_only` in `tests/cases/cu.rs`.
+pub const MAX_ACCOUNTS: usize = 64;

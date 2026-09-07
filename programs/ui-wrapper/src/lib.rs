@@ -12,14 +12,12 @@ pub mod wrapper_user;
 
 use hypertree::trace;
 use instruction::ManifestWrapperInstruction;
+use pinocchio::{account::AccountView, error::ProgramError, ProgramResult};
 use processors::{
     cancel_order::process_cancel_order, create_wrapper::process_create_wrapper,
     place_order::process_place_order, settle_funds::process_settle_funds,
 };
-use solana_program::{
-    account_info::AccountInfo, declare_id, entrypoint::ProgramResult, program_error::ProgramError,
-    pubkey::Pubkey,
-};
+use solana_program::{declare_id, pubkey::Pubkey};
 
 #[cfg(not(feature = "no-entrypoint"))]
 use solana_security_txt::security_txt;
@@ -38,13 +36,16 @@ security_txt! {
 declare_id!("UMnFStVeG1ecZFc2gc5K3vFy3sMpotq8C91mXBQDGwh");
 
 #[cfg(not(feature = "no-entrypoint"))]
-manifest::entrypoint!(process_instruction);
+pinocchio::program_entrypoint!(process_instruction, {
+    manifest::state::constants::MAX_ACCOUNTS
+});
 
 pub fn process_instruction(
-    program_id: &Pubkey,
-    accounts: &[AccountInfo],
+    program_id_raw: &pinocchio::address::Address,
+    accounts: &[AccountView],
     instruction_data: &[u8],
 ) -> ProgramResult {
+    let program_id: &Pubkey = manifest::validation::as_pubkey(program_id_raw);
     let (tag, data) = instruction_data
         .split_first()
         .ok_or(ProgramError::InvalidInstructionData)?;

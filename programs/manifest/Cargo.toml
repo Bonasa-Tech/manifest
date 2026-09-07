@@ -40,7 +40,7 @@ num_enum = { workspace = true }
 thiserror = { workspace = true }
 solana-security-txt = { workspace = true }
 static_assertions = { workspace = true }
-nondet = { workspace = true, optional = true}
+nondet = { workspace = true, optional = true, features = ["pinocchio_accounts"] }
 cvt = { workspace = true, optional = true}
 cvt-macros = { workspace = true, optional = true}
 early-panic = { workspace = true, optional = true}
@@ -50,6 +50,9 @@ vectors = { workspace = true, optional = true}
 hook_macro = { workspace = true, optional = true}
 arrayref = { workspace = true}
 solana-invoke = { workspace = true }
+pinocchio = { workspace = true }
+pinocchio-system = { workspace = true }
+pinocchio-token = { workspace = true }
 solana-curve25519 = { workspace = true }
 cvlr = { version = "0.4", optional = true } 
 

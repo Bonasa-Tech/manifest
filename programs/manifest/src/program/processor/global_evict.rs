@@ -1,9 +1,15 @@
-use std::cell::RefMut;
+use crate::validation::{io_to_program_error, to_program_error, AccountViewExt};
+use pinocchio::{
+    account::RefMut,
+    sysvars::{rent::Rent, Sysvar},
+    ProgramResult,
+};
 
-use borsh::{BorshDeserialize, BorshSerialize};
-use solana_program::{account_info::AccountInfo, entrypoint::ProgramResult, pubkey::Pubkey};
 #[cfg(not(feature = "certora"))]
-use solana_program::{program::invoke_signed, program_pack::Pack, rent::Rent, sysvar::Sysvar};
+use crate::program::invoke_signed;
+use borsh::{BorshDeserialize, BorshSerialize};
+use pinocchio::account::AccountView;
+use solana_program::{program_pack::Pack, pubkey::Pubkey};
 #[cfg(not(feature = "certora"))]
 use spl_token::state::Account;
 
@@ -44,17 +50,18 @@ impl GlobalEvictParams {
 
 pub(crate) fn process_global_evict(
     program_id: &Pubkey,
-    accounts: &[AccountInfo],
+    accounts: &[AccountView],
     data: &[u8],
 ) -> ProgramResult {
-    let params: GlobalEvictParams = GlobalEvictParams::try_from_slice(data)?;
+    let params: GlobalEvictParams =
+        GlobalEvictParams::try_from_slice(data).map_err(io_to_program_error)?;
     process_global_evict_core(program_id, accounts, params)
 }
 
 #[cfg_attr(all(feature = "certora", not(feature = "certora-test")), early_panic)]
 pub(crate) fn process_global_evict_core(
     _program_id: &Pubkey,
-    accounts: &[AccountInfo],
+    accounts: &[AccountView],
     params: GlobalEvictParams,
 ) -> ProgramResult {
     let global_evict_context: GlobalEvictContext = GlobalEvictContext::load(accounts)?;
@@ -76,7 +83,7 @@ pub(crate) fn process_global_evict_core(
     // 1. Withdraw for the evictee
     // 2. Evict the seat on the global account and claim
     // 3. Deposit for the evictor
-    let global_data: &mut RefMut<&mut [u8]> = &mut global.try_borrow_mut_data()?;
+    let global_data: &mut RefMut<[u8]> = &mut global.try_borrow_mut()?;
     let mut global_dynamic_account: GlobalRefMut = get_mut_dynamic_account(global_data);
     let evictee_balance: GlobalAtoms =
         global_dynamic_account.get_balance_atoms(&evictee_token.get_owner());
@@ -107,7 +114,7 @@ pub(crate) fn process_global_evict_core(
         )?;
 
         emit_stack(GlobalWithdrawLog {
-            global: *global.key,
+            global: *global.pubkey(),
             trader: evictee_token.get_owner(),
             global_atoms: evictee_balance,
         })?;
@@ -156,11 +163,11 @@ pub(crate) fn process_global_evict_core(
         )?;
 
         global_dynamic_account
-            .deposit_global(payer.key, GlobalAtoms::new(deposited_amount_atoms))?;
+            .deposit_global(payer.pubkey(), GlobalAtoms::new(deposited_amount_atoms))?;
 
         emit_stack(GlobalDepositLog {
-            global: *global.key,
-            trader: *payer.key,
+            global: *global.pubkey(),
+            trader: *payer.pubkey(),
             global_atoms: GlobalAtoms::new(deposited_amount_atoms),
         })?;
     }
@@ -178,18 +185,18 @@ pub(crate) fn process_global_evict_core(
 /// unbacked order penalty it's advised to not place more than 10000 global
 /// orders using the same trader identity.
 #[cfg(not(feature = "certora"))]
-fn charge_eviction_fee<'a, 'info>(
-    payer: &Signer<'a, 'info>,
-    global: &ManifestAccountInfo<'a, 'info, GlobalFixed>,
+fn charge_eviction_fee<'a>(
+    payer: &Signer<'a>,
+    global: &ManifestAccountInfo<'a, GlobalFixed>,
 ) -> ProgramResult {
     let rent: Rent = Rent::get()?;
     invoke(
         &solana_program::system_instruction::transfer(
-            &payer.key,
-            &global.key,
-            rent.minimum_balance(Account::LEN as usize) * 2 + 10000 * GAS_DEPOSIT_LAMPORTS,
+            &payer.pubkey(),
+            &global.pubkey(),
+            rent.try_minimum_balance(Account::LEN as usize)? * 2 + 10000 * GAS_DEPOSIT_LAMPORTS,
         ),
-        &[payer.info.clone(), global.info.clone()],
+        &[payer.info, global.info],
     )?;
     Ok(())
 }
@@ -199,64 +206,72 @@ fn charge_eviction_fee<'a, 'info>(
 /// rent, sysvar state the prover does not model, so it is a nondeterministic
 /// amount the payer can cover.
 #[cfg(feature = "certora")]
-fn charge_eviction_fee<'a, 'info>(
-    payer: &Signer<'a, 'info>,
-    global: &ManifestAccountInfo<'a, 'info, GlobalFixed>,
+fn charge_eviction_fee<'a>(
+    payer: &Signer<'a>,
+    global: &ManifestAccountInfo<'a, GlobalFixed>,
 ) -> ProgramResult {
     let fee_lamports: u64 = ::nondet::nondet();
-    cvt::cvt_assume!(**payer.info.lamports.borrow() >= fee_lamports);
-    cvt::cvt_assume!(**global.info.lamports.borrow() <= u64::MAX - fee_lamports);
-    **payer.info.lamports.borrow_mut() -= fee_lamports;
-    **global.info.lamports.borrow_mut() += fee_lamports;
+    cvt::cvt_assume!(payer.info.lamports() >= fee_lamports);
+    cvt::cvt_assume!(global.info.lamports() <= u64::MAX - fee_lamports);
+    payer
+        .info
+        .set_lamports(payer.info.lamports() - fee_lamports);
+    global
+        .info
+        .set_lamports(global.info.lamports() + fee_lamports);
     Ok(())
 }
 
 /** Transfer the evictee's balance from the global vault to their token account **/
 #[cfg(not(feature = "certora"))]
-fn spl_token_transfer_from_global_vault_to_evictee<'a, 'info>(
-    token_program: &TokenProgram<'a, 'info>,
-    mint: &MintAccountInfo<'a, 'info>,
-    global_vault: &TokenAccountInfo<'a, 'info>,
-    evictee_token: &TokenAccountInfo<'a, 'info>,
+fn spl_token_transfer_from_global_vault_to_evictee<'a>(
+    token_program: &TokenProgram<'a>,
+    mint: &MintAccountInfo<'a>,
+    global_vault: &TokenAccountInfo<'a>,
+    evictee_token: &TokenAccountInfo<'a>,
     amount_atoms: u64,
     bump: u8,
 ) -> ProgramResult {
-    if *global_vault.owner == spl_token_2022::id() {
+    if global_vault.owner_pubkey() == spl_token_2022::id() {
         invoke_signed(
             &spl_token_2022::instruction::transfer_checked(
-                token_program.key,
-                global_vault.key,
-                mint.info.key,
-                evictee_token.key,
-                global_vault.key,
+                token_program.pubkey(),
+                global_vault.pubkey(),
+                mint.info.pubkey(),
+                evictee_token.pubkey(),
+                global_vault.pubkey(),
                 &[],
                 amount_atoms,
                 mint.mint.decimals,
-            )?,
+            )
+            .map_err(to_program_error)?,
+            // source, mint, destination, authority: the vault signs for itself.
             &[
-                token_program.as_ref().clone(),
-                evictee_token.as_ref().clone(),
-                mint.as_ref().clone(),
-                global_vault.as_ref().clone(),
+                global_vault.as_ref(),
+                mint.as_ref(),
+                evictee_token.as_ref(),
+                global_vault.as_ref(),
             ],
-            global_vault_seeds_with_bump!(mint.info.key, bump),
+            global_vault_seeds_with_bump!(mint.info.pubkey(), bump),
         )?;
     } else {
         invoke_signed(
             &spl_token::instruction::transfer(
-                token_program.key,
-                global_vault.key,
-                evictee_token.key,
-                global_vault.key,
+                token_program.pubkey(),
+                global_vault.pubkey(),
+                evictee_token.pubkey(),
+                global_vault.pubkey(),
                 &[],
                 amount_atoms,
-            )?,
+            )
+            .map_err(to_program_error)?,
+            // source, destination, authority: the vault signs for itself.
             &[
-                token_program.as_ref().clone(),
-                global_vault.as_ref().clone(),
-                evictee_token.as_ref().clone(),
+                global_vault.as_ref(),
+                evictee_token.as_ref(),
+                global_vault.as_ref(),
             ],
-            global_vault_seeds_with_bump!(mint.info.key, bump),
+            global_vault_seeds_with_bump!(mint.info.pubkey(), bump),
         )?;
     }
     Ok(())
@@ -267,15 +282,15 @@ token account. The mint may carry a transfer fee on the token-2022 path; the
 fee is withheld from what the evictee receives, the vault is debited the full
 amount. **/
 #[cfg(feature = "certora")]
-fn spl_token_transfer_from_global_vault_to_evictee<'a, 'info>(
-    _token_program: &TokenProgram<'a, 'info>,
-    _mint: &MintAccountInfo<'a, 'info>,
-    global_vault: &TokenAccountInfo<'a, 'info>,
-    evictee_token: &TokenAccountInfo<'a, 'info>,
+fn spl_token_transfer_from_global_vault_to_evictee<'a>(
+    _token_program: &TokenProgram<'a>,
+    _mint: &MintAccountInfo<'a>,
+    global_vault: &TokenAccountInfo<'a>,
+    evictee_token: &TokenAccountInfo<'a>,
     amount_atoms: u64,
     _bump: u8,
 ) -> ProgramResult {
-    if *global_vault.owner == spl_token_2022::id() {
+    if global_vault.owner_pubkey() == spl_token_2022::id() {
         spl_token_2022_transfer_with_fee(
             global_vault.info,
             evictee_token.info,
@@ -294,50 +309,48 @@ fn spl_token_transfer_from_global_vault_to_evictee<'a, 'info>(
 
 /** Transfer the evictor's deposit from their token account to the global vault **/
 #[cfg(not(feature = "certora"))]
-fn spl_token_transfer_from_evictor_to_global_vault<'a, 'info>(
-    token_program: &TokenProgram<'a, 'info>,
-    mint: &MintAccountInfo<'a, 'info>,
-    trader_token: &TokenAccountInfo<'a, 'info>,
-    global_vault: &TokenAccountInfo<'a, 'info>,
-    payer: &Signer<'a, 'info>,
+fn spl_token_transfer_from_evictor_to_global_vault<'a>(
+    token_program: &TokenProgram<'a>,
+    mint: &MintAccountInfo<'a>,
+    trader_token: &TokenAccountInfo<'a>,
+    global_vault: &TokenAccountInfo<'a>,
+    payer: &Signer<'a>,
     amount_atoms: u64,
 ) -> ProgramResult {
-    if *global_vault.owner == spl_token_2022::id() {
+    if global_vault.owner_pubkey() == spl_token_2022::id() {
         invoke(
             &spl_token_2022::instruction::transfer_checked(
-                token_program.key,
-                trader_token.key,
-                mint.info.key,
-                global_vault.key,
-                payer.key,
+                token_program.pubkey(),
+                trader_token.pubkey(),
+                mint.info.pubkey(),
+                global_vault.pubkey(),
+                payer.pubkey(),
                 &[],
                 amount_atoms,
                 mint.mint.decimals,
-            )?,
+            )
+            .map_err(to_program_error)?,
+            // source, mint, destination, authority.
             &[
-                token_program.as_ref().clone(),
-                trader_token.as_ref().clone(),
-                mint.as_ref().clone(),
-                global_vault.as_ref().clone(),
-                payer.as_ref().clone(),
+                trader_token.as_ref(),
+                mint.as_ref(),
+                global_vault.as_ref(),
+                payer.as_ref(),
             ],
         )?;
     } else {
         invoke(
             &spl_token::instruction::transfer(
-                token_program.key,
-                trader_token.key,
-                global_vault.key,
-                payer.key,
+                token_program.pubkey(),
+                trader_token.pubkey(),
+                global_vault.pubkey(),
+                payer.pubkey(),
                 &[],
                 amount_atoms,
-            )?,
-            &[
-                token_program.as_ref().clone(),
-                trader_token.as_ref().clone(),
-                global_vault.as_ref().clone(),
-                payer.as_ref().clone(),
-            ],
+            )
+            .map_err(to_program_error)?,
+            // source, destination, authority.
+            &[trader_token.as_ref(), global_vault.as_ref(), payer.as_ref()],
         )?;
     }
     Ok(())
@@ -348,15 +361,15 @@ global vault. The mint may carry a transfer fee on the token-2022 path, so the
 vault can receive less than the requested amount; the processor credits the
 vault balance delta. **/
 #[cfg(feature = "certora")]
-fn spl_token_transfer_from_evictor_to_global_vault<'a, 'info>(
-    _token_program: &TokenProgram<'a, 'info>,
-    _mint: &MintAccountInfo<'a, 'info>,
-    trader_token: &TokenAccountInfo<'a, 'info>,
-    global_vault: &TokenAccountInfo<'a, 'info>,
-    payer: &Signer<'a, 'info>,
+fn spl_token_transfer_from_evictor_to_global_vault<'a>(
+    _token_program: &TokenProgram<'a>,
+    _mint: &MintAccountInfo<'a>,
+    trader_token: &TokenAccountInfo<'a>,
+    global_vault: &TokenAccountInfo<'a>,
+    payer: &Signer<'a>,
     amount_atoms: u64,
 ) -> ProgramResult {
-    if *global_vault.owner == spl_token_2022::id() {
+    if global_vault.owner_pubkey() == spl_token_2022::id() {
         spl_token_2022_transfer_with_fee(
             trader_token.info,
             global_vault.info,

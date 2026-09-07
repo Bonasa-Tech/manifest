@@ -1,3 +1,4 @@
+use pinocchio::ProgramResult;
 /// The global order state stores information about all global orders for a given token.
 ///
 /// The reason for global orders to be sharded by token is that it will make it
@@ -16,7 +17,7 @@ use hypertree::{
 };
 use hypertree::{DataIndex, Get, NIL};
 use shank::ShankType;
-use solana_program::{entrypoint::ProgramResult, pubkey::Pubkey};
+use solana_program::pubkey::Pubkey;
 use static_assertions::const_assert_eq;
 
 use crate::{
@@ -357,7 +358,7 @@ impl ManifestAccount for GlobalFixed {
         // Check the discriminant to make sure it is a global account.
         require!(
             self.discriminant == GLOBAL_FIXED_DISCRIMINANT,
-            solana_program::program_error::ProgramError::InvalidAccountData,
+            pinocchio::error::ProgramError::InvalidAccountData,
             "Invalid market discriminant actual: {} expected: {}",
             self.discriminant,
             GLOBAL_FIXED_DISCRIMINANT
@@ -793,7 +794,7 @@ fn get_deposit_index(
     fixed: &GlobalFixed,
     dynamic: &[u8],
     trader: &Pubkey,
-) -> Result<DataIndex, solana_program::program_error::ProgramError> {
+) -> Result<DataIndex, pinocchio::error::ProgramError> {
     let global_trader_tree: GlobalTraderTreeReadOnly =
         GlobalTraderTreeReadOnly::new(dynamic, fixed.global_traders_root_index, NIL);
     let global_trader_index: DataIndex =

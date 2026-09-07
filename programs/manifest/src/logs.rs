@@ -1,7 +1,8 @@
 use bytemuck::{Pod, Zeroable};
 use hypertree::PodBool;
+use pinocchio::error::ProgramError;
 use shank::ShankAccount;
-use solana_program::{program_error::ProgramError, pubkey::Pubkey};
+use solana_program::pubkey::Pubkey;
 
 use crate::{
     quantities::{BaseAtoms, GlobalAtoms, QuoteAtoms, QuoteAtomsPerBaseAtom},

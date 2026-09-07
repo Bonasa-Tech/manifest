@@ -1,0 +1,7 @@
+error: Expected 1 argument
+  --> tests/expand/test_hook_error2.rs:11:1
+   |
+11 | #[cvt_hook_start(hook(), hook2())]
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: this error originates in the attribute macro `cvt_hook_start` (in Nightly builds, run with -Z macro-backtrace for more info)

@@ -943,7 +943,8 @@ async fn wrapper_partial_fill_cancel_accrues_fee_test() -> anyhow::Result<()> {
         let wrapper_keypair = Keypair::new();
 
         let create_wrapper_ixs: Vec<Instruction> =
-            create_wrapper_instructions(&maker, &maker, &wrapper_keypair.pubkey())?;
+            create_wrapper_instructions(&maker, &maker, &wrapper_keypair.pubkey())
+                .map_err(|e| anyhow::anyhow!("{e:?}"))?;
 
         send_tx_with_retry(
             Rc::clone(&test_fixture.context),
@@ -1364,7 +1365,8 @@ async fn wrapper_fill_order_without_referral_test() -> anyhow::Result<()> {
         let wrapper_keypair = Keypair::new();
 
         let create_wrapper_ixs: Vec<Instruction> =
-            create_wrapper_instructions(&maker, &maker, &wrapper_keypair.pubkey())?;
+            create_wrapper_instructions(&maker, &maker, &wrapper_keypair.pubkey())
+                .map_err(|e| anyhow::anyhow!("{e:?}"))?;
 
         send_tx_with_retry(
             Rc::clone(&test_fixture.context),
@@ -1736,7 +1738,8 @@ async fn wrapper_fill_order_with_transfer_fees_test() -> anyhow::Result<()> {
         let wrapper_keypair = Keypair::new();
 
         let create_wrapper_ixs: Vec<Instruction> =
-            create_wrapper_instructions(&maker, &maker, &wrapper_keypair.pubkey())?;
+            create_wrapper_instructions(&maker, &maker, &wrapper_keypair.pubkey())
+                .map_err(|e| anyhow::anyhow!("{e:?}"))?;
 
         send_tx_with_retry(
             Rc::clone(&test_fixture.context),
@@ -2127,7 +2130,8 @@ async fn wrapper_fill_order_with_transfer_fees_without_referral_test() -> anyhow
         let wrapper_keypair = Keypair::new();
 
         let create_wrapper_ixs: Vec<Instruction> =
-            create_wrapper_instructions(&maker, &maker, &wrapper_keypair.pubkey())?;
+            create_wrapper_instructions(&maker, &maker, &wrapper_keypair.pubkey())
+                .map_err(|e| anyhow::anyhow!("{e:?}"))?;
 
         send_tx_with_retry(
             Rc::clone(&test_fixture.context),

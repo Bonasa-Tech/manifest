@@ -18,7 +18,7 @@ mod integration_tests {
     use solana_program::{
         program_pack::Pack, pubkey::Pubkey as SolanaPubkey, rent::Rent, system_instruction,
     };
-    use solana_program_test::{processor, ProgramTest};
+    use solana_program_test::ProgramTest;
     use solana_signer::Signer;
     use solana_transaction::Transaction;
     use spl_token::state::Mint;
@@ -55,11 +55,11 @@ mod integration_tests {
         Keypair,
         solana_program::hash::Hash,
     ) {
-        let program_test = ProgramTest::new(
-            "manifest",
-            manifest::ID,
-            processor!(manifest::process_instruction),
-        );
+        // `None` loads the compiled program from BPF_OUT_DIR. The native
+        // processor cannot be used: pinocchio compiles its syscalls to
+        // nothing off chain, so a test running the entrypoint natively would
+        // execute no CPI at all and still pass.
+        let program_test = ProgramTest::new("manifest", manifest::ID, None);
 
         program_test.start().await
     }

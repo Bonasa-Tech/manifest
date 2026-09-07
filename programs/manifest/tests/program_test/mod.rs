@@ -5,23 +5,13 @@ use solana_program_test::ProgramTest;
 pub use fixtures::*;
 
 pub fn manifest_program_test() -> ProgramTest {
-    let mut program = {
-        #[cfg(feature = "test-sbf")]
-        {
-            ProgramTest::new("manifest", manifest::ID, None)
-        }
-
-        #[cfg(not(feature = "test-sbf"))]
-        {
-            ProgramTest::new(
-                "manifest",
-                manifest::ID,
-                solana_program_test::processor!(manifest::process_instruction),
-            )
-        }
-    };
-
-    #[cfg(feature = "test-sbf")]
+    // Always the compiled binary. The entrypoint hands out pinocchio account
+    // views, which are pointers into the runtime's serialized input, and off
+    // the SBF target pinocchio compiles its syscalls to no-ops: a native
+    // processor would skip every CPI and the tests would pass without testing
+    // anything. Run with `cargo test-sbf`, or point BPF_OUT_DIR at a build.
+    let mut program: ProgramTest = ProgramTest::new("manifest", manifest::ID, None);
+    // The SPL programs registered below keep their native processors.
     program.prefer_bpf(false);
 
     program.add_program(
