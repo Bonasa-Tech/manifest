@@ -85,6 +85,10 @@ Reverse orders are a special type of order available on Manifest designed to rep
 
 ### Building
 
+The workspace pins the SBF compiler through `workspace.metadata.solana` in
+`Cargo.toml`, so both `cargo build-sbf` and `cargo test-sbf` use the same
+platform-tools version as CI and the CU benchmark.
+
 ```
 cargo build-sbf
 ```

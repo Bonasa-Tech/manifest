@@ -482,7 +482,7 @@ impl<Fixed: DerefOrBorrow<GlobalFixed>, Dynamic: DerefOrBorrow<[u8]>>
 impl<Fixed: DerefOrBorrowMut<GlobalFixed>, Dynamic: DerefOrBorrowMut<[u8]>>
     DynamicAccount<Fixed, Dynamic>
 {
-    fn borrow_mut_global(&mut self) -> GlobalRefMut {
+    fn borrow_mut_global(&mut self) -> GlobalRefMut<'_> {
         GlobalRefMut {
             fixed: self.fixed.deref_or_borrow_mut(),
             dynamic: self.dynamic.deref_or_borrow_mut(),

@@ -9,9 +9,12 @@ env:
   MANIFEST_NAME: manifest
   WRAPPER_NAME: wrapper
   UI_WRAPPER_NAME: ui_wrapper
-  RUST_TOOLCHAIN: '1.86.0'
+  # solana-verify 0.5.1's locked dependencies require Rust 1.89 or newer.
+  RUST_TOOLCHAIN: '1.89.0'
   SOLANA_TOOLCHAIN: '2.2.20'
   SVM_ARCH: 'v2'
+  # Must match workspace.metadata.solana.tools-version.
+  PLATFORM_TOOLS: 'v1.57'
   SOLANA_VERIFIABLE_BUILD_IMAGE: 'solanafoundation/solana-verifiable-build@sha256:a1c0d5899ee0ffc81412428760662d9ba4643c2003ec3a92ab6f75a6e2e52a1b'
 
 
@@ -40,11 +43,13 @@ jobs:
 
       - name: Setup solana-verify
         run: |
-          cargo install solana-verify --version 0.4.1 --locked
+          # 0.5.1 adds forwarding of cargo-build-sbf arguments, allowing the
+          # verifiable container build to enforce the platform-tools pin.
+          cargo +${{ env.RUST_TOOLCHAIN }} install solana-verify --version 0.5.1 --locked
 
       - name: Verifiable build manifest
         run: |
-          solana-verify build --arch=${{ env.SVM_ARCH }} --base-image ${{ env.SOLANA_VERIFIABLE_BUILD_IMAGE }} --library-name ${{ env.MANIFEST_NAME }}
+          solana-verify build --arch=${{ env.SVM_ARCH }} --cargo-build-sbf-args="--tools-version ${{ env.PLATFORM_TOOLS }}" --base-image ${{ env.SOLANA_VERIFIABLE_BUILD_IMAGE }} --library-name ${{ env.MANIFEST_NAME }}
 
       - name: Get hash manifest
         run: |
@@ -63,7 +68,7 @@ jobs:
 
       - name: Verifiable build wrapper
         run: |
-          solana-verify build --arch=${{ env.SVM_ARCH }} --base-image ${{ env.SOLANA_VERIFIABLE_BUILD_IMAGE }} --library-name ${{ env.WRAPPER_NAME }}
+          solana-verify build --arch=${{ env.SVM_ARCH }} --cargo-build-sbf-args="--tools-version ${{ env.PLATFORM_TOOLS }}" --base-image ${{ env.SOLANA_VERIFIABLE_BUILD_IMAGE }} --library-name ${{ env.WRAPPER_NAME }}
 
       - name: Get hash wrapper
         run: |
@@ -82,7 +87,7 @@ jobs:
 
       - name: Verifiable build ui wrapper
         run: |
-          solana-verify build --arch=${{ env.SVM_ARCH }} --base-image ${{ env.SOLANA_VERIFIABLE_BUILD_IMAGE }} --library-name ${{ env.UI_WRAPPER_NAME }}
+          solana-verify build --arch=${{ env.SVM_ARCH }} --cargo-build-sbf-args="--tools-version ${{ env.PLATFORM_TOOLS }}" --base-image ${{ env.SOLANA_VERIFIABLE_BUILD_IMAGE }} --library-name ${{ env.UI_WRAPPER_NAME }}
 
       - name: Get hash ui wrapper
         run: |

@@ -45,6 +45,10 @@ env:
   CARGO_TERM_COLOR: always
   SOLANA_VERSION: '2.2.20'
   RUST_TOOLCHAIN: '1.86.0'
+  # Must match workspace.metadata.solana.tools-version. The benchmark harness
+  # builds this checkout from its workspace, so the workspace pin is what
+  # selects this SBF compiler for the measured programs.
+  PLATFORM_TOOLS: 'v1.57'
   # Must be configured as a full, reviewed commit SHA. Mutable branch names
   # are rejected before any private-repository code is checked out.
   BENCHMARK_REPOSITORY_SHA: ${{ vars.MANIFEST_PRIVATE_BENCHMARK_SHA }}
@@ -109,7 +113,7 @@ jobs:
       - name: Cache dependencies
         uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
-          shared-key: 'solana-${{ env.SOLANA_VERSION }}'
+          shared-key: 'solana-${{ env.SOLANA_VERSION }}-platform-tools-${{ env.PLATFORM_TOOLS }}'
           workspaces: |
             . -> target
             manifest-private/deps/manifest -> target
