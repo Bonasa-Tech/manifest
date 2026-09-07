@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1788542695709,
+  "lastUpdate": 1788804939611,
   "repoUrl": "https://github.com/Bonasa-Tech/manifest",
   "entries": {
     "CU Benchmark": [
@@ -13295,6 +13295,72 @@ window.BENCHMARK_DATA = {
           {
             "name": "MFX_99",
             "value": 3054,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "cyrbritt@gmail.com",
+            "name": "Britt Cyr",
+            "username": "brittcyr"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "210757d3428fea16989e032e77425f07f97cc135",
+          "message": "Platform tools and price compare (#701)\n\n* Build the programs with platform tools v1.57\n\nThe SBF programs are compiled by the rustc that ships inside solana's\nplatform tools, which is separate from the host toolchain in\nrust-toolchain.toml. The default is several releases behind; v1.57\ncarries rustc 1.95. Same source, newer code generator.\n\nOn its own this is close to a wash on the replay benchmark, within a\npercent either way. It is here because two things need it. The price\ncomparison in the commit that follows is worth 4% under this compiler\nand a 2% regression under the old one, and the pinocchio account view\ncrates require rustc 1.89 or newer to build at all.\n\nAlso makes four lifetimes explicit, which the newer compiler warns about\nunder `hiding a lifetime that's elided elsewhere`, so the build stays\nfree of warnings.\n\n* Keep prices in registers when comparing them\n\nQuoteAtomsPerBaseAtom stores its u128 as [u64; 2] because a u128 may want\nsixteen byte alignment and the array guarantees only eight. Both conversions\nbetween the two went through a pointer cast and an unaligned read, and that\nmade the compiler round the value through the stack rather than keep it in\nthe register pair it already occupies.\n\nThey are now shifts, which is the same little endian split with no memory\ninvolved, and the Ord impl compares the high word then the low word instead\nof materializing a u128 at all.\n\nThis sits under every price comparison, so it was paid at every level of\nevery orderbook tree descent, and under every piece of price arithmetic.\nWorth 2.91% of MFX CU per order on the replay benchmark for the comparison\nand a further 0.36% for the conversions, no transaction worse.\n\nTwo tests pin the equivalence: that the word wise comparison agrees with\ncomparing the u128 across the sixty four bit boundary, and that the shift\nbased split is byte for byte what the reinterpretation produced.\n\n* Pin SBF platform tools across build workflows",
+          "timestamp": "2026-09-07T11:04:55-07:00",
+          "tree_id": "9dded09758e8db27fc0367d4eb5546c2be92154e",
+          "url": "https://github.com/Bonasa-Tech/manifest/commit/210757d3428fea16989e032e77425f07f97cc135"
+        },
+        "date": 1788804937653,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "PHX_50",
+            "value": 6897,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "PHX_95",
+            "value": 13208,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "PHX_99",
+            "value": 13902,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_50",
+            "value": 1524,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_95",
+            "value": 2578,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_99",
+            "value": 3047,
             "range": "",
             "unit": "CU",
             "extra": ""
