@@ -509,7 +509,7 @@ pub fn cvt_assume_global_trade_accounts_with_gas<'a>(
     market_vault_token: &'a AccountView,
     system_program: &'a AccountView,
     is_global_base: bool,
-) -> [Option<GlobalTradeAccounts<'a, 'static>>; 2] {
+) -> [Option<GlobalTradeAccounts<'a>>; 2] {
     cvt_assume!(system_program.pubkey() == &solana_program::system_program::id());
     cvt_assume_global_trade_accounts_gen(
         market,
@@ -537,7 +537,7 @@ pub fn cvt_assume_global_trade_accounts<'a>(
     global_vault_token: &'a AccountView,
     market_vault_token: &'a AccountView,
     is_global_base: bool,
-) -> [Option<GlobalTradeAccounts<'a, 'static>>; 2] {
+) -> [Option<GlobalTradeAccounts<'a>>; 2] {
     cvt_assume_global_trade_accounts_gen(
         market,
         trader,
@@ -560,9 +560,9 @@ fn cvt_assume_global_trade_accounts_gen<'a>(
     market_vault_token: &'a AccountView,
     system_program: Option<&'a AccountView>,
     is_global_base: bool,
-) -> [Option<GlobalTradeAccounts<'a, 'static>>; 2] {
+) -> [Option<GlobalTradeAccounts<'a>>; 2] {
     // -- the global account is a manifest account holding a GlobalFixed
-    cvt_assume!(global.owner == &crate::id());
+    cvt_assume!(global.owner_pubkey() == &crate::id());
     create_global!(global);
 
     // -- the maker has a seat on the global account, otherwise their global
@@ -574,7 +574,7 @@ fn cvt_assume_global_trade_accounts_gen<'a>(
     cvt_assume!(global_vault_token.pubkey() != market_vault_token.pubkey());
     cvt_assume!(global_vault_token.pubkey() != global.pubkey());
 
-    let global_trade_accounts: GlobalTradeAccounts<'a, 'static> = GlobalTradeAccounts {
+    let global_trade_accounts: GlobalTradeAccounts<'a> = GlobalTradeAccounts {
         // Token-2022 extensions are summarized away, so the mint is never read.
         mint_opt: None,
         global: ManifestAccountInfo::<GlobalFixed>::new(global).unwrap(),

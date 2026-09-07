@@ -19,9 +19,9 @@ use crate::{
 };
 use hypertree::DataIndex;
 
-pub fn place_single_order_nondet_inputs<const IS_BID: bool>(
-    market_info: &AccountView,
-) -> (AddOrderToMarketArgs<'static>, BaseAtoms, u32) {
+pub fn place_single_order_nondet_inputs<'a, const IS_BID: bool>(
+    market_info: &'a AccountView,
+) -> (AddOrderToMarketArgs<'a>, BaseAtoms, u32) {
     place_single_order_nondet_inputs_with_type::<IS_BID>(
         market_info,
         state::OrderType::Limit,
@@ -32,12 +32,12 @@ pub fn place_single_order_nondet_inputs<const IS_BID: bool>(
 /// Nondeterministic inputs for a taker of the given order type, matching
 /// against whatever the global accounts allow.
 pub fn place_single_order_nondet_inputs_with_type<'a, const IS_BID: bool>(
-    market_info: &AccountView,
+    market_info: &'a AccountView,
     order_type: state::OrderType,
-    global_trade_accounts_opts: &'a [Option<GlobalTradeAccounts<'a, 'static>>; 2],
-) -> (AddOrderToMarketArgs<'a, 'static>, BaseAtoms, u32) {
+    global_trade_accounts_opts: &'a [Option<GlobalTradeAccounts<'a>>; 2],
+) -> (AddOrderToMarketArgs<'a>, BaseAtoms, u32) {
     let args: AddOrderToMarketArgs = AddOrderToMarketArgs {
-        market: *market_info.pubkey(),
+        market: market_info.pubkey(),
         trader_index: main_trader_index(),
         num_base_atoms: nondet(),
         price: QuoteAtomsPerBaseAtom::nondet_price_u32(),

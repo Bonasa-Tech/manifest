@@ -17,7 +17,6 @@ use cvt_macros::rule;
 use nondet::*;
 use pinocchio::{account::AccountView, ProgramResult};
 
-use solana_program::entrypoint::ProgramResult;
 
 use crate::{
     certora::spec::{
@@ -322,7 +321,7 @@ pub fn rest_remaining_global_no_revert_check<const IS_BID: bool>() {
         );
 
     let args: AddOrderToMarketArgs = AddOrderToMarketArgs {
-        market: *market_info.pubkey(),
+        market: market_info.pubkey(),
         trader_index: main_trader_index(),
         num_base_atoms: nondet(),
         price: QuoteAtomsPerBaseAtom::nondet_price_u32(),
@@ -442,7 +441,7 @@ fn global_deposit_withdraw_no_revert_check<const IS_DEPOSIT: bool>() {
     let global_vault_token: &AccountView = &used_acc_infos[3];
     let trader_token: &AccountView = &used_acc_infos[4];
 
-    cvt_assume!(global_info.owner == &crate::id());
+    cvt_assume!(global_info.owner_pubkey() == &crate::id());
     create_global!(global_info);
     crate::state::cvt_assume_main_trader_has_seat(trader.pubkey());
     crate::state::cvt_assume_has_global_seat(trader.pubkey());

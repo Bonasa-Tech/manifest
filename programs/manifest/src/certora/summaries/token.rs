@@ -17,7 +17,6 @@
 use crate::validation::AccountViewExt;
 use pinocchio::{account::AccountView, ProgramResult};
 use solana_cvt::token::{spl_token_account_get_amount, spl_token_account_set_amount};
-use solana_program::entrypoint::ProgramResult;
 
 /// Whether transfers may charge a nondeterministic fee. Reset by
 /// `init_static`; havoced in rules that do not initialize statics.

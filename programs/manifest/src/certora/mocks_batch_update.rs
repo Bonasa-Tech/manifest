@@ -8,7 +8,7 @@ use crate::{
     validation::loaders::GlobalTradeAccounts,
 };
 use hypertree::DataIndex;
-use solana_program::program_error::ProgramError;
+use pinocchio::error::ProgramError;
 
 #[cfg_attr(feature = "certora", cvt_hook_end(cancel_order_was_called()))]
 pub fn mock_cancel_order(

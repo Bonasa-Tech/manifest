@@ -37,6 +37,14 @@ pub fn nondet_account_view() -> AccountView {
     unsafe { AccountView::new_unchecked(address as *mut RuntimeAccount) }
 }
 
+impl crate::Nondet for AccountView {
+    /// So a spec can write `let account: AccountView = nondet();` the same way
+    /// it does for every other symbolic value.
+    fn nondet() -> Self {
+        nondet_account_view()
+    }
+}
+
 /// Sixteen account views laid out in the input memory region, one after
 /// another, with unconstrained contents.
 ///

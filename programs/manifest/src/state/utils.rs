@@ -1,9 +1,9 @@
 use crate::validation::AccountViewExt;
-use pinocchio::{
-    account::RefMut,
-    error::ProgramError,
-    ProgramResult,
-};
+use pinocchio::{account::RefMut, error::ProgramError, ProgramResult};
+// Only the certora build names the type; the rest reaches it through the
+// account wrappers.
+#[cfg(feature = "certora")]
+use pinocchio::account::AccountView;
 
 #[cfg(not(feature = "certora"))]
 use crate::program::invoke_signed;

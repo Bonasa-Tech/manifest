@@ -161,7 +161,7 @@ pub fn rule_deposit_deposits_with_fee() {
 
     // -- the vault is a token-2022 account, the only path where a transfer fee
     // exists, and the mint may charge one
-    cvt_assume!(vault_token.owner == &spl_token_2022::id());
+    cvt_assume!(vault_token.owner_pubkey() == &spl_token_2022::id());
     cvt_enable_transfer_fee();
 
     // Non-deterministically chosen amount
