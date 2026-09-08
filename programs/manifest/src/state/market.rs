@@ -102,7 +102,9 @@ pub use helpers::*;
 
 #[derive(Clone)]
 pub struct AddOrderToMarketArgs<'a> {
-    pub market: Pubkey,
+    /// Only read when a fill is logged, so it is borrowed rather than copied
+    /// into the arguments of every order placed.
+    pub market: &'a Pubkey,
     pub trader_index: DataIndex,
     pub num_base_atoms: BaseAtoms,
     pub price: QuoteAtomsPerBaseAtom,
@@ -1345,7 +1347,7 @@ impl<
             record_volume_by_trader_index(dynamic, trader_index, quote_atoms_traded);
 
             emit_stack(FillLog {
-                market,
+                market: *market,
                 maker,
                 taker,
                 base_mint: fixed.base_mint,

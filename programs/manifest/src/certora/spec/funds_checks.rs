@@ -271,7 +271,7 @@ fn rest_remaining_check<const IS_BID: bool>() {
     cvt_assume_funds_invariants(balances_old);
 
     let args: AddOrderToMarketArgs = AddOrderToMarketArgs {
-        market: *market_info.pubkey(),
+        market: market_info.pubkey(),
         trader_index: main_trader_index(),
         num_base_atoms: nondet(),
         price: nondet(),
