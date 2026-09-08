@@ -320,7 +320,7 @@ pub fn rest_remaining_global_no_revert_check<const IS_BID: bool>() {
         );
 
     let args: AddOrderToMarketArgs = AddOrderToMarketArgs {
-        market: *market_info.pubkey(),
+        market: market_info.pubkey(),
         trader_index: main_trader_index(),
         num_base_atoms: nondet(),
         price: QuoteAtomsPerBaseAtom::nondet_price_u32(),

@@ -491,7 +491,7 @@ impl<'a, 'b> AddSingleOrderCtx<'a, 'b> {
         record_volume_by_trader_index(dynamic, trader_index, quote_atoms_traded);
 
         emit_stack(FillLog {
-            market,
+            market: *market,
             maker,
             taker,
             base_atoms: base_atoms_traded,
@@ -871,7 +871,7 @@ mod place_order_equivalence_tests {
         current_slot: u32,
     ) -> Result<AddOrderToMarketResult, ProgramError> {
         market.place_order(AddOrderToMarketArgs {
-            market: Pubkey::new_unique(),
+            market: &Pubkey::new_unique(),
             trader_index,
             num_base_atoms: BaseAtoms::new(num_base_atoms),
             price: price.try_into().unwrap(),
@@ -907,7 +907,7 @@ mod place_order_equivalence_tests {
 
         let production_result: Result<AddOrderToMarketResult, ProgramError> = production
             .place_order(AddOrderToMarketArgs {
-                market: market_key,
+                market: &market_key,
                 trader_index,
                 num_base_atoms: BaseAtoms::new(num_base_atoms),
                 price: price.try_into().unwrap(),
@@ -919,7 +919,7 @@ mod place_order_equivalence_tests {
             });
         let model_result: Result<AddOrderToMarketResult, ProgramError> =
             model.place_order_(AddOrderToMarketArgs {
-                market: market_key,
+                market: &market_key,
                 trader_index,
                 num_base_atoms: BaseAtoms::new(num_base_atoms),
                 price: price.try_into().unwrap(),
@@ -1238,7 +1238,7 @@ mod place_order_equivalence_tests {
         let orders_before = market.get_bids().iter::<RestingOrder>().count();
 
         let result = market.place_order(AddOrderToMarketArgs {
-            market: Pubkey::new_unique(),
+            market: &Pubkey::new_unique(),
             trader_index: taker_index,
             num_base_atoms: BaseAtoms::new(u64::MAX),
             price: QuoteAtomsPerBaseAtom::MAX,
