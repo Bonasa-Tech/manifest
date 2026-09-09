@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1788914296951,
+  "lastUpdate": 1788917109244,
   "repoUrl": "https://github.com/Bonasa-Tech/manifest",
   "entries": {
     "CU Benchmark": [
@@ -13387,6 +13387,72 @@ window.BENCHMARK_DATA = {
           "url": "https://github.com/Bonasa-Tech/manifest/commit/64340cb368f194b409ea27cd202d5ce15265c8fd"
         },
         "date": 1788914294910,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "PHX_50",
+            "value": 6897,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "PHX_95",
+            "value": 13208,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "PHX_99",
+            "value": 13902,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_50",
+            "value": 1473,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_95",
+            "value": 2482,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_99",
+            "value": 2958,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "cyrbritt@gmail.com",
+            "name": "Britt Cyr",
+            "username": "brittcyr"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "1f95b209394821e0ac7376e7532131a781b62be4",
+          "message": "Build the formal verification with the pinned platform tools (#703)\n\nThe prover was still building with platform tools v1.43, which ships\nrustc 1.79. The programs now use pinocchio, whose account view crates\nneed 1.89 or newer, so that build cannot succeed at all.\n\nThree places pinned it: the conf the prover actually builds from, the\nrecipes for running it by hand, and the flag the action passes. All move\nto v1.57, which is what workspace.metadata.solana already pins for every\nother build in the repository.",
+          "timestamp": "2026-09-08T21:17:33-04:00",
+          "tree_id": "d700f16790bd9d6171493820d65357895dde9b86",
+          "url": "https://github.com/Bonasa-Tech/manifest/commit/1f95b209394821e0ac7376e7532131a781b62be4"
+        },
+        "date": 1788917107255,
         "tool": "customSmallerIsBetter",
         "benches": [
           {
