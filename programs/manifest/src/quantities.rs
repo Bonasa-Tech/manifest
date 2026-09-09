@@ -88,7 +88,15 @@ macro_rules! basic_math {
 
             #[inline(always)]
             fn add(self, other: Self) -> Self {
-                $type_name::new(self.inner + other.inner)
+                // Checked explicitly rather than left to the overflow-checks
+                // profile flag, which is off in release builds. Quantities
+                // carry trader value, so a wrap here has to trap in every
+                // build, not just the ones with the flag on.
+                $type_name::new(
+                    self.inner
+                        .checked_add(other.inner)
+                        .expect("quantity addition overflowed"),
+                )
             }
         }
 
@@ -104,7 +112,12 @@ macro_rules! basic_math {
 
             #[inline(always)]
             fn sub(self, other: Self) -> Self {
-                $type_name::new(self.inner - other.inner)
+                // See the note on `add` above.
+                $type_name::new(
+                    self.inner
+                        .checked_sub(other.inner)
+                        .expect("quantity subtraction underflowed"),
+                )
             }
         }
 

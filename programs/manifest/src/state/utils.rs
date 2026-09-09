@@ -169,10 +169,25 @@ pub(crate) fn settle_global_gas_refunds(
         let refund_lamports: u64 = GAS_DEPOSIT_LAMPORTS.checked_mul(num_refunds).unwrap();
         // Both accounts belong to this program here, so the lamports move by
         // writing the balances rather than asking the system program.
-        global.set_lamports(global.lamports() - refund_lamports);
+        // Every refund counted here was paid into the global account as a
+        // deposit, so the balance covers them, but that is an accounting
+        // invariant held across transactions rather than something checked
+        // locally. Checked explicitly so it still traps with overflow-checks
+        // off in release builds.
+        global.set_lamports(
+            global
+                .lamports()
+                .checked_sub(refund_lamports)
+                .ok_or(ProgramError::InsufficientFunds)?,
+        );
         {
             let receiver = gas_receiver_opt.as_ref().unwrap();
-            receiver.set_lamports(receiver.lamports() + refund_lamports);
+            receiver.set_lamports(
+                receiver
+                    .lamports()
+                    .checked_add(refund_lamports)
+                    .ok_or(ProgramError::ArithmeticOverflow)?,
+            );
         }
     }
 
