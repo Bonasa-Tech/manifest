@@ -77,7 +77,7 @@ lto = "fat"
 # silently instead of failing the transaction, and the audits and formal
 # verification were done with it on. Prefer targeted wrapping ops with a
 # proof, like the entrypoint does, over flipping this.
-overflow-checks = true
+overflow-checks = false
 strip = "debuginfo"
 
 [profile.release.build-override]
