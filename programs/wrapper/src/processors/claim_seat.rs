@@ -100,16 +100,18 @@ pub(crate) fn process_claim_seat(
 
     // Put that market_info at the free list head.
     let mut free_list: FreeList<UnusedWrapperFreeListPadding> =
-        FreeList::new(wrapper_dynamic_data, wrapper_fixed.free_list_head_index);
+        unsafe { FreeList::new(wrapper_dynamic_data, wrapper_fixed.free_list_head_index) };
     let free_address: DataIndex = free_list.remove();
     wrapper_fixed.free_list_head_index = free_list.get_head();
 
     // Insert into the MarketInfosTree.
-    let mut market_infos_tree: MarketInfosTree = MarketInfosTree::new(
-        wrapper_dynamic_data,
-        wrapper_fixed.market_infos_root_index,
-        NIL,
-    );
+    let mut market_infos_tree: MarketInfosTree = unsafe {
+        MarketInfosTree::new(
+            wrapper_dynamic_data,
+            wrapper_fixed.market_infos_root_index,
+            NIL,
+        )
+    };
     market_infos_tree.insert(free_address, market_info);
     wrapper_fixed.market_infos_root_index = market_infos_tree.get_root_index();
     // New market infos keep their open orders in the list layout.

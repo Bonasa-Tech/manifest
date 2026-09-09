@@ -193,11 +193,13 @@ async fn wrapper_batch_update_reuse_client_order_id_test() -> anyhow::Result<()>
         wrapper_account.data[..].split_at_mut(size_of::<ManifestWrapperStateFixed>());
 
     let wrapper_fixed: &ManifestWrapperStateFixed = get_helper(fixed_data, 0);
-    let market_infos_tree: MarketInfosTree = MarketInfosTree::new(
-        wrapper_dynamic_data,
-        wrapper_fixed.market_infos_root_index,
-        NIL,
-    );
+    let market_infos_tree: MarketInfosTree = unsafe {
+        MarketInfosTree::new(
+            wrapper_dynamic_data,
+            wrapper_fixed.market_infos_root_index,
+            NIL,
+        )
+    };
 
     let market_info_index: DataIndex =
         market_infos_tree.lookup_index(&MarketInfo::new_empty(test_fixture.market.key, NIL));
@@ -327,11 +329,13 @@ async fn sync_remove_test() -> anyhow::Result<()> {
         wrapper_account.data[..].split_at_mut(size_of::<ManifestWrapperStateFixed>());
 
     let wrapper_fixed: &ManifestWrapperStateFixed = get_helper(fixed_data, 0);
-    let market_infos_tree: MarketInfosTree = MarketInfosTree::new(
-        wrapper_dynamic_data,
-        wrapper_fixed.market_infos_root_index,
-        NIL,
-    );
+    let market_infos_tree: MarketInfosTree = unsafe {
+        MarketInfosTree::new(
+            wrapper_dynamic_data,
+            wrapper_fixed.market_infos_root_index,
+            NIL,
+        )
+    };
 
     // Just need to lookup by market key so the rest doesnt matter.
     let market_info_index: DataIndex =
@@ -490,11 +494,13 @@ async fn wrapper_batch_update_cancel_all_test() -> anyhow::Result<()> {
         .split_at_mut(size_of::<ManifestWrapperStateFixed>());
     let wrapper_fixed_after_first_pass: &ManifestWrapperStateFixed =
         get_helper(fixed_after_first_pass, 0);
-    let market_infos_after_first_pass: MarketInfosTree = MarketInfosTree::new(
-        dynamic_after_first_pass,
-        wrapper_fixed_after_first_pass.market_infos_root_index,
-        NIL,
-    );
+    let market_infos_after_first_pass: MarketInfosTree = unsafe {
+        MarketInfosTree::new(
+            dynamic_after_first_pass,
+            wrapper_fixed_after_first_pass.market_infos_root_index,
+            NIL,
+        )
+    };
     let market_info_index_after_first_pass: DataIndex = market_infos_after_first_pass
         .lookup_index(&MarketInfo::new_empty(test_fixture.market.key, NIL));
     let market_info_after_first_pass: &MarketInfo = get_helper::<RBNode<MarketInfo>>(
@@ -533,11 +539,13 @@ async fn wrapper_batch_update_cancel_all_test() -> anyhow::Result<()> {
         wrapper_account.data[..].split_at_mut(size_of::<ManifestWrapperStateFixed>());
 
     let wrapper_fixed: &ManifestWrapperStateFixed = get_helper(fixed_data, 0);
-    let market_infos_tree: MarketInfosTree = MarketInfosTree::new(
-        wrapper_dynamic_data,
-        wrapper_fixed.market_infos_root_index,
-        NIL,
-    );
+    let market_infos_tree: MarketInfosTree = unsafe {
+        MarketInfosTree::new(
+            wrapper_dynamic_data,
+            wrapper_fixed.market_infos_root_index,
+            NIL,
+        )
+    };
 
     let market_info_index: DataIndex =
         market_infos_tree.lookup_index(&MarketInfo::new_empty(test_fixture.market.key, NIL));
@@ -722,8 +730,9 @@ async fn wrapper_cancel_all_does_not_scan_a_large_market() -> anyhow::Result<()>
             .data
             .split_at_mut(size_of::<ManifestWrapperStateFixed>());
         let wrapper_fixed: &ManifestWrapperStateFixed = get_helper(fixed_data, 0);
-        let market_infos: MarketInfosTree =
-            MarketInfosTree::new(dynamic_data, wrapper_fixed.market_infos_root_index, NIL);
+        let market_infos: MarketInfosTree = unsafe {
+            MarketInfosTree::new(dynamic_data, wrapper_fixed.market_infos_root_index, NIL)
+        };
         let market_info_index: DataIndex =
             market_infos.lookup_index(&MarketInfo::new_empty(test_fixture.market.key, NIL));
         get_helper::<RBNode<MarketInfo>>(dynamic_data, market_info_index)
@@ -756,7 +765,7 @@ async fn wrapper_cancel_all_does_not_scan_a_large_market() -> anyhow::Result<()>
         .split_at_mut(size_of::<ManifestWrapperStateFixed>());
     let wrapper_fixed: &ManifestWrapperStateFixed = get_helper(fixed_data, 0);
     let market_infos: MarketInfosTree =
-        MarketInfosTree::new(dynamic_data, wrapper_fixed.market_infos_root_index, NIL);
+        unsafe { MarketInfosTree::new(dynamic_data, wrapper_fixed.market_infos_root_index, NIL) };
     let market_info_index: DataIndex =
         market_infos.lookup_index(&MarketInfo::new_empty(test_fixture.market.key, NIL));
     let market_info: &MarketInfo =

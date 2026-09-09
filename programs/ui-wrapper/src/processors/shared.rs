@@ -104,7 +104,7 @@ pub fn expand_wrapper(wrapper_data: &mut [u8]) {
 
     let wrapper_fixed: &mut ManifestWrapperUserFixed = get_mut_helper(fixed_data, 0);
     let mut free_list: FreeList<UnusedWrapperFreeListPadding> =
-        FreeList::new(dynamic_data, wrapper_fixed.free_list_head_index);
+        unsafe { FreeList::new(dynamic_data, wrapper_fixed.free_list_head_index) };
 
     free_list.add(wrapper_fixed.num_bytes_allocated);
     wrapper_fixed.num_bytes_allocated += WRAPPER_BLOCK_SIZE as u32;
@@ -147,7 +147,7 @@ pub(crate) fn sync_fast(
 
     if orders_root_index != NIL {
         let orders_tree: OpenOrdersTreeReadOnly =
-            OpenOrdersTreeReadOnly::new(wrapper_dynamic_data, orders_root_index, NIL);
+            unsafe { OpenOrdersTreeReadOnly::new(wrapper_dynamic_data, orders_root_index, NIL) };
 
         // Cannot do this in one pass because we need the data borrowed for the
         // iterator so cannot also borrow it for updating the nodes.
@@ -187,8 +187,9 @@ pub(crate) fn sync_fast(
             node.get_mut_value()
                 .set_is_bid(core_resting_order.get_is_bid());
         }
-        let mut orders_tree: RedBlackTree<WrapperOpenOrder> =
-            RedBlackTree::<WrapperOpenOrder>::new(wrapper_dynamic_data, orders_root_index, NIL);
+        let mut orders_tree: RedBlackTree<WrapperOpenOrder> = unsafe {
+            RedBlackTree::<WrapperOpenOrder>::new(wrapper_dynamic_data, orders_root_index, NIL)
+        };
         for to_remove_index in to_remove_indices.iter() {
             orders_tree.remove_by_index(*to_remove_index);
         }
@@ -196,7 +197,7 @@ pub(crate) fn sync_fast(
 
         let wrapper_fixed: &mut ManifestWrapperUserFixed = get_mut_helper(fixed_data, 0);
         let mut free_list: FreeList<UnusedWrapperFreeListPadding> =
-            FreeList::new(wrapper_dynamic_data, wrapper_fixed.free_list_head_index);
+            unsafe { FreeList::new(wrapper_dynamic_data, wrapper_fixed.free_list_head_index) };
         for open_order_index in to_remove_indices.iter() {
             // Free the node in wrapper.
             free_list.add(*open_order_index);
@@ -237,11 +238,13 @@ pub(crate) fn get_market_info_index_for_market(
         wrapper_data.split_at_mut(size_of::<ManifestWrapperUserFixed>());
 
     let wrapper_fixed: &ManifestWrapperUserFixed = get_helper(fixed_data, 0);
-    let market_infos_tree: MarketInfosTree = MarketInfosTree::new(
-        wrapper_dynamic_data,
-        wrapper_fixed.market_infos_root_index,
-        NIL,
-    );
+    let market_infos_tree: MarketInfosTree = unsafe {
+        MarketInfosTree::new(
+            wrapper_dynamic_data,
+            wrapper_fixed.market_infos_root_index,
+            NIL,
+        )
+    };
 
     // Just need to lookup by market key so the rest doesnt matter.
     let market_info_index: DataIndex =

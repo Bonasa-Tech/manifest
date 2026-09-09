@@ -2,9 +2,25 @@ use bytemuck::{Pod, Zeroable};
 use std::{cmp::Ordering, collections::HashSet};
 
 use crate::{
-    get_helper, get_mut_helper, trace, DataIndex, Get, HyperTreeData, HyperTreeReadOperations,
-    HyperTreeWriteOperations, Payload, NIL,
+    get_helper_unchecked, get_mut_helper_unchecked, trace, DataIndex, Get, HyperTreeData,
+    HyperTreeReadOperations, HyperTreeWriteOperations, Payload, NIL,
 };
+
+// SAFETY invariant for the node reads in this module.
+//
+// Every `DataIndex` this module dereferences is a node handle: the tree's
+// `root_index` or `max_index`, a `parent`/`left`/`right` link read out of an
+// existing node, or an index handed to a mutating method (`insert`,
+// `remove_by_index`) that the caller obtained from the free list for this same
+// account. Handles are block-aligned offsets the free list carved out of the
+// account's dynamic data, so each is an in-bounds, aligned start for the
+// `RBNode<V>` stored there. NIL is guarded before every read. The trait that
+// exposes these reads is `pub(crate)`, so no code outside this crate reaches
+// them with an index of its own. That is exactly the contract of
+// `get_helper_unchecked`/`get_mut_helper_unchecked`, so the reads below use the
+// unchecked accessors (the range check is measurable CU on a per-node walk);
+// an externally supplied index, such as an instruction-data hint, must be
+// range-checked and go through the safe `get_helper` instead.
 
 pub const RBTREE_OVERHEAD_BYTES: usize = 16;
 
@@ -121,7 +137,12 @@ impl<'a, V: Payload> RedBlackTreeReadOnly<'a, V> {
     ///                    iter() will dynamically lookup the maximum
     ///
     /// root!=NIL max!=NIL: initializes an existing tree, get_max() is defined
-    pub fn new(data: &'a [u8], root_index: DataIndex, max_index: DataIndex) -> Self {
+    ///
+    /// # Safety
+    /// Same contract as [`RedBlackTree::new`]: `data` must be a well formed tree
+    /// and every index passed here or to a method one of its node handles.
+    /// Reads are unchecked, so an out-of-range handle is undefined behavior.
+    pub unsafe fn new(data: &'a [u8], root_index: DataIndex, max_index: DataIndex) -> Self {
         RedBlackTreeReadOnly::<V> {
             root_index,
             data,
@@ -321,45 +342,45 @@ where
 {
     fn get_value<V: Payload>(&'a self, index: DataIndex) -> &'a V {
         debug_assert_ne!(index, NIL);
-        let node: &RBNode<V> = get_helper::<RBNode<V>>(self.data(), index);
+        let node: &RBNode<V> = unsafe { get_helper_unchecked::<RBNode<V>>(self.data(), index) };
         &node.value
     }
     fn has_left<V: Payload>(&self, index: DataIndex) -> bool {
         debug_assert_ne!(index, NIL);
-        let node: &RBNode<V> = get_helper::<RBNode<V>>(self.data(), index);
+        let node: &RBNode<V> = unsafe { get_helper_unchecked::<RBNode<V>>(self.data(), index) };
         node.left != NIL
     }
     fn has_right<V: Payload>(&self, index: DataIndex) -> bool {
         debug_assert_ne!(index, NIL);
-        let node: &RBNode<V> = get_helper::<RBNode<V>>(self.data(), index);
+        let node: &RBNode<V> = unsafe { get_helper_unchecked::<RBNode<V>>(self.data(), index) };
         node.right != NIL
     }
     fn get_color<V: Payload>(&self, index: DataIndex) -> Color {
         if index == NIL {
             return Color::Black;
         }
-        let node: &RBNode<V> = get_helper::<RBNode<V>>(self.data(), index);
+        let node: &RBNode<V> = unsafe { get_helper_unchecked::<RBNode<V>>(self.data(), index) };
         node.color
     }
     fn get_right_index<V: Payload>(&self, index: DataIndex) -> DataIndex {
         if index == NIL {
             return NIL;
         }
-        let node: &RBNode<V> = get_helper::<RBNode<V>>(self.data(), index);
+        let node: &RBNode<V> = unsafe { get_helper_unchecked::<RBNode<V>>(self.data(), index) };
         node.right
     }
     fn get_left_index<V: Payload>(&self, index: DataIndex) -> DataIndex {
         if index == NIL {
             return NIL;
         }
-        let node: &RBNode<V> = get_helper::<RBNode<V>>(self.data(), index);
+        let node: &RBNode<V> = unsafe { get_helper_unchecked::<RBNode<V>>(self.data(), index) };
         node.left
     }
     fn get_parent_index<V: Payload>(&self, index: DataIndex) -> DataIndex {
         if index == NIL {
             return NIL;
         }
-        let node: &RBNode<V> = get_helper::<RBNode<V>>(self.data(), index);
+        let node: &RBNode<V> = unsafe { get_helper_unchecked::<RBNode<V>>(self.data(), index) };
         node.parent
     }
 
@@ -444,28 +465,32 @@ where
         if index == NIL {
             return;
         }
-        let node: &mut RBNode<V> = get_mut_helper::<RBNode<V>>(self.data(), index);
+        let node: &mut RBNode<V> =
+            unsafe { get_mut_helper_unchecked::<RBNode<V>>(self.data(), index) };
         node.color = color;
     }
     fn set_parent_index<V: Payload>(&mut self, index: DataIndex, parent_index: DataIndex) {
         if index == NIL {
             return;
         }
-        let node: &mut RBNode<V> = get_mut_helper::<RBNode<V>>(self.data(), index);
+        let node: &mut RBNode<V> =
+            unsafe { get_mut_helper_unchecked::<RBNode<V>>(self.data(), index) };
         node.parent = parent_index;
     }
     fn set_left_index<V: Payload>(&mut self, index: DataIndex, left_index: DataIndex) {
         if index == NIL {
             return;
         }
-        let node: &mut RBNode<V> = get_mut_helper::<RBNode<V>>(self.data(), index);
+        let node: &mut RBNode<V> =
+            unsafe { get_mut_helper_unchecked::<RBNode<V>>(self.data(), index) };
         node.left = left_index;
     }
     fn set_right_index<V: Payload>(&mut self, index: DataIndex, right_index: DataIndex) {
         if index == NIL {
             return;
         }
-        let node: &mut RBNode<V> = get_mut_helper::<RBNode<V>>(self.data(), index);
+        let node: &mut RBNode<V> =
+            unsafe { get_mut_helper_unchecked::<RBNode<V>>(self.data(), index) };
         node.right = right_index;
     }
 
@@ -488,7 +513,8 @@ where
         // P
         {
             // Does not use the helpers to avoid redundant NIL checks.
-            let p_node: &mut RBNode<V> = get_mut_helper::<RBNode<V>>(self.data(), p_index);
+            let p_node: &mut RBNode<V> =
+                unsafe { get_mut_helper_unchecked::<RBNode<V>>(self.data(), p_index) };
             p_node.parent = gg_index;
             p_node.left = g_index;
         }
@@ -498,7 +524,8 @@ where
 
         // G
         {
-            let g_node: &mut RBNode<V> = get_mut_helper::<RBNode<V>>(self.data(), g_index);
+            let g_node: &mut RBNode<V> =
+                unsafe { get_mut_helper_unchecked::<RBNode<V>>(self.data(), g_index) };
             g_node.parent = p_index;
             g_node.right = y_index;
         }
@@ -543,7 +570,8 @@ where
         // P
         {
             // Does not use the helpers to avoid redundant NIL checks.
-            let p_node: &mut RBNode<V> = get_mut_helper::<RBNode<V>>(self.data(), p_index);
+            let p_node: &mut RBNode<V> =
+                unsafe { get_mut_helper_unchecked::<RBNode<V>>(self.data(), p_index) };
             p_node.parent = gg_index;
             p_node.right = g_index;
         }
@@ -555,7 +583,8 @@ where
 
         // G
         {
-            let g_node: &mut RBNode<V> = get_mut_helper::<RBNode<V>>(self.data(), g_index);
+            let g_node: &mut RBNode<V> =
+                unsafe { get_mut_helper_unchecked::<RBNode<V>>(self.data(), g_index) };
             g_node.parent = p_index;
             g_node.left = y_index;
         }
@@ -669,7 +698,8 @@ where
         let mut current_index: DataIndex = self.root_index();
 
         while current_index != NIL {
-            let node: &RBNode<V> = get_helper::<RBNode<V>>(self.data(), current_index);
+            let node: &RBNode<V> =
+                unsafe { get_helper_unchecked::<RBNode<V>>(self.data(), current_index) };
 
             if node.value == *value {
                 return current_index;
@@ -683,12 +713,12 @@ where
                 // either subtree and both have to be searched.
                 let (left_index, right_index): (DataIndex, DataIndex) = (node.left, node.right);
                 let left_lookup: DataIndex =
-                    RedBlackTreeReadOnly::<V>::new(self.data(), left_index, NIL)
+                    unsafe { RedBlackTreeReadOnly::<V>::new(self.data(), left_index, NIL) }
                         .lookup_index(value);
                 if left_lookup != NIL {
                     return left_lookup;
                 }
-                return RedBlackTreeReadOnly::<V>::new(self.data(), right_index, NIL)
+                return unsafe { RedBlackTreeReadOnly::<V>::new(self.data(), right_index, NIL) }
                     .lookup_index(value);
             }
         }
@@ -728,13 +758,14 @@ where
         // A read per node rather than per field. Walking the book takes this
         // step for every order it passes, and the field accessors fetch the
         // node again for each field they return.
-        let node: &RBNode<V> = get_helper::<RBNode<V>>(self.data(), index);
+        let node: &RBNode<V> = unsafe { get_helper_unchecked::<RBNode<V>>(self.data(), index) };
 
         // The predecessor is the rightmost node of the left subtree.
         if node.left != NIL {
             let mut current_index: DataIndex = node.left;
             loop {
-                let current: &RBNode<V> = get_helper::<RBNode<V>>(self.data(), current_index);
+                let current: &RBNode<V> =
+                    unsafe { get_helper_unchecked::<RBNode<V>>(self.data(), current_index) };
                 if current.right == NIL {
                     return current_index;
                 }
@@ -747,7 +778,8 @@ where
         let mut current_index: DataIndex = index;
         let mut parent_index: DataIndex = node.parent;
         while current_index != root_index {
-            let parent: &RBNode<V> = get_helper::<RBNode<V>>(self.data(), parent_index);
+            let parent: &RBNode<V> =
+                unsafe { get_helper_unchecked::<RBNode<V>>(self.data(), parent_index) };
             if parent.left != current_index {
                 break;
             }
@@ -767,11 +799,12 @@ where
     fn get_next_higher_index<V: Payload>(&'a self, index: DataIndex) -> DataIndex {
         debug_assert!(index != NIL);
         // A read per node, as above.
-        let node: &RBNode<V> = get_helper::<RBNode<V>>(self.data(), index);
+        let node: &RBNode<V> = unsafe { get_helper_unchecked::<RBNode<V>>(self.data(), index) };
         debug_assert!(node.right != NIL);
         let mut current_index: DataIndex = node.right;
         loop {
-            let current: &RBNode<V> = get_helper::<RBNode<V>>(self.data(), current_index);
+            let current: &RBNode<V> =
+                unsafe { get_helper_unchecked::<RBNode<V>>(self.data(), current_index) };
             if current.left == NIL {
                 return current_index;
             }
@@ -1118,7 +1151,8 @@ impl<'a, V: Payload> HyperTreeWriteOperations<'a, V> for RedBlackTree<'a, V> {
         if self.root_index == NIL {
             self.root_index = index;
             self.max_index = index;
-            let root_node: &mut RBNode<V> = get_mut_helper::<RBNode<V>>(self.data, index);
+            let root_node: &mut RBNode<V> =
+                unsafe { get_mut_helper_unchecked::<RBNode<V>>(self.data, index) };
             let new_node: RBNode<V> = RBNode {
                 left: NIL,
                 right: NIL,
@@ -1143,7 +1177,10 @@ impl<'a, V: Payload> HyperTreeWriteOperations<'a, V> for RedBlackTree<'a, V> {
             _unused_padding: 0,
         };
 
-        if self.max_index != NIL && *get_helper::<RBNode<V>>(self.data, self.max_index) < new_node {
+        // SAFETY: node handle; see the module invariant.
+        if self.max_index != NIL
+            && *unsafe { get_helper_unchecked::<RBNode<V>>(self.data, self.max_index) } < new_node
+        {
             self.max_index = index;
         }
 
@@ -1228,7 +1265,16 @@ impl<'a, V: Payload> HyperTreeWriteOperations<'a, V> for RedBlackTree<'a, V> {
 impl<'a, V: Payload> RedBlackTree<'a, V> {
     /// Creates a new RedBlackTree. Does not mutate data yet. Assumes the actual
     /// data in data is already well formed as a red black tree.
-    pub fn new(data: &'a mut [u8], root_index: DataIndex, max_index: DataIndex) -> Self {
+    ///
+    /// # Safety
+    /// `data` must be a well formed red-black tree for this account and every
+    /// `DataIndex` later passed to a method (the `root_index`/`max_index` here,
+    /// and the indices given to `insert`, `remove_by_index`, `get`, ...) must be
+    /// one of its node handles: an in-bounds, aligned start for an `RBNode<V>`,
+    /// obtained from the account's free list or read back out of the tree. The
+    /// methods read nodes without bounds checks ([`get_helper_unchecked`]), so
+    /// an out-of-range handle is undefined behavior. See the module invariant.
+    pub unsafe fn new(data: &'a mut [u8], root_index: DataIndex, max_index: DataIndex) -> Self {
         RedBlackTree::<V> {
             root_index,
             data,
@@ -1361,7 +1407,8 @@ impl<'a, V: Payload> RedBlackTree<'a, V> {
     /// and this runs for every order placed, so taking it by value copied it
     /// onto the stack a second time on the way in.
     fn insert_node_no_fix(&mut self, node_to_insert: &RBNode<V>, new_node_index: DataIndex) {
-        let mut current_parent: &RBNode<V> = get_helper::<RBNode<V>>(self.data, self.root_index);
+        let mut current_parent: &RBNode<V> =
+            unsafe { get_helper_unchecked::<RBNode<V>>(self.data, self.root_index) };
         let mut current_parent_index: DataIndex = self.root_index;
 
         // Which side of `current_parent` the new node belongs on, once the
@@ -1379,7 +1426,8 @@ impl<'a, V: Payload> RedBlackTree<'a, V> {
                     let right_index: DataIndex = current_parent.get_right_index();
                     if right_index != NIL {
                         // Keep going down the right subtree
-                        current_parent = get_helper::<RBNode<V>>(self.data, right_index);
+                        current_parent =
+                            unsafe { get_helper_unchecked::<RBNode<V>>(self.data, right_index) };
                         current_parent_index = right_index;
                     } else {
                         insert_on_right = Some(true);
@@ -1390,7 +1438,8 @@ impl<'a, V: Payload> RedBlackTree<'a, V> {
                     let left_index: DataIndex = current_parent.get_left_index();
                     if left_index != NIL {
                         // Keep going down the left subtree
-                        current_parent = get_helper::<RBNode<V>>(self.data, left_index);
+                        current_parent =
+                            unsafe { get_helper_unchecked::<RBNode<V>>(self.data, left_index) };
                         current_parent_index = left_index;
                     } else {
                         insert_on_right = Some(false);
@@ -1402,7 +1451,8 @@ impl<'a, V: Payload> RedBlackTree<'a, V> {
                     let left_index: DataIndex = current_parent.get_left_index();
                     if left_index != NIL {
                         // Keep going down the left subtree
-                        current_parent = get_helper::<RBNode<V>>(self.data, left_index);
+                        current_parent =
+                            unsafe { get_helper_unchecked::<RBNode<V>>(self.data, left_index) };
                         current_parent_index = left_index;
                     } else {
                         insert_on_right = Some(false);
@@ -1424,7 +1474,8 @@ impl<'a, V: Payload> RedBlackTree<'a, V> {
 
         // Put the leaf in the tree and update its parent.
         {
-            let new_node: &mut RBNode<V> = get_mut_helper::<RBNode<V>>(self.data, new_node_index);
+            let new_node: &mut RBNode<V> =
+                unsafe { get_mut_helper_unchecked::<RBNode<V>>(self.data, new_node_index) };
             *new_node = *node_to_insert;
             new_node.parent = current_parent_index;
         }
@@ -1541,7 +1592,8 @@ impl<'a, T: HyperTreeReadOperations<'a> + GetRedBlackTreeReadOnlyData<'a>, V: Pa
         if index == NIL {
             None
         } else {
-            let result: &RBNode<V> = get_helper::<RBNode<V>>(self.tree.data(), index);
+            let result: &RBNode<V> =
+                unsafe { get_helper_unchecked::<RBNode<V>>(self.tree.data(), index) };
             self.index = next_index;
             Some((index, result))
         }
@@ -1555,7 +1607,7 @@ pub(crate) mod test {
     use std::fmt::Display;
 
     use super::*;
-    use crate::HyperTreeValueIteratorTrait;
+    use crate::{get_helper, get_mut_helper, HyperTreeValueIteratorTrait};
     use static_assertions::assert_not_impl_any;
 
     assert_not_impl_any!(RBNode<u64>: Pod);
@@ -1665,7 +1717,8 @@ pub(crate) mod test {
     #[test]
     fn test_insert_basic() {
         let mut data: [u8; 100000] = [0; 100000];
-        let mut tree: RedBlackTree<TestOrderBid> = RedBlackTree::new(&mut data, NIL, NIL);
+        let mut tree: RedBlackTree<TestOrderBid> =
+            unsafe { RedBlackTree::new(&mut data, NIL, NIL) };
 
         tree.insert(TEST_BLOCK_WIDTH * 0, TestOrderBid::new(1111));
         tree.insert(TEST_BLOCK_WIDTH, TestOrderBid::new(1234));
@@ -1678,7 +1731,7 @@ pub(crate) mod test {
     }
 
     fn init_simple_tree(data: &mut [u8]) -> RedBlackTree<TestOrderBid> {
-        let mut tree: RedBlackTree<TestOrderBid> = RedBlackTree::new(data, NIL, NIL);
+        let mut tree: RedBlackTree<TestOrderBid> = unsafe { RedBlackTree::new(data, NIL, NIL) };
 
         for i in 1..12 {
             tree.insert(TEST_BLOCK_WIDTH * i, TestOrderBid::new((i * 1_000).into()));
@@ -1817,7 +1870,8 @@ pub(crate) mod test {
     #[test]
     fn test_rotate_right() {
         let mut data: [u8; 100000] = [0; 100000];
-        let mut tree: RedBlackTree<TestOrderBid> = RedBlackTree::new(&mut data, NIL, NIL);
+        let mut tree: RedBlackTree<TestOrderBid> =
+            unsafe { RedBlackTree::new(&mut data, NIL, NIL) };
 
         for i in 1..12 {
             tree.insert(
@@ -1852,7 +1906,8 @@ pub(crate) mod test {
     #[test]
     fn test_insert_right_left() {
         let mut data: [u8; 100000] = [0; 100000];
-        let mut tree: RedBlackTree<TestOrderBid> = RedBlackTree::new(&mut data, NIL, NIL);
+        let mut tree: RedBlackTree<TestOrderBid> =
+            unsafe { RedBlackTree::new(&mut data, NIL, NIL) };
         tree.insert(TEST_BLOCK_WIDTH * 0, TestOrderBid::new(100));
         tree.insert(TEST_BLOCK_WIDTH, TestOrderBid::new(200));
         tree.insert(TEST_BLOCK_WIDTH * 2, TestOrderBid::new(300));
@@ -1863,7 +1918,8 @@ pub(crate) mod test {
     #[test]
     fn test_remove_left_left() {
         let mut data: [u8; 100000] = [0; 100000];
-        let mut tree: RedBlackTree<TestOrderBid> = RedBlackTree::new(&mut data, NIL, NIL);
+        let mut tree: RedBlackTree<TestOrderBid> =
+            unsafe { RedBlackTree::new(&mut data, NIL, NIL) };
         tree.insert(TEST_BLOCK_WIDTH * 4, TestOrderBid::new(40));
         tree.insert(TEST_BLOCK_WIDTH * 3, TestOrderBid::new(30));
         tree.insert(TEST_BLOCK_WIDTH * 2, TestOrderBid::new(25));
@@ -1877,7 +1933,8 @@ pub(crate) mod test {
     #[test]
     fn test_remove_right_left() {
         let mut data: [u8; 100000] = [0; 100000];
-        let mut tree: RedBlackTree<TestOrderBid> = RedBlackTree::new(&mut data, NIL, NIL);
+        let mut tree: RedBlackTree<TestOrderBid> =
+            unsafe { RedBlackTree::new(&mut data, NIL, NIL) };
         tree.insert(TEST_BLOCK_WIDTH * 0, TestOrderBid::new(20));
         tree.insert(TEST_BLOCK_WIDTH, TestOrderBid::new(30));
         tree.insert(TEST_BLOCK_WIDTH * 2, TestOrderBid::new(40));
@@ -1890,7 +1947,8 @@ pub(crate) mod test {
     #[test]
     fn test_remove_left_right() {
         let mut data: [u8; 100000] = [0; 100000];
-        let mut tree: RedBlackTree<TestOrderBid> = RedBlackTree::new(&mut data, NIL, NIL);
+        let mut tree: RedBlackTree<TestOrderBid> =
+            unsafe { RedBlackTree::new(&mut data, NIL, NIL) };
         tree.insert(TEST_BLOCK_WIDTH * 0, TestOrderBid::new(20));
         tree.insert(TEST_BLOCK_WIDTH, TestOrderBid::new(30));
         tree.insert(TEST_BLOCK_WIDTH * 2, TestOrderBid::new(40));
@@ -1903,7 +1961,8 @@ pub(crate) mod test {
     #[test]
     fn test_remove_red_left_sibling() {
         let mut data: [u8; 100000] = [0; 100000];
-        let mut tree: RedBlackTree<TestOrderBid> = RedBlackTree::new(&mut data, NIL, NIL);
+        let mut tree: RedBlackTree<TestOrderBid> =
+            unsafe { RedBlackTree::new(&mut data, NIL, NIL) };
         tree.insert(TEST_BLOCK_WIDTH * 0, TestOrderBid::new(30));
         tree.insert(TEST_BLOCK_WIDTH, TestOrderBid::new(20));
         tree.insert(TEST_BLOCK_WIDTH * 3, TestOrderBid::new(15));
@@ -1919,7 +1978,8 @@ pub(crate) mod test {
     #[test]
     fn test_remove_red_right_sibling() {
         let mut data: [u8; 100000] = [0; 100000];
-        let mut tree: RedBlackTree<TestOrderBid> = RedBlackTree::new(&mut data, NIL, NIL);
+        let mut tree: RedBlackTree<TestOrderBid> =
+            unsafe { RedBlackTree::new(&mut data, NIL, NIL) };
         tree.insert(TEST_BLOCK_WIDTH * 0, TestOrderBid::new(10));
         tree.insert(TEST_BLOCK_WIDTH, TestOrderBid::new(20));
         tree.insert(TEST_BLOCK_WIDTH * 3, TestOrderBid::new(25));
@@ -1935,7 +1995,8 @@ pub(crate) mod test {
     #[test]
     fn test_insert_left_right() {
         let mut data: [u8; 100000] = [0; 100000];
-        let mut tree: RedBlackTree<TestOrderBid> = RedBlackTree::new(&mut data, NIL, NIL);
+        let mut tree: RedBlackTree<TestOrderBid> =
+            unsafe { RedBlackTree::new(&mut data, NIL, NIL) };
         tree.insert(TEST_BLOCK_WIDTH * 0, TestOrderBid::new(100));
         tree.insert(TEST_BLOCK_WIDTH, TestOrderBid::new(200));
         tree.insert(TEST_BLOCK_WIDTH * 2, TestOrderBid::new(300));
@@ -1988,7 +2049,7 @@ pub(crate) mod test {
     #[test]
     fn test_empty_max() {
         let mut data: [u8; 100000] = [0; 100000];
-        let tree: RedBlackTree<TestOrderBid> = RedBlackTree::new(&mut data, NIL, NIL);
+        let tree: RedBlackTree<TestOrderBid> = unsafe { RedBlackTree::new(&mut data, NIL, NIL) };
         assert_eq!(tree.lookup_max_index::<TestOrderBid>(), NIL);
         assert_eq!(tree.get_max_index(), NIL);
         tree.verify_rb_tree::<TestOrderBid>();
@@ -2025,7 +2086,8 @@ pub(crate) mod test {
     #[test]
     fn test_insert_and_remove_complex() {
         let mut data: [u8; 100000] = [0; 100000];
-        let mut tree: RedBlackTree<TestOrderBid> = RedBlackTree::new(&mut data, NIL, NIL);
+        let mut tree: RedBlackTree<TestOrderBid> =
+            unsafe { RedBlackTree::new(&mut data, NIL, NIL) };
 
         tree.insert(TEST_BLOCK_WIDTH * 0, TestOrderBid::new(0));
         tree.insert(TEST_BLOCK_WIDTH * 1, TestOrderBid::new(1064));
@@ -2141,7 +2203,7 @@ pub(crate) mod test {
         };
 
         let mut tree: RedBlackTree<TestOrderBid> =
-            RedBlackTree::new(&mut data, 5 * TEST_BLOCK_WIDTH, NIL);
+            unsafe { RedBlackTree::new(&mut data, 5 * TEST_BLOCK_WIDTH, NIL) };
         tree.verify_rb_tree::<TestOrderBid>();
 
         tree.remove_by_index(8 * TEST_BLOCK_WIDTH);
@@ -2242,7 +2304,7 @@ pub(crate) mod test {
         };
 
         let mut tree: RedBlackTree<TestOrderBid> =
-            RedBlackTree::new(&mut data, 6 * TEST_BLOCK_WIDTH, NIL);
+            unsafe { RedBlackTree::new(&mut data, 6 * TEST_BLOCK_WIDTH, NIL) };
         tree.verify_rb_tree::<TestOrderBid>();
 
         tree.remove_by_index(6 * TEST_BLOCK_WIDTH);
@@ -2373,7 +2435,7 @@ pub(crate) mod test {
             value: TestOrderBid::new(11),
         };
         let mut tree: RedBlackTree<TestOrderBid> =
-            RedBlackTree::new(&mut data, 5 * TEST_BLOCK_WIDTH, NIL);
+            unsafe { RedBlackTree::new(&mut data, 5 * TEST_BLOCK_WIDTH, NIL) };
         tree.verify_rb_tree::<TestOrderBid>();
 
         tree.remove_by_index(11 * TEST_BLOCK_WIDTH);
@@ -2445,7 +2507,7 @@ pub(crate) mod test {
             _unused_padding: 0,
         };
         let mut tree: RedBlackTree<TestOrderAsk> =
-            RedBlackTree::new(&mut data, 0 * TEST_BLOCK_WIDTH, 1 * TEST_BLOCK_WIDTH);
+            unsafe { RedBlackTree::new(&mut data, 0 * TEST_BLOCK_WIDTH, 1 * TEST_BLOCK_WIDTH) };
         tree.verify_rb_tree::<TestOrderBid>();
         tree.pretty_print::<TestOrderBid>();
 
@@ -2773,7 +2835,7 @@ pub(crate) mod test {
         };
 
         let mut tree: RedBlackTree<TestOrderBid> =
-            RedBlackTree::new(&mut data, 1 * TEST_BLOCK_WIDTH, 15 * TEST_BLOCK_WIDTH);
+            unsafe { RedBlackTree::new(&mut data, 1 * TEST_BLOCK_WIDTH, 15 * TEST_BLOCK_WIDTH) };
         tree.verify_rb_tree::<TestOrderBid>();
 
         tree.remove_by_index(6 * TEST_BLOCK_WIDTH);
@@ -2784,7 +2846,8 @@ pub(crate) mod test {
     #[test]
     fn test_read_only() {
         let mut data: [u8; 100000] = [0; 100000];
-        let mut tree: RedBlackTree<TestOrderBid> = RedBlackTree::new(&mut data, NIL, NIL);
+        let mut tree: RedBlackTree<TestOrderBid> =
+            unsafe { RedBlackTree::new(&mut data, NIL, NIL) };
 
         tree.insert(TEST_BLOCK_WIDTH * 0, TestOrderBid::new(1111));
         tree.insert(TEST_BLOCK_WIDTH, TestOrderBid::new(1234));
@@ -2798,7 +2861,7 @@ pub(crate) mod test {
         drop(tree);
 
         let tree: RedBlackTreeReadOnly<TestOrderBid> =
-            RedBlackTreeReadOnly::new(&data, root_index, NIL);
+            unsafe { RedBlackTreeReadOnly::new(&data, root_index, NIL) };
         for _ in tree.iter::<TestOrderBid>() {
             println!("Iteration in read only tree");
         }
@@ -2855,7 +2918,7 @@ pub(crate) mod test {
     #[test]
     fn test_lookup_equal() {
         let mut data: [u8; 100000] = [0; 100000];
-        let mut tree: RedBlackTree<TestOrder2> = RedBlackTree::new(&mut data, NIL, NIL);
+        let mut tree: RedBlackTree<TestOrder2> = unsafe { RedBlackTree::new(&mut data, NIL, NIL) };
 
         tree.insert(TEST_BLOCK_WIDTH * 0, TestOrder2::new(1000, 1234));
         tree.insert(TEST_BLOCK_WIDTH * 1, TestOrder2::new(1000, 2345));

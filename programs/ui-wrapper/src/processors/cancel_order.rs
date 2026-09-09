@@ -79,7 +79,7 @@ pub(crate) fn process_cancel_order(
     let orders_root_index = market_info.orders_root_index;
 
     let open_orders_tree: OpenOrdersTreeReadOnly =
-        OpenOrdersTreeReadOnly::new(wrapper.dynamic, orders_root_index, NIL);
+        unsafe { OpenOrdersTreeReadOnly::new(wrapper.dynamic, orders_root_index, NIL) };
 
     // find order with same client order id
     let (wrapper_index, open_order): (DataIndex, &WrapperOpenOrder) = open_orders_tree
@@ -135,7 +135,7 @@ pub(crate) fn process_cancel_order(
     // remove node from order tree
     let orders_root_index = {
         let mut open_orders_tree: OpenOrdersTree =
-            OpenOrdersTree::new(wrapper.dynamic, orders_root_index, NIL);
+            unsafe { OpenOrdersTree::new(wrapper.dynamic, orders_root_index, NIL) };
         open_orders_tree.remove_by_index(wrapper_index);
         open_orders_tree.get_root_index()
     };
@@ -166,7 +166,7 @@ pub(crate) fn process_cancel_order(
 
     // add node to freelist
     let mut free_list: FreeList<UnusedWrapperFreeListPadding> =
-        FreeList::new(wrapper.dynamic, wrapper.fixed.free_list_head_index);
+        unsafe { FreeList::new(wrapper.dynamic, wrapper.fixed.free_list_head_index) };
     free_list.add(wrapper_index);
     wrapper.fixed.free_list_head_index = free_list.get_head();
 

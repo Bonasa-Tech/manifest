@@ -157,7 +157,7 @@ pub fn rule_rotate_left() {
     // X
     *get_mut_helper(&mut data, x_index) =
         mk_rb_node!(NIL, NIL, p_index, Color::Red, TestOrder::new(x_val));
-    let mut tree: RedBlackTree<TestOrder> = RedBlackTree::new(&mut data, gg_index, NIL);
+    let mut tree: RedBlackTree<TestOrder> = unsafe { RedBlackTree::new(&mut data, gg_index, NIL) };
 
     tree.rotate_left::<TestOrder>(g_index);
 
@@ -263,7 +263,7 @@ pub fn rule_rotate_right() {
     *get_mut_helper(&mut data, y_index) =
         mk_rb_node!(NIL, NIL, p_index, Color::Red, TestOrder::new(y_val));
 
-    let mut tree: RedBlackTree<TestOrder> = RedBlackTree::new(&mut data, gg_index, NIL);
+    let mut tree: RedBlackTree<TestOrder> = unsafe { RedBlackTree::new(&mut data, gg_index, NIL) };
 
     tree.rotate_right::<TestOrder>(g_index);
 
@@ -377,7 +377,8 @@ pub fn rule_insert_preserves_parent_of_left_child() {
     *get_mut_helper(&mut data, four_index) =
         mk_rb_node!(NIL, NIL, one_index, Color::Black, TestOrder::new(four_val));
 
-    let mut tree: RedBlackTree<TestOrder> = RedBlackTree::new(&mut data, zero_index, two_index);
+    let mut tree: RedBlackTree<TestOrder> =
+        unsafe { RedBlackTree::new(&mut data, zero_index, two_index) };
 
     // Check that the parent of the left child of any node is the node itself
     // This loop is unrolled enough times with -bmc 2 because the Rust compiler
@@ -474,7 +475,8 @@ pub fn rule_insert_preserves_parent_of_right_child() {
     *get_mut_helper(&mut data, four_index) =
         mk_rb_node!(NIL, NIL, one_index, Color::Black, TestOrder::new(four_val));
 
-    let mut tree: RedBlackTree<TestOrder> = RedBlackTree::new(&mut data, zero_index, two_index);
+    let mut tree: RedBlackTree<TestOrder> =
+        unsafe { RedBlackTree::new(&mut data, zero_index, two_index) };
 
     // Check that the parent of the right child of any node is the node itself
     // This loop is unrolled enough times with -bmc 2 because the Rust compiler
@@ -581,7 +583,8 @@ pub fn rule_insert_preserves_root_parent_is_nil() {
     *get_mut_helper(&mut data, four_index) =
         mk_rb_node!(NIL, NIL, one_index, Color::Black, TestOrder::new(four_val));
 
-    let mut tree: RedBlackTree<TestOrder> = RedBlackTree::new(&mut data, zero_index, two_index);
+    let mut tree: RedBlackTree<TestOrder> =
+        unsafe { RedBlackTree::new(&mut data, zero_index, two_index) };
 
     // Assert that the root parent is NIL before inserting node 5
     let root_parent = tree.get_parent_index::<TestOrder>(tree.root_index());
@@ -608,7 +611,7 @@ pub fn rule_root_is_black_after_insert_empty_tree() {
     let acc_info = &acc_infos[0];
     let mut data = acc_info.try_borrow_mut().unwrap();
 
-    let mut tree: RedBlackTree<TestOrder> = RedBlackTree::new(&mut data, NIL, NIL);
+    let mut tree: RedBlackTree<TestOrder> = unsafe { RedBlackTree::new(&mut data, NIL, NIL) };
 
     // Insert the first node
     tree.insert(0, TestOrder::new(nondet::<u64>()));
@@ -688,7 +691,8 @@ pub fn rule_root_is_black_after_insert_non_empty_tree() {
     *get_mut_helper(&mut data, four_index) =
         mk_rb_node!(NIL, NIL, one_index, Color::Black, TestOrder::new(four_val));
 
-    let mut tree: RedBlackTree<TestOrder> = RedBlackTree::new(&mut data, zero_index, two_index);
+    let mut tree: RedBlackTree<TestOrder> =
+        unsafe { RedBlackTree::new(&mut data, zero_index, two_index) };
 
     let root_index = tree.root_index();
     let root = get_helper::<RBNode<TestOrder>>(tree.data(), root_index);
@@ -761,7 +765,8 @@ pub fn rule_tree_is_ordered_after_insert_smallest_element() {
     *get_mut_helper(&mut data, three_index) =
         mk_rb_node!(NIL, NIL, one_index, Color::Red, TestOrder::new(three_val));
 
-    let mut tree: RedBlackTree<TestOrder> = RedBlackTree::new(&mut data, zero_index, two_index);
+    let mut tree: RedBlackTree<TestOrder> =
+        unsafe { RedBlackTree::new(&mut data, zero_index, two_index) };
 
     let four_val = nondet::<u64>();
     cvt_assume!(four_val < three_val);
@@ -849,7 +854,7 @@ macro_rules! build_tree_0 {
             TestOrder::new($val_2)
         );
 
-        RedBlackTree::new(&mut $data, index_0, index_2)
+        unsafe { RedBlackTree::new(&mut $data, index_0, index_2) }
     }};
 }
 
@@ -1028,7 +1033,7 @@ macro_rules! build_tree_1 {
             TestOrder::new(nondet())
         );
 
-        RedBlackTree::new(&mut $data, index_5, index_7)
+        unsafe { RedBlackTree::new(&mut $data, index_5, index_7) }
     }};
 }
 
@@ -1248,7 +1253,7 @@ macro_rules! build_tree_2 {
             TestOrder::new(nondet())
         );
 
-        RedBlackTree::new(&mut $data, index_5, index_7)
+        unsafe { RedBlackTree::new(&mut $data, index_5, index_7) }
     }};
 }
 
@@ -1468,7 +1473,7 @@ macro_rules! build_tree_3 {
             TestOrder::new(nondet())
         );
 
-        RedBlackTree::new(&mut $data, index_5, index_7)
+        unsafe { RedBlackTree::new(&mut $data, index_5, index_7) }
     }};
 }
 
@@ -1688,7 +1693,7 @@ macro_rules! build_tree_4 {
             TestOrder::new(nondet())
         );
 
-        RedBlackTree::new(&mut $data, index_5, index_11)
+        unsafe { RedBlackTree::new(&mut $data, index_5, index_11) }
     }};
 }
 
@@ -1908,7 +1913,7 @@ macro_rules! build_tree_5 {
             TestOrder::new(nondet())
         );
 
-        RedBlackTree::new(&mut $data, index_5, index_7)
+        unsafe { RedBlackTree::new(&mut $data, index_5, index_7) }
     }};
 }
 
@@ -2128,7 +2133,7 @@ macro_rules! build_tree_6 {
             TestOrder::new(nondet())
         );
 
-        RedBlackTree::new(&mut $data, index_5, index_7)
+        unsafe { RedBlackTree::new(&mut $data, index_5, index_7) }
     }};
 }
 
@@ -2341,7 +2346,7 @@ macro_rules! build_tree_shape_1 {
             TestOrder::new(nondet())
         );
 
-        RedBlackTree::new(&mut $data, index_5, index_11)
+        unsafe { RedBlackTree::new(&mut $data, index_5, index_11) }
     }};
 }
 
@@ -2442,7 +2447,7 @@ macro_rules! build_tree_shape_2 {
         *get_mut_helper(&mut $data, index_11) =
             mk_rb_node!(NIL, NIL, index_4, $c11, TestOrder::new(nondet()));
 
-        RedBlackTree::new(&mut $data, index_5, index_11)
+        unsafe { RedBlackTree::new(&mut $data, index_5, index_11) }
     }};
 }
 
@@ -3299,7 +3304,7 @@ pub fn rule_insert_updates_max_index_empty_tree() {
     let acc_info = &acc_infos[0];
     let mut data = acc_info.try_borrow_mut().unwrap();
 
-    let mut tree: RedBlackTree<TestOrder> = RedBlackTree::new(&mut data, NIL, NIL);
+    let mut tree: RedBlackTree<TestOrder> = unsafe { RedBlackTree::new(&mut data, NIL, NIL) };
 
     cvt_assert!(tree.max_index() == NIL);
 
@@ -3341,7 +3346,7 @@ macro_rules! build_tree_7 {
             TestOrder::new($val_1)
         );
 
-        RedBlackTree::new(&mut $data, index_0, index_1)
+        unsafe { RedBlackTree::new(&mut $data, index_0, index_1) }
     }};
 }
 
@@ -3399,7 +3404,7 @@ macro_rules! build_tree_8 {
         *get_mut_helper(&mut $data, index_1) =
             mk_rb_node!(NIL, NIL, index_0, Color::Black, TestOrder::new($val_1));
 
-        RedBlackTree::new(&mut $data, index_0, index_1)
+        unsafe { RedBlackTree::new(&mut $data, index_0, index_1) }
     }};
 }
 
@@ -3469,7 +3474,7 @@ macro_rules! build_tree_9 {
         *get_mut_helper(&mut $data, index_1) =
             mk_rb_node!(NIL, NIL, index_0, Color::Red, TestOrder::new($val_1));
 
-        RedBlackTree::new(&mut $data, index_2, index_1)
+        unsafe { RedBlackTree::new(&mut $data, index_2, index_1) }
     }};
 }
 
@@ -3489,7 +3494,8 @@ pub fn rule_remove_updates_max_index_single_node_tree() {
     *get_mut_helper(&mut data, index_0) =
         mk_rb_node!(NIL, NIL, NIL, Color::Black, TestOrder::new(nondet()));
 
-    let mut tree: RedBlackTree<TestOrder> = RedBlackTree::new(&mut data, index_0, index_0);
+    let mut tree: RedBlackTree<TestOrder> =
+        unsafe { RedBlackTree::new(&mut data, index_0, index_0) };
 
     cvt_assert!(tree.max_index() == index_0);
 
@@ -3561,7 +3567,7 @@ macro_rules! build_tree_9_1 {
         *get_mut_helper(&mut $data, index_1) =
             mk_rb_node!(NIL, NIL, index_0, Color::Red, TestOrder::new($val_1));
 
-        RedBlackTree::new(&mut $data, index_2, index_1)
+        unsafe { RedBlackTree::new(&mut $data, index_2, index_1) }
     }};
 }
 
@@ -3668,7 +3674,7 @@ macro_rules! build_tree_10 {
             TestOrder::new(nondet())
         );
 
-        RedBlackTree::new(&mut $data, index_0, index_7)
+        unsafe { RedBlackTree::new(&mut $data, index_0, index_7) }
     }};
 }
 
@@ -3793,7 +3799,7 @@ macro_rules! build_tree_11 {
             TestOrder::new(nondet())
         );
 
-        RedBlackTree::new(&mut $data, index_0, index_7)
+        unsafe { RedBlackTree::new(&mut $data, index_0, index_7) }
     }};
 }
 
@@ -3908,7 +3914,7 @@ macro_rules! build_tree_12 {
             TestOrder::new(nondet())
         );
 
-        RedBlackTree::new(&mut $data, index_1, index_7)
+        unsafe { RedBlackTree::new(&mut $data, index_1, index_7) }
     }};
 }
 
@@ -4023,7 +4029,7 @@ macro_rules! build_tree_13 {
             TestOrder::new(nondet())
         );
 
-        RedBlackTree::new(&mut $data, index_5, index_7)
+        unsafe { RedBlackTree::new(&mut $data, index_5, index_7) }
     }};
 }
 
@@ -4131,7 +4137,7 @@ macro_rules! build_tree_14 {
             TestOrder::new(nondet())
         );
 
-        RedBlackTree::new(&mut $data, index_0, index_7)
+        unsafe { RedBlackTree::new(&mut $data, index_0, index_7) }
     }};
 }
 
@@ -4235,7 +4241,7 @@ macro_rules! build_tree_15 {
             TestOrder::new(nondet())
         );
 
-        RedBlackTree::new(&mut $data, index_0, index_7)
+        unsafe { RedBlackTree::new(&mut $data, index_0, index_7) }
     }};
 }
 
@@ -4321,7 +4327,7 @@ macro_rules! build_tree_16 {
         *get_mut_helper(&mut $data, index_5) =
             mk_rb_node!(NIL, NIL, index_4, $c5, TestOrder::new(nondet()));
 
-        RedBlackTree::new(&mut $data, index_0, index_5)
+        unsafe { RedBlackTree::new(&mut $data, index_0, index_5) }
     }};
 }
 
@@ -4421,7 +4427,7 @@ macro_rules! build_tree_17 {
             TestOrder::new(nondet())
         );
 
-        RedBlackTree::new(&mut $data, index_0, index_5)
+        unsafe { RedBlackTree::new(&mut $data, index_0, index_5) }
     }};
 }
 
@@ -4522,7 +4528,7 @@ macro_rules! build_tree_18 {
             TestOrder::new(nondet())
         );
 
-        RedBlackTree::new(&mut $data, index_0, index_2)
+        unsafe { RedBlackTree::new(&mut $data, index_0, index_2) }
     }};
 }
 
@@ -4624,7 +4630,7 @@ macro_rules! build_tree_19 {
             TestOrder::new(nondet())
         );
 
-        RedBlackTree::new(&mut $data, index_0, index_5)
+        unsafe { RedBlackTree::new(&mut $data, index_0, index_5) }
     }};
 }
 
@@ -4726,7 +4732,7 @@ macro_rules! build_tree_20 {
             TestOrder::new(nondet())
         );
 
-        RedBlackTree::new(&mut $data, index_0, index_2)
+        unsafe { RedBlackTree::new(&mut $data, index_0, index_2) }
     }};
 }
 

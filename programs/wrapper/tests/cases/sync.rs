@@ -75,7 +75,7 @@ fn market_info_index(wrapper_dynamic_data: &mut [u8], market: &Pubkey) -> DataIn
     let (_, dynamic_data) =
         wrapper_dynamic_data.split_at_mut(size_of::<ManifestWrapperStateFixed>());
     let market_infos_tree: MarketInfosTree =
-        MarketInfosTree::new(dynamic_data, market_infos_root_index, NIL);
+        unsafe { MarketInfosTree::new(dynamic_data, market_infos_root_index, NIL) };
     market_infos_tree.lookup_index(&MarketInfo::new_empty(*market, NIL))
 }
 
@@ -100,8 +100,9 @@ async fn wrapper_view(test_fixture: &TestFixture) -> (MarketInfo, Vec<(u64, u64)
         .expect("well formed open orders list");
     let mut orders: Vec<(u64, u64)> = Vec::new();
     if market_info.orders_root_index != NIL {
-        let list: OpenOrdersListReadOnly =
-            OpenOrdersListReadOnly::new(wrapper_dynamic_data, market_info.orders_root_index);
+        let list: OpenOrdersListReadOnly = unsafe {
+            OpenOrdersListReadOnly::new(wrapper_dynamic_data, market_info.orders_root_index)
+        };
         for (_, order) in list.iter::<WrapperOpenOrder>() {
             orders.push((
                 order.get_client_order_id(),
@@ -129,12 +130,12 @@ async fn rewrite_orders_as_tree(test_fixture: &TestFixture) {
                 .get_value()
                 .orders_root_index;
         let orders: Vec<(DataIndex, WrapperOpenOrder)> =
-            OpenOrdersListReadOnly::new(wrapper_dynamic_data, head_index)
+            unsafe { OpenOrdersListReadOnly::new(wrapper_dynamic_data, head_index) }
                 .iter::<WrapperOpenOrder>()
                 .map(|(index, order)| (index, *order))
                 .collect();
         let mut tree: RedBlackTree<WrapperOpenOrder> =
-            RedBlackTree::new(wrapper_dynamic_data, NIL, NIL);
+            unsafe { RedBlackTree::new(wrapper_dynamic_data, NIL, NIL) };
         for (index, order) in orders {
             tree.insert(index, order);
         }
@@ -255,7 +256,7 @@ async fn fabricate_legacy_tree(test_fixture: &TestFixture, num_orders: usize) {
 
         let price: QuoteAtomsPerBaseAtom = QuoteAtomsPerBaseAtom::try_from(1_f64).unwrap();
         let mut tree: RedBlackTree<WrapperOpenOrder> =
-            RedBlackTree::new(wrapper_dynamic_data, NIL, NIL);
+            unsafe { RedBlackTree::new(wrapper_dynamic_data, NIL, NIL) };
         for order_number in 0..num_orders {
             let index: DataIndex =
                 (bytes_allocated + order_number * WRAPPER_BLOCK_SIZE) as DataIndex;

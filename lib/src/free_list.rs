@@ -1,6 +1,6 @@
 use bytemuck::{Pod, Zeroable};
 
-use crate::{get_mut_helper, DataIndex, Get, NIL};
+use crate::{get_mut_helper_unchecked, DataIndex, Get, NIL};
 
 // FreeList is a linked list that keeps track of all the available nodes that
 // can be filled with ClaimedSeats and RestingOrders.
@@ -37,9 +37,17 @@ impl<T: Pod> FreeListNode<T> {
 }
 
 impl<'a, T: Pod> FreeList<'a, T> {
-    /// Create a new free list. Assumes that the data within data is already a well
-    /// formed FreeList.
-    pub fn new(data: &'a mut [u8], head_index: DataIndex) -> Self {
+    /// Create a new free list over existing, well formed free list data.
+    ///
+    /// # Safety
+    /// `data` must be a well formed free list for this account and `head_index`
+    /// one of its block handles (or [`NIL`]/`END`): an in-bounds, aligned start
+    /// for a `FreeListNode<T>`, as must every handle later passed to `add`. The
+    /// methods read and write nodes without bounds checks
+    /// ([`get_mut_helper_unchecked`]), so an out-of-range handle is undefined
+    /// behavior. The program upholds this by only building free lists over its
+    /// own account data and only freeing handles the account allocated.
+    pub unsafe fn new(data: &'a mut [u8], head_index: DataIndex) -> Self {
         FreeList {
             head_index,
             data,
@@ -54,7 +62,11 @@ impl<'a, T: Pod> FreeList<'a, T> {
 
     /// Free a node to the free list
     pub fn add(&mut self, index: DataIndex) {
-        let node: &mut FreeListNode<T> = get_mut_helper::<FreeListNode<T>>(self.data, index);
+        // SAFETY: `index` is a block handle: either a node being freed or the
+        // newly grown region during an expansion, both in-bounds, aligned
+        // starts for a `FreeListNode<T>` in `self.data`.
+        let node: &mut FreeListNode<T> =
+            unsafe { get_mut_helper_unchecked::<FreeListNode<T>>(self.data, index) };
         node.node_inner = T::zeroed();
         node.next_index = self.head_index;
         self.head_index = index;
@@ -67,8 +79,10 @@ impl<'a, T: Pod> FreeList<'a, T> {
         }
 
         let free_node_index: DataIndex = self.head_index;
+        // SAFETY: `head_index` is the free-list head, a block handle that is an
+        // in-bounds, aligned start for a `FreeListNode<T>` in `self.data`.
         let head: &mut FreeListNode<T> =
-            get_mut_helper::<FreeListNode<T>>(self.data, free_node_index);
+            unsafe { get_mut_helper_unchecked::<FreeListNode<T>>(self.data, free_node_index) };
 
         self.head_index = head.next_index;
 
@@ -96,7 +110,8 @@ mod test {
     #[test]
     fn test_free_list_basic() {
         let mut data: [u8; 100000] = [0; 100000];
-        let mut free_list: FreeList<UnusedFreeListPadding1> = FreeList::new(&mut data, END);
+        let mut free_list: FreeList<UnusedFreeListPadding1> =
+            unsafe { FreeList::new(&mut data, END) };
         free_list.add(64);
         free_list.add(128);
 

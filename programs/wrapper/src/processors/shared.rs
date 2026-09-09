@@ -204,7 +204,7 @@ pub fn expand_wrapper(wrapper_data: &mut [u8]) {
 
     let wrapper_fixed: &mut ManifestWrapperStateFixed = get_mut_helper(fixed_data, 0);
     let mut free_list: FreeList<UnusedWrapperFreeListPadding> =
-        FreeList::new(dynamic_data, wrapper_fixed.free_list_head_index);
+        unsafe { FreeList::new(dynamic_data, wrapper_fixed.free_list_head_index) };
 
     free_list.add(wrapper_fixed.num_bytes_allocated);
     wrapper_fixed.num_bytes_allocated += WRAPPER_BLOCK_SIZE as u32;
@@ -420,7 +420,7 @@ pub(crate) fn sync_fast(
         // ones the core no longer has and matching the cancels. Only the
         // unlinked indices are kept, for the free list.
         let mut orders: OpenOrdersList =
-            OpenOrdersList::new(wrapper_dynamic_data, orders_root_index);
+            unsafe { OpenOrdersList::new(wrapper_dynamic_data, orders_root_index) };
         let mut to_free_indices: Vec<DataIndex> = Vec::new();
         let mut num_open_global_orders: u32 = 0;
         let mut order_index: DataIndex = orders_root_index;
@@ -479,7 +479,7 @@ pub(crate) fn sync_fast(
         if !to_free_indices.is_empty() {
             let wrapper_fixed: &mut ManifestWrapperStateFixed = get_mut_helper(fixed_data, 0);
             let mut free_list: FreeList<UnusedWrapperFreeListPadding> =
-                FreeList::new(wrapper_dynamic_data, wrapper_fixed.free_list_head_index);
+                unsafe { FreeList::new(wrapper_dynamic_data, wrapper_fixed.free_list_head_index) };
             for open_order_index in to_free_indices.iter() {
                 free_list.add(*open_order_index);
             }
@@ -520,11 +520,13 @@ pub(crate) fn get_market_info_index_for_market(
         wrapper_data.split_at_mut(size_of::<ManifestWrapperStateFixed>());
 
     let wrapper_fixed: &ManifestWrapperStateFixed = get_helper(fixed_data, 0);
-    let market_infos_tree: MarketInfosTree = MarketInfosTree::new(
-        wrapper_dynamic_data,
-        wrapper_fixed.market_infos_root_index,
-        NIL,
-    );
+    let market_infos_tree: MarketInfosTree = unsafe {
+        MarketInfosTree::new(
+            wrapper_dynamic_data,
+            wrapper_fixed.market_infos_root_index,
+            NIL,
+        )
+    };
 
     // Just need to lookup by market key so the rest doesnt matter.
     let market_info_index: DataIndex =

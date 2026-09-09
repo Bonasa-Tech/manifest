@@ -234,6 +234,33 @@ pub(crate) fn get_trader_index_with_hint(
     Ok(trader_index)
 }
 
+/// Rejects an index hint that would read a `T` outside `dynamic`.
+///
+/// On Solana `get_helper` no longer performs the slice range check (see
+/// `lib/src/utils.rs`). Indices the program produces itself, from the free
+/// list and the trees and lists, are in bounds by construction, but an index
+/// supplied in instruction data as a hint is not: it is only checked for block
+/// alignment and payload type, and the payload type is read through
+/// `get_helper` itself. So every externally supplied hint must be bounds
+/// checked here first, or an out-of-range hint would be an out-of-bounds read
+/// rather than a rejected instruction.
+#[inline(always)]
+pub(crate) fn require_index_hint_in_bounds<T>(
+    dynamic: &[u8],
+    hinted_index: DataIndex,
+) -> ProgramResult {
+    require!(
+        (hinted_index as usize)
+            .checked_add(size_of::<T>())
+            .is_some_and(|end| end <= dynamic.len()),
+        crate::program::ManifestError::WrongIndexHintParams,
+        "Index hint {} out of bounds for dynamic len {}",
+        hinted_index,
+        dynamic.len(),
+    )?;
+    Ok(())
+}
+
 fn verify_trader_index_hint(
     hinted_index: DataIndex,
     dynamic_account: &MarketRefMut,
@@ -245,6 +272,7 @@ fn verify_trader_index_hint(
         "Invalid trader hint index {} did not align",
         hinted_index,
     )?;
+    require_index_hint_in_bounds::<RBNode<ClaimedSeat>>(&dynamic_account.dynamic, hinted_index)?;
     require!(
         get_helper::<RBNode<ClaimedSeat>>(&dynamic_account.dynamic, hinted_index)
             .get_payload_type()

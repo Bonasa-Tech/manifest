@@ -7,7 +7,9 @@ use pinocchio::account::AccountView;
 use solana_program::pubkey::Pubkey;
 
 use crate::{
-    program::{batch_update::MarketDataTreeNodeType, get_mut_dynamic_account},
+    program::{
+        batch_update::MarketDataTreeNodeType, get_mut_dynamic_account, require_index_hint_in_bounds,
+    },
     quantities::{GlobalAtoms, WrapperU64},
     require,
     state::{
@@ -73,6 +75,10 @@ pub(crate) fn process_global_clean(
             order_index % (MARKET_BLOCK_SIZE as DataIndex) == 0,
             crate::program::ManifestError::WrongIndexHintParams,
             "Invalid order index {}",
+            order_index,
+        )?;
+        require_index_hint_in_bounds::<RBNode<RestingOrder>>(
+            &market_dynamic_account.dynamic,
             order_index,
         )?;
         let resting_order_node: &RBNode<RestingOrder> =

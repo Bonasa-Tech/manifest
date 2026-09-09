@@ -234,7 +234,7 @@ fn process_cancels(
     }
     let orders_root_index: DataIndex = {
         let mut open_orders: OpenOrdersList =
-            OpenOrdersList::new(wrapper.dynamic, orders_root_index);
+            unsafe { OpenOrdersList::new(wrapper.dynamic, orders_root_index) };
         for order_wrapper_index in cancel_indices {
             open_orders.remove_by_index(*order_wrapper_index);
         }
@@ -246,7 +246,7 @@ fn process_cancels(
     market_info.num_open_global_orders = num_open_global_orders;
 
     let mut free_list: FreeList<UnusedWrapperFreeListPadding> =
-        FreeList::new(wrapper.dynamic, wrapper.fixed.free_list_head_index);
+        unsafe { FreeList::new(wrapper.dynamic, wrapper.fixed.free_list_head_index) };
     for order_wrapper_index in cancel_indices {
         if *order_wrapper_index != NIL {
             free_list.add(*order_wrapper_index);
@@ -306,7 +306,7 @@ fn process_orders<'a>(
         }
         let wrapper_new_order_index: DataIndex = {
             let mut free_list: FreeList<UnusedWrapperFreeListPadding> =
-                FreeList::new(wrapper.dynamic, free_list_head_index);
+                unsafe { FreeList::new(wrapper.dynamic, free_list_head_index) };
             let new_index: DataIndex = free_list.remove();
             free_list_head_index = free_list.get_head();
             new_index
@@ -334,7 +334,7 @@ fn process_orders<'a>(
         }
 
         let mut open_orders: OpenOrdersList =
-            OpenOrdersList::new(wrapper.dynamic, orders_root_index);
+            unsafe { OpenOrdersList::new(wrapper.dynamic, orders_root_index) };
         open_orders.insert(wrapper_new_order_index, order);
         orders_root_index = open_orders.get_root_index();
     }

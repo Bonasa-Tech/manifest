@@ -833,7 +833,7 @@ impl<Fixed: DerefOrBorrow<MarketFixed>, Dynamic: DerefOrBorrow<[u8]>>
         let DynamicAccount { fixed, dynamic } = self.borrow_market();
 
         let claimed_seats_tree: ClaimedSeatTreeReadOnly =
-            ClaimedSeatTreeReadOnly::new(dynamic, fixed.claimed_seats_root_index, NIL);
+            unsafe { ClaimedSeatTreeReadOnly::new(dynamic, fixed.claimed_seats_root_index, NIL) };
         let trader_index: DataIndex =
             claimed_seats_tree.lookup_index(&ClaimedSeat::new_empty(*trader));
         let claimed_seat: &ClaimedSeat = get_helper_seat(dynamic, trader_index).get_value();
@@ -853,7 +853,7 @@ impl<Fixed: DerefOrBorrow<MarketFixed>, Dynamic: DerefOrBorrow<[u8]>>
         let DynamicAccount { fixed, dynamic } = self.borrow_market();
 
         let claimed_seats_tree: ClaimedSeatTreeReadOnly =
-            ClaimedSeatTreeReadOnly::new(dynamic, fixed.claimed_seats_root_index, NIL);
+            unsafe { ClaimedSeatTreeReadOnly::new(dynamic, fixed.claimed_seats_root_index, NIL) };
         let trader_index: DataIndex =
             claimed_seats_tree.lookup_index(&ClaimedSeat::new_empty(*trader));
         let claimed_seat: &ClaimedSeat = get_helper_seat(dynamic, trader_index).get_value();
@@ -867,25 +867,29 @@ impl<Fixed: DerefOrBorrow<MarketFixed>, Dynamic: DerefOrBorrow<[u8]>>
         let market: MarketRef<'_> = self.borrow_market();
         let dynamic: &[u8] = market.dynamic;
         let fixed: &MarketFixed = market.fixed;
-        ClaimedSeatTreeReadOnly::new(dynamic, fixed.claimed_seats_root_index, NIL)
+        unsafe { ClaimedSeatTreeReadOnly::new(dynamic, fixed.claimed_seats_root_index, NIL) }
     }
 
     pub fn get_bids(&self) -> BooksideReadOnly<'_> {
         let DynamicAccount { dynamic, fixed } = self.borrow_market();
-        BooksideReadOnly::new(
-            dynamic,
-            fixed.get_bids_root_index(),
-            fixed.get_bids_best_index(),
-        )
+        unsafe {
+            BooksideReadOnly::new(
+                dynamic,
+                fixed.get_bids_root_index(),
+                fixed.get_bids_best_index(),
+            )
+        }
     }
 
     pub fn get_asks(&self) -> BooksideReadOnly<'_> {
         let DynamicAccount { dynamic, fixed } = self.borrow_market();
-        BooksideReadOnly::new(
-            dynamic,
-            fixed.get_asks_root_index(),
-            fixed.get_asks_best_index(),
-        )
+        unsafe {
+            BooksideReadOnly::new(
+                dynamic,
+                fixed.get_asks_root_index(),
+                fixed.get_asks_best_index(),
+            )
+        }
     }
 
     fn is_missing_global_account(
@@ -951,7 +955,7 @@ impl<Fixed: DerefOrBorrow<MarketFixed>, Dynamic: DerefOrBorrow<[u8]>>
         let DynamicAccount { fixed, dynamic } = self.borrow_market();
 
         let claimed_seats_tree: ClaimedSeatTreeReadOnly =
-            ClaimedSeatTreeReadOnly::new(dynamic, fixed.claimed_seats_root_index, NIL);
+            unsafe { ClaimedSeatTreeReadOnly::new(dynamic, fixed.claimed_seats_root_index, NIL) };
         let trader_index: DataIndex =
             claimed_seats_tree.lookup_index(&ClaimedSeat::new_empty(*trader));
         trader_index
@@ -975,7 +979,7 @@ impl<
     pub fn market_expand(&mut self) -> ProgramResult {
         let DynamicAccount { fixed, dynamic } = self.borrow_mut();
         let mut free_list: FreeList<MarketUnusedFreeListPadding> =
-            FreeList::new(dynamic, fixed.free_list_head_index);
+            unsafe { FreeList::new(dynamic, fixed.free_list_head_index) };
 
         free_list.add(fixed.num_bytes_allocated);
         fixed.num_bytes_allocated += MARKET_BLOCK_SIZE as u32;
@@ -986,7 +990,7 @@ impl<
     pub fn market_expand_n(&mut self, mut n: u32) -> ProgramResult {
         let DynamicAccount { fixed, dynamic } = self.borrow_mut();
         let mut free_list: FreeList<MarketUnusedFreeListPadding> =
-            FreeList::new(dynamic, fixed.free_list_head_index);
+            unsafe { FreeList::new(dynamic, fixed.free_list_head_index) };
         while n > 0 {
             free_list.add(fixed.num_bytes_allocated);
             fixed.num_bytes_allocated += MARKET_BLOCK_SIZE as u32;
@@ -1001,7 +1005,7 @@ impl<
         let free_address: DataIndex = get_free_address_on_market_fixed_for_seat(fixed, dynamic);
 
         let mut claimed_seats_tree: ClaimedSeatTree =
-            ClaimedSeatTree::new(dynamic, fixed.claimed_seats_root_index, NIL);
+            unsafe { ClaimedSeatTree::new(dynamic, fixed.claimed_seats_root_index, NIL) };
 
         let claimed_seat: ClaimedSeat = ClaimedSeat::new_empty(*trader);
         require!(
@@ -1032,7 +1036,7 @@ impl<
         let DynamicAccount { fixed, dynamic } = self.borrow_mut();
 
         let mut claimed_seats_tree: ClaimedSeatTree =
-            ClaimedSeatTree::new(dynamic, fixed.claimed_seats_root_index, NIL);
+            unsafe { ClaimedSeatTree::new(dynamic, fixed.claimed_seats_root_index, NIL) };
         claimed_seats_tree.remove_by_index(trader_seat_index);
         fixed.claimed_seats_root_index = claimed_seats_tree.get_root_index();
 
@@ -1456,9 +1460,21 @@ impl<
                     {
                         let top_index: DataIndex = {
                             let other_tree: Bookside = if is_bid {
-                                Bookside::new(dynamic, fixed.bids_root_index, fixed.bids_best_index)
+                                unsafe {
+                                    Bookside::new(
+                                        dynamic,
+                                        fixed.bids_root_index,
+                                        fixed.bids_best_index,
+                                    )
+                                }
                             } else {
-                                Bookside::new(dynamic, fixed.asks_root_index, fixed.asks_best_index)
+                                unsafe {
+                                    Bookside::new(
+                                        dynamic,
+                                        fixed.asks_root_index,
+                                        fixed.asks_best_index,
+                                    )
+                                }
                             };
                             other_tree.get_max_index()
                         };
@@ -1744,7 +1760,7 @@ impl<
 
         // One iteration to find the index to cancel in the ask side.
         let tree: BooksideReadOnly =
-            BooksideReadOnly::new(dynamic, fixed.asks_root_index, fixed.asks_best_index);
+            unsafe { BooksideReadOnly::new(dynamic, fixed.asks_root_index, fixed.asks_best_index) };
         for (index, resting_order) in tree.iter::<RestingOrder>() {
             if resting_order.get_sequence_number() == order_sequence_number {
                 require!(
@@ -1763,7 +1779,7 @@ impl<
 
         // Second iteration to find the index to cancel in the bid side.
         let tree: BooksideReadOnly =
-            BooksideReadOnly::new(dynamic, fixed.bids_root_index, fixed.bids_best_index);
+            unsafe { BooksideReadOnly::new(dynamic, fixed.bids_root_index, fixed.bids_best_index) };
         for (index, resting_order) in tree.iter::<RestingOrder>() {
             if resting_order.get_sequence_number() == order_sequence_number {
                 require!(
@@ -1891,9 +1907,9 @@ fn remove_order_from_tree(
     #[cfg(feature = "certora")]
     remove_from_orderbook_balance(fixed, dynamic, order_index);
     let mut tree: Bookside = if is_bids {
-        Bookside::new(dynamic, fixed.bids_root_index, fixed.bids_best_index)
+        unsafe { Bookside::new(dynamic, fixed.bids_root_index, fixed.bids_best_index) }
     } else {
-        Bookside::new(dynamic, fixed.asks_root_index, fixed.asks_best_index)
+        unsafe { Bookside::new(dynamic, fixed.asks_root_index, fixed.asks_best_index) }
     };
     tree.remove_by_index(order_index);
 
@@ -2035,9 +2051,9 @@ fn insert_order_into_tree(
     resting_order: &RestingOrder,
 ) {
     let mut tree: Bookside = if is_bid {
-        Bookside::new(dynamic, fixed.bids_root_index, fixed.bids_best_index)
+        unsafe { Bookside::new(dynamic, fixed.bids_root_index, fixed.bids_best_index) }
     } else {
-        Bookside::new(dynamic, fixed.asks_root_index, fixed.asks_best_index)
+        unsafe { Bookside::new(dynamic, fixed.asks_root_index, fixed.asks_best_index) }
     };
     tree.insert(free_address, *resting_order);
 
@@ -2076,13 +2092,13 @@ fn get_next_candidate_match_index(
 ) -> DataIndex {
     if is_bid {
         let tree: BooksideReadOnly =
-            BooksideReadOnly::new(dynamic, fixed.asks_root_index, fixed.asks_best_index);
+            unsafe { BooksideReadOnly::new(dynamic, fixed.asks_root_index, fixed.asks_best_index) };
         let next_order_index: DataIndex =
             tree.get_next_lower_index::<RestingOrder>(current_maker_order_index);
         next_order_index
     } else {
         let tree: BooksideReadOnly =
-            BooksideReadOnly::new(dynamic, fixed.bids_root_index, fixed.bids_best_index);
+            unsafe { BooksideReadOnly::new(dynamic, fixed.bids_root_index, fixed.bids_best_index) };
         let next_order_index: DataIndex =
             tree.get_next_lower_index::<RestingOrder>(current_maker_order_index);
         next_order_index

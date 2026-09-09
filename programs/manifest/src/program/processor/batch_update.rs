@@ -6,7 +6,7 @@ use pinocchio::{
 };
 
 use crate::{
-    program::get_trader_index_with_hint,
+    program::{get_trader_index_with_hint, require_index_hint_in_bounds},
     quantities::{BaseAtoms, PriceConversionError, QuoteAtomsPerBaseAtom, WrapperU64},
     require,
     state::{
@@ -297,6 +297,10 @@ pub(crate) fn process_batch_update_core(
                         hinted_cancel_index % (MARKET_BLOCK_SIZE as DataIndex) == 0,
                         crate::program::ManifestError::WrongIndexHintParams,
                         "Invalid cancel hint index {}",
+                        hinted_cancel_index,
+                    )?;
+                    require_index_hint_in_bounds::<RBNode<RestingOrder>>(
+                        &dynamic_account.dynamic,
                         hinted_cancel_index,
                     )?;
                     require!(

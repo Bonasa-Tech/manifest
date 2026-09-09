@@ -70,13 +70,21 @@ arrayref = "0.3.7"
 [profile.release]
 codegen-units = 1
 lto = "fat"
-# Kept on deliberately. Measured 2026-08 on SBPF v2: turning this off saves
-# 0-2.4% CU (about 118 CU on a single-order batch update, 400 on five orders,
-# nothing on deposit/withdraw/swap). In exchange every plain +, - and * that is
-# not explicitly checked (lamport fees, byte offsets, indices) would wrap
-# silently instead of failing the transaction, and the audits and formal
-# verification were done with it on. Prefer targeted wrapping ops with a
-# proof, like the entrypoint does, over flipping this.
+# Turned off. Measured 2026-08 on SBPF v2 it saves 0-2.4% CU (about 118 CU on
+# a single-order batch update, 400 on five orders, nothing on
+# deposit/withdraw/swap), and 1,366 -> 1,312 CU at the median of the replayed
+# mainnet transactions. With it off, every plain +, - and * that is not
+# explicitly checked wraps silently instead of trapping, so the arithmetic
+# that carries trader value does not rely on this flag: the quantity operators
+# and the gas-refund lamport settlement check themselves (see quantities.rs and
+# state/utils.rs), and value-bearing multiplies use the checked_* forms. What
+# is left unchecked is offsets, sizes and counters, each bounded well below
+# u32/usize by the 10 MB account-size limit, plus the reciprocal-multiply
+# division whose ranges are proven in quantities.rs. Externally supplied index
+# hints, which the account size does not bound, are range-checked before use
+# (require_index_hint_in_bounds); see also the get_helper note in
+# lib/src/utils.rs. The audits and the formal verification were done with this
+# flag on, so re-run them against this build.
 overflow-checks = false
 strip = "debuginfo"
 

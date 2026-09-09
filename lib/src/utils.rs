@@ -12,55 +12,100 @@ pub unsafe trait Get: Copy {}
 
 /// Read a struct of type T in an array of data at a given index.
 ///
-/// Native callers may pass arbitrary byte slices (including RPC buffers), so
-/// native builds check the effective address at runtime. Solana release builds
-/// deliberately omit that check: the program only calls this with account data
-/// supplied by the runtime, whose base is eight-byte aligned, and at offsets
-/// formed from eight-byte-aligned fixed headers and block sizes. Every `Get`
-/// type used by the program has alignment at most eight.
+/// This is a safe function: it range-checks `index` on every target, so an
+/// out-of-range index is a clean panic rather than an out-of-bounds read. That
+/// makes it sound for callers that supply arbitrary slices or indices, such as
+/// native RPC buffers and instruction-data index hints.
 ///
-/// Solana callers must preserve that account-data invariant. Passing an
-/// arbitrary or shifted slice to this safe function on Solana could create a
-/// misaligned reference and cause undefined behavior.
+/// Alignment: native builds still assert the effective address is aligned,
+/// because a caller may pass a shifted slice. On Solana the base is the
+/// runtime's eight-byte-aligned account data and every offset is formed from
+/// eight-byte-aligned fixed headers and block sizes, and every `Get` type used
+/// by the program has alignment at most eight, so alignment is only
+/// debug-asserted there.
+///
+/// The hot data-structure walks, where the range check is measurable, use
+/// [`get_helper_unchecked`] instead, under the allocator/tree invariants
+/// documented at those call sites.
 #[inline(always)]
 pub fn get_helper<T: Get>(data: &[u8], index: DataIndex) -> &T {
     let index_usize: usize = index as usize;
-    let end: usize = index_usize + size_of::<T>();
-    // Solana builds index without the range check; see the note above. It is
-    // asserted in debug builds, so the tests still catch a bad index.
-    debug_assert!(end <= data.len());
-    #[cfg(not(target_os = "solana"))]
-    let bytes: &[u8] = &data[index_usize..end];
-    #[cfg(target_os = "solana")]
-    let bytes: &[u8] = unsafe { data.get_unchecked(index_usize..end) };
+    let bytes: &[u8] = &data[index_usize..index_usize + size_of::<T>()];
     #[cfg(not(target_os = "solana"))]
     assert_eq!((bytes.as_ptr() as usize) % std::mem::align_of::<T>(), 0);
     #[cfg(target_os = "solana")]
     debug_assert_eq!((bytes.as_ptr() as usize) % std::mem::align_of::<T>(), 0);
-    // SAFETY: `Get` supplies the validity contract. Native builds check
-    // alignment above; Solana builds rely on the documented account-data and
-    // block-layout invariant. The slice operation checks the range, and the
-    // returned reference is tied to `data`.
+    // SAFETY: `Get` supplies the validity contract, the slice range is checked
+    // just above, alignment is checked/asserted, and the returned reference is
+    // tied to `data`.
     unsafe { &*bytes.as_ptr().cast::<T>() }
 }
 
-/// Read a struct of type T in an array of data at a given index.
-///
-/// On Solana, this has the same account-data alignment requirement as
-/// [`get_helper`].
+/// Mutable counterpart of [`get_helper`]. Range-checked on every target; the
+/// same soundness notes apply.
 #[inline(always)]
 pub fn get_mut_helper<T: Get>(data: &mut [u8], index: DataIndex) -> &mut T {
     let index_usize: usize = index as usize;
-    let end: usize = index_usize + size_of::<T>();
-    // As above.
-    debug_assert!(end <= data.len());
-    #[cfg(not(target_os = "solana"))]
-    let bytes: &mut [u8] = &mut data[index_usize..end];
-    #[cfg(target_os = "solana")]
-    let bytes: &mut [u8] = unsafe { data.get_unchecked_mut(index_usize..end) };
+    let bytes: &mut [u8] = &mut data[index_usize..index_usize + size_of::<T>()];
     #[cfg(not(target_os = "solana"))]
     assert_eq!((bytes.as_ptr() as usize) % std::mem::align_of::<T>(), 0);
     #[cfg(target_os = "solana")]
+    debug_assert_eq!((bytes.as_ptr() as usize) % std::mem::align_of::<T>(), 0);
+    // SAFETY: As above, with exclusive access inherited from `data`.
+    unsafe { &mut *bytes.as_mut_ptr().cast::<T>() }
+}
+
+/// Unchecked counterpart of [`get_helper`] for the hot data-structure walks,
+/// where the range check is measurable CU. On Solana it indexes without the
+/// bound check; on native it stays range-checked (native callers may pass
+/// arbitrary slices). The bound and alignment are debug-asserted on both, so
+/// the tests still trap a bad index.
+///
+/// # Safety
+/// `index` must be the start of an in-bounds, correctly aligned `T` in `data`:
+/// `index as usize + size_of::<T>() <= data.len()`, and the effective address
+/// must be `align_of::<T>()`-aligned. Callers in this crate satisfy this by
+/// only passing node handles the free list allocated, read back out of node
+/// links or the free list; see the module-level invariants in
+/// `red_black_tree`, `linked_list` and `free_list`. Passing an arbitrary or
+/// out-of-range index is undefined behavior — range-check it first (or use the
+/// safe [`get_helper`]).
+#[inline(always)]
+pub unsafe fn get_helper_unchecked<T: Get>(data: &[u8], index: DataIndex) -> &T {
+    let index_usize: usize = index as usize;
+    let end: usize = index_usize + size_of::<T>();
+    debug_assert!(
+        end <= data.len(),
+        "get_helper_unchecked index out of bounds"
+    );
+    #[cfg(not(target_os = "solana"))]
+    let bytes: &[u8] = &data[index_usize..end];
+    #[cfg(target_os = "solana")]
+    // SAFETY: the caller guarantees `end <= data.len()` (see the contract
+    // above); debug-asserted just above.
+    let bytes: &[u8] = unsafe { data.get_unchecked(index_usize..end) };
+    debug_assert_eq!((bytes.as_ptr() as usize) % std::mem::align_of::<T>(), 0);
+    // SAFETY: `Get` supplies the validity contract, the caller guarantees the
+    // range and alignment, and the returned reference is tied to `data`.
+    unsafe { &*bytes.as_ptr().cast::<T>() }
+}
+
+/// Mutable counterpart of [`get_helper_unchecked`]. Same safety contract, with
+/// exclusive access inherited from `data`.
+#[inline(always)]
+pub unsafe fn get_mut_helper_unchecked<T: Get>(data: &mut [u8], index: DataIndex) -> &mut T {
+    let index_usize: usize = index as usize;
+    let end: usize = index_usize + size_of::<T>();
+    debug_assert!(
+        end <= data.len(),
+        "get_mut_helper_unchecked index out of bounds"
+    );
+    #[cfg(not(target_os = "solana"))]
+    let bytes: &mut [u8] = &mut data[index_usize..end];
+    #[cfg(target_os = "solana")]
+    // SAFETY: the caller guarantees `end <= data.len()` (see the contract
+    // above); debug-asserted just above.
+    let bytes: &mut [u8] = unsafe { data.get_unchecked_mut(index_usize..end) };
     debug_assert_eq!((bytes.as_ptr() as usize) % std::mem::align_of::<T>(), 0);
     // SAFETY: As above, with exclusive access inherited from `data`.
     unsafe { &mut *bytes.as_mut_ptr().cast::<T>() }

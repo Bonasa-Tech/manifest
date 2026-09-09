@@ -1,9 +1,22 @@
 use std::collections::HashSet;
 
 use crate::{
-    get_helper, get_mut_helper, trace, Color, DataIndex, HyperTreeData, HyperTreeReadOperations,
-    HyperTreeWriteOperations, Payload, RBNode, RedBlackTreeReadOnly, NIL,
+    get_helper_unchecked, get_mut_helper_unchecked, trace, Color, DataIndex, HyperTreeData,
+    HyperTreeReadOperations, HyperTreeWriteOperations, Payload, RBNode, RedBlackTreeReadOnly, NIL,
 };
+
+// SAFETY invariant for the node reads in this module.
+//
+// The list stores its nodes in the same blocks the red-black tree uses, keyed
+// by handle: the list `head` (`root_index`), and each node's `parent` (prev)
+// and `right` (next) links. Every `DataIndex` read here is one of those
+// handles or an index handed to `insert`/`remove_by_index` that the caller
+// obtained from the free list for this account, so each is an in-bounds,
+// aligned start for the `RBNode<V>` stored there, and NIL is guarded before
+// every read. These reads therefore use the unchecked accessors, whose
+// contract this upholds; an externally supplied index must be range-checked
+// and use the safe `get_helper` instead. See the fuller note in
+// `red_black_tree`.
 
 // Overview of the structs and traits in this file.
 //
@@ -96,7 +109,16 @@ pub struct LinkedListReadOnly<'a, V: Payload> {
 impl<'a, V: Payload> LinkedList<'a, V> {
     /// Creates a list over existing, well formed list data. `head_index` is
     /// [`NIL`] for an empty list.
-    pub fn new(data: &'a mut [u8], head_index: DataIndex) -> Self {
+    ///
+    /// # Safety
+    /// `data` must be a well formed list for this account and every `DataIndex`
+    /// later passed to a method (the `head_index` here, and the indices given to
+    /// `insert`, `remove_by_index`, `get_mut_value`, ...) must be one of its
+    /// node handles: an in-bounds, aligned start for an `RBNode<V>`, obtained
+    /// from the account's free list or read back out of the list. The methods
+    /// read nodes without bounds checks ([`get_helper_unchecked`]), so an
+    /// out-of-range handle is undefined behavior. See the module invariant.
+    pub unsafe fn new(data: &'a mut [u8], head_index: DataIndex) -> Self {
         LinkedList::<V> {
             head_index,
             data,
@@ -107,7 +129,7 @@ impl<'a, V: Payload> LinkedList<'a, V> {
     /// Mutable access to the payload of a node, for updating an entry in place
     /// while walking with `get_next_index`.
     pub fn get_mut_value(&mut self, index: DataIndex) -> &mut V {
-        get_mut_helper::<RBNode<V>>(self.data, index).get_mut_value()
+        unsafe { get_mut_helper_unchecked::<RBNode<V>>(self.data, index) }.get_mut_value()
     }
 
     /// The next node, NIL at the end. Same as `get_next_lower_index` but
@@ -126,7 +148,12 @@ impl<'a, V: Payload> LinkedList<'a, V> {
 impl<'a, V: Payload> LinkedListReadOnly<'a, V> {
     /// Creates a read only list over existing, well formed list data.
     /// `head_index` is [`NIL`] for an empty list.
-    pub fn new(data: &'a [u8], head_index: DataIndex) -> Self {
+    ///
+    /// # Safety
+    /// Same contract as [`LinkedList::new`]: `data` must be a well formed list
+    /// and every index passed to a method one of its node handles. Reads are
+    /// unchecked, so an out-of-range handle is undefined behavior.
+    pub unsafe fn new(data: &'a [u8], head_index: DataIndex) -> Self {
         LinkedListReadOnly::<V> {
             head_index,
             data,
@@ -161,20 +188,20 @@ fn next_index<V: Payload>(data: &[u8], index: DataIndex) -> DataIndex {
     if index == NIL {
         return NIL;
     }
-    get_helper::<RBNode<V>>(data, index).right
+    unsafe { get_helper_unchecked::<RBNode<V>>(data, index) }.right
 }
 
 fn prev_index<V: Payload>(data: &[u8], index: DataIndex) -> DataIndex {
     if index == NIL {
         return NIL;
     }
-    get_helper::<RBNode<V>>(data, index).parent
+    unsafe { get_helper_unchecked::<RBNode<V>>(data, index) }.parent
 }
 
 fn lookup_index<V: Payload>(data: &[u8], head_index: DataIndex, value: &V) -> DataIndex {
     let mut index: DataIndex = head_index;
     while index != NIL {
-        let node: &RBNode<V> = get_helper::<RBNode<V>>(data, index);
+        let node: &RBNode<V> = unsafe { get_helper_unchecked::<RBNode<V>>(data, index) };
         if node.get_value() == value {
             return index;
         }
@@ -230,7 +257,8 @@ impl<'a, V: Payload> HyperTreeWriteOperations<'a, V> for LinkedList<'a, V> {
         trace!("LIST insert {index}");
         debug_assert_ne!(index, NIL);
         let old_head_index: DataIndex = self.head_index;
-        let node: &mut RBNode<V> = get_mut_helper::<RBNode<V>>(self.data, index);
+        let node: &mut RBNode<V> =
+            unsafe { get_mut_helper_unchecked::<RBNode<V>>(self.data, index) };
         *node = RBNode {
             left: NIL,
             right: old_head_index,
@@ -241,7 +269,8 @@ impl<'a, V: Payload> HyperTreeWriteOperations<'a, V> for LinkedList<'a, V> {
             value,
         };
         if old_head_index != NIL {
-            get_mut_helper::<RBNode<V>>(self.data, old_head_index).parent = index;
+            unsafe { get_mut_helper_unchecked::<RBNode<V>>(self.data, old_head_index) }.parent =
+                index;
         }
         self.head_index = index;
     }
@@ -256,7 +285,8 @@ impl<'a, V: Payload> HyperTreeWriteOperations<'a, V> for LinkedList<'a, V> {
             return;
         }
         let (prev_index, next_index): (DataIndex, DataIndex) = {
-            let node: &mut RBNode<V> = get_mut_helper::<RBNode<V>>(self.data, index);
+            let node: &mut RBNode<V> =
+                unsafe { get_mut_helper_unchecked::<RBNode<V>>(self.data, index) };
             let links: (DataIndex, DataIndex) = (node.parent, node.right);
             node.parent = NIL;
             node.right = NIL;
@@ -269,10 +299,12 @@ impl<'a, V: Payload> HyperTreeWriteOperations<'a, V> for LinkedList<'a, V> {
             );
             self.head_index = next_index;
         } else {
-            get_mut_helper::<RBNode<V>>(self.data, prev_index).right = next_index;
+            unsafe { get_mut_helper_unchecked::<RBNode<V>>(self.data, prev_index) }.right =
+                next_index;
         }
         if next_index != NIL {
-            get_mut_helper::<RBNode<V>>(self.data, next_index).parent = prev_index;
+            unsafe { get_mut_helper_unchecked::<RBNode<V>>(self.data, next_index) }.parent =
+                prev_index;
         }
     }
 }
@@ -310,7 +342,8 @@ pub fn convert_red_black_tree_to_linked_list<V: Payload>(
     }
     // The head is the tree's max, read before anything is overwritten.
     let head_index: DataIndex = {
-        let tree: RedBlackTreeReadOnly<V> = RedBlackTreeReadOnly::<V>::new(data, root_index, NIL);
+        let tree: RedBlackTreeReadOnly<V> =
+            unsafe { RedBlackTreeReadOnly::<V>::new(data, root_index, NIL) };
         tree.lookup_max_index::<V>()
     };
 
@@ -319,10 +352,10 @@ pub fn convert_red_black_tree_to_linked_list<V: Payload>(
     while index != NIL {
         let next_index: DataIndex = {
             let tree: RedBlackTreeReadOnly<V> =
-                RedBlackTreeReadOnly::<V>::new(data, root_index, NIL);
+                unsafe { RedBlackTreeReadOnly::<V>::new(data, root_index, NIL) };
             tree.get_next_lower_index::<V>(index)
         };
-        get_mut_helper::<RBNode<V>>(data, index).right = next_index;
+        unsafe { get_mut_helper_unchecked::<RBNode<V>>(data, index) }.right = next_index;
         index = next_index;
     }
 
@@ -330,7 +363,7 @@ pub fn convert_red_black_tree_to_linked_list<V: Payload>(
     let mut prev_index: DataIndex = NIL;
     let mut index: DataIndex = head_index;
     while index != NIL {
-        let node: &mut RBNode<V> = get_mut_helper::<RBNode<V>>(data, index);
+        let node: &mut RBNode<V> = unsafe { get_mut_helper_unchecked::<RBNode<V>>(data, index) };
         let next_index: DataIndex = node.right;
         node.left = NIL;
         node.parent = prev_index;
@@ -404,12 +437,13 @@ pub fn validate_linked_list<V: Payload>(
 mod test {
     use super::*;
     use crate::{
+        get_helper, get_mut_helper,
         red_black_tree::test::{TestOrderBid, TEST_BLOCK_WIDTH},
         HyperTreeValueIteratorTrait, RedBlackTree,
     };
 
     fn values(data: &[u8], head_index: DataIndex) -> Vec<u64> {
-        LinkedListReadOnly::<TestOrderBid>::new(data, head_index)
+        unsafe { LinkedListReadOnly::<TestOrderBid>::new(data, head_index) }
             .iter::<TestOrderBid>()
             .map(|(_, order)| order.order_id())
             .collect()
@@ -425,7 +459,7 @@ mod test {
     #[test]
     fn test_insert_iter_and_lookup() {
         let mut data: [u8; 100000] = [0; 100000];
-        let mut list: LinkedList<TestOrderBid> = LinkedList::new(&mut data, NIL);
+        let mut list: LinkedList<TestOrderBid> = unsafe { LinkedList::new(&mut data, NIL) };
         assert_eq!(list.get_root_index(), NIL);
         assert_eq!(list.get_max_index(), NIL);
         assert_eq!(list.lookup_max_index::<TestOrderBid>(), NIL);
@@ -446,7 +480,8 @@ mod test {
         );
         assert_well_formed(&data, head, 8);
 
-        let list: LinkedListReadOnly<TestOrderBid> = LinkedListReadOnly::new(&data, head);
+        let list: LinkedListReadOnly<TestOrderBid> =
+            unsafe { LinkedListReadOnly::new(&data, head) };
         for i in 1..=8 {
             assert_eq!(
                 list.lookup_index(&TestOrderBid::new((i * 100).into())),
@@ -480,7 +515,7 @@ mod test {
     #[test]
     fn test_remove() {
         let mut data: [u8; 100000] = [0; 100000];
-        let mut list: LinkedList<TestOrderBid> = LinkedList::new(&mut data, NIL);
+        let mut list: LinkedList<TestOrderBid> = unsafe { LinkedList::new(&mut data, NIL) };
         for i in 1..=5 {
             list.insert(TEST_BLOCK_WIDTH * i, TestOrderBid::new(i.into()));
         }
@@ -536,7 +571,7 @@ mod test {
     #[test]
     fn test_walk_while_mutating() {
         let mut data: [u8; 100000] = [0; 100000];
-        let mut list: LinkedList<TestOrderBid> = LinkedList::new(&mut data, NIL);
+        let mut list: LinkedList<TestOrderBid> = unsafe { LinkedList::new(&mut data, NIL) };
         for i in 1..=6 {
             list.insert(TEST_BLOCK_WIDTH * i, TestOrderBid::new(i.into()));
         }
@@ -566,7 +601,7 @@ mod test {
     #[test]
     fn test_get_mut_value() {
         let mut data: [u8; 100000] = [0; 100000];
-        let mut list: LinkedList<TestOrderBid> = LinkedList::new(&mut data, NIL);
+        let mut list: LinkedList<TestOrderBid> = unsafe { LinkedList::new(&mut data, NIL) };
         list.insert(TEST_BLOCK_WIDTH, TestOrderBid::new(1));
         list.insert(TEST_BLOCK_WIDTH * 2, TestOrderBid::new(2));
         *list.get_mut_value(TEST_BLOCK_WIDTH) = TestOrderBid::new(10);
@@ -578,7 +613,8 @@ mod test {
     fn check_conversion(order_ids: &[u64]) {
         let mut data: [u8; 100000] = [0; 100000];
         let root_index: DataIndex = {
-            let mut tree: RedBlackTree<TestOrderBid> = RedBlackTree::new(&mut data, NIL, NIL);
+            let mut tree: RedBlackTree<TestOrderBid> =
+                unsafe { RedBlackTree::new(&mut data, NIL, NIL) };
             for (i, order_id) in order_ids.iter().enumerate() {
                 tree.insert(
                     TEST_BLOCK_WIDTH * (i as DataIndex + 1),
@@ -604,12 +640,13 @@ mod test {
             assert_eq!(node.payload_type, 0);
         }
         if let Some(max) = expected.first() {
-            let list: LinkedListReadOnly<TestOrderBid> = LinkedListReadOnly::new(&data, head_index);
+            let list: LinkedListReadOnly<TestOrderBid> =
+                unsafe { LinkedListReadOnly::new(&data, head_index) };
             assert_eq!(list.lookup_index(&TestOrderBid::new(*max)), head_index);
         }
 
         // The list keeps working afterwards.
-        let mut list: LinkedList<TestOrderBid> = LinkedList::new(&mut data, head_index);
+        let mut list: LinkedList<TestOrderBid> = unsafe { LinkedList::new(&mut data, head_index) };
         if let Some(last) = expected.last() {
             let index: DataIndex = list.lookup_index(&TestOrderBid::new(*last));
             list.remove_by_index(index);
@@ -658,7 +695,8 @@ mod test {
         for _ in 0..5_000 {
             let r: u64 = next_random();
             let do_insert: bool = model.is_empty() || (!free_slots.is_empty() && r % 3 != 0);
-            let mut list: LinkedList<TestOrderBid> = LinkedList::new(&mut data, head_index);
+            let mut list: LinkedList<TestOrderBid> =
+                unsafe { LinkedList::new(&mut data, head_index) };
             if do_insert {
                 let slot: DataIndex = free_slots.swap_remove((r >> 8) as usize % free_slots.len());
                 list.insert(slot * TEST_BLOCK_WIDTH, TestOrderBid::new(next_order_id));
@@ -698,7 +736,8 @@ mod test {
         const NODES: DataIndex = 400;
         let mut data: Vec<u8> = vec![0; (NODES as usize + 1) * TEST_BLOCK_WIDTH as usize];
         let root_index: DataIndex = {
-            let mut tree: RedBlackTree<TestOrderBid> = RedBlackTree::new(&mut data, NIL, NIL);
+            let mut tree: RedBlackTree<TestOrderBid> =
+                unsafe { RedBlackTree::new(&mut data, NIL, NIL) };
             // Mixed insertion order so the tree is neither degenerate nor
             // perfectly balanced.
             for i in 0..NODES {
@@ -771,7 +810,7 @@ mod test {
     fn test_validated_lists_can_be_walked() {
         let mut data: [u8; 100000] = [0; 100000];
         let head_index: DataIndex = {
-            let mut list: LinkedList<TestOrderBid> = LinkedList::new(&mut data, NIL);
+            let mut list: LinkedList<TestOrderBid> = unsafe { LinkedList::new(&mut data, NIL) };
             for i in 1..=5 {
                 list.insert(TEST_BLOCK_WIDTH * i, TestOrderBid::new(i.into()));
             }
@@ -795,7 +834,7 @@ mod test {
     fn test_a_list_is_a_valid_tree_shape() {
         let mut data: [u8; 100000] = [0; 100000];
         let head_index: DataIndex = {
-            let mut list: LinkedList<TestOrderBid> = LinkedList::new(&mut data, NIL);
+            let mut list: LinkedList<TestOrderBid> = unsafe { LinkedList::new(&mut data, NIL) };
             for i in 1..=6 {
                 list.insert(TEST_BLOCK_WIDTH * i, TestOrderBid::new(i.into()));
             }
@@ -834,7 +873,7 @@ mod test {
     fn test_validate_rejects_bad_links() {
         let mut data: [u8; 100000] = [0; 100000];
         let head_index: DataIndex = {
-            let mut list: LinkedList<TestOrderBid> = LinkedList::new(&mut data, NIL);
+            let mut list: LinkedList<TestOrderBid> = unsafe { LinkedList::new(&mut data, NIL) };
             for i in 1..=3 {
                 list.insert(TEST_BLOCK_WIDTH * i, TestOrderBid::new(i.into()));
             }

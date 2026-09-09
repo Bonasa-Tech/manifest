@@ -128,11 +128,13 @@ async fn wrapper_place_order_test() -> anyhow::Result<()> {
     test_fixture.wrapper.reload().await;
 
     let open_order: WrapperOpenOrder = {
-        let market_infos_tree: MarketInfosTreeReadOnly = MarketInfosTreeReadOnly::new(
-            &test_fixture.wrapper.wrapper.dynamic,
-            test_fixture.wrapper.wrapper.fixed.market_infos_root_index,
-            NIL,
-        );
+        let market_infos_tree: MarketInfosTreeReadOnly = unsafe {
+            MarketInfosTreeReadOnly::new(
+                &test_fixture.wrapper.wrapper.dynamic,
+                test_fixture.wrapper.wrapper.fixed.market_infos_root_index,
+                NIL,
+            )
+        };
 
         let market_info_index: DataIndex =
             market_infos_tree.lookup_index(&MarketInfo::new_empty(test_fixture.market.key, NIL));
@@ -202,11 +204,13 @@ async fn wrapper_place_order_test() -> anyhow::Result<()> {
     test_fixture.wrapper.reload().await;
 
     let market_info_index: DataIndex = {
-        let market_infos_tree: MarketInfosTreeReadOnly = MarketInfosTreeReadOnly::new(
-            &test_fixture.wrapper.wrapper.dynamic,
-            test_fixture.wrapper.wrapper.fixed.market_infos_root_index,
-            NIL,
-        );
+        let market_infos_tree: MarketInfosTreeReadOnly = unsafe {
+            MarketInfosTreeReadOnly::new(
+                &test_fixture.wrapper.wrapper.dynamic,
+                test_fixture.wrapper.wrapper.fixed.market_infos_root_index,
+                NIL,
+            )
+        };
         market_infos_tree.lookup_index(&MarketInfo::new_empty(test_fixture.market.key, NIL))
     };
 
@@ -220,11 +224,13 @@ async fn wrapper_place_order_test() -> anyhow::Result<()> {
         market_info.orders_root_index
     };
 
-    let open_orders_tree: OpenOrdersTreeReadOnly = OpenOrdersTreeReadOnly::new(
-        &test_fixture.wrapper.wrapper.dynamic,
-        orders_root_index,
-        NIL,
-    );
+    let open_orders_tree: OpenOrdersTreeReadOnly = unsafe {
+        OpenOrdersTreeReadOnly::new(
+            &test_fixture.wrapper.wrapper.dynamic,
+            orders_root_index,
+            NIL,
+        )
+    };
     let found = open_orders_tree
         .iter::<WrapperOpenOrder>()
         .find(|(_, o)| o.get_client_order_id() == 1);
@@ -412,11 +418,13 @@ async fn wrapper_place_order_with_broke_owner_test() -> anyhow::Result<()> {
     wrapper_fixture.reload().await;
 
     let open_order: WrapperOpenOrder = {
-        let market_infos_tree: MarketInfosTreeReadOnly = MarketInfosTreeReadOnly::new(
-            &wrapper_fixture.wrapper.dynamic,
-            wrapper_fixture.wrapper.fixed.market_infos_root_index,
-            NIL,
-        );
+        let market_infos_tree: MarketInfosTreeReadOnly = unsafe {
+            MarketInfosTreeReadOnly::new(
+                &wrapper_fixture.wrapper.dynamic,
+                wrapper_fixture.wrapper.fixed.market_infos_root_index,
+                NIL,
+            )
+        };
 
         let market_info_index: DataIndex =
             market_infos_tree.lookup_index(&MarketInfo::new_empty(test_fixture.market.key, NIL));
@@ -485,11 +493,13 @@ async fn wrapper_place_order_with_broke_owner_test() -> anyhow::Result<()> {
     wrapper_fixture.reload().await;
 
     let market_info_index: DataIndex = {
-        let market_infos_tree: MarketInfosTreeReadOnly = MarketInfosTreeReadOnly::new(
-            &wrapper_fixture.wrapper.dynamic,
-            wrapper_fixture.wrapper.fixed.market_infos_root_index,
-            NIL,
-        );
+        let market_infos_tree: MarketInfosTreeReadOnly = unsafe {
+            MarketInfosTreeReadOnly::new(
+                &wrapper_fixture.wrapper.dynamic,
+                wrapper_fixture.wrapper.fixed.market_infos_root_index,
+                NIL,
+            )
+        };
         market_infos_tree.lookup_index(&MarketInfo::new_empty(test_fixture.market.key, NIL))
     };
 
@@ -501,8 +511,9 @@ async fn wrapper_place_order_with_broke_owner_test() -> anyhow::Result<()> {
         market_info.orders_root_index
     };
 
-    let open_orders_tree: OpenOrdersTreeReadOnly =
-        OpenOrdersTreeReadOnly::new(&wrapper_fixture.wrapper.dynamic, orders_root_index, NIL);
+    let open_orders_tree: OpenOrdersTreeReadOnly = unsafe {
+        OpenOrdersTreeReadOnly::new(&wrapper_fixture.wrapper.dynamic, orders_root_index, NIL)
+    };
     let found = open_orders_tree
         .iter::<WrapperOpenOrder>()
         .find(|(_, o)| o.get_client_order_id() == 1);
@@ -640,11 +651,13 @@ async fn wrapper_place_order_without_globals_test() -> anyhow::Result<()> {
     test_fixture.wrapper.reload().await;
 
     let open_order: WrapperOpenOrder = {
-        let market_infos_tree: MarketInfosTreeReadOnly = MarketInfosTreeReadOnly::new(
-            &test_fixture.wrapper.wrapper.dynamic,
-            test_fixture.wrapper.wrapper.fixed.market_infos_root_index,
-            NIL,
-        );
+        let market_infos_tree: MarketInfosTreeReadOnly = unsafe {
+            MarketInfosTreeReadOnly::new(
+                &test_fixture.wrapper.wrapper.dynamic,
+                test_fixture.wrapper.wrapper.fixed.market_infos_root_index,
+                NIL,
+            )
+        };
 
         let market_info_index: DataIndex =
             market_infos_tree.lookup_index(&MarketInfo::new_empty(test_fixture.market.key, NIL));
@@ -714,11 +727,13 @@ async fn wrapper_place_order_without_globals_test() -> anyhow::Result<()> {
     test_fixture.wrapper.reload().await;
 
     let market_info_index: DataIndex = {
-        let market_infos_tree: MarketInfosTreeReadOnly = MarketInfosTreeReadOnly::new(
-            &test_fixture.wrapper.wrapper.dynamic,
-            test_fixture.wrapper.wrapper.fixed.market_infos_root_index,
-            NIL,
-        );
+        let market_infos_tree: MarketInfosTreeReadOnly = unsafe {
+            MarketInfosTreeReadOnly::new(
+                &test_fixture.wrapper.wrapper.dynamic,
+                test_fixture.wrapper.wrapper.fixed.market_infos_root_index,
+                NIL,
+            )
+        };
         market_infos_tree.lookup_index(&MarketInfo::new_empty(test_fixture.market.key, NIL))
     };
 
@@ -732,11 +747,13 @@ async fn wrapper_place_order_without_globals_test() -> anyhow::Result<()> {
         market_info.orders_root_index
     };
 
-    let open_orders_tree: OpenOrdersTreeReadOnly = OpenOrdersTreeReadOnly::new(
-        &test_fixture.wrapper.wrapper.dynamic,
-        orders_root_index,
-        NIL,
-    );
+    let open_orders_tree: OpenOrdersTreeReadOnly = unsafe {
+        OpenOrdersTreeReadOnly::new(
+            &test_fixture.wrapper.wrapper.dynamic,
+            orders_root_index,
+            NIL,
+        )
+    };
     let found = open_orders_tree
         .iter::<WrapperOpenOrder>()
         .find(|(_, o)| o.get_client_order_id() == 1);
@@ -1047,11 +1064,13 @@ async fn wrapper_partial_fill_cancel_accrues_fee_test() -> anyhow::Result<()> {
     maker_wrapper_fixture.reload().await;
 
     let open_order: WrapperOpenOrder = {
-        let market_infos_tree: MarketInfosTreeReadOnly = MarketInfosTreeReadOnly::new(
-            &maker_wrapper_fixture.wrapper.dynamic,
-            maker_wrapper_fixture.wrapper.fixed.market_infos_root_index,
-            NIL,
-        );
+        let market_infos_tree: MarketInfosTreeReadOnly = unsafe {
+            MarketInfosTreeReadOnly::new(
+                &maker_wrapper_fixture.wrapper.dynamic,
+                maker_wrapper_fixture.wrapper.fixed.market_infos_root_index,
+                NIL,
+            )
+        };
 
         let market_info_index: DataIndex =
             market_infos_tree.lookup_index(&MarketInfo::new_empty(test_fixture.market.key, NIL));
@@ -1159,11 +1178,13 @@ async fn wrapper_partial_fill_cancel_accrues_fee_test() -> anyhow::Result<()> {
 
     maker_wrapper_fixture.reload().await;
     let maker_market_info_index: DataIndex = {
-        let market_infos_tree: MarketInfosTreeReadOnly = MarketInfosTreeReadOnly::new(
-            &maker_wrapper_fixture.wrapper.dynamic,
-            maker_wrapper_fixture.wrapper.fixed.market_infos_root_index,
-            NIL,
-        );
+        let market_infos_tree: MarketInfosTreeReadOnly = unsafe {
+            MarketInfosTreeReadOnly::new(
+                &maker_wrapper_fixture.wrapper.dynamic,
+                maker_wrapper_fixture.wrapper.fixed.market_infos_root_index,
+                NIL,
+            )
+        };
         market_infos_tree.lookup_index(&MarketInfo::new_empty(test_fixture.market.key, NIL))
     };
     let maker_market_info: &MarketInfo = get_helper::<RBNode<MarketInfo>>(
@@ -1469,11 +1490,13 @@ async fn wrapper_fill_order_without_referral_test() -> anyhow::Result<()> {
     maker_wrapper_fixture.reload().await;
 
     let open_order: WrapperOpenOrder = {
-        let market_infos_tree: MarketInfosTreeReadOnly = MarketInfosTreeReadOnly::new(
-            &maker_wrapper_fixture.wrapper.dynamic,
-            maker_wrapper_fixture.wrapper.fixed.market_infos_root_index,
-            NIL,
-        );
+        let market_infos_tree: MarketInfosTreeReadOnly = unsafe {
+            MarketInfosTreeReadOnly::new(
+                &maker_wrapper_fixture.wrapper.dynamic,
+                maker_wrapper_fixture.wrapper.fixed.market_infos_root_index,
+                NIL,
+            )
+        };
 
         let market_info_index: DataIndex =
             market_infos_tree.lookup_index(&MarketInfo::new_empty(test_fixture.market.key, NIL));
@@ -1560,11 +1583,13 @@ async fn wrapper_fill_order_without_referral_test() -> anyhow::Result<()> {
     // verify order is correctly not-tracked on wrapper
     taker_wrapper_fixture.reload().await;
     {
-        let market_infos_tree: MarketInfosTreeReadOnly = MarketInfosTreeReadOnly::new(
-            &taker_wrapper_fixture.wrapper.dynamic,
-            taker_wrapper_fixture.wrapper.fixed.market_infos_root_index,
-            NIL,
-        );
+        let market_infos_tree: MarketInfosTreeReadOnly = unsafe {
+            MarketInfosTreeReadOnly::new(
+                &taker_wrapper_fixture.wrapper.dynamic,
+                taker_wrapper_fixture.wrapper.fixed.market_infos_root_index,
+                NIL,
+            )
+        };
 
         let market_info_index: DataIndex =
             market_infos_tree.lookup_index(&MarketInfo::new_empty(test_fixture.market.key, NIL));
@@ -1846,11 +1871,13 @@ async fn wrapper_fill_order_with_transfer_fees_test() -> anyhow::Result<()> {
     maker_wrapper_fixture.reload().await;
 
     let open_order: WrapperOpenOrder = {
-        let market_infos_tree: MarketInfosTreeReadOnly = MarketInfosTreeReadOnly::new(
-            &maker_wrapper_fixture.wrapper.dynamic,
-            maker_wrapper_fixture.wrapper.fixed.market_infos_root_index,
-            NIL,
-        );
+        let market_infos_tree: MarketInfosTreeReadOnly = unsafe {
+            MarketInfosTreeReadOnly::new(
+                &maker_wrapper_fixture.wrapper.dynamic,
+                maker_wrapper_fixture.wrapper.fixed.market_infos_root_index,
+                NIL,
+            )
+        };
 
         let market_info_index: DataIndex =
             market_infos_tree.lookup_index(&MarketInfo::new_empty(test_fixture.market.key, NIL));
@@ -1937,11 +1964,13 @@ async fn wrapper_fill_order_with_transfer_fees_test() -> anyhow::Result<()> {
     // verify order is correctly not-tracked on wrapper
     taker_wrapper_fixture.reload().await;
     {
-        let market_infos_tree: MarketInfosTreeReadOnly = MarketInfosTreeReadOnly::new(
-            &taker_wrapper_fixture.wrapper.dynamic,
-            taker_wrapper_fixture.wrapper.fixed.market_infos_root_index,
-            NIL,
-        );
+        let market_infos_tree: MarketInfosTreeReadOnly = unsafe {
+            MarketInfosTreeReadOnly::new(
+                &taker_wrapper_fixture.wrapper.dynamic,
+                taker_wrapper_fixture.wrapper.fixed.market_infos_root_index,
+                NIL,
+            )
+        };
 
         let market_info_index: DataIndex =
             market_infos_tree.lookup_index(&MarketInfo::new_empty(test_fixture.market.key, NIL));
@@ -2235,11 +2264,13 @@ async fn wrapper_fill_order_with_transfer_fees_without_referral_test() -> anyhow
     maker_wrapper_fixture.reload().await;
 
     let open_order: WrapperOpenOrder = {
-        let market_infos_tree: MarketInfosTreeReadOnly = MarketInfosTreeReadOnly::new(
-            &maker_wrapper_fixture.wrapper.dynamic,
-            maker_wrapper_fixture.wrapper.fixed.market_infos_root_index,
-            NIL,
-        );
+        let market_infos_tree: MarketInfosTreeReadOnly = unsafe {
+            MarketInfosTreeReadOnly::new(
+                &maker_wrapper_fixture.wrapper.dynamic,
+                maker_wrapper_fixture.wrapper.fixed.market_infos_root_index,
+                NIL,
+            )
+        };
 
         let market_info_index: DataIndex =
             market_infos_tree.lookup_index(&MarketInfo::new_empty(test_fixture.market.key, NIL));
@@ -2326,11 +2357,13 @@ async fn wrapper_fill_order_with_transfer_fees_without_referral_test() -> anyhow
     // verify order is correctly not-tracked on wrapper
     taker_wrapper_fixture.reload().await;
     {
-        let market_infos_tree: MarketInfosTreeReadOnly = MarketInfosTreeReadOnly::new(
-            &taker_wrapper_fixture.wrapper.dynamic,
-            taker_wrapper_fixture.wrapper.fixed.market_infos_root_index,
-            NIL,
-        );
+        let market_infos_tree: MarketInfosTreeReadOnly = unsafe {
+            MarketInfosTreeReadOnly::new(
+                &taker_wrapper_fixture.wrapper.dynamic,
+                taker_wrapper_fixture.wrapper.fixed.market_infos_root_index,
+                NIL,
+            )
+        };
 
         let market_info_index: DataIndex =
             market_infos_tree.lookup_index(&MarketInfo::new_empty(test_fixture.market.key, NIL));
@@ -2599,11 +2632,13 @@ async fn wrapper_self_trade_test() -> anyhow::Result<()> {
     test_fixture.wrapper.reload().await;
 
     let market_info_index: DataIndex = {
-        let market_infos_tree: MarketInfosTreeReadOnly = MarketInfosTreeReadOnly::new(
-            &test_fixture.wrapper.wrapper.dynamic,
-            test_fixture.wrapper.wrapper.fixed.market_infos_root_index,
-            NIL,
-        );
+        let market_infos_tree: MarketInfosTreeReadOnly = unsafe {
+            MarketInfosTreeReadOnly::new(
+                &test_fixture.wrapper.wrapper.dynamic,
+                test_fixture.wrapper.wrapper.fixed.market_infos_root_index,
+                NIL,
+            )
+        };
         market_infos_tree.lookup_index(&MarketInfo::new_empty(test_fixture.market.key, NIL))
     };
 
@@ -2617,11 +2652,13 @@ async fn wrapper_self_trade_test() -> anyhow::Result<()> {
         market_info.orders_root_index
     };
 
-    let open_orders_tree: OpenOrdersTreeReadOnly = OpenOrdersTreeReadOnly::new(
-        &test_fixture.wrapper.wrapper.dynamic,
-        orders_root_index,
-        NIL,
-    );
+    let open_orders_tree: OpenOrdersTreeReadOnly = unsafe {
+        OpenOrdersTreeReadOnly::new(
+            &test_fixture.wrapper.wrapper.dynamic,
+            orders_root_index,
+            NIL,
+        )
+    };
     let found = open_orders_tree
         .iter::<WrapperOpenOrder>()
         .find(|(_, o)| o.get_client_order_id() == 1 || o.get_client_order_id() == 2);

@@ -33,11 +33,18 @@ pub(crate) fn process_global_add_trader(
         // else to get that seat, they would need to init a token account for the
         // attacker, giving them rent.
         let rent: Rent = Rent::get()?;
+        // Checked explicitly: this is the lamport amount charged, and it must
+        // not wrap with overflow-checks off in release builds. Cold path, so
+        // the check costs nothing that matters.
+        let seat_fee: u64 = rent
+            .try_minimum_balance(Account::LEN as usize)?
+            .checked_mul(2)
+            .ok_or(pinocchio::error::ProgramError::ArithmeticOverflow)?;
         invoke(
             &solana_program::system_instruction::transfer(
                 &payer.pubkey(),
                 &global.pubkey(),
-                rent.try_minimum_balance(Account::LEN as usize)? * 2,
+                seat_fee,
             ),
             &[payer.info, global.info],
         )?;

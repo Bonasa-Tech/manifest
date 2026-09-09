@@ -64,7 +64,7 @@ mod global_helpers {
         dynamic: &mut [u8],
     ) -> DataIndex {
         let mut free_list: FreeList<GlobalUnusedFreeListPadding> =
-            FreeList::new(dynamic, fixed.free_list_head_index);
+            unsafe { FreeList::new(dynamic, fixed.free_list_head_index) };
         let free_address: DataIndex = free_list.remove();
         fixed.free_list_head_index = free_list.get_head();
         free_address
@@ -104,17 +104,19 @@ pub fn validate_global_dynamic(fixed: &GlobalFixed, dynamic: &[u8]) -> Result<()
         fixed.global_deposits_max_index,
     )?;
 
-    let deposit_tree: GlobalDepositTreeReadOnly<'_> = GlobalDepositTreeReadOnly::new(
-        dynamic,
-        fixed.global_deposits_root_index,
-        fixed.global_deposits_max_index,
-    );
+    let deposit_tree: GlobalDepositTreeReadOnly<'_> = unsafe {
+        GlobalDepositTreeReadOnly::new(
+            dynamic,
+            fixed.global_deposits_root_index,
+            fixed.global_deposits_max_index,
+        )
+    };
     let deposits_by_index: BTreeMap<DataIndex, Pubkey> = deposit_tree
         .iter::<GlobalDeposit>()
         .map(|(index, deposit): (DataIndex, &GlobalDeposit)| (index, *deposit.get_trader()))
         .collect();
     let trader_tree: GlobalTraderTreeReadOnly<'_> =
-        GlobalTraderTreeReadOnly::new(dynamic, fixed.global_traders_root_index, NIL);
+        unsafe { GlobalTraderTreeReadOnly::new(dynamic, fixed.global_traders_root_index, NIL) };
     for (_index, trader) in trader_tree.iter::<GlobalTrader>() {
         let deposit_owner: &Pubkey = deposits_by_index
             .get(&trader.get_deposit_index())
@@ -459,11 +461,13 @@ impl<Fixed: DerefOrBorrow<GlobalFixed>, Dynamic: DerefOrBorrow<[u8]>>
             trader
         )?;
         let existing_global_trader: GlobalTrader = *existing_global_trader_opt.unwrap();
-        let global_trader_tree: GlobalTraderTreeReadOnly = GlobalTraderTreeReadOnly::new(
-            dynamic,
-            fixed.global_traders_root_index,
-            fixed.global_deposits_max_index,
-        );
+        let global_trader_tree: GlobalTraderTreeReadOnly = unsafe {
+            GlobalTraderTreeReadOnly::new(
+                dynamic,
+                fixed.global_traders_root_index,
+                fixed.global_deposits_max_index,
+            )
+        };
         let existing_trader_index: DataIndex =
             global_trader_tree.lookup_index(&existing_global_trader);
         let existing_global_trader: &GlobalTrader =
@@ -501,7 +505,7 @@ impl<Fixed: DerefOrBorrowMut<GlobalFixed>, Dynamic: DerefOrBorrowMut<[u8]>>
         )?;
 
         let mut free_list: FreeList<GlobalUnusedFreeListPadding> =
-            FreeList::new(dynamic, fixed.free_list_head_index);
+            unsafe { FreeList::new(dynamic, fixed.free_list_head_index) };
 
         // Expand twice since there are two trees.
         free_list.add(fixed.num_bytes_allocated);
@@ -525,11 +529,13 @@ impl<Fixed: DerefOrBorrowMut<GlobalFixed>, Dynamic: DerefOrBorrowMut<[u8]>>
         // Remove from tree first, then update balance, then reinsert.
         // Split into separate scopes to satisfy the borrow checker.
         {
-            let mut deposit_tree: GlobalDepositTree = GlobalDepositTree::new(
-                dynamic,
-                fixed.global_deposits_root_index,
-                fixed.global_deposits_max_index,
-            );
+            let mut deposit_tree: GlobalDepositTree = unsafe {
+                GlobalDepositTree::new(
+                    dynamic,
+                    fixed.global_deposits_root_index,
+                    fixed.global_deposits_max_index,
+                )
+            };
             deposit_tree.remove_by_index(deposit_index);
             fixed.global_deposits_root_index = deposit_tree.get_root_index();
             fixed.global_deposits_max_index = deposit_tree.get_max_index();
@@ -545,11 +551,13 @@ impl<Fixed: DerefOrBorrowMut<GlobalFixed>, Dynamic: DerefOrBorrowMut<[u8]>>
         update_deposited_atoms(fixed, old_balance_atoms, updated_deposit.balance_atoms);
 
         {
-            let mut deposit_tree: GlobalDepositTree = GlobalDepositTree::new(
-                dynamic,
-                fixed.global_deposits_root_index,
-                fixed.global_deposits_max_index,
-            );
+            let mut deposit_tree: GlobalDepositTree = unsafe {
+                GlobalDepositTree::new(
+                    dynamic,
+                    fixed.global_deposits_root_index,
+                    fixed.global_deposits_max_index,
+                )
+            };
             deposit_tree.insert(deposit_index, updated_deposit);
             fixed.global_deposits_root_index = deposit_tree.get_root_index();
             fixed.global_deposits_max_index = deposit_tree.get_max_index();
@@ -564,7 +572,7 @@ impl<Fixed: DerefOrBorrowMut<GlobalFixed>, Dynamic: DerefOrBorrowMut<[u8]>>
         let free_address_trader: DataIndex = get_free_address_on_global_fixed(fixed, dynamic);
         let free_address_deposit: DataIndex = get_free_address_on_global_fixed(fixed, dynamic);
         let mut global_trader_tree: GlobalTraderTree =
-            GlobalTraderTree::new(dynamic, fixed.global_traders_root_index, NIL);
+            unsafe { GlobalTraderTree::new(dynamic, fixed.global_traders_root_index, NIL) };
         let global_trader: GlobalTrader = GlobalTrader::new_empty(trader, free_address_deposit);
 
         require!(
@@ -584,11 +592,13 @@ impl<Fixed: DerefOrBorrowMut<GlobalFixed>, Dynamic: DerefOrBorrowMut<[u8]>>
         fixed.num_seats_claimed += 1;
 
         let global_deposit: GlobalDeposit = GlobalDeposit::new_empty(trader);
-        let mut global_deposit_tree: GlobalDepositTree = GlobalDepositTree::new(
-            dynamic,
-            fixed.global_deposits_root_index,
-            fixed.global_deposits_max_index,
-        );
+        let mut global_deposit_tree: GlobalDepositTree = unsafe {
+            GlobalDepositTree::new(
+                dynamic,
+                fixed.global_deposits_root_index,
+                fixed.global_deposits_max_index,
+            )
+        };
         global_deposit_tree.insert(free_address_deposit, global_deposit);
         fixed.global_deposits_root_index = global_deposit_tree.get_root_index();
         fixed.global_deposits_max_index = global_deposit_tree.get_max_index();
@@ -633,7 +643,7 @@ impl<Fixed: DerefOrBorrowMut<GlobalFixed>, Dynamic: DerefOrBorrowMut<[u8]>>
 
         // Verification that the max index is the deposit index we are taking happens before withdraw.
         let global_trader_tree: GlobalTraderTree =
-            GlobalTraderTree::new(dynamic, fixed.global_traders_root_index, NIL);
+            unsafe { GlobalTraderTree::new(dynamic, fixed.global_traders_root_index, NIL) };
         let existing_trader_index: DataIndex =
             global_trader_tree.lookup_index(&existing_global_trader);
         let existing_global_trader: &GlobalTrader =
@@ -643,7 +653,7 @@ impl<Fixed: DerefOrBorrowMut<GlobalFixed>, Dynamic: DerefOrBorrowMut<[u8]>>
         // Update global trader
         {
             let mut global_trader_tree: GlobalTraderTree =
-                GlobalTraderTree::new(dynamic, fixed.global_traders_root_index, NIL);
+                unsafe { GlobalTraderTree::new(dynamic, fixed.global_traders_root_index, NIL) };
             // `verify_min_balance` already authenticated this deposit as the
             // cached minimum before GlobalEvict withdrew it. Withdrawal removes
             // and reinserts the deposit, and an equal-balance node may become
@@ -669,11 +679,13 @@ impl<Fixed: DerefOrBorrowMut<GlobalFixed>, Dynamic: DerefOrBorrowMut<[u8]>>
         // Update global deposits
         {
             let new_global_deposit: GlobalDeposit = GlobalDeposit::new_empty(new_trader);
-            let mut global_deposit_tree: GlobalDepositTree = GlobalDepositTree::new(
-                dynamic,
-                fixed.global_deposits_root_index,
-                fixed.global_deposits_max_index,
-            );
+            let mut global_deposit_tree: GlobalDepositTree = unsafe {
+                GlobalDepositTree::new(
+                    dynamic,
+                    fixed.global_deposits_root_index,
+                    fixed.global_deposits_max_index,
+                )
+            };
             global_deposit_tree.remove_by_index(existing_deposit_index);
             global_deposit_tree.insert(existing_deposit_index, new_global_deposit);
             fixed.global_deposits_max_index = global_deposit_tree.get_max_index();
@@ -707,11 +719,13 @@ impl<Fixed: DerefOrBorrowMut<GlobalFixed>, Dynamic: DerefOrBorrowMut<[u8]>>
         let deposit_index: DataIndex = get_deposit_index(fixed, dynamic, trader)?;
 
         {
-            let mut deposit_tree: GlobalDepositTree = GlobalDepositTree::new(
-                dynamic,
-                fixed.global_deposits_root_index,
-                fixed.global_deposits_max_index,
-            );
+            let mut deposit_tree: GlobalDepositTree = unsafe {
+                GlobalDepositTree::new(
+                    dynamic,
+                    fixed.global_deposits_root_index,
+                    fixed.global_deposits_max_index,
+                )
+            };
             deposit_tree.remove_by_index(deposit_index);
             fixed.global_deposits_root_index = deposit_tree.get_root_index();
             fixed.global_deposits_max_index = deposit_tree.get_max_index();
@@ -727,11 +741,13 @@ impl<Fixed: DerefOrBorrowMut<GlobalFixed>, Dynamic: DerefOrBorrowMut<[u8]>>
         update_deposited_atoms(fixed, old_balance_atoms, updated_deposit.balance_atoms);
 
         {
-            let mut deposit_tree: GlobalDepositTree = GlobalDepositTree::new(
-                dynamic,
-                fixed.global_deposits_root_index,
-                fixed.global_deposits_max_index,
-            );
+            let mut deposit_tree: GlobalDepositTree = unsafe {
+                GlobalDepositTree::new(
+                    dynamic,
+                    fixed.global_deposits_root_index,
+                    fixed.global_deposits_max_index,
+                )
+            };
             deposit_tree.insert(deposit_index, updated_deposit);
             fixed.global_deposits_root_index = deposit_tree.get_root_index();
             fixed.global_deposits_max_index = deposit_tree.get_max_index();
@@ -746,11 +762,13 @@ impl<Fixed: DerefOrBorrowMut<GlobalFixed>, Dynamic: DerefOrBorrowMut<[u8]>>
         let deposit_index: DataIndex = get_deposit_index(fixed, dynamic, trader)?;
 
         {
-            let mut deposit_tree: GlobalDepositTree = GlobalDepositTree::new(
-                dynamic,
-                fixed.global_deposits_root_index,
-                fixed.global_deposits_max_index,
-            );
+            let mut deposit_tree: GlobalDepositTree = unsafe {
+                GlobalDepositTree::new(
+                    dynamic,
+                    fixed.global_deposits_root_index,
+                    fixed.global_deposits_max_index,
+                )
+            };
             deposit_tree.remove_by_index(deposit_index);
             fixed.global_deposits_root_index = deposit_tree.get_root_index();
             fixed.global_deposits_max_index = deposit_tree.get_max_index();
@@ -766,11 +784,13 @@ impl<Fixed: DerefOrBorrowMut<GlobalFixed>, Dynamic: DerefOrBorrowMut<[u8]>>
         update_deposited_atoms(fixed, old_balance_atoms, updated_deposit.balance_atoms);
 
         {
-            let mut deposit_tree: GlobalDepositTree = GlobalDepositTree::new(
-                dynamic,
-                fixed.global_deposits_root_index,
-                fixed.global_deposits_max_index,
-            );
+            let mut deposit_tree: GlobalDepositTree = unsafe {
+                GlobalDepositTree::new(
+                    dynamic,
+                    fixed.global_deposits_root_index,
+                    fixed.global_deposits_max_index,
+                )
+            };
             deposit_tree.insert(deposit_index, updated_deposit);
             fixed.global_deposits_root_index = deposit_tree.get_root_index();
             fixed.global_deposits_max_index = deposit_tree.get_max_index();
@@ -796,7 +816,7 @@ fn get_deposit_index(
     trader: &Pubkey,
 ) -> Result<DataIndex, pinocchio::error::ProgramError> {
     let global_trader_tree: GlobalTraderTreeReadOnly =
-        GlobalTraderTreeReadOnly::new(dynamic, fixed.global_traders_root_index, NIL);
+        unsafe { GlobalTraderTreeReadOnly::new(dynamic, fixed.global_traders_root_index, NIL) };
     let global_trader_index: DataIndex =
         global_trader_tree.lookup_index(&GlobalTrader::new_empty(trader, NIL));
     require!(
@@ -816,7 +836,7 @@ fn get_global_trader<'a>(
     trader: &'a Pubkey,
 ) -> Option<&'a GlobalTrader> {
     let global_trader_tree: GlobalTraderTreeReadOnly =
-        GlobalTraderTreeReadOnly::new(dynamic, fixed.global_traders_root_index, NIL);
+        unsafe { GlobalTraderTreeReadOnly::new(dynamic, fixed.global_traders_root_index, NIL) };
     let global_trader_index: DataIndex =
         global_trader_tree.lookup_index(&GlobalTrader::new_empty(trader, NIL));
     if global_trader_index == NIL {
@@ -833,7 +853,7 @@ fn get_mut_global_deposit<'a>(
     trader: &'a Pubkey,
 ) -> Option<&'a mut GlobalDeposit> {
     let global_trader_tree: GlobalTraderTree =
-        GlobalTraderTree::new(dynamic, fixed.global_traders_root_index, NIL);
+        unsafe { GlobalTraderTree::new(dynamic, fixed.global_traders_root_index, NIL) };
     let global_trader_index: DataIndex =
         global_trader_tree.lookup_index(&GlobalTrader::new_empty(trader, NIL));
     if global_trader_index == NIL {
@@ -851,7 +871,7 @@ fn get_global_deposit<'a>(
     trader: &'a Pubkey,
 ) -> Option<&'a GlobalDeposit> {
     let global_trader_tree: GlobalTraderTreeReadOnly =
-        GlobalTraderTreeReadOnly::new(dynamic, fixed.global_traders_root_index, NIL);
+        unsafe { GlobalTraderTreeReadOnly::new(dynamic, fixed.global_traders_root_index, NIL) };
     let global_trader_index: DataIndex =
         global_trader_tree.lookup_index(&GlobalTrader::new_empty(trader, NIL));
     if global_trader_index == NIL {
@@ -876,7 +896,8 @@ mod test {
         let mut fixed: GlobalFixed = GlobalFixed::new_empty(&Pubkey::new_unique());
         let mut dynamic: [u8; 2 * GLOBAL_BLOCK_SIZE] = [0; 2 * GLOBAL_BLOCK_SIZE];
 
-        let mut trader_tree: GlobalTraderTree<'_> = GlobalTraderTree::new(&mut dynamic, NIL, NIL);
+        let mut trader_tree: GlobalTraderTree<'_> =
+            unsafe { GlobalTraderTree::new(&mut dynamic, NIL, NIL) };
         trader_tree.insert(
             TRADER_INDEX,
             GlobalTrader::new_empty(&trader, DEPOSIT_INDEX),
@@ -885,7 +906,7 @@ mod test {
         drop(trader_tree);
 
         let mut deposit_tree: GlobalDepositTree<'_> =
-            GlobalDepositTree::new(&mut dynamic, NIL, NIL);
+            unsafe { GlobalDepositTree::new(&mut dynamic, NIL, NIL) };
         deposit_tree.insert(DEPOSIT_INDEX, GlobalDeposit::new_empty(&trader));
         fixed.global_deposits_root_index = deposit_tree.get_root_index();
         fixed.global_deposits_max_index = deposit_tree.get_max_index();

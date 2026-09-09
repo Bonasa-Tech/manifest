@@ -190,11 +190,18 @@ fn charge_eviction_fee<'a>(
     global: &ManifestAccountInfo<'a, GlobalFixed>,
 ) -> ProgramResult {
     let rent: Rent = Rent::get()?;
+    // Checked explicitly: this is the lamport amount charged, and it must not
+    // wrap with overflow-checks off in release builds. Cold path.
+    let base: u64 = rent.try_minimum_balance(Account::LEN as usize)?;
+    let eviction_fee: u64 = base
+        .checked_mul(2)
+        .and_then(|two_seats| two_seats.checked_add(10_000u64.checked_mul(GAS_DEPOSIT_LAMPORTS)?))
+        .ok_or(pinocchio::error::ProgramError::ArithmeticOverflow)?;
     invoke(
         &solana_program::system_instruction::transfer(
             &payer.pubkey(),
             &global.pubkey(),
-            rent.try_minimum_balance(Account::LEN as usize)? * 2 + 10000 * GAS_DEPOSIT_LAMPORTS,
+            eviction_fee,
         ),
         &[payer.info, global.info],
     )?;

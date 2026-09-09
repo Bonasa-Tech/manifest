@@ -8,7 +8,7 @@ mod free_addr_helpers {
         dynamic: &mut [u8],
     ) -> DataIndex {
         let mut free_list: FreeList<MarketUnusedFreeListPadding> =
-            FreeList::new(dynamic, fixed.free_list_head_index);
+            unsafe { FreeList::new(dynamic, fixed.free_list_head_index) };
         let free_address: DataIndex = free_list.remove();
         fixed.free_list_head_index = free_list.get_head();
         free_address
@@ -41,7 +41,7 @@ mod free_addr_helpers {
         index: DataIndex,
     ) {
         let mut free_list: FreeList<MarketUnusedFreeListPadding> =
-            FreeList::new(dynamic, fixed.free_list_head_index);
+            unsafe { FreeList::new(dynamic, fixed.free_list_head_index) };
         free_list.add(index);
         fixed.free_list_head_index = index;
     }
@@ -593,9 +593,9 @@ fn place_reverse_order(
     {
         let top_index: DataIndex = {
             let other_tree: Bookside = if is_bid {
-                Bookside::new(dynamic, fixed.bids_root_index, fixed.bids_best_index)
+                unsafe { Bookside::new(dynamic, fixed.bids_root_index, fixed.bids_best_index) }
             } else {
-                Bookside::new(dynamic, fixed.asks_root_index, fixed.asks_best_index)
+                unsafe { Bookside::new(dynamic, fixed.asks_root_index, fixed.asks_best_index) }
             };
             other_tree.get_max_index()
         };

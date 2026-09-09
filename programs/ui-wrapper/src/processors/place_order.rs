@@ -201,16 +201,18 @@ fn get_or_create_market_info<'a>(
 
         // Put that market_info at the free list head.
         let mut free_list: FreeList<UnusedWrapperFreeListPadding> =
-            FreeList::new(wrapper_dynamic_data, wrapper_fixed.free_list_head_index);
+            unsafe { FreeList::new(wrapper_dynamic_data, wrapper_fixed.free_list_head_index) };
         let market_info_index: DataIndex = free_list.remove();
         wrapper_fixed.free_list_head_index = free_list.get_head();
 
         // Insert into the MarketInfosTree.
-        let mut market_infos_tree: MarketInfosTree = MarketInfosTree::new(
-            wrapper_dynamic_data,
-            wrapper_fixed.market_infos_root_index,
-            NIL,
-        );
+        let mut market_infos_tree: MarketInfosTree = unsafe {
+            MarketInfosTree::new(
+                wrapper_dynamic_data,
+                wrapper_fixed.market_infos_root_index,
+                NIL,
+            )
+        };
         market_infos_tree.insert(market_info_index, market_info);
         wrapper_fixed.market_infos_root_index = market_infos_tree.get_root_index();
 
@@ -410,7 +412,7 @@ pub(crate) fn process_place_order(
 
         let wrapper_new_order_index: DataIndex = {
             let mut free_list: FreeList<UnusedWrapperFreeListPadding> =
-                FreeList::new(wrapper.dynamic, wrapper.fixed.free_list_head_index);
+                unsafe { FreeList::new(wrapper.dynamic, wrapper.fixed.free_list_head_index) };
             let new_index: DataIndex = free_list.remove();
             wrapper.fixed.free_list_head_index = free_list.get_head();
             new_index
@@ -429,7 +431,7 @@ pub(crate) fn process_place_order(
         );
 
         let mut open_orders_tree: OpenOrdersTree =
-            OpenOrdersTree::new(wrapper.dynamic, orders_root_index, NIL);
+            unsafe { OpenOrdersTree::new(wrapper.dynamic, orders_root_index, NIL) };
         open_orders_tree.insert(wrapper_new_order_index, wrapper_order);
         let new_root_index: DataIndex = open_orders_tree.get_root_index();
         let market_info: &mut MarketInfo =
