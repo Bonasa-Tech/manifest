@@ -29,9 +29,13 @@ jobs:
           working-directory: programs/manifest/src/certora/confs
           certora-key: ${{ secrets.CERTORAKEY }}
           cli-version: "8.13.0"
-          # Must match workspace.metadata.solana.tools-version. This overrides
-          # the workspace pin, and v1.43 ships rustc 1.79, which cannot build
-          # the pinocchio account view crates the programs now use.
-          certora-sbf-options: "-vvv --tools-version=v1.57"
+          # Deliberately not workspace.metadata.solana.tools-version, which is
+          # v1.57. `cargo certora-sbf` refuses anything newer than v1.53, and
+          # the pinocchio account view crates need rustc 1.89, which v1.43 (on
+          # 1.79) does not have. v1.53 ships exactly 1.89, so it is the only
+          # version that satisfies both. The prover therefore verifies a build
+          # from a slightly older compiler than the deployed one; it reasons
+          # about the program's semantics, not its compute.
+          certora-sbf-options: "-vvv --tools-version=v1.53"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
