@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1788921548505,
+  "lastUpdate": 1788925481659,
   "repoUrl": "https://github.com/Bonasa-Tech/manifest",
   "entries": {
     "CU Benchmark": [
@@ -13559,6 +13559,72 @@ window.BENCHMARK_DATA = {
           {
             "name": "MFX_99",
             "value": 2958,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "cyrbritt@gmail.com",
+            "name": "Britt Cyr",
+            "username": "brittcyr"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "6d747a72126a1af50339b38a5add7ac1b4e851c6",
+          "message": "Insert a tree node without copying it twice (#705)\n\nAn RBNode<RestingOrder> is eighty bytes. Placing an order built one on the\nstack, passed it by value into the descent, which copied it again, and then\nwrote it into the tree. The descent now takes it by reference.\n\nThe descent also threw away what it had just learned. The comparison that\nstopped the walk already decides which side of the parent the new node goes\non, but the code then fetched that parent again and compared a second time.\nThat decision is now recorded when the walk breaks; only stopping at a node\nwith no children at all still needs a comparison, and that one uses the\nreference the walk already holds.\n\nDrops get_node, which was the second fetch's only caller.\n\nTree insert is the largest single cost in placing an order, 865 CU of a\n1,300 CU place against a three hundred order book. Worth 0.48% of MFX CU\nper order on the replay benchmark, no transaction worse.",
+          "timestamp": "2026-09-08T23:38:44-04:00",
+          "tree_id": "b69734c5511b98e556be6f96eae7d3b3b8c2e4af",
+          "url": "https://github.com/Bonasa-Tech/manifest/commit/6d747a72126a1af50339b38a5add7ac1b4e851c6"
+        },
+        "date": 1788925479443,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "PHX_50",
+            "value": 6897,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "PHX_95",
+            "value": 13208,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "PHX_99",
+            "value": 13902,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_50",
+            "value": 1464,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_95",
+            "value": 2469,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_99",
+            "value": 2940,
             "range": "",
             "unit": "CU",
             "extra": ""
