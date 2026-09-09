@@ -89,9 +89,12 @@ pub const WRAPPER_BLOCK_SIZE: usize = WRAPPER_BLOCK_PAYLOAD_SIZE + BLOCK_HEADER_
 // validate arbitrary input bases; see `hypertree::get_helper`.
 const_assert_eq!(WRAPPER_BLOCK_SIZE % 8, 0);
 
-// This is the maximum number of order ids/cancels assembled for one core CPI;
-// it is not a market traversal budget. Bounded traversals have their own
-// explicit step quotas and persistent progress state.
+// The order id/cancel count a batch is expected to carry, used to size the
+// vectors that collect them. It is a starting capacity, not a limit: a batch
+// with more cancels than this, including a cancel_all over more tracked
+// orders, grows them and is processed in full. It is not a market traversal
+// budget either; bounded traversals have their own explicit step quotas and
+// persistent progress state.
 pub const EXPECTED_ORDER_BATCH_SIZE: usize = 16;
 
 /// Blocks added per wrapper expansion. Growing costs a system transfer CPI
@@ -305,14 +308,16 @@ impl<'a> CancelMatcher<'a> {
     ///
     /// A batch is a handful of ids, so comparing each open order against all
     /// of them costs a few CU per order, where hashing cost hundreds.
-    /// cancel_all is bounded to EXPECTED_ORDER_BATCH_SIZE wrapper-tracked
-    /// cancels per transaction so its CPI work stays bounded; shared market
-    /// size cannot affect this path. Orders placed directly through the core
-    /// are intentionally excluded and remain cancellable by sequence
-    /// number/index. The rest of the tracked orders are left for a retry.
+    /// cancel_all takes every order this wrapper tracks, however many that is,
+    /// so one call cancels all of them instead of leaving a remainder for the
+    /// caller to notice and retry. The work is proportional to the trader's own
+    /// open orders, which they alone create and pay rent for; shared market
+    /// size still cannot affect this path, because orders placed directly
+    /// through the core are not tracked here and remain cancellable by
+    /// sequence number/index.
     fn matches(&self, order: &WrapperOpenOrder) -> bool {
         if self.cancel_all {
-            self.core_cancels.len() < EXPECTED_ORDER_BATCH_SIZE
+            true
         } else {
             self.cancels
                 .iter()

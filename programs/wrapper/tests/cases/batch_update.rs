@@ -446,7 +446,7 @@ async fn wrapper_batch_update_cancel_all_test() -> anyhow::Result<()> {
         "Wrapper and direct asks before cancel_all"
     );
 
-    // cancel_all is bounded to 16 owned cancellations per transaction.
+    // cancel_all takes every order the wrapper tracks, in one transaction.
     let batch_update_ix: Instruction = batch_update_instruction(
         &test_fixture.market.key,
         &payer,
@@ -471,12 +471,12 @@ async fn wrapper_batch_update_cancel_all_test() -> anyhow::Result<()> {
             .get_asks()
             .iter::<RestingOrder>()
             .count(),
-        2,
-        "First bounded cancel_all leaves work for a retry",
+        1,
+        "One cancel_all clears all 17 tracked asks, leaving only the direct-core one",
     );
 
-    // The wrapper sync consumed all 16 core cancellation slots. The reserved
-    // legacy scan field remains untouched.
+    // Every tracked order went in one pass. The reserved legacy scan field
+    // remains untouched.
     let mut wrapper_account_after_first_pass: Account = test_fixture
         .context
         .borrow_mut()
@@ -551,8 +551,9 @@ async fn wrapper_batch_update_cancel_all_test() -> anyhow::Result<()> {
         "cancel_all does not update the reserved legacy scan field",
     );
 
-    // The direct-core order remains. cancel_all deliberately limits its work
-    // to orders tracked by this wrapper so unrelated market size cannot affect
+    // The direct-core order remains: a second cancel_all is a no-op because
+    // the wrapper tracks nothing more. cancel_all still limits its work to
+    // orders tracked by this wrapper, so unrelated market size cannot affect
     // its compute cost.
     test_fixture.market.reload().await;
     assert_eq!(
