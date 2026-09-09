@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1788931794965,
+  "lastUpdate": 1788984103612,
   "repoUrl": "https://github.com/Bonasa-Tech/manifest",
   "entries": {
     "CU Benchmark": [
@@ -13691,6 +13691,72 @@ window.BENCHMARK_DATA = {
           {
             "name": "MFX_99",
             "value": 2923,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "cyrbritt@gmail.com",
+            "name": "Britt Cyr",
+            "username": "brittcyr"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "a82441693165513f68236bff8e9748400b92b855",
+          "message": "Cancel every tracked order in one cancel_all (#708)\n\ncancel_all stopped after EXPECTED_ORDER_BATCH_SIZE orders and left the\nrest for the caller to retry, so a trader with more than sixteen open\norders got a partial cancel from an instruction whose whole purpose is\nto leave nothing behind. Nothing in the response said work remained;\nthe caller had to compare the book against its own records to find out.\n\nNow it takes every order the wrapper tracks. The cost is proportional to\nthe trader's own open orders, which only they create and pay rent for,\nso the bound the cap was protecting, that a shared market's size cannot\nbe used to inflate this path, is unchanged: orders placed directly\nthrough the core are not tracked by the wrapper and are still cancelled\nby sequence number or index.\n\nEXPECTED_ORDER_BATCH_SIZE stays as the starting capacity for the vectors\nthat collect the cancels, which is what it is now used for.\n\nThe existing test already places seventeen wrapper-tracked asks, one\nmore than the old cap, and needed two passes to clear them. It now\nclears them in one and keeps the second pass as an idempotency check.",
+          "timestamp": "2026-09-09T15:55:42-04:00",
+          "tree_id": "adc899c7d53fe9ebfb7103aabcd593c2b02327b8",
+          "url": "https://github.com/Bonasa-Tech/manifest/commit/a82441693165513f68236bff8e9748400b92b855"
+        },
+        "date": 1788984100504,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "PHX_50",
+            "value": 6897,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "PHX_95",
+            "value": 13208,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "PHX_99",
+            "value": 13902,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_50",
+            "value": 1442,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_95",
+            "value": 2432,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_99",
+            "value": 2655,
             "range": "",
             "unit": "CU",
             "extra": ""
