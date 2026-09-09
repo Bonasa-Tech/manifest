@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1788917109244,
+  "lastUpdate": 1788921548505,
   "repoUrl": "https://github.com/Bonasa-Tech/manifest",
   "entries": {
     "CU Benchmark": [
@@ -13453,6 +13453,72 @@ window.BENCHMARK_DATA = {
           "url": "https://github.com/Bonasa-Tech/manifest/commit/1f95b209394821e0ac7376e7532131a781b62be4"
         },
         "date": 1788917107255,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "PHX_50",
+            "value": 6897,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "PHX_95",
+            "value": 13208,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "PHX_99",
+            "value": 13902,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_50",
+            "value": 1473,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_95",
+            "value": 2482,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_99",
+            "value": 2958,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "cyrbritt@gmail.com",
+            "name": "Britt Cyr",
+            "username": "brittcyr"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "d752a66edd49c5c3fd18978f27ea2f9e03fd2c07",
+          "message": "Build the formal verification with the tools the prover accepts (#704)\n\nThe previous change moved the prover to v1.57 to match the rest of the\nrepository. It cannot use that: `cargo certora-sbf` refuses any version\nnewer than v1.53, so the build failed before compiling anything.\n\nv1.53 is the version that works. The pinocchio account view crates need\nrustc 1.89, which is why v1.43 could not build them at all, and v1.53\nships exactly 1.89 while v1.57 ships 1.95. That makes v1.53 the only\nversion satisfying both constraints, so the prover deliberately builds\nwith an older compiler than the deployed programs. It reasons about what\nthe program does rather than what it costs, so that difference does not\naffect the rules.\n\nPinned in the three places that select it: the conf the prover builds\nfrom, the recipes for running it by hand, and the flag the action passes.",
+          "timestamp": "2026-09-08T22:32:46-04:00",
+          "tree_id": "266028476afbf4cb1891539f4b906257713eab4a",
+          "url": "https://github.com/Bonasa-Tech/manifest/commit/d752a66edd49c5c3fd18978f27ea2f9e03fd2c07"
+        },
+        "date": 1788921545489,
         "tool": "customSmallerIsBetter",
         "benches": [
           {
