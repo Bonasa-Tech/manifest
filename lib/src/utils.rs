@@ -25,7 +25,14 @@ pub unsafe trait Get: Copy {}
 #[inline(always)]
 pub fn get_helper<T: Get>(data: &[u8], index: DataIndex) -> &T {
     let index_usize: usize = index as usize;
-    let bytes: &[u8] = &data[index_usize..index_usize + size_of::<T>()];
+    let end: usize = index_usize + size_of::<T>();
+    // Solana builds index without the range check; see the note above. It is
+    // asserted in debug builds, so the tests still catch a bad index.
+    debug_assert!(end <= data.len());
+    #[cfg(not(target_os = "solana"))]
+    let bytes: &[u8] = &data[index_usize..end];
+    #[cfg(target_os = "solana")]
+    let bytes: &[u8] = unsafe { data.get_unchecked(index_usize..end) };
     #[cfg(not(target_os = "solana"))]
     assert_eq!((bytes.as_ptr() as usize) % std::mem::align_of::<T>(), 0);
     #[cfg(target_os = "solana")]
@@ -44,7 +51,13 @@ pub fn get_helper<T: Get>(data: &[u8], index: DataIndex) -> &T {
 #[inline(always)]
 pub fn get_mut_helper<T: Get>(data: &mut [u8], index: DataIndex) -> &mut T {
     let index_usize: usize = index as usize;
-    let bytes: &mut [u8] = &mut data[index_usize..index_usize + size_of::<T>()];
+    let end: usize = index_usize + size_of::<T>();
+    // As above.
+    debug_assert!(end <= data.len());
+    #[cfg(not(target_os = "solana"))]
+    let bytes: &mut [u8] = &mut data[index_usize..end];
+    #[cfg(target_os = "solana")]
+    let bytes: &mut [u8] = unsafe { data.get_unchecked_mut(index_usize..end) };
     #[cfg(not(target_os = "solana"))]
     assert_eq!((bytes.as_ptr() as usize) % std::mem::align_of::<T>(), 0);
     #[cfg(target_os = "solana")]
