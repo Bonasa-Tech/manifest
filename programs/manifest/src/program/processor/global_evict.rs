@@ -250,7 +250,6 @@ fn spl_token_transfer_from_global_vault_to_evictee<'a>(
                 global_vault.as_ref(),
                 mint.as_ref(),
                 evictee_token.as_ref(),
-                global_vault.as_ref(),
             ],
             global_vault_seeds_with_bump!(mint.info.pubkey(), bump),
         )?;
@@ -269,7 +268,6 @@ fn spl_token_transfer_from_global_vault_to_evictee<'a>(
             &[
                 global_vault.as_ref(),
                 evictee_token.as_ref(),
-                global_vault.as_ref(),
             ],
             global_vault_seeds_with_bump!(mint.info.pubkey(), bump),
         )?;
