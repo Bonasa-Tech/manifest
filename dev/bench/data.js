@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1788804939611,
+  "lastUpdate": 1788914296951,
   "repoUrl": "https://github.com/Bonasa-Tech/manifest",
   "entries": {
     "CU Benchmark": [
@@ -13361,6 +13361,72 @@ window.BENCHMARK_DATA = {
           {
             "name": "MFX_99",
             "value": 3047,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "cyrbritt@gmail.com",
+            "name": "Britt Cyr",
+            "username": "brittcyr"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "64340cb368f194b409ea27cd202d5ce15265c8fd",
+          "message": "Run the programs on pinocchio (#702)\n\nAll three programs move off solana_program's AccountInfo and onto\npinocchio's AccountView. An AccountInfo is a bundle of pointers the\nentrypoint builds by copying out of the input region; an AccountView is\none pointer to the region itself, so reading a field is a load and the\nentrypoint stops rebuilding what the runtime already laid out.\n\nReplaying 4,158 recorded mainnet orders, against the same platform\ntools v1.57 build without this: CU per order p50 1,524 to 1,473, a 3.35%\ndrop, p95 2,578 to 2,482, 3.49% less compute in total, and every\ntransaction in the replay improved. manifest.so goes 395,424 bytes to\n350,960, 11% smaller, which also lowers what a wrapper pays to pass the\nmarket through a CPI, since the runtime charges that by account size.\n\nThree things about pinocchio are worth knowing before reading the diff.\n\nIts CPI is positional: the accounts handed to invoke must be exactly the\ninstruction's accounts, in the instruction's order, where\nsolana_program's took any superset in any order and matched them by key.\nCall sites that cannot promise that go through a shim in\nprogram/processor/shared.rs, which matches once and calls pinocchio\ndirectly.\n\nIts syscalls compile to nothing off chain. A test running the program\nnatively through `processor!` would silently execute no CPI at all and\nstill pass, so the suites load the compiled .so instead. That is also\nwhat makes compute measurable from the tests.\n\nAnd its account type cannot be constructed off chain by ordinary means,\nwhich the Jupiter quoter and the prover both need. validation/\noffchain_account.rs builds an account in the runtime's own layout on the\nheap; certora/solana-cvt is a fork of Certora's helpers with a backend\nthat gives the prover a symbolic account view, since an account view is\na single pointer and a symbolic pointer is already a symbolic account.\n\nThe formal verification specs build against account views throughout.\n\nRequires platform tools v1.57: pinocchio's account view crates need\nrustc 1.89 or newer and v1.57 is the first that ships one, so the SBF\nbuilds and rust-toolchain.toml move with it.\n\nThe borrowed market key optimisation is deliberately left out and\nfollows separately. Keeping AddOrderToMarketArgs.market by value is what\nlets one revision of the benchmarking harness in manifest-private,\n248f2df0eddc9e0d191c521ee75f6ebb919b8d48, build against both current\nmain and this, which the benchmark needs because it pins a single\nrevision for both sides of its comparison.",
+          "timestamp": "2026-09-08T20:26:16-04:00",
+          "tree_id": "4f7c8be983c7aca545071abf45aa71b452d7fa30",
+          "url": "https://github.com/Bonasa-Tech/manifest/commit/64340cb368f194b409ea27cd202d5ce15265c8fd"
+        },
+        "date": 1788914294910,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "PHX_50",
+            "value": 6897,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "PHX_95",
+            "value": 13208,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "PHX_99",
+            "value": 13902,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_50",
+            "value": 1473,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_95",
+            "value": 2482,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_99",
+            "value": 2958,
             "range": "",
             "unit": "CU",
             "extra": ""
