@@ -274,7 +274,7 @@ fn seat_pubkey_preserved_by_rest_remaining_check<const IS_BID: bool>() {
     let old: (Pubkey, Pubkey) = record_seat_pubkeys();
 
     let args: AddOrderToMarketArgs = AddOrderToMarketArgs {
-        market: *market_info.pubkey(),
+        market: market_info.pubkey(),
         trader_index: main_trader_index(),
         num_base_atoms: nondet(),
         price: crate::quantities::QuoteAtomsPerBaseAtom::nondet_price_u32(),
@@ -533,7 +533,7 @@ fn seat_pubkey_preserved_by_rest_remaining_global_check<const IS_BID: bool>() {
     let old: (Pubkey, Pubkey) = record_seat_pubkeys();
 
     let args: AddOrderToMarketArgs = AddOrderToMarketArgs {
-        market: *market_info.pubkey(),
+        market: market_info.pubkey(),
         trader_index: main_trader_index(),
         num_base_atoms: nondet(),
         price: crate::quantities::QuoteAtomsPerBaseAtom::nondet_price_u32(),

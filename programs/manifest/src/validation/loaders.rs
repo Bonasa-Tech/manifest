@@ -563,8 +563,12 @@ impl<'a> BatchUpdateContext<'a> {
         #[cfg(not(feature = "certora"))]
         let mut global_trade_accounts_opts: [Option<GlobalTradeAccounts<'a>>; 2] = [None, None];
 
+        // The mints and vaults below are only used to work out which side a
+        // global account belongs to, and most batch updates pass none. Copying
+        // four addresses out of the market header for a loop that is about to
+        // do nothing is worth skipping, so this checks first.
         #[cfg(not(feature = "certora"))]
-        {
+        if account_iter.len() > 0 {
             let market_fixed: Ref<MarketFixed> = market.get_fixed()?;
             let base_mint: Pubkey = *market_fixed.get_base_mint();
             let quote_mint: Pubkey = *market_fixed.get_quote_mint();

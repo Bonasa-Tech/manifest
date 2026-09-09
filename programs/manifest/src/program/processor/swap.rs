@@ -291,7 +291,7 @@ pub(crate) fn process_swap_core(
     } = place_order(
         &mut dynamic_account,
         AddOrderToMarketArgs {
-            market: *market.pubkey(),
+            market: market.pubkey(),
             trader_index,
             num_base_atoms: base_atoms,
             price,

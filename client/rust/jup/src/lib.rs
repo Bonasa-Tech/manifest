@@ -568,7 +568,7 @@ mod test {
         market_value.market_expand().unwrap();
         market_value
             .place_order(AddOrderToMarketArgs {
-                market: MARKET_KEY,
+                market: &MARKET_KEY,
                 trader_index,
                 num_base_atoms: BaseAtoms::new(10_000),
                 price: 0.150.try_into().unwrap(),
@@ -584,7 +584,7 @@ mod test {
         market_value.market_expand().unwrap();
         market_value
             .place_order(AddOrderToMarketArgs {
-                market: MARKET_KEY,
+                market: &MARKET_KEY,
                 trader_index,
                 num_base_atoms: BaseAtoms::new(10_000),
                 price: 0.180.try_into().unwrap(),
