@@ -2,9 +2,9 @@
 macro_rules! create_empty_market {
     ($market_acc_info:expr) => {{
         let empty_market_fixed: MarketFixed = MarketFixed::new_nondet();
-        let mut market_bytes: std::cell::RefMut<&mut [u8]> =
-            $market_acc_info.data.try_borrow_mut().unwrap();
-        *get_mut_helper::<MarketFixed>(*market_bytes, 0_u32) = empty_market_fixed;
+        let mut market_bytes: pinocchio::account::RefMut<[u8]> =
+            $market_acc_info.try_borrow_mut().unwrap();
+        *get_mut_helper::<MarketFixed>(&mut market_bytes, 0_u32) = empty_market_fixed;
     }};
 }
 
@@ -14,9 +14,9 @@ macro_rules! create_empty_market {
 macro_rules! create_global {
     ($global_acc_info:expr) => {{
         let global_fixed: crate::state::GlobalFixed = crate::state::GlobalFixed::new_nondet();
-        let mut global_bytes: std::cell::RefMut<&mut [u8]> =
-            $global_acc_info.data.try_borrow_mut().unwrap();
-        *hypertree::get_mut_helper::<crate::state::GlobalFixed>(*global_bytes, 0_u32) =
+        let mut global_bytes: pinocchio::account::RefMut<[u8]> =
+            $global_acc_info.try_borrow_mut().unwrap();
+        *hypertree::get_mut_helper::<crate::state::GlobalFixed>(&mut global_bytes, 0_u32) =
             global_fixed;
     }};
 }
@@ -25,8 +25,8 @@ macro_rules! create_global {
 /// Ghost sum of every balance held on the global account.
 macro_rules! get_global_deposited_atoms {
     ($global_acc_info:expr) => {{
-        let global_data: &mut std::cell::RefMut<&mut [u8]> =
-            &mut $global_acc_info.try_borrow_mut_data().unwrap();
+        let global_data: &mut pinocchio::account::RefMut<[u8]> =
+            &mut $global_acc_info.try_borrow_mut().unwrap();
         let global_dynamic_account: crate::state::GlobalRefMut =
             crate::program::get_mut_dynamic_account(global_data);
         let res = global_dynamic_account
@@ -41,8 +41,8 @@ macro_rules! get_global_deposited_atoms {
 #[macro_export]
 macro_rules! claim_seat {
     ($market_acc_info:expr, $trader_key: expr) => {{
-        let market_data: &mut std::cell::RefMut<&mut [u8]> =
-            &mut $market_acc_info.try_borrow_mut_data().unwrap();
+        let market_data: &mut pinocchio::account::RefMut<[u8]> =
+            &mut $market_acc_info.try_borrow_mut().unwrap();
         let mut dynamic_account: MarketRefMut = get_mut_dynamic_account(market_data);
         dynamic_account.claim_seat($trader_key).unwrap();
     }};
@@ -51,8 +51,8 @@ macro_rules! claim_seat {
 #[macro_export]
 macro_rules! get_trader_index {
     ($market_acc_info:expr, $trader_key: expr) => {{
-        let market_data: &mut std::cell::RefMut<&mut [u8]> =
-            &mut $market_acc_info.try_borrow_mut_data().unwrap();
+        let market_data: &mut pinocchio::account::RefMut<[u8]> =
+            &mut $market_acc_info.try_borrow_mut().unwrap();
         let dynamic_account: MarketRefMut = get_mut_dynamic_account(market_data);
         dynamic_account.get_trader_index($trader_key)
     }};
@@ -62,8 +62,8 @@ macro_rules! get_trader_index {
 /// Return a pair of (base_atoms, quote_atoms) as u64
 macro_rules! get_trader_balance {
     ($market_acc_info:expr, $trader_key: expr) => {{
-        let market_data: &mut std::cell::RefMut<&mut [u8]> =
-            &mut $market_acc_info.try_borrow_mut_data().unwrap();
+        let market_data: &mut pinocchio::account::RefMut<[u8]> =
+            &mut $market_acc_info.try_borrow_mut().unwrap();
         let dynamic_account: MarketRefMut = get_mut_dynamic_account(market_data);
         let (base_atoms, quote_atoms) = dynamic_account.get_trader_balance($trader_key);
         let res = (u64::from(base_atoms), u64::from(quote_atoms));
@@ -76,8 +76,8 @@ macro_rules! get_trader_balance {
 #[macro_export]
 macro_rules! update_balance {
     ($market_acc_info:expr, $trader_index: expr, $is_base: expr, $is_increase: expr, $amount: expr) => {{
-        let market_data: &mut std::cell::RefMut<&mut [u8]> =
-            &mut $market_acc_info.try_borrow_mut_data().unwrap();
+        let market_data: &mut pinocchio::account::RefMut<[u8]> =
+            &mut $market_acc_info.try_borrow_mut().unwrap();
         let dynamic_account: MarketRefMut = get_mut_dynamic_account(market_data);
         let DynamicAccount { fixed, dynamic } = dynamic_account;
         crate::state::update_balance(
@@ -102,8 +102,8 @@ macro_rules! cvt_assert_is_nil {
 #[macro_export]
 macro_rules! deposit {
     ($market_acc_info:expr, $trader_key: expr, $in_atoms: expr, $is_base_in: expr) => {{
-        let market_data: &mut std::cell::RefMut<&mut [u8]> =
-            &mut $market_acc_info.try_borrow_mut_data().unwrap();
+        let market_data: &mut pinocchio::account::RefMut<[u8]> =
+            &mut $market_acc_info.try_borrow_mut().unwrap();
         let mut dynamic_account: MarketRefMut = get_mut_dynamic_account(market_data);
         dynamic_account
             .deposit($trader_key, $in_atoms, $is_base_in)
@@ -115,8 +115,8 @@ macro_rules! deposit {
 /// Return the base token vault
 macro_rules! get_base_vault {
     ($market_acc_info:expr) => {{
-        let market_data: &mut std::cell::RefMut<&mut [u8]> =
-            &mut $market_acc_info.try_borrow_mut_data().unwrap();
+        let market_data: &mut pinocchio::account::RefMut<[u8]> =
+            &mut $market_acc_info.try_borrow_mut().unwrap();
         let dynamic_account: MarketRefMut = get_mut_dynamic_account(market_data);
         let DynamicAccount { fixed, .. } = dynamic_account;
         *fixed.get_base_vault()
@@ -127,8 +127,8 @@ macro_rules! get_base_vault {
 /// Return the quote token vault
 macro_rules! get_quote_vault {
     ($market_acc_info:expr) => {{
-        let market_data: &mut std::cell::RefMut<&mut [u8]> =
-            &mut $market_acc_info.try_borrow_mut_data().unwrap();
+        let market_data: &mut pinocchio::account::RefMut<[u8]> =
+            &mut $market_acc_info.try_borrow_mut().unwrap();
         let dynamic_account: MarketRefMut = get_mut_dynamic_account(market_data);
         let DynamicAccount { fixed, .. } = dynamic_account;
         *fixed.get_quote_vault()
@@ -139,8 +139,8 @@ macro_rules! get_quote_vault {
 /// Return the withdrawable base token amount
 macro_rules! get_withdrawable_base_atoms {
     ($market_acc_info:expr) => {{
-        let market_data: &mut std::cell::RefMut<&mut [u8]> =
-            &mut $market_acc_info.try_borrow_mut_data().unwrap();
+        let market_data: &mut pinocchio::account::RefMut<[u8]> =
+            &mut $market_acc_info.try_borrow_mut().unwrap();
         let dynamic_account: MarketRefMut = get_mut_dynamic_account(market_data);
         let DynamicAccount { fixed, .. } = dynamic_account;
         let res = fixed.get_withdrawable_base_atoms().as_u64();
@@ -152,8 +152,8 @@ macro_rules! get_withdrawable_base_atoms {
 /// Return the withdrawable quote token amount
 macro_rules! get_withdrawable_quote_atoms {
     ($market_acc_info:expr) => {{
-        let market_data: &mut std::cell::RefMut<&mut [u8]> =
-            &mut $market_acc_info.try_borrow_mut_data().unwrap();
+        let market_data: &mut pinocchio::account::RefMut<[u8]> =
+            &mut $market_acc_info.try_borrow_mut().unwrap();
         let dynamic_account: MarketRefMut = get_mut_dynamic_account(market_data);
         let DynamicAccount { fixed, .. } = dynamic_account;
         let res = fixed.get_withdrawable_quote_atoms().as_u64();
@@ -165,8 +165,8 @@ macro_rules! get_withdrawable_quote_atoms {
 /// Return the orderbook base token amount
 macro_rules! get_orderbook_base_atoms {
     ($market_acc_info:expr) => {{
-        let market_data: &mut std::cell::RefMut<&mut [u8]> =
-            &mut $market_acc_info.try_borrow_mut_data().unwrap();
+        let market_data: &mut pinocchio::account::RefMut<[u8]> =
+            &mut $market_acc_info.try_borrow_mut().unwrap();
         let dynamic_account: MarketRefMut = get_mut_dynamic_account(market_data);
         let DynamicAccount { fixed, .. } = dynamic_account;
         let res = fixed.get_orderbook_base_atoms().as_u64();
@@ -178,8 +178,8 @@ macro_rules! get_orderbook_base_atoms {
 /// Return the orderbook quote token amount
 macro_rules! get_orderbook_quote_atoms {
     ($market_acc_info:expr) => {{
-        let market_data: &mut std::cell::RefMut<&mut [u8]> =
-            &mut $market_acc_info.try_borrow_mut_data().unwrap();
+        let market_data: &mut pinocchio::account::RefMut<[u8]> =
+            &mut $market_acc_info.try_borrow_mut().unwrap();
         let dynamic_account: MarketRefMut = get_mut_dynamic_account(market_data);
         let DynamicAccount { fixed, .. } = dynamic_account;
         let res = fixed.get_orderbook_quote_atoms().as_u64();
@@ -205,8 +205,8 @@ macro_rules! rest_remaining {
     $order_sequence_number: expr,
     $total_base_atoms_traded: expr,
     $total_quote_atoms_traded: expr) => {{
-        let market_data: &mut std::cell::RefMut<&mut [u8]> =
-            &mut $market_acc_info.try_borrow_mut_data().unwrap();
+        let market_data: &mut pinocchio::account::RefMut<[u8]> =
+            &mut $market_acc_info.try_borrow_mut().unwrap();
         let mut dynamic_account: MarketRefMut = get_mut_dynamic_account(market_data);
         // let DynamicAccount { fixed, .. } = dynamic_account;
         dynamic_account
@@ -234,8 +234,8 @@ macro_rules! cancel_order_by_index {
         $order_index:expr,
         $global_trade_accounts_opts:expr
     ) => {{
-        let market_data: &mut std::cell::RefMut<&mut [u8]> =
-            &mut $market_acc_info.try_borrow_mut_data().unwrap();
+        let market_data: &mut pinocchio::account::RefMut<[u8]> =
+            &mut $market_acc_info.try_borrow_mut().unwrap();
         let mut dynamic_account: MarketRefMut = get_mut_dynamic_account(market_data);
         dynamic_account
             .cancel_order_by_index($order_index, $global_trade_accounts_opts)
@@ -280,8 +280,8 @@ macro_rules! place_single_order_and_settle_global {
         $now_slot: expr,
         $current_order_index: expr
     ) => {{
-        let market_data: &mut std::cell::RefMut<&mut [u8]> =
-            &mut $market_acc_info.try_borrow_mut_data().unwrap();
+        let market_data: &mut pinocchio::account::RefMut<[u8]> =
+            &mut $market_acc_info.try_borrow_mut().unwrap();
         let dynamic_account: MarketRefMut = get_mut_dynamic_account(market_data);
         let DynamicAccount { fixed, dynamic } = dynamic_account;
 
@@ -323,15 +323,15 @@ macro_rules! place_single_order_res {
         $now_slot: expr,
         $current_order_index: expr
     ) => {{
-        let market_data: &mut std::cell::RefMut<&mut [u8]> =
-            &mut $market_acc_info.try_borrow_mut_data().unwrap();
+        let market_data: &mut pinocchio::account::RefMut<[u8]> =
+            &mut $market_acc_info.try_borrow_mut().unwrap();
         let dynamic_account: MarketRefMut = get_mut_dynamic_account(market_data);
         let DynamicAccount { fixed, dynamic } = dynamic_account;
 
         let mut ctx: AddSingleOrderCtx =
             AddSingleOrderCtx::new($args, fixed, dynamic, $remaining_base_atoms, $now_slot);
 
-        let res: Result<AddOrderToMarketInnerResult, solana_program::program_error::ProgramError> =
+        let res: Result<AddOrderToMarketInnerResult, pinocchio::error::ProgramError> =
             ctx.place_single_order($current_order_index);
         (
             res,

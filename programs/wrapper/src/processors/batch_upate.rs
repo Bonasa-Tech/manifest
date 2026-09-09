@@ -1,7 +1,4 @@
-use std::{
-    cell::{Ref, RefMut},
-    mem::size_of,
-};
+use std::mem::size_of;
 
 use borsh::{BorshDeserialize, BorshSerialize};
 use hypertree::{
@@ -11,22 +8,19 @@ use hypertree::{
 use manifest::{
     program::{
         batch_update::{BatchUpdateParams, CancelOrderParams, PlaceOrderParams},
-        get_mut_dynamic_account, invoke, ManifestInstruction,
+        get_mut_dynamic_account, invoke_passthrough, invoke_passthrough_refs, ManifestInstruction,
     },
     quantities::{BaseAtoms, QuoteAtoms, QuoteAtomsPerBaseAtom, WrapperU64},
     state::{
         utils::get_now_slot, DynamicAccount, MarketFixed, OrderType, NO_EXPIRATION_LAST_VALID_SLOT,
     },
-    validation::{ManifestAccountInfo, Program, Signer},
+    validation::{next_account_info, AccountViewExt, ManifestAccountInfo, Program, Signer},
 };
-use solana_program::{
-    account_info::{next_account_info, AccountInfo},
-    entrypoint::ProgramResult,
-    instruction::{AccountMeta, Instruction},
-    program::get_return_data,
-    pubkey::Pubkey,
-    system_program,
+use pinocchio::{
+    account::{AccountView, Ref, RefMut},
+    ProgramResult,
 };
+use solana_program::{program::get_return_data, pubkey::Pubkey, system_program};
 
 use crate::{
     loader::{check_signer, WrapperStateAccountInfo},
@@ -185,39 +179,31 @@ fn prepare_orders(
 ///
 /// CU note: besides the 1,000 CU invoke base cost, the runtime charges every
 /// account passed to a CPI `data_len / 250` CU when it translates the
-/// caller's `AccountInfo`s (`cpi_bytes_per_unit`), whether or not account
+/// caller's `AccountView`s (`cpi_bytes_per_unit`), whether or not account
 /// data direct mapping is enabled; direct mapping only removes the copy of
 /// the data, not the charge. For the market that is 4 CU per KB per batch
 /// update, e.g. about 4,000 CU on a 1 MB market, and the only ways around it
 /// are smaller markets or not going through a CPI.
 fn execute_cpi(
-    accounts: &[AccountInfo],
+    accounts: &[AccountView],
     trader_index_hint: Option<DataIndex>,
     core_cancels: Vec<CancelOrderParams>,
     core_orders: Vec<PlaceOrderParams>,
 ) -> ProgramResult {
-    let mut acc_metas: Vec<AccountMeta> = Vec::with_capacity(accounts.len());
-    // First two accounts are for wrapper and manifest program itself the
-    // remainder is passed through directly to manifest.
-    acc_metas.extend(accounts[2..].iter().map(|ai| {
-        if ai.is_writable {
-            AccountMeta::new(*ai.key, ai.is_signer)
-        } else {
-            AccountMeta::new_readonly(*ai.key, ai.is_signer)
-        }
-    }));
+    // Serialize straight into one buffer, sized for what goes in it. Building
+    // the discriminant and the params as their own vectors and concatenating
+    // them allocated three times and copied the params twice.
+    let mut data: Vec<u8> =
+        Vec::with_capacity(1 + 5 + 4 + core_cancels.len() * 13 + 4 + core_orders.len() * 19);
+    data.push(ManifestInstruction::BatchUpdate as u8);
+    BatchUpdateParams::new(trader_index_hint, core_cancels, core_orders)
+        .serialize(&mut data)
+        .map_err(manifest::validation::io_to_program_error)?;
 
-    let ix: Instruction = Instruction {
-        program_id: manifest::id(),
-        accounts: acc_metas,
-        data: [
-            ManifestInstruction::BatchUpdate.to_vec(),
-            BatchUpdateParams::new(trader_index_hint, core_cancels, core_orders).try_to_vec()?,
-        ]
-        .concat(),
-    };
-
-    invoke(&ix, &accounts[1..])
+    // The first two accounts are this program's state and the manifest
+    // program itself; the rest are passed through to manifest as they stand,
+    // with the flags this program sees on them.
+    invoke_passthrough(&manifest::id(), &accounts[2..], &data)
 }
 
 /// Removes the cancelled orders from the wrapper's open orders.
@@ -226,7 +212,7 @@ fn process_cancels(
     cancel_indices: &[DataIndex],
     market_info_index: DataIndex,
 ) {
-    let mut wrapper_data: RefMut<&mut [u8]> = wrapper_state.info.try_borrow_mut_data().unwrap();
+    let mut wrapper_data: RefMut<[u8]> = wrapper_state.info.try_borrow_mut().unwrap();
     let wrapper: DynamicAccount<&mut ManifestWrapperStateFixed, &mut [u8]> =
         get_mut_dynamic_account(&mut wrapper_data);
     let (orders_root_index, mut num_open_global_orders): (DataIndex, u32) = {
@@ -271,10 +257,10 @@ fn process_cancels(
 }
 
 /// Records the orders that rested on the core in the wrapper's open orders.
-fn process_orders<'a, 'info>(
-    payer: &Signer<'a, 'info>,
-    system_program: &Program<'a, 'info>,
-    wrapper_state: &WrapperStateAccountInfo<'a, 'info>,
+fn process_orders<'a>(
+    payer: &Signer<'a>,
+    system_program: &Program<'a>,
+    wrapper_state: &WrapperStateAccountInfo<'a>,
     orders: &[WrapperPlaceOrderParams],
     original_indices: &[usize],
     market_info_index: DataIndex,
@@ -301,7 +287,7 @@ fn process_orders<'a, 'info>(
     }
     ensure_free_slots(wrapper_state, payer, system_program, num_resting)?;
 
-    let mut wrapper_data: RefMut<&mut [u8]> = wrapper_state.info.try_borrow_mut_data().unwrap();
+    let mut wrapper_data: RefMut<[u8]> = wrapper_state.info.try_borrow_mut().unwrap();
     let wrapper: DynamicAccount<&mut ManifestWrapperStateFixed, &mut [u8]> =
         get_mut_dynamic_account(&mut wrapper_data);
     let (mut orders_root_index, mut num_open_global_orders): (DataIndex, u32) = {
@@ -364,17 +350,21 @@ fn process_orders<'a, 'info>(
 // wrapper state because it prevents the need for a contentious extra write
 // lock. Users who do not wish to pay this fee should use their own wrapper or
 // interact directly with the manifest program.
-fn collect_fee<'a, 'info>(
-    payer: &Signer<'a, 'info>,
-    wrapper_state: &WrapperStateAccountInfo<'a, 'info>,
+fn collect_fee<'a>(
+    payer: &Signer<'a>,
+    wrapper_state: &WrapperStateAccountInfo<'a>,
 ) -> ProgramResult {
-    invoke(
-        &solana_program::system_instruction::transfer(
-            &payer.as_ref().key,
-            &wrapper_state.key,
-            manifest::state::GAS_DEPOSIT_LAMPORTS,
-        ),
-        &[payer.as_ref().clone(), wrapper_state.info.clone()],
+    // The system program's transfer, encoded directly. Building it through
+    // `system_instruction::transfer` bincode encodes the instruction enum and
+    // allocates a vector for the data and another for the account metas, and
+    // this runs on every batch update.
+    let mut data: [u8; 12] = [0; 12];
+    data[0] = 2;
+    data[4..].copy_from_slice(&manifest::state::GAS_DEPOSIT_LAMPORTS.to_le_bytes());
+    invoke_passthrough_refs(
+        &system_program::id(),
+        &[payer.as_ref(), wrapper_state.info],
+        &data,
     )?;
 
     Ok(())
@@ -382,10 +372,10 @@ fn collect_fee<'a, 'info>(
 
 pub(crate) fn process_batch_update(
     _program_id: &Pubkey,
-    accounts: &[AccountInfo],
+    accounts: &[AccountView],
     data: &[u8],
 ) -> ProgramResult {
-    let account_iter: &mut std::slice::Iter<AccountInfo> = &mut accounts.iter();
+    let account_iter: &mut std::slice::Iter<AccountView> = &mut accounts.iter();
     let wrapper_state: WrapperStateAccountInfo =
         WrapperStateAccountInfo::new(next_account_info(account_iter)?)?;
     let _manifest_program: Program =
@@ -396,8 +386,9 @@ pub(crate) fn process_batch_update(
     let system_program: Program =
         Program::new(next_account_info(account_iter)?, &system_program::id())?;
 
-    check_signer(&wrapper_state, payer.key);
-    let market_info_index: DataIndex = get_market_info_index_for_market(&wrapper_state, market.key);
+    check_signer(&wrapper_state, payer.pubkey());
+    let market_info_index: DataIndex =
+        get_market_info_index_for_market(&wrapper_state, market.pubkey());
 
     // One clock read for the whole instruction.
     let now_slot: u32 = get_now_slot();
@@ -409,7 +400,8 @@ pub(crate) fn process_batch_update(
         orders,
         cancel_all,
         cancels,
-    } = WrapperBatchUpdateParams::try_from_slice(data)?;
+    } = WrapperBatchUpdateParams::try_from_slice(data)
+        .map_err(manifest::validation::io_to_program_error)?;
 
     // Only price the funds that cancels free up when a new order needs the
     // balance check.
@@ -435,7 +427,7 @@ pub(crate) fn process_batch_update(
     )?;
 
     let market_info: MarketInfo = {
-        let wrapper_data: Ref<&mut [u8]> = wrapper_state.info.try_borrow_data()?;
+        let wrapper_data: Ref<[u8]> = wrapper_state.info.try_borrow()?;
         let (_fixed_data, wrapper_dynamic_data) =
             wrapper_data.split_at(size_of::<ManifestWrapperStateFixed>());
         *get_helper::<RBNode<MarketInfo>>(wrapper_dynamic_data, market_info_index).get_value()

@@ -1,7 +1,9 @@
-use std::cell::RefMut;
+use crate::validation::{io_to_program_error, to_program_error, AccountViewExt};
+use pinocchio::{account::RefMut, ProgramResult};
 
 use borsh::{BorshDeserialize, BorshSerialize};
-use solana_program::{account_info::AccountInfo, entrypoint::ProgramResult, pubkey::Pubkey};
+use pinocchio::account::AccountView;
+use solana_program::pubkey::Pubkey;
 
 use crate::{
     logs::{emit_stack, GlobalDepositLog},
@@ -40,17 +42,18 @@ impl GlobalDepositParams {
 
 pub(crate) fn process_global_deposit(
     program_id: &Pubkey,
-    accounts: &[AccountInfo],
+    accounts: &[AccountView],
     data: &[u8],
 ) -> ProgramResult {
-    let params: GlobalDepositParams = GlobalDepositParams::try_from_slice(data)?;
+    let params: GlobalDepositParams =
+        GlobalDepositParams::try_from_slice(data).map_err(io_to_program_error)?;
     process_global_deposit_core(program_id, accounts, params)
 }
 
 #[cfg_attr(all(feature = "certora", not(feature = "certora-test")), early_panic)]
 pub(crate) fn process_global_deposit_core(
     _program_id: &Pubkey,
-    accounts: &[AccountInfo],
+    accounts: &[AccountView],
     params: GlobalDepositParams,
 ) -> ProgramResult {
     let global_deposit_context: GlobalDepositContext = GlobalDepositContext::load(accounts)?;
@@ -69,7 +72,7 @@ pub(crate) fn process_global_deposit_core(
     } = global_deposit_context;
 
     // Do the token transfer first to determine actual received amount
-    if *global_vault.owner == spl_token_2022::id() {
+    if global_vault.owner_pubkey() == spl_token_2022::id() {
         let before_vault_balance_atoms: u64 = global_vault.get_balance_atoms();
         spl_token_2022_transfer_from_trader_to_global_vault(
             &token_program,
@@ -95,13 +98,14 @@ pub(crate) fn process_global_deposit_core(
     }
 
     // Now deposit the actual received amount (which may be less than requested due to transfer fees)
-    let global_data: &mut RefMut<&mut [u8]> = &mut global.try_borrow_mut_data()?;
+    let global_data: &mut RefMut<[u8]> = &mut global.try_borrow_mut()?;
     let mut global_dynamic_account: GlobalRefMut = get_mut_dynamic_account(global_data);
-    global_dynamic_account.deposit_global(payer.key, GlobalAtoms::new(deposited_amount_atoms))?;
+    global_dynamic_account
+        .deposit_global(payer.pubkey(), GlobalAtoms::new(deposited_amount_atoms))?;
 
     emit_stack(GlobalDepositLog {
-        global: *global.key,
-        trader: *payer.key,
+        global: *global.pubkey(),
+        trader: *payer.pubkey(),
         global_atoms: GlobalAtoms::new(deposited_amount_atoms),
     })?;
 
@@ -110,38 +114,39 @@ pub(crate) fn process_global_deposit_core(
 
 /** Transfer from trader to global vault using SPL Token **/
 #[cfg(not(feature = "certora"))]
-fn spl_token_transfer_from_trader_to_global_vault<'a, 'info>(
-    token_program: &TokenProgram<'a, 'info>,
-    trader_token_account: &TokenAccountInfo<'a, 'info>,
-    global_vault: &TokenAccountInfo<'a, 'info>,
-    payer: &Signer<'a, 'info>,
+fn spl_token_transfer_from_trader_to_global_vault<'a>(
+    token_program: &TokenProgram<'a>,
+    trader_token_account: &TokenAccountInfo<'a>,
+    global_vault: &TokenAccountInfo<'a>,
+    payer: &Signer<'a>,
     amount_atoms: u64,
 ) -> ProgramResult {
     invoke(
         &spl_token::instruction::transfer(
-            token_program.key,
-            trader_token_account.key,
-            global_vault.key,
-            payer.key,
+            token_program.pubkey(),
+            trader_token_account.pubkey(),
+            global_vault.pubkey(),
+            payer.pubkey(),
             &[],
             amount_atoms,
-        )?,
+        )
+        .map_err(to_program_error)?,
+        // source, destination, authority.
         &[
-            token_program.as_ref().clone(),
-            trader_token_account.as_ref().clone(),
-            global_vault.as_ref().clone(),
-            payer.as_ref().clone(),
+            trader_token_account.as_ref(),
+            global_vault.as_ref(),
+            payer.as_ref(),
         ],
     )
 }
 
 #[cfg(feature = "certora")]
 /** (Summary) Transfer from trader to global vault using SPL Token **/
-fn spl_token_transfer_from_trader_to_global_vault<'a, 'info>(
-    _token_program: &crate::validation::TokenProgram<'a, 'info>,
-    trader_token_account: &TokenAccountInfo<'a, 'info>,
-    global_vault: &TokenAccountInfo<'a, 'info>,
-    payer: &Signer<'a, 'info>,
+fn spl_token_transfer_from_trader_to_global_vault<'a>(
+    _token_program: &crate::validation::TokenProgram<'a>,
+    trader_token_account: &TokenAccountInfo<'a>,
+    global_vault: &TokenAccountInfo<'a>,
+    payer: &Signer<'a>,
     amount_atoms: u64,
 ) -> ProgramResult {
     spl_token_transfer(
@@ -154,31 +159,32 @@ fn spl_token_transfer_from_trader_to_global_vault<'a, 'info>(
 
 /** Transfer from trader to global vault using SPL Token 2022 **/
 #[cfg(not(feature = "certora"))]
-fn spl_token_2022_transfer_from_trader_to_global_vault<'a, 'info>(
-    token_program: &TokenProgram<'a, 'info>,
-    trader_token_account: &TokenAccountInfo<'a, 'info>,
-    mint: &MintAccountInfo<'a, 'info>,
-    global_vault: &TokenAccountInfo<'a, 'info>,
-    payer: &Signer<'a, 'info>,
+fn spl_token_2022_transfer_from_trader_to_global_vault<'a>(
+    token_program: &TokenProgram<'a>,
+    trader_token_account: &TokenAccountInfo<'a>,
+    mint: &MintAccountInfo<'a>,
+    global_vault: &TokenAccountInfo<'a>,
+    payer: &Signer<'a>,
     amount_atoms: u64,
 ) -> ProgramResult {
     invoke(
         &spl_token_2022::instruction::transfer_checked(
-            token_program.key,
-            trader_token_account.key,
-            mint.info.key,
-            global_vault.key,
-            payer.key,
+            token_program.pubkey(),
+            trader_token_account.pubkey(),
+            mint.info.pubkey(),
+            global_vault.pubkey(),
+            payer.pubkey(),
             &[],
             amount_atoms,
             mint.mint.decimals,
-        )?,
+        )
+        .map_err(to_program_error)?,
+        // source, mint, destination, authority.
         &[
-            token_program.as_ref().clone(),
-            trader_token_account.as_ref().clone(),
-            mint.as_ref().clone(),
-            global_vault.as_ref().clone(),
-            payer.as_ref().clone(),
+            trader_token_account.as_ref(),
+            mint.as_ref(),
+            global_vault.as_ref(),
+            payer.as_ref(),
         ],
     )
 }
@@ -187,12 +193,12 @@ fn spl_token_2022_transfer_from_trader_to_global_vault<'a, 'info>(
 /** (Summary) Transfer from trader to global vault using SPL Token 2022.
 The mint may carry a transfer fee, so the vault can receive less than the
 requested amount; the processor credits the vault balance delta. **/
-fn spl_token_2022_transfer_from_trader_to_global_vault<'a, 'info>(
-    _token_program: &crate::validation::TokenProgram<'a, 'info>,
-    trader_token_account: &TokenAccountInfo<'a, 'info>,
-    _mint: &MintAccountInfo<'a, 'info>,
-    global_vault: &TokenAccountInfo<'a, 'info>,
-    payer: &Signer<'a, 'info>,
+fn spl_token_2022_transfer_from_trader_to_global_vault<'a>(
+    _token_program: &crate::validation::TokenProgram<'a>,
+    trader_token_account: &TokenAccountInfo<'a>,
+    _mint: &MintAccountInfo<'a>,
+    global_vault: &TokenAccountInfo<'a>,
+    payer: &Signer<'a>,
     amount_atoms: u64,
 ) -> ProgramResult {
     spl_token_2022_transfer_with_fee(

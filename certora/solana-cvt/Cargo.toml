@@ -1,0 +1,14 @@
+[workspace]
+resolver = "2"
+members = [ 
+    "vectors", 
+    "cvt", 
+    "hook_macro",
+    "early-panic",
+    "nondet", 
+    "solana_cvt",
+    "cvt-macros",
+    "stubs",
+    "calltrace",
+    "mathint"
+]

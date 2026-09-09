@@ -1,7 +1,7 @@
-use solana_program::{
-    account_info::AccountInfo, entrypoint::ProgramResult, keccak, program::invoke_signed,
-    program_error::ProgramError, pubkey::Pubkey, rent::Rent, system_instruction,
-};
+use pinocchio::{account::AccountView, error::ProgramError, sysvars::rent::Rent, ProgramResult};
+use solana_program::{keccak, pubkey::Pubkey, system_instruction};
+
+use crate::{program::invoke_signed, validation::AccountViewExt};
 
 /// Canonical discriminant of the given struct. It is the hash of program ID and
 /// the name of the type.
@@ -16,10 +16,12 @@ pub fn get_discriminant<T>() -> Result<u64, ProgramError> {
 }
 
 /// Send CPI for creating a new account on chain.
-pub fn create_account<'a, 'info>(
-    payer: &'a AccountInfo<'info>,
-    new_account: &'a AccountInfo<'info>,
-    system_program: &'a AccountInfo<'info>,
+pub fn create_account<'a>(
+    payer: &'a AccountView,
+    new_account: &'a AccountView,
+    // Kept in the signature so callers still pass the account the runtime
+    // requires to be present; create_account names only the two below.
+    _system_program: &'a AccountView,
     program_owner: &Pubkey,
     rent: &Rent,
     space: u64,
@@ -27,13 +29,14 @@ pub fn create_account<'a, 'info>(
 ) -> ProgramResult {
     invoke_signed(
         &system_instruction::create_account(
-            payer.key,
-            new_account.key,
-            rent.minimum_balance(space as usize),
+            payer.pubkey(),
+            new_account.pubkey(),
+            rent.try_minimum_balance(space as usize)?,
             space,
             program_owner,
         ),
-        &[payer.clone(), new_account.clone(), system_program.clone()],
+        // create_account names the funder and the new account.
+        &[payer, new_account],
         &[seeds
             .iter()
             .map(|seed| seed.as_slice())

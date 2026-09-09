@@ -819,53 +819,16 @@ impl MarketFixture {
 
         let context_ref: Rc<RefCell<ProgramTestContext>> = Rc::clone(&context);
 
-        let mut lamports: u64 = 0;
-        let base_mint: MintAccountInfo = MintAccountInfo {
-            mint: Mint {
-                mint_authority: None.into(),
-                supply: 0,
-                decimals: 6,
-                is_initialized: true,
-                freeze_authority: None.into(),
-            },
-            info: &AccountInfo {
-                key: &Pubkey::new_unique(),
-                lamports: Rc::new(RefCell::new(&mut lamports)),
-                data: Rc::new(RefCell::new(&mut [])),
-                owner: &Pubkey::new_unique(),
-                rent_epoch: 0,
-                is_signer: false,
-                is_writable: false,
-                executable: false,
-            },
-        };
-
-        let mut lamports: u64 = 0;
-        let quote_mint: MintAccountInfo = MintAccountInfo {
-            mint: Mint {
-                mint_authority: None.into(),
-                supply: 0,
-                decimals: 9,
-                is_initialized: true,
-                freeze_authority: None.into(),
-            },
-            info: &AccountInfo {
-                key: &Pubkey::new_unique(),
-                lamports: Rc::new(RefCell::new(&mut lamports)),
-                data: Rc::new(RefCell::new(&mut [])),
-                owner: &Pubkey::new_unique(),
-                rent_epoch: 0,
-                is_signer: false,
-                is_writable: false,
-                executable: false,
-            },
-        };
+        // Dummy default value. Not valid until reload, and the market is read
+        // back from the chain there, so the placeholder needs no mints: it is
+        // zeroed rather than built out of fabricated accounts, which the
+        // runtime's account type cannot be constructed off chain anyway.
         // Dummy default value. Not valid until reload.
         MarketFixture {
             context: context_ref,
             key: market_keypair.pubkey(),
             market: MarketValue {
-                fixed: MarketFixed::new_empty(&base_mint, &quote_mint, &market_keypair.pubkey()),
+                fixed: bytemuck::Zeroable::zeroed(),
                 dynamic: Vec::new(),
             },
         }

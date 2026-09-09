@@ -19,7 +19,7 @@ no-entrypoint = []
 cpi = ["no-entrypoint"]
 default = []
 trace = [ "manifest-dex/trace" ]
-test = []
+test = ["manifest-dex/test"]
 test-sbf = []
 
 [dependencies]
@@ -37,6 +37,7 @@ thiserror = { workspace = true }
 solana-security-txt = { workspace = true }
 static_assertions = { workspace = true }
 solana-invoke = { workspace = true }
+pinocchio = { workspace = true }
 
 [dev-dependencies]
 anyhow = { workspace = true }

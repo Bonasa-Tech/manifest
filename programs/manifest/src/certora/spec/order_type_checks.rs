@@ -14,7 +14,7 @@ use cvt::{cvt_assert, cvt_assume};
 use cvt_macros::rule;
 use nondet::*;
 
-use solana_program::account_info::AccountInfo;
+use pinocchio::account::AccountView;
 
 use crate::{
     certora::spec::{
@@ -40,12 +40,12 @@ use hypertree::DataIndex;
 pub fn taker_cannot_take_check<const IS_BID: bool>(order_type: OrderType) {
     cvt_static_initializer!();
 
-    let acc_infos: [AccountInfo; 16] = acc_infos_with_mem_layout!();
-    let trader: &AccountInfo = &acc_infos[0];
-    let market_info: &AccountInfo = &acc_infos[1];
-    let maker_trader: &AccountInfo = &acc_infos[7];
-    let vault_base_token: &AccountInfo = &acc_infos[8];
-    let vault_quote_token: &AccountInfo = &acc_infos[9];
+    let acc_infos: [AccountView; 16] = account_views_with_mem_layout!();
+    let trader: &AccountView = &acc_infos[0];
+    let market_info: &AccountView = &acc_infos[1];
+    let maker_trader: &AccountView = &acc_infos[7];
+    let vault_base_token: &AccountView = &acc_infos[8];
+    let vault_quote_token: &AccountView = &acc_infos[9];
 
     let maker_order_index: DataIndex = cvt_assume_market_preconditions::<IS_BID>(
         market_info,
@@ -128,12 +128,12 @@ pub fn rule_global_taker_cannot_take_ask() {
 pub fn place_single_order_funds_check<const IS_BID: bool>(order_type: OrderType) {
     cvt_static_initializer!();
 
-    let acc_infos: [AccountInfo; 16] = acc_infos_with_mem_layout!();
-    let trader: &AccountInfo = &acc_infos[0];
-    let market_info: &AccountInfo = &acc_infos[1];
-    let maker_trader: &AccountInfo = &acc_infos[7];
-    let vault_base_token: &AccountInfo = &acc_infos[8];
-    let vault_quote_token: &AccountInfo = &acc_infos[9];
+    let acc_infos: [AccountView; 16] = account_views_with_mem_layout!();
+    let trader: &AccountView = &acc_infos[0];
+    let market_info: &AccountView = &acc_infos[1];
+    let maker_trader: &AccountView = &acc_infos[7];
+    let vault_base_token: &AccountView = &acc_infos[8];
+    let vault_quote_token: &AccountView = &acc_infos[9];
 
     let maker_order_index: DataIndex = cvt_assume_market_preconditions::<IS_BID>(
         market_info,
@@ -208,12 +208,12 @@ pub fn rule_reverse_taker_no_funds_loss_ask() {
 pub fn reverse_maker_check<const IS_BID: bool, const IS_TIGHT: bool>() {
     cvt_static_initializer!();
 
-    let acc_infos: [AccountInfo; 16] = acc_infos_with_mem_layout!();
-    let trader: &AccountInfo = &acc_infos[0];
-    let market_info: &AccountInfo = &acc_infos[1];
-    let maker_trader: &AccountInfo = &acc_infos[7];
-    let vault_base_token: &AccountInfo = &acc_infos[8];
-    let vault_quote_token: &AccountInfo = &acc_infos[9];
+    let acc_infos: [AccountView; 16] = account_views_with_mem_layout!();
+    let trader: &AccountView = &acc_infos[0];
+    let market_info: &AccountView = &acc_infos[1];
+    let maker_trader: &AccountView = &acc_infos[7];
+    let vault_base_token: &AccountView = &acc_infos[8];
+    let vault_quote_token: &AccountView = &acc_infos[9];
 
     let maker_order_index: DataIndex = cvt_assume_market_preconditions::<IS_BID>(
         market_info,
@@ -325,12 +325,12 @@ pub fn rule_reverse_tight_maker_no_funds_loss_ask() {
 pub fn reverse_coalesce_check<const IS_BID: bool, const IS_TIGHT: bool>() {
     cvt_static_initializer!();
 
-    let acc_infos: [AccountInfo; 16] = acc_infos_with_mem_layout!();
-    let trader: &AccountInfo = &acc_infos[0];
-    let market_info: &AccountInfo = &acc_infos[1];
-    let maker_trader: &AccountInfo = &acc_infos[7];
-    let vault_base_token: &AccountInfo = &acc_infos[8];
-    let vault_quote_token: &AccountInfo = &acc_infos[9];
+    let acc_infos: [AccountView; 16] = account_views_with_mem_layout!();
+    let trader: &AccountView = &acc_infos[0];
+    let market_info: &AccountView = &acc_infos[1];
+    let maker_trader: &AccountView = &acc_infos[7];
+    let vault_base_token: &AccountView = &acc_infos[8];
+    let vault_quote_token: &AccountView = &acc_infos[9];
 
     let (maker_order_index, coalesce_order_index) =
         cvt_assume_reverse_coalesce_preconditions::<IS_BID, IS_TIGHT>(

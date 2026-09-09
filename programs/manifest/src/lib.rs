@@ -1,7 +1,6 @@
 //! Manifest is a limit order book exchange on the Solana blockchain.
 //!
 
-pub mod entrypoint;
 pub mod logs;
 pub mod program;
 pub mod quantities;
@@ -18,6 +17,7 @@ pub mod deps {
 pub mod certora;
 
 use hypertree::trace;
+use pinocchio::{account::AccountView, address::Address, error::ProgramError, ProgramResult};
 use program::{
     batch_update::process_batch_update, claim_seat::process_claim_seat,
     create_market::process_create_market, deposit::process_deposit,
@@ -27,10 +27,7 @@ use program::{
     global_withdraw::process_global_withdraw, process_swap, withdraw::process_withdraw,
     ManifestInstruction,
 };
-use solana_program::{
-    account_info::AccountInfo, declare_id, entrypoint::ProgramResult, program_error::ProgramError,
-    pubkey::Pubkey,
-};
+use solana_program::{declare_id, pubkey::Pubkey};
 
 #[cfg(not(feature = "no-entrypoint"))]
 use solana_security_txt::security_txt;
@@ -97,13 +94,16 @@ security_txt! {
 declare_id!("MNFSTqtC93rEfYHB6hF82sKdZpUDFWkViLByLd1k1Ms");
 
 #[cfg(not(feature = "no-entrypoint"))]
-crate::entrypoint!(process_instruction);
+pinocchio::program_entrypoint!(process_instruction, {
+    crate::state::constants::MAX_ACCOUNTS
+});
 
 pub fn process_instruction(
-    program_id: &Pubkey,
-    accounts: &[AccountInfo],
+    program_id_raw: &Address,
+    accounts: &[AccountView],
     instruction_data: &[u8],
 ) -> ProgramResult {
+    let program_id: &Pubkey = crate::validation::as_pubkey(program_id_raw);
     let (tag, data) = instruction_data
         .split_first()
         .ok_or(ProgramError::InvalidInstructionData)?;

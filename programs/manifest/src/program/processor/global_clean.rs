@@ -1,8 +1,10 @@
-use std::cell::RefMut;
+use crate::validation::{io_to_program_error, AccountViewExt};
+use pinocchio::{account::RefMut, ProgramResult};
 
 use borsh::{BorshDeserialize, BorshSerialize};
 use hypertree::{get_helper, trace, DataIndex, RBNode};
-use solana_program::{account_info::AccountInfo, entrypoint::ProgramResult, pubkey::Pubkey};
+use pinocchio::account::AccountView;
+use solana_program::pubkey::Pubkey;
 
 use crate::{
     program::{batch_update::MarketDataTreeNodeType, get_mut_dynamic_account},
@@ -28,10 +30,10 @@ impl GlobalCleanParams {
 
 pub(crate) fn process_global_clean(
     _program_id: &Pubkey,
-    accounts: &[AccountInfo],
+    accounts: &[AccountView],
     data: &[u8],
 ) -> ProgramResult {
-    trace!("process_global_clean accs={accounts:?}");
+    trace!("process_global_clean accs={}", accounts.len());
     let global_clean_context: GlobalCleanContext = GlobalCleanContext::load(accounts)?;
 
     let GlobalCleanContext {
@@ -48,18 +50,19 @@ pub(crate) fn process_global_clean(
         market_vault_opt: None,
         token_program_opt: None,
         system_program: Some(system_program),
-        market: *market.key,
+        market: *market.pubkey(),
         gas_payer_opt: None,
         gas_receiver_opt: Some(payer),
         num_deferred_gas_refunds: std::cell::Cell::new(0),
     };
 
-    let GlobalCleanParams { order_index } = GlobalCleanParams::try_from_slice(data)?;
+    let GlobalCleanParams { order_index } =
+        GlobalCleanParams::try_from_slice(data).map_err(io_to_program_error)?;
 
-    let market_data: &mut RefMut<&mut [u8]> = &mut market.try_borrow_mut_data()?;
+    let market_data: &mut RefMut<[u8]> = &mut market.try_borrow_mut()?;
     let mut market_dynamic_account: MarketRefMut = get_mut_dynamic_account(market_data);
 
-    let global_data: &mut RefMut<&mut [u8]> = &mut global.try_borrow_mut_data()?;
+    let global_data: &mut RefMut<[u8]> = &mut global.try_borrow_mut()?;
     let global_dynamic_account: GlobalRefMut = get_mut_dynamic_account(global_data);
 
     // Get the resting order and do some checks to make sure the order index is

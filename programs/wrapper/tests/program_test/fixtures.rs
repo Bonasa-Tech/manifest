@@ -61,16 +61,8 @@ pub struct TestFixture {
 
 impl TestFixture {
     pub async fn new() -> TestFixture {
-        let mut program: ProgramTest = ProgramTest::new(
-            "wrapper",
-            wrapper::ID,
-            processor!(wrapper::process_instruction),
-        );
-        program.add_program(
-            "manifest",
-            manifest::ID,
-            processor!(manifest::process_instruction),
-        );
+        let mut program: ProgramTest = ProgramTest::new("wrapper", wrapper::ID, None);
+        program.add_program("manifest", manifest::ID, None);
 
         let second_keypair: Keypair = Keypair::new();
         program.add_account(
@@ -400,53 +392,15 @@ impl MarketFixture {
         let context_ref: Rc<RefCell<ProgramTestContext>> = Rc::clone(&context);
 
         // Just needed for storing the decimals. The rest can be blank.
-        let mut lamports: u64 = 0;
-        let base_mint: MintAccountInfo = MintAccountInfo {
-            mint: Mint {
-                mint_authority: None.into(),
-                supply: 0,
-                decimals: 6,
-                is_initialized: true,
-                freeze_authority: None.into(),
-            },
-            info: &AccountInfo {
-                key: &Pubkey::new_unique(),
-                lamports: Rc::new(RefCell::new(&mut lamports)),
-                data: Rc::new(RefCell::new(&mut [])),
-                owner: &Pubkey::new_unique(),
-                rent_epoch: 0,
-                is_signer: false,
-                is_writable: false,
-                executable: false,
-            },
-        };
-
-        let mut lamports: u64 = 0;
-        let quote_mint: MintAccountInfo = MintAccountInfo {
-            mint: Mint {
-                mint_authority: None.into(),
-                supply: 0,
-                decimals: 9,
-                is_initialized: true,
-                freeze_authority: None.into(),
-            },
-            info: &AccountInfo {
-                key: &Pubkey::new_unique(),
-                lamports: Rc::new(RefCell::new(&mut lamports)),
-                data: Rc::new(RefCell::new(&mut [])),
-                owner: &Pubkey::new_unique(),
-                rent_epoch: 0,
-                is_signer: false,
-                is_writable: false,
-                executable: false,
-            },
-        };
+        // Placeholder until the first reload, which reads the market back from
+        // the chain. Zeroed rather than built from fabricated accounts: the
+        // runtime's account type cannot be constructed off chain.
         // Dummy default value. Not valid until reload.
         MarketFixture {
             context: context_ref,
             key,
             market: MarketValue {
-                fixed: MarketFixed::new_empty(&base_mint, &quote_mint, &key),
+                fixed: bytemuck::Zeroable::zeroed(),
                 dynamic: Vec::new(),
             },
         }

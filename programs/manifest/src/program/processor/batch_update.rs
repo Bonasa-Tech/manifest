@@ -1,4 +1,9 @@
-use std::cell::RefMut;
+use crate::validation::{io_to_program_error, AccountViewExt};
+use pinocchio::{
+    account::{AccountView, RefMut},
+    error::ProgramError,
+    ProgramResult,
+};
 
 use crate::{
     program::get_trader_index_with_hint,
@@ -14,10 +19,7 @@ use crate::{
 use borsh::{BorshDeserialize, BorshSerialize};
 
 use hypertree::{get_helper, trace, DataIndex, RBNode};
-use solana_program::{
-    account_info::AccountInfo, entrypoint::ProgramResult, program_error::ProgramError,
-    pubkey::Pubkey,
-};
+use solana_program::pubkey::Pubkey;
 
 use super::{expand_market_if_needed, shared::get_mut_dynamic_account};
 
@@ -156,10 +158,11 @@ pub enum MarketDataTreeNodeType {
 
 pub(crate) fn process_batch_update(
     program_id: &Pubkey,
-    accounts: &[AccountInfo],
+    accounts: &[AccountView],
     data: &[u8],
 ) -> ProgramResult {
-    let params: BatchUpdateParams = BatchUpdateParams::try_from_slice(data)?;
+    let params: BatchUpdateParams =
+        BatchUpdateParams::try_from_slice(data).map_err(io_to_program_error)?;
     process_batch_update_core(program_id, accounts, params)
 }
 
@@ -243,7 +246,7 @@ fn batch_place_order(
 /// decoding historical transactions; nothing emits them.
 pub(crate) fn process_batch_update_core(
     _program_id: &Pubkey,
-    accounts: &[AccountInfo],
+    accounts: &[AccountView],
     params: BatchUpdateParams,
 ) -> ProgramResult {
     let batch_update_context: BatchUpdateContext = BatchUpdateContext::load(accounts)?;
@@ -266,7 +269,7 @@ pub(crate) fn process_batch_update_core(
     trace!("batch_update trader_index_hint:{trader_index_hint:?} cancels:{cancels:?} orders:{orders:?}");
 
     let trader_index: DataIndex = {
-        let market_data: &mut RefMut<&mut [u8]> = &mut market.try_borrow_mut_data()?;
+        let market_data: &mut RefMut<[u8]> = &mut market.try_borrow_mut()?;
 
         let mut dynamic_account: MarketRefMut = get_mut_dynamic_account(market_data);
         let trader_index: DataIndex =
@@ -336,8 +339,16 @@ pub(crate) fn process_batch_update_core(
     let mut result: Vec<(u64, DataIndex)> = Vec::with_capacity(orders.len());
     #[cfg(feature = "certora")]
     let mut result = NoResizableVec::<(u64, DataIndex)>::new(10);
+    // One borrow of the market for the whole loop. Placing an order does not
+    // need its own, and the borrow is only given up when a block is actually
+    // missing, because expanding takes the account for itself.
+    let market_pubkey: Pubkey = *market.pubkey();
+    let mut market_data: RefMut<[u8]> = market.try_borrow_mut()?;
+    // The account is split into its fixed header and its dynamic bytes once
+    // per borrow rather than once per order. Only an expansion invalidates it.
+    let mut dynamic_account: MarketRefMut = get_mut_dynamic_account(&mut market_data);
     for place_order_params in orders {
-        {
+        let need_expand: bool = {
             let base_atoms: BaseAtoms = BaseAtoms::new(place_order_params.base_atoms());
             let price: QuoteAtomsPerBaseAtom = place_order_params.try_price()?;
             let order_type: OrderType = place_order_params.order_type();
@@ -349,14 +360,10 @@ pub(crate) fn process_batch_update_core(
             )?;
             let last_valid_slot: u32 = place_order_params.last_valid_slot();
 
-            // Need to reborrow every iteration so we can borrow later for expanding.
-            let market_data: &mut RefMut<&mut [u8]> = &mut market.try_borrow_mut_data()?;
-            let mut dynamic_account: MarketRefMut = get_mut_dynamic_account(market_data);
-
             let add_order_to_market_result: AddOrderToMarketResult = batch_place_order(
                 &mut dynamic_account,
                 AddOrderToMarketArgs {
-                    market: *market.key,
+                    market: market_pubkey,
                     trader_index,
                     num_base_atoms: base_atoms,
                     price,
@@ -375,9 +382,16 @@ pub(crate) fn process_batch_update_core(
             } = add_order_to_market_result;
 
             result.push((order_sequence_number, order_index));
+            !dynamic_account.fixed.has_free_block()
+        };
+        if need_expand {
+            drop(market_data);
+            expand_market_if_needed(&payer, &market)?;
+            market_data = market.try_borrow_mut()?;
+            dynamic_account = get_mut_dynamic_account(&mut market_data);
         }
-        expand_market_if_needed(&payer, &market)?;
     }
+    drop(market_data);
 
     // Pay out gas prepayment refunds for cancelled global orders. This must
     // happen after the last CPI of this instruction (gas prepayments and
