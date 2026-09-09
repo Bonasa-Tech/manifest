@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1788925481659,
+  "lastUpdate": 1788931794965,
   "repoUrl": "https://github.com/Bonasa-Tech/manifest",
   "entries": {
     "CU Benchmark": [
@@ -13625,6 +13625,72 @@ window.BENCHMARK_DATA = {
           {
             "name": "MFX_99",
             "value": 2940,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "cyrbritt@gmail.com",
+            "name": "Britt Cyr",
+            "username": "brittcyr"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "d218ba6ee138bfb40867ed9fcff4380d0c42f071",
+          "message": "Cu improvement with borrows (#706)\n\n* Borrow the market key in the place order arguments\n\nAddOrderToMarketArgs carried the market address by value, so every order\nplaced copied thirty two bytes into the argument struct. The only thing\nthat reads it is the fill log, which copies it out again when a fill\nhappens, so the argument is now a reference.\n\nWorth about half a percent of MFX compute per order on the replay\nbenchmark.\n\nThis changes a public signature that the benchmarking harness in\nmanifest-private constructs directly, so it lands with the matching\nharness revision. It is split out of the pinocchio migration for that\nreason: one harness revision cannot compile against a manifest with this\nchange and one without, and the benchmark pins a single revision for both\nsides of its comparison.\n\n* Read the market's mints and vaults only when a global account follows\n\nLoading a batch update copied the base and quote mint and both vault\naddresses out of the market header on every call. They are used for one\nthing: working out which side an optional global account belongs to. Most\nbatch updates pass none, so those four addresses were copied for a loop that\nthen did nothing.",
+          "timestamp": "2026-09-09T01:02:58-04:00",
+          "tree_id": "55a08a674324a3fdaf259026ff55f9670cde6ad4",
+          "url": "https://github.com/Bonasa-Tech/manifest/commit/d218ba6ee138bfb40867ed9fcff4380d0c42f071"
+        },
+        "date": 1788931792115,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "PHX_50",
+            "value": 6897,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "PHX_95",
+            "value": 13208,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "PHX_99",
+            "value": 13902,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_50",
+            "value": 1453,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_95",
+            "value": 2450,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_99",
+            "value": 2923,
             "range": "",
             "unit": "CU",
             "extra": ""
