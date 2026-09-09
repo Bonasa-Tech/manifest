@@ -21,8 +21,14 @@ export const INSERT_MARKET_CHECKPOINT =
 export const INSERT_TRADER_STATS =
   'INSERT INTO trader_stats (checkpoint_id, trader, num_taker_trades, num_maker_trades, taker_notional_volume, maker_notional_volume) VALUES ($1, $2, $3, $4, $5, $6)';
 
-export const INSERT_TRADER_POSITION =
-  'INSERT INTO trader_positions (checkpoint_id, trader, mint, position, acquisition_value) VALUES ($1, $2, $3, $4, $5)';
+// ON CONFLICT is a backstop: saveTraderData writes from a snapshot so a
+// (checkpoint_id, trader, mint) row should never be inserted twice, but a
+// duplicate must not roll back the whole trader checkpoint if it ever is.
+export const INSERT_TRADER_POSITION = `
+  INSERT INTO trader_positions (checkpoint_id, trader, mint, position, acquisition_value)
+  VALUES ($1, $2, $3, $4, $5)
+  ON CONFLICT (checkpoint_id, trader, mint) DO NOTHING
+`;
 
 // ========== SELECT QUERIES ==========
 
