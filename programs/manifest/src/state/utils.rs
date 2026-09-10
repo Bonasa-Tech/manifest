@@ -532,7 +532,6 @@ pub(crate) fn transfer_global_tokens<'a>(
                 global_vault.as_ref(),
                 mint_account_info.as_ref(),
                 market_vault.as_ref(),
-                global_vault.as_ref(),
             ],
             global_vault_seeds_with_bump!(&mint_key, global_vault_bump),
         )?;
@@ -548,11 +547,7 @@ pub(crate) fn transfer_global_tokens<'a>(
             )
             .map_err(to_program_error)?,
             // source, destination, authority: the vault signs for itself.
-            &[
-                global_vault.as_ref(),
-                market_vault.as_ref(),
-                global_vault.as_ref(),
-            ],
+            &[global_vault.as_ref(), market_vault.as_ref()],
             global_vault_seeds_with_bump!(&mint_key, global_vault_bump),
         )?;
     }
