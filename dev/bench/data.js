@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1788984103612,
+  "lastUpdate": 1789065015399,
   "repoUrl": "https://github.com/Bonasa-Tech/manifest",
   "entries": {
     "CU Benchmark": [
@@ -13717,6 +13717,72 @@ window.BENCHMARK_DATA = {
           "url": "https://github.com/Bonasa-Tech/manifest/commit/a82441693165513f68236bff8e9748400b92b855"
         },
         "date": 1788984100504,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "PHX_50",
+            "value": 6897,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "PHX_95",
+            "value": 13208,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "PHX_99",
+            "value": 13902,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_50",
+            "value": 1442,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_95",
+            "value": 2432,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_99",
+            "value": 2655,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "mail@maximilianschneider.net",
+            "name": "Maximilian Schneider",
+            "username": "mschneider"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "3f804ecf892c1935abf8838b16cb58c417758e25",
+          "message": "deduplicate accounts in cpi context (#710)\n\n* deduplicate global vault in cpi context\n* market vault deduplicated\n* fmt",
+          "timestamp": "2026-09-10T20:24:54+02:00",
+          "tree_id": "1620c0dd665eaa330734195d3684d35d669aefef",
+          "url": "https://github.com/Bonasa-Tech/manifest/commit/3f804ecf892c1935abf8838b16cb58c417758e25"
+        },
+        "date": 1789065012475,
         "tool": "customSmallerIsBetter",
         "benches": [
           {
