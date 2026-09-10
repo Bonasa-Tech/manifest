@@ -2675,10 +2675,27 @@ export class ManifestStatsServer {
       const delay = (ms: number | undefined): Promise<void> =>
         new Promise((resolve) => setTimeout(resolve, ms));
 
+      // Copy the positions before the first await. The loop below yields to
+      // the event loop between traders, and during that time
+      // pruneInactiveTraders can delete a trader while a new fill re-adds it.
+      // A Map iterator revisits a key that is deleted and re-added
+      // mid-iteration, which would insert the same (checkpoint_id, trader,
+      // mint) twice and violate the primary key. The copy is synchronous, so
+      // it is also a consistent point-in-time snapshot of every trader.
+      const positionsSnapshot: [
+        string,
+        Map<string, number>,
+        Map<string, number>,
+      ][] = Array.from(this.traderPositions.entries()).map(
+        ([trader, positions]) => [
+          trader,
+          new Map(positions),
+          new Map(this.traderAcquisitionValue.get(trader) || []),
+        ],
+      );
+
       let traderCount: number = 0;
-      for (const [trader, positions] of this.traderPositions.entries()) {
-        const acquisitionValues: Map<string, number> =
-          this.traderAcquisitionValue.get(trader) || new Map();
+      for (const [trader, positions, acquisitionValues] of positionsSnapshot) {
         const positionBatchPromises: Promise<QueryResult>[] = [];
 
         for (const [mint, position] of positions.entries()) {
