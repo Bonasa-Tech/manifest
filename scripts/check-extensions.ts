@@ -177,18 +177,126 @@ function parseExtensionsFromAccountData(data: Buffer): {
   };
 }
 
+// Discord rejects any webhook payload whose content exceeds 2000 characters
+// with a bare 400, so long reports have to be split before sending.
+const DISCORD_CONTENT_LIMIT: number = 2000;
+const DISCORD_MAX_ATTEMPTS: number = 3;
+
+function splitDiscordMessage(content: string): string[] {
+  const chunks: string[] = [];
+  let current: string = '';
+
+  for (const line of content.split('\n')) {
+    // A single line longer than the limit cannot be kept intact; hard split it.
+    if (line.length > DISCORD_CONTENT_LIMIT) {
+      if (current.length > 0) {
+        chunks.push(current);
+        current = '';
+      }
+      for (let i = 0; i < line.length; i += DISCORD_CONTENT_LIMIT) {
+        chunks.push(line.slice(i, i + DISCORD_CONTENT_LIMIT));
+      }
+      continue;
+    }
+
+    const candidate: string =
+      current.length === 0 ? line : `${current}\n${line}`;
+    if (candidate.length > DISCORD_CONTENT_LIMIT) {
+      chunks.push(current);
+      current = line;
+    } else {
+      current = candidate;
+    }
+  }
+
+  if (current.trim().length > 0) {
+    chunks.push(current);
+  }
+  return chunks;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function postDiscordChunk(
+  webhookUrl: string,
+  content: string,
+  label: string,
+): Promise<void> {
+  let lastError: string = '';
+
+  for (let attempt: number = 1; attempt <= DISCORD_MAX_ATTEMPTS; attempt++) {
+    let response: Response;
+    try {
+      response = await fetch(webhookUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content }),
+      });
+    } catch (error) {
+      lastError = `network error: ${(error as Error).message}`;
+      console.error(
+        `Discord ${label} attempt ${attempt}/${DISCORD_MAX_ATTEMPTS} failed: ${lastError}`,
+      );
+      await sleep(1000 * attempt);
+      continue;
+    }
+
+    if (response.ok) {
+      return;
+    }
+
+    // The body carries Discord's actual complaint (error code, offending
+    // field); the status line alone is not enough to debug a 400.
+    let body: string = '';
+    try {
+      body = await response.text();
+    } catch (error) {
+      body = `<unreadable body: ${(error as Error).message}>`;
+    }
+
+    lastError =
+      `${response.status} ${response.statusText} ` +
+      `(${label}, ${content.length} chars) body: ${body.slice(0, 1000)}`;
+    console.error(
+      `Discord ${label} attempt ${attempt}/${DISCORD_MAX_ATTEMPTS} failed: ${lastError}`,
+    );
+
+    // 4xx other than rate limiting will not succeed on a retry.
+    if (
+      response.status !== 429 &&
+      response.status >= 400 &&
+      response.status < 500
+    ) {
+      throw new Error(`Failed to send Discord message: ${lastError}`);
+    }
+
+    let delayMs: number = 1000 * attempt;
+    if (response.status === 429) {
+      const retryAfter: number = Number(response.headers.get('retry-after'));
+      if (Number.isFinite(retryAfter) && retryAfter > 0) {
+        delayMs = retryAfter * 1000;
+      }
+    }
+    await sleep(delayMs);
+  }
+
+  throw new Error(
+    `Failed to send Discord message after ${DISCORD_MAX_ATTEMPTS} attempts: ${lastError}`,
+  );
+}
+
 async function sendDiscordMessage(
   webhookUrl: string,
   content: string,
 ): Promise<void> {
-  const response = await fetch(webhookUrl, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ content }),
-  });
-  if (!response.ok) {
-    throw new Error(
-      `Failed to send Discord message: ${response.status} ${response.statusText}`,
+  const chunks: string[] = splitDiscordMessage(content);
+  for (let i = 0; i < chunks.length; i++) {
+    await postDiscordChunk(
+      webhookUrl,
+      chunks[i],
+      `chunk ${i + 1}/${chunks.length}`,
     );
   }
 }
@@ -522,8 +630,16 @@ async function main(): Promise<void> {
       message += `No concerning extensions found.`;
     }
 
-    await sendDiscordMessage(discordWebhookUrl, message);
-    console.log('Discord notification sent');
+    // The extension report itself already succeeded and is on disk; a failed
+    // notification should be loud but must not take down the whole run.
+    try {
+      await sendDiscordMessage(discordWebhookUrl, message);
+      console.log('Discord notification sent');
+    } catch (error) {
+      console.error(
+        `Discord notification failed, continuing anyway: ${(error as Error).message}`,
+      );
+    }
   }
 
   // Permissionlessly created malformed accounts must not hide findings for all
