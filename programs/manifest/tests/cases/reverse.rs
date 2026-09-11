@@ -1,9 +1,9 @@
-use crate::{send_tx_with_retry, TestFixture};
+use crate::{send_tx_with_retry, Side, TestFixture, Token};
 use hypertree::HyperTreeValueIteratorTrait;
 use manifest::{
     program::swap_instruction,
     quantities::WrapperU64,
-    state::{BooksideReadOnly, RestingOrder},
+    state::{constants::NO_EXPIRATION_LAST_VALID_SLOT, BooksideReadOnly, OrderType, RestingOrder},
 };
 use solana_compute_budget_interface::ComputeBudgetInstruction;
 use solana_instruction::Instruction;
@@ -12,6 +12,53 @@ use solana_program::{pubkey, pubkey::Pubkey};
 use solana_signer::Signer;
 use spl_associated_token_account::get_associated_token_address;
 use std::{rc::Rc, str::FromStr};
+
+#[tokio::test]
+async fn zero_spread_reverse_partial_fill_does_not_cross_sbf() -> anyhow::Result<()> {
+    let mut test_fixture: TestFixture = TestFixture::new().await;
+    test_fixture.claim_seat().await?;
+    test_fixture.deposit(Token::SOL, 2).await?;
+    test_fixture
+        .place_order(Side::Ask, 2, 1, 0, 0, OrderType::Reverse)
+        .await?;
+
+    let second_keypair: Keypair = test_fixture.second_keypair.insecure_clone();
+    test_fixture.claim_seat_for_keypair(&second_keypair).await?;
+    test_fixture
+        .deposit_for_keypair(Token::USDC, 1, &second_keypair)
+        .await?;
+    test_fixture
+        .place_order_for_keypair(
+            Side::Bid,
+            1,
+            1,
+            0,
+            NO_EXPIRATION_LAST_VALID_SLOT,
+            OrderType::Limit,
+            &second_keypair,
+        )
+        .await?;
+
+    test_fixture.market_fixture.reload().await;
+    let asks: Vec<RestingOrder> = test_fixture
+        .market_fixture
+        .market
+        .get_asks()
+        .iter::<RestingOrder>()
+        .map(|(_, order)| *order)
+        .collect();
+    assert_eq!(asks.len(), 1);
+    assert_eq!(asks[0].get_num_base_atoms().as_u64(), 1);
+    assert!(test_fixture
+        .market_fixture
+        .market
+        .get_bids()
+        .iter::<RestingOrder>()
+        .next()
+        .is_none());
+
+    Ok(())
+}
 
 #[tokio::test]
 async fn reverse_coalesce() -> anyhow::Result<()> {

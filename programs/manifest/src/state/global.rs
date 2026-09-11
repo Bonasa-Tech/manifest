@@ -931,6 +931,51 @@ mod test {
     }
 
     #[test]
+    fn validation_accepts_equal_balance_deposits_after_rotation() {
+        const NUM_TRADERS: usize = 3;
+        const NUM_BLOCKS: usize = 2 * NUM_TRADERS;
+
+        let traders: [Pubkey; NUM_TRADERS] = std::array::from_fn(|_| Pubkey::new_unique());
+        let mut fixed: GlobalFixed = GlobalFixed::new_empty(&Pubkey::new_unique());
+        let mut dynamic: [u8; NUM_BLOCKS * GLOBAL_BLOCK_SIZE] = [0; NUM_BLOCKS * GLOBAL_BLOCK_SIZE];
+
+        let mut trader_tree: GlobalTraderTree<'_> = GlobalTraderTree::new(&mut dynamic, NIL, NIL);
+        for (i, trader) in traders.iter().enumerate() {
+            let trader_index: DataIndex = (i * GLOBAL_BLOCK_SIZE) as DataIndex;
+            let deposit_index: DataIndex = ((NUM_TRADERS + i) * GLOBAL_BLOCK_SIZE) as DataIndex;
+            trader_tree.insert(trader_index, GlobalTrader::new_empty(trader, deposit_index));
+        }
+        fixed.global_traders_root_index = trader_tree.get_root_index();
+        drop(trader_tree);
+
+        let mut deposit_tree: GlobalDepositTree<'_> =
+            GlobalDepositTree::new(&mut dynamic, NIL, NIL);
+        for (i, trader) in traders.iter().enumerate() {
+            let deposit_index: DataIndex = ((NUM_TRADERS + i) * GLOBAL_BLOCK_SIZE) as DataIndex;
+            deposit_tree.insert(deposit_index, GlobalDeposit::new_empty(trader));
+        }
+        let deposit_root_index: DataIndex = deposit_tree.get_root_index();
+        let higher_deposit_index: DataIndex =
+            deposit_tree.get_next_higher_index::<GlobalDeposit>(deposit_root_index);
+        fixed.global_deposits_root_index = deposit_root_index;
+        fixed.global_deposits_max_index = deposit_tree.get_max_index();
+        drop(deposit_tree);
+
+        // Inserting three comparator-equal deposits takes the normal
+        // left-left rotation path, which leaves an equal deposit on the right.
+        let root_node: &RBNode<GlobalDeposit> =
+            get_helper(&dynamic, fixed.global_deposits_root_index);
+        assert_ne!(higher_deposit_index, NIL);
+        assert_eq!(
+            root_node.get_value().cmp(
+                get_helper::<RBNode<GlobalDeposit>>(&dynamic, higher_deposit_index).get_value()
+            ),
+            Ordering::Equal
+        );
+        assert_eq!(validate_global_dynamic(&fixed, &dynamic), Ok(()));
+    }
+
+    #[test]
     fn validation_rejects_unreachable_trader_deposit_reference() {
         let (fixed, mut dynamic, _trader): (GlobalFixed, [u8; 2 * GLOBAL_BLOCK_SIZE], Pubkey) =
             global_with_one_trader();

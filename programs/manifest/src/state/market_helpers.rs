@@ -321,7 +321,7 @@ impl<'a, 'b> AddSingleOrderCtx<'a, 'b> {
 
         let matched_price: QuoteAtomsPerBaseAtom = other_order.get_price();
         let maker_order_type: OrderType = other_order.get_order_type();
-        let maker_price_reverse: Result<QuoteAtomsPerBaseAtom, _> = other_order.reverse_price();
+        let maker_price_reverse: Option<QuoteAtomsPerBaseAtom> = other_order.reverse_price().ok();
         let is_global: bool = other_order.is_global();
         let is_maker_reverse: bool = other_order.is_reversible();
         let maker_reverse_spread: u16 = other_order.get_reverse_spread();
@@ -535,7 +535,11 @@ impl<'a, 'b> AddSingleOrderCtx<'a, 'b> {
         // is non-trivial because in order to prevent tons of orders filling the
         // books on partial fills, we coalesce on top of book.
         if is_maker_reverse {
-            if let Ok(price_reverse) = maker_price_reverse {
+            let safe_maker_price_reverse: Option<QuoteAtomsPerBaseAtom> = maker_price_reverse
+                .filter(|reverse_price| {
+                    !reverse_order_would_cross(fixed, dynamic, *reverse_price, is_bid)
+                });
+            if let Some(price_reverse) = safe_maker_price_reverse {
                 place_reverse_order(
                     fixed,
                     dynamic,
@@ -1197,6 +1201,115 @@ mod place_order_equivalence_tests {
             OrderType::Limit,
             NO_EXPIRATION_LAST_VALID_SLOT,
         );
+    }
+
+    /// A same-price comeback after a partial fill would cross the maker's
+    /// still-resting remainder.
+    #[test]
+    fn zero_spread_reverse_partial_fill_does_not_cross_book() {
+        let (mut market, maker_index, taker_index, _, _) = new_market_with_seats();
+        place(
+            &mut market,
+            maker_index,
+            2,
+            1.0,
+            false,
+            OrderType::Reverse,
+            0,
+            NOW_SLOT,
+        )
+        .unwrap();
+
+        assert_equivalent_taker(
+            &market,
+            taker_index,
+            1,
+            1.0,
+            true,
+            OrderType::Limit,
+            NO_EXPIRATION_LAST_VALID_SLOT,
+        );
+
+        place(
+            &mut market,
+            taker_index,
+            1,
+            1.0,
+            true,
+            OrderType::Limit,
+            NO_EXPIRATION_LAST_VALID_SLOT,
+            NOW_SLOT,
+        )
+        .unwrap();
+
+        let asks: Vec<RestingOrder> = market
+            .get_asks()
+            .iter::<RestingOrder>()
+            .map(|(_, order)| *order)
+            .collect();
+        assert_eq!(asks.len(), 1);
+        assert_eq!(asks[0].get_num_base_atoms(), BaseAtoms::ONE);
+        assert!(market.get_bids().iter::<RestingOrder>().next().is_none());
+    }
+
+    /// A full fill still cannot come back at the same price when another ask
+    /// remains in that price level.
+    #[test]
+    fn zero_spread_reverse_full_fill_does_not_cross_equal_successor() {
+        let (mut market, maker_index, taker_index, _, _) = new_market_with_seats();
+        place(
+            &mut market,
+            maker_index,
+            1,
+            1.0,
+            false,
+            OrderType::Reverse,
+            0,
+            NOW_SLOT,
+        )
+        .unwrap();
+        place(
+            &mut market,
+            maker_index,
+            1,
+            1.0,
+            false,
+            OrderType::Limit,
+            NO_EXPIRATION_LAST_VALID_SLOT,
+            NOW_SLOT,
+        )
+        .unwrap();
+
+        assert_equivalent_taker(
+            &market,
+            taker_index,
+            1,
+            1.0,
+            true,
+            OrderType::ImmediateOrCancel,
+            NO_EXPIRATION_LAST_VALID_SLOT,
+        );
+
+        place(
+            &mut market,
+            taker_index,
+            1,
+            1.0,
+            true,
+            OrderType::ImmediateOrCancel,
+            NO_EXPIRATION_LAST_VALID_SLOT,
+            NOW_SLOT,
+        )
+        .unwrap();
+
+        let asks: Vec<RestingOrder> = market
+            .get_asks()
+            .iter::<RestingOrder>()
+            .map(|(_, order)| *order)
+            .collect();
+        assert_eq!(asks.len(), 1);
+        assert_eq!(asks[0].get_order_type(), OrderType::Limit);
+        assert!(market.get_bids().iter::<RestingOrder>().next().is_none());
     }
 
     /// A zero-price order matches nothing and does not rest.

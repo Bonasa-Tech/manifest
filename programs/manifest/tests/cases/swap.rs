@@ -1243,6 +1243,247 @@ async fn swap_global_not_backed() -> anyhow::Result<()> {
     Ok(())
 }
 
+// Regression test: exact-in impact must account for a maker's global balance
+// cumulatively. Each global ask below is individually backed by the same five
+// base atoms, but only one can execute. The remaining quote must therefore be
+// sized against the worse local ask instead of the second global ask.
+#[tokio::test]
+async fn swap_exact_in_cumulative_global_ask_backing() -> anyhow::Result<()> {
+    let mut test_fixture: TestFixture = TestFixture::new().await;
+    let maker: Keypair = test_fixture.second_keypair.insecure_clone();
+
+    test_fixture.claim_seat_for_keypair(&maker).await?;
+
+    send_tx_with_retry(
+        Rc::clone(&test_fixture.context),
+        &[global_add_trader_instruction(
+            &test_fixture.sol_global_fixture.key,
+            &maker.pubkey(),
+        )],
+        Some(&maker.pubkey()),
+        &[&maker],
+    )
+    .await?;
+
+    let global_source_keypair: Keypair = Keypair::new();
+    let global_source: TokenAccountFixture = TokenAccountFixture::new_with_keypair(
+        Rc::clone(&test_fixture.context),
+        &test_fixture.sol_global_fixture.mint_key,
+        &maker.pubkey(),
+        &global_source_keypair,
+    )
+    .await;
+    test_fixture
+        .sol_mint_fixture
+        .mint_to(&global_source.key, 5)
+        .await;
+    send_tx_with_retry(
+        Rc::clone(&test_fixture.context),
+        &[global_deposit_instruction(
+            &test_fixture.sol_global_fixture.mint_key,
+            &maker.pubkey(),
+            &global_source.key,
+            &spl_token::id(),
+            5,
+        )],
+        Some(&maker.pubkey()),
+        &[&maker],
+    )
+    .await?;
+
+    // Back the worse local ask independently of the global deposit.
+    test_fixture
+        .deposit_for_keypair(Token::SOL, 5, &maker)
+        .await?;
+    test_fixture
+        .batch_update_with_global_for_keypair(
+            None,
+            vec![],
+            vec![
+                PlaceOrderParams::new(
+                    5,
+                    1,
+                    0,
+                    false,
+                    OrderType::Global,
+                    NO_EXPIRATION_LAST_VALID_SLOT,
+                ),
+                PlaceOrderParams::new(
+                    5,
+                    1,
+                    0,
+                    false,
+                    OrderType::Global,
+                    NO_EXPIRATION_LAST_VALID_SLOT,
+                ),
+                PlaceOrderParams::new(
+                    5,
+                    2,
+                    0,
+                    false,
+                    OrderType::Limit,
+                    NO_EXPIRATION_LAST_VALID_SLOT,
+                ),
+            ],
+            &maker,
+        )
+        .await?;
+
+    test_fixture
+        .usdc_mint_fixture
+        .mint_to(&test_fixture.payer_usdc_fixture.key, 10)
+        .await;
+
+    test_fixture.swap_with_global(10, 0, false, true).await?;
+
+    // Five base comes from the one backed global ask. The remaining five quote
+    // buys two base from the local ask at price two, leaving one quote unused.
+    assert_eq!(test_fixture.payer_sol_fixture.balance_atoms().await, 7);
+    assert_eq!(test_fixture.payer_usdc_fixture.balance_atoms().await, 1);
+
+    Ok(())
+}
+
+// Regression test: representable quote/base quotients must retain the
+// matcher-compatible full/partial decision. Comparing only a rounded full
+// order cost would skip this global ask as an unbacked full fill, then return a
+// target from the local ask that replays as a more-expensive partial global
+// fill and reverts.
+#[tokio::test]
+async fn swap_exact_in_fractional_global_partial_replays() -> anyhow::Result<()> {
+    let mut test_fixture: TestFixture = TestFixture::new().await;
+    let maker: Keypair = test_fixture.second_keypair.insecure_clone();
+
+    test_fixture.claim_seat_for_keypair(&maker).await?;
+    send_tx_with_retry(
+        Rc::clone(&test_fixture.context),
+        &[global_add_trader_instruction(
+            &test_fixture.sol_global_fixture.key,
+            &maker.pubkey(),
+        )],
+        Some(&maker.pubkey()),
+        &[&maker],
+    )
+    .await?;
+
+    let global_source_keypair: Keypair = Keypair::new();
+    let global_source: TokenAccountFixture = TokenAccountFixture::new_with_keypair(
+        Rc::clone(&test_fixture.context),
+        &test_fixture.sol_global_fixture.mint_key,
+        &maker.pubkey(),
+        &global_source_keypair,
+    )
+    .await;
+    test_fixture
+        .sol_mint_fixture
+        .mint_to(&global_source.key, 4)
+        .await;
+    send_tx_with_retry(
+        Rc::clone(&test_fixture.context),
+        &[global_deposit_instruction(
+            &test_fixture.sol_global_fixture.mint_key,
+            &maker.pubkey(),
+            &global_source.key,
+            &spl_token::id(),
+            4,
+        )],
+        Some(&maker.pubkey()),
+        &[&maker],
+    )
+    .await?;
+
+    test_fixture
+        .deposit_for_keypair(Token::SOL, 4, &maker)
+        .await?;
+    test_fixture
+        .batch_update_with_global_for_keypair(
+            None,
+            vec![],
+            vec![
+                PlaceOrderParams::new(
+                    5,
+                    3,
+                    -1,
+                    false,
+                    OrderType::Global,
+                    NO_EXPIRATION_LAST_VALID_SLOT,
+                ),
+                PlaceOrderParams::new(
+                    4,
+                    3,
+                    -1,
+                    false,
+                    OrderType::Limit,
+                    NO_EXPIRATION_LAST_VALID_SLOT,
+                ),
+            ],
+            &maker,
+        )
+        .await?;
+
+    test_fixture
+        .usdc_mint_fixture
+        .mint_to(&test_fixture.payer_usdc_fixture.key, 1)
+        .await;
+    test_fixture.swap_with_global(1, 0, false, true).await?;
+
+    assert_eq!(test_fixture.payer_sol_fixture.balance_atoms().await, 3);
+    assert_eq!(test_fixture.payer_usdc_fixture.balance_atoms().await, 0);
+
+    Ok(())
+}
+
+// Regression test: cap quote-input sizing to each finite resting order before
+// rejecting an uncapped base quotient that is larger than u64.
+#[tokio::test]
+async fn swap_exact_in_low_price_finite_order_does_not_overflow() -> anyhow::Result<()> {
+    let mut test_fixture: TestFixture = TestFixture::new().await;
+    let maker: Keypair = test_fixture.second_keypair.insecure_clone();
+
+    test_fixture.claim_seat_for_keypair(&maker).await?;
+    test_fixture
+        .deposit_for_keypair(Token::SOL, 6, &maker)
+        .await?;
+    test_fixture
+        .batch_update_for_keypair(
+            None,
+            vec![],
+            vec![
+                PlaceOrderParams::new(
+                    1,
+                    1,
+                    -18,
+                    false,
+                    OrderType::Limit,
+                    NO_EXPIRATION_LAST_VALID_SLOT,
+                ),
+                PlaceOrderParams::new(
+                    5,
+                    1,
+                    0,
+                    false,
+                    OrderType::Limit,
+                    NO_EXPIRATION_LAST_VALID_SLOT,
+                ),
+            ],
+            &maker,
+        )
+        .await?;
+
+    // 19 / 1e-18 is greater than u64::MAX, but the first order contains only
+    // one base atom. It is fully affordable and must be capped before division.
+    test_fixture
+        .usdc_mint_fixture
+        .mint_to(&test_fixture.payer_usdc_fixture.key, 19)
+        .await;
+    test_fixture.swap(19, 0, false, true).await?;
+
+    assert_eq!(test_fixture.payer_sol_fixture.balance_atoms().await, 6);
+    assert_eq!(test_fixture.payer_usdc_fixture.balance_atoms().await, 14);
+
+    Ok(())
+}
+
 /// Test wash trading with reverse orders.
 /// A single trader posts reverse orders on both sides at two price levels,
 /// then swaps against their own orders in both directions twice, filling

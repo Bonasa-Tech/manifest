@@ -37,7 +37,7 @@ use crate::{
 
 use super::{
     claimed_seat::ClaimedSeat,
-    constants::{MARKET_BLOCK_SIZE, MARKET_FIXED_SIZE},
+    constants::{MARKET_BLOCK_SIZE, MARKET_FIXED_SIZE, MAX_GLOBAL_SEATS},
     order_type_can_rest,
     utils::{
         assert_already_has_seat, assert_not_already_expired, can_back_order, get_now_slot,
@@ -99,6 +99,146 @@ mod helpers {
 
 #[cfg(not(feature = "certora"))]
 pub use helpers::*;
+
+// One impact walk can encounter several orders backed by the same global
+// deposit. Keep a cumulative ledger without std::HashMap: Solana's program
+// heap is a bump allocator, so repeated hash-table growth would retain every
+// old allocation and can exhaust the 32 KiB heap. Each packed entry uses 12
+// bytes (u32 market-seat index plus u64 atoms), and the table is allocated only
+// after the first backed global order is encountered.
+const GLOBAL_CONSUMPTION_ENTRY_BYTES: usize = 12;
+const GLOBAL_CONSUMPTION_CAPACITY: usize = (MAX_GLOBAL_SEATS as usize).next_power_of_two();
+const_assert_eq!(GLOBAL_CONSUMPTION_CAPACITY.is_power_of_two(), true);
+
+#[derive(Default)]
+struct SimulatedGlobalConsumption {
+    entries: Option<Vec<[u8; GLOBAL_CONSUMPTION_ENTRY_BYTES]>>,
+}
+
+impl SimulatedGlobalConsumption {
+    #[inline(always)]
+    fn initial_slot(trader_index: DataIndex) -> usize {
+        // Market indices are block-aligned, so hash the allocation ordinal
+        // rather than the low zero bits of the byte offset.
+        let mut hash: u32 = trader_index / MARKET_BLOCK_SIZE as u32;
+        hash ^= hash >> 16;
+        hash = hash.wrapping_mul(0x7feb_352d);
+        hash ^= hash >> 15;
+        hash = hash.wrapping_mul(0x846c_a68b);
+        hash ^= hash >> 16;
+        hash as usize & (GLOBAL_CONSUMPTION_CAPACITY - 1)
+    }
+
+    #[inline(always)]
+    fn entry_key(entry: &[u8; GLOBAL_CONSUMPTION_ENTRY_BYTES]) -> DataIndex {
+        DataIndex::from_le_bytes([entry[0], entry[1], entry[2], entry[3]])
+    }
+
+    #[inline(always)]
+    fn entry_atoms(entry: &[u8; GLOBAL_CONSUMPTION_ENTRY_BYTES]) -> GlobalAtoms {
+        GlobalAtoms::new(u64::from_le_bytes([
+            entry[4], entry[5], entry[6], entry[7], entry[8], entry[9], entry[10], entry[11],
+        ]))
+    }
+
+    fn get(&self, trader_index: DataIndex) -> GlobalAtoms {
+        let Some(entries) = self.entries.as_ref() else {
+            return GlobalAtoms::ZERO;
+        };
+        let mut slot: usize = Self::initial_slot(trader_index);
+        for _ in 0..GLOBAL_CONSUMPTION_CAPACITY {
+            let entry: &[u8; GLOBAL_CONSUMPTION_ENTRY_BYTES] = &entries[slot];
+            let entry_key: DataIndex = Self::entry_key(entry);
+            if entry_key == trader_index {
+                return Self::entry_atoms(entry);
+            }
+            if entry_key == NIL {
+                return GlobalAtoms::ZERO;
+            }
+            slot = (slot + 1) & (GLOBAL_CONSUMPTION_CAPACITY - 1);
+        }
+        GlobalAtoms::ZERO
+    }
+
+    /// Records a backed maker's cumulative use. A positive backed balance
+    /// implies a current global seat, so at most MAX_GLOBAL_SEATS distinct
+    /// makers can be inserted and this table always has room.
+    fn insert(&mut self, trader_index: DataIndex, atoms: GlobalAtoms) -> bool {
+        if atoms == GlobalAtoms::ZERO {
+            return true;
+        }
+        let entries = self.entries.get_or_insert_with(|| {
+            vec![[u8::MAX; GLOBAL_CONSUMPTION_ENTRY_BYTES]; GLOBAL_CONSUMPTION_CAPACITY]
+        });
+        let mut slot: usize = Self::initial_slot(trader_index);
+        for _ in 0..GLOBAL_CONSUMPTION_CAPACITY {
+            let entry: &mut [u8; GLOBAL_CONSUMPTION_ENTRY_BYTES] = &mut entries[slot];
+            let entry_key: DataIndex = Self::entry_key(entry);
+            if entry_key == NIL || entry_key == trader_index {
+                entry[..4].copy_from_slice(&trader_index.to_le_bytes());
+                entry[4..].copy_from_slice(&atoms.as_u64().to_le_bytes());
+                return true;
+            }
+            slot = (slot + 1) & (GLOBAL_CONSUMPTION_CAPACITY - 1);
+        }
+        false
+    }
+}
+
+#[cfg(test)]
+mod simulated_global_consumption_tests {
+    use super::*;
+
+    #[test]
+    fn packed_ledger_handles_collisions_and_updates_without_zero_allocation() {
+        let mut ledger: SimulatedGlobalConsumption = SimulatedGlobalConsumption::default();
+        let zero_key: DataIndex = MARKET_BLOCK_SIZE as DataIndex;
+        assert!(ledger.insert(zero_key, GlobalAtoms::ZERO));
+        assert!(ledger.entries.is_none());
+
+        let first_key: DataIndex = 2 * MARKET_BLOCK_SIZE as DataIndex;
+        let first_slot: usize = SimulatedGlobalConsumption::initial_slot(first_key);
+        let colliding_key: DataIndex = (3..10_000)
+            .map(|ordinal| ordinal * MARKET_BLOCK_SIZE as DataIndex)
+            .find(|candidate| SimulatedGlobalConsumption::initial_slot(*candidate) == first_slot)
+            .unwrap();
+
+        assert!(ledger.insert(first_key, GlobalAtoms::new(7)));
+        assert!(ledger.insert(colliding_key, GlobalAtoms::new(11)));
+        assert_eq!(ledger.get(first_key), GlobalAtoms::new(7));
+        assert_eq!(ledger.get(colliding_key), GlobalAtoms::new(11));
+        assert!(ledger.insert(first_key, GlobalAtoms::new(13)));
+        assert_eq!(ledger.get(first_key), GlobalAtoms::new(13));
+    }
+}
+
+/// Whether a maker's comeback order would cross the best order left on the
+/// side it just matched. This must be checked after the original maker order
+/// is reduced or removed: a full fill is safe at the same price only when no
+/// equal-priced successor remains.
+fn reverse_order_would_cross(
+    fixed: &MarketFixed,
+    dynamic: &[u8],
+    reverse_price: QuoteAtomsPerBaseAtom,
+    taker_is_bid: bool,
+) -> bool {
+    let opposing_best_index: DataIndex = if taker_is_bid {
+        fixed.asks_best_index
+    } else {
+        fixed.bids_best_index
+    };
+    if opposing_best_index == NIL {
+        return false;
+    }
+    let opposing_best_price: QuoteAtomsPerBaseAtom = get_helper_order(dynamic, opposing_best_index)
+        .get_value()
+        .get_price();
+    if taker_is_bid {
+        reverse_price >= opposing_best_price
+    } else {
+        reverse_price <= opposing_best_price
+    }
+}
 
 #[derive(Clone)]
 pub struct AddOrderToMarketArgs<'a> {
@@ -643,6 +783,12 @@ impl<Fixed: DerefOrBorrow<MarketFixed>, Dynamic: DerefOrBorrow<[u8]>>
 
         let mut total_matched_quote_atoms: QuoteAtoms = QuoteAtoms::ZERO;
         let mut remaining_base_atoms: BaseAtoms = limit_base_atoms;
+        // Global orders are intentionally allowed to overcommit a trader's
+        // deposit. Matching consumes that deposit cumulatively, so impact must
+        // reserve the same balance as it walks or it can quote multiple orders
+        // as if each one had the full deposit available.
+        let mut simulated_global_consumption: SimulatedGlobalConsumption =
+            SimulatedGlobalConsumption::default();
         for (_, resting_order) in book.iter::<RestingOrder>() {
             // Skip expired orders
             if resting_order.is_expired(now_slot) {
@@ -676,6 +822,7 @@ impl<Fixed: DerefOrBorrow<MarketFixed>, Dynamic: DerefOrBorrow<[u8]>>
                 global_trade_accounts_opts,
                 matched_base_atoms,
                 matched_quote_atoms,
+                &mut simulated_global_consumption,
             ) {
                 continue;
             }
@@ -749,6 +896,11 @@ impl<Fixed: DerefOrBorrow<MarketFixed>, Dynamic: DerefOrBorrow<[u8]>>
 
         let mut total_matched_base_atoms: BaseAtoms = BaseAtoms::ZERO;
         let mut remaining_quote_atoms: QuoteAtoms = limit_quote_atoms;
+        // See impact_quote_atoms_with_slot: this mirrors the cumulative
+        // reduction performed by matching without reserving funds when global
+        // orders are placed.
+        let mut simulated_global_consumption: SimulatedGlobalConsumption =
+            SimulatedGlobalConsumption::default();
 
         for (_, resting_order) in book.iter::<RestingOrder>() {
             // Skip expired orders.
@@ -757,23 +909,24 @@ impl<Fixed: DerefOrBorrow<MarketFixed>, Dynamic: DerefOrBorrow<[u8]>>
             }
 
             let matched_price: QuoteAtomsPerBaseAtom = resting_order.get_price();
-            // base_atoms_limit is the number of base atoms that you get if you
-            // were to trade all of the remaining quote atoms at the current
-            // price. Rounding is done in the taker favor because at the limit,
-            // it is a full match. So if you are checking against asks with 100
-            // quote remaining against price 1.001, then the answer should be
-            // 100, because the rounding is in favor of the taker. It takes 100
-            // base atoms to exhaust 100 quote atoms at that price.
-            let base_atoms_limit: BaseAtoms =
-                matched_price.checked_base_for_quote(remaining_quote_atoms, !is_bid)?;
-            // Either fill the entire resting order, or only the
-            // base_atoms_limit, in which case, this is the last iteration.
-            let matched_base_atoms: BaseAtoms =
-                resting_order.get_num_base_atoms().min(base_atoms_limit);
-            let did_fully_match_resting_order: bool =
-                base_atoms_limit >= resting_order.get_num_base_atoms();
-            // Number of quote atoms matched exactly. Round in taker favor if
-            // fully matching.
+            let resting_base_atoms: BaseAtoms = resting_order.get_num_base_atoms();
+
+            // Preserve quotient-first sizing whenever the quotient fits. Its
+            // full/partial decision is what makes impact replay exactly in the
+            // matcher when an earlier global order is skipped. At very low
+            // prices the uncapped quotient can exceed u64; in that one case,
+            // every finite u64-sized resting order is necessarily a full fill,
+            // so cap to the order before converting its quote cost.
+            let base_atoms_limit_result: Result<BaseAtoms, ProgramError> =
+                matched_price.checked_base_for_quote(remaining_quote_atoms, !is_bid);
+            let (matched_base_atoms, did_fully_match_resting_order): (BaseAtoms, bool) =
+                match base_atoms_limit_result {
+                    Ok(base_atoms_limit) => (
+                        resting_base_atoms.min(base_atoms_limit),
+                        base_atoms_limit >= resting_base_atoms,
+                    ),
+                    Err(_) => (resting_base_atoms, true),
+                };
             let matched_quote_atoms: QuoteAtoms = matched_price.checked_quote_for_base(
                 matched_base_atoms,
                 is_bid != did_fully_match_resting_order,
@@ -791,6 +944,7 @@ impl<Fixed: DerefOrBorrow<MarketFixed>, Dynamic: DerefOrBorrow<[u8]>>
                 global_trade_accounts_opts,
                 matched_base_atoms,
                 matched_quote_atoms,
+                &mut simulated_global_consumption,
             ) {
                 continue;
             }
@@ -919,6 +1073,7 @@ impl<Fixed: DerefOrBorrow<MarketFixed>, Dynamic: DerefOrBorrow<[u8]>>
         global_trade_accounts_opts: &[Option<GlobalTradeAccounts>; 2],
         matched_base_atoms: BaseAtoms,
         matched_quote_atoms: QuoteAtoms,
+        simulated_global_consumption: &mut SimulatedGlobalConsumption,
     ) -> bool {
         if resting_order.get_order_type() == OrderType::Global {
             // If global accounts are needed but not present, then this will
@@ -931,16 +1086,29 @@ impl<Fixed: DerefOrBorrow<MarketFixed>, Dynamic: DerefOrBorrow<[u8]>>
             } else {
                 &global_trade_accounts_opts[1]
             };
+            let trader_index: DataIndex = resting_order.get_trader_index();
+            let desired_global_atoms: GlobalAtoms = GlobalAtoms::new(if is_bid {
+                matched_base_atoms.as_u64()
+            } else {
+                matched_quote_atoms.as_u64()
+            });
+            let already_consumed: GlobalAtoms = simulated_global_consumption.get(trader_index);
+            let Ok(total_required) = already_consumed.checked_add(desired_global_atoms) else {
+                // A global deposit is a u64, so an overflowing cumulative
+                // requirement can never be backed.
+                return true;
+            };
             let has_enough_tokens: bool = can_back_order(
                 global_trade_accounts_opt,
-                self.get_trader_key_by_index(resting_order.get_trader_index()),
-                GlobalAtoms::new(if is_bid {
-                    matched_base_atoms.as_u64()
-                } else {
-                    matched_quote_atoms.as_u64()
-                }),
+                self.get_trader_key_by_index(trader_index),
+                total_required,
             );
             if !has_enough_tokens {
+                return true;
+            }
+            if !simulated_global_consumption.insert(trader_index, total_required) {
+                // Defensive only: positive backed balances belong to at most
+                // MAX_GLOBAL_SEATS traders, less than the table capacity.
                 return true;
             }
         }
@@ -1177,7 +1345,8 @@ impl<
 
             let matched_price: QuoteAtomsPerBaseAtom = maker_order.get_price();
             let maker_order_type: OrderType = maker_order.get_order_type();
-            let maker_price_reverse: Result<QuoteAtomsPerBaseAtom, _> = maker_order.reverse_price();
+            let maker_price_reverse: Option<QuoteAtomsPerBaseAtom> =
+                maker_order.reverse_price().ok();
 
             // on full fill: round in favor of the taker
             // on partial fill: round in favor of the maker
@@ -1405,7 +1574,11 @@ impl<
             // This is non-trivial because in order to prevent tons of orders
             // filling the books on partial fills, we coalesce on top of book.
             if is_maker_reverse {
-                if let Ok(price_reverse) = maker_price_reverse {
+                let safe_maker_price_reverse: Option<QuoteAtomsPerBaseAtom> = maker_price_reverse
+                    .filter(|reverse_price| {
+                        !reverse_order_would_cross(fixed, dynamic, *reverse_price, is_bid)
+                    });
+                if let Some(price_reverse) = safe_maker_price_reverse {
                     let num_base_atoms_reverse: BaseAtoms = if is_bid {
                         // Maker is now buying with the exact number of quote atoms.
                         // Do not round_up because there might not be enough atoms

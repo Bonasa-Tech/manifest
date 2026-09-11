@@ -179,8 +179,10 @@ pub fn validate_red_black_tree<V: Payload>(
         if node.parent != expected_parent {
             return Err("tree node has inconsistent parent");
         }
-        // Equal values are deliberately inserted on the left to preserve FIFO.
-        if lower_bound.is_some_and(|lower| node.value <= lower)
+        // Insertion deliberately starts equal values on the left, but balancing
+        // rotations can move them to either side.  Rotations preserve the
+        // nondecreasing in-order invariant, not a left-only duplicate rule.
+        if lower_bound.is_some_and(|lower| node.value < lower)
             || upper_bound.is_some_and(|upper| node.value > upper)
         {
             return Err("tree violates binary-search ordering");
@@ -1721,6 +1723,31 @@ pub(crate) mod test {
         get_mut_helper::<RBNode<TestOrderBid>>(&mut data, left_index).value =
             TestOrderBid::new(root_value.order_id + 1);
         assert!(validate_red_black_tree::<TestOrderBid>(&data, root, max).is_err());
+    }
+
+    #[test]
+    fn test_validate_accepts_equal_values_moved_right_by_rotation() {
+        let mut data = [0_u8; 4096];
+        let (root, max) = {
+            let mut tree: RedBlackTree<TestOrderBid> = RedBlackTree::new(&mut data, NIL, NIL);
+            for i in 0..3 {
+                tree.insert(TEST_BLOCK_WIDTH * i, TestOrderBid::new(1_000));
+            }
+            (tree.get_root_index(), tree.get_max_index())
+        };
+
+        let root_node: &RBNode<TestOrderBid> = get_helper(&data, root);
+        assert_ne!(root_node.right, NIL);
+        assert_eq!(
+            root_node
+                .value
+                .cmp(&get_helper::<RBNode<TestOrderBid>>(&data, root_node.right).value),
+            Ordering::Equal
+        );
+        assert_eq!(
+            validate_red_black_tree::<TestOrderBid>(&data, root, max),
+            Ok(())
+        );
     }
 
     #[test]

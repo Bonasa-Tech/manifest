@@ -1,7 +1,7 @@
 use anyhow::{Error, Result};
 use jupiter_amm_interface::{
-    AccountMap, Amm, AmmContext, KeyedAccount, Quote, QuoteParams, Side, Swap, SwapAndAccountMetas,
-    SwapParams,
+    AccountMap, Amm, AmmContext, ClockRef, KeyedAccount, Quote, QuoteParams, Side, Swap,
+    SwapAndAccountMetas, SwapParams,
 };
 
 use hypertree::{
@@ -21,7 +21,7 @@ use manifest::{
     },
 };
 use solana_program::{instruction::AccountMeta, pubkey::Pubkey, system_program};
-use std::{collections::HashSet, mem::size_of};
+use std::{collections::HashSet, mem::size_of, sync::atomic::Ordering};
 
 /// Lays out an account the way the runtime would, so this quoter can run the
 /// program's own matching code over bytes it fetched rather than a copy of
@@ -110,6 +110,7 @@ pub struct ManifestMarket {
     market: MarketValue,
     key: Pubkey,
     label: String,
+    clock_ref: ClockRef,
     base_global: Option<GlobalValue>,
     quote_global: Option<GlobalValue>,
     base_token_program: Pubkey,
@@ -128,6 +129,14 @@ impl ManifestMarket {
     }
     pub fn get_quote_global_address(&self) -> Pubkey {
         get_global_address(self.market.get_quote_mint()).0
+    }
+
+    fn current_slot(&self) -> u32 {
+        // Manifest stores expiration slots as u32 and narrows the runtime
+        // Clock slot the same way on chain. ClockRef is shared with the
+        // Jupiter host, so this observes slot advances between account
+        // updates and quotes.
+        self.clock_ref.slot.load(Ordering::Relaxed) as u32
     }
 }
 
@@ -158,11 +167,12 @@ impl Amm for ManifestMarket {
         ]
     }
 
-    fn from_keyed_account(keyed_account: &KeyedAccount, _amm_context: &AmmContext) -> Result<Self> {
+    fn from_keyed_account(keyed_account: &KeyedAccount, amm_context: &AmmContext) -> Result<Self> {
         Ok(ManifestMarket {
             market: validated_market_value(&keyed_account.account)?,
             key: keyed_account.key,
             label: "Manifest".into(),
+            clock_ref: amm_context.clock_ref.clone(),
             // Gets updated on the first iter
             base_token_program: spl_token::id(),
             quote_token_program: spl_token::id(),
@@ -303,15 +313,16 @@ impl Amm for ManifestMarket {
             quote_global_trade_accounts_opt,
         ];
 
+        let current_slot: u32 = self.current_slot();
         let out_amount: u64 = if quote_params.input_mint == self.get_base_mint() {
             let in_atoms: BaseAtoms = BaseAtoms::new(quote_params.amount);
             market
-                .impact_quote_atoms_with_slot(false, in_atoms, global_trade_accounts, u32::MAX)?
+                .impact_quote_atoms_with_slot(false, in_atoms, global_trade_accounts, current_slot)?
                 .as_u64()
         } else {
             let in_atoms: QuoteAtoms = QuoteAtoms::new(quote_params.amount);
             market
-                .impact_base_atoms_with_slot(true, in_atoms, global_trade_accounts, u32::MAX)?
+                .impact_base_atoms_with_slot(true, in_atoms, global_trade_accounts, current_slot)?
                 .as_u64()
         };
         Ok(Quote {
@@ -419,7 +430,7 @@ impl Amm for ManifestMarket {
 mod test {
     use super::*;
     use hypertree::{get_mut_helper, DataIndex};
-    use jupiter_amm_interface::{ClockRef, SwapMode};
+    use jupiter_amm_interface::SwapMode;
     use manifest::{
         quantities::{BaseAtoms, GlobalAtoms},
         state::{
@@ -431,7 +442,6 @@ mod test {
     use solana_account::Account;
     use solana_program::pubkey;
     use spl_token_2022::state::Mint;
-    use std::{cell::RefCell, rc::Rc};
 
     const BASE_MINT_KEY: Pubkey = pubkey!("So11111111111111111111111111111111111111112");
     const QUOTE_MINT_KEY: Pubkey = pubkey!("EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v");
@@ -496,7 +506,10 @@ mod test {
     }
 
     #[test]
-    fn test_jupiter_global_with_global_orders() {
+    fn test_jupiter_clock_and_cumulative_global_backing() {
+        const CURRENT_SLOT: u32 = 100;
+        const LAST_VALID_SLOT: u32 = CURRENT_SLOT + 1;
+
         mint_account_info!(base_mint_owned, base_mint, 9);
         mint_account_info!(quote_mint_owned, quote_mint, 6);
         let quote_global_key: Pubkey = get_global_address(&QUOTE_MINT_KEY).0;
@@ -506,13 +519,14 @@ mod test {
             // 2 because 1 deposit, 1 seat
             dynamic: vec![0; GLOBAL_BLOCK_SIZE * 2],
         };
-        // Claim a seat and deposit plenty of quote atoms.
+        // Claim a seat and deposit enough quote atoms to back exactly one of
+        // the two global bids below.
         quote_global_value.global_expand().expect("global expand");
         quote_global_value
             .add_trader(&TRADER_KEY)
             .expect("claim global seat");
         quote_global_value
-            .deposit_global(&TRADER_KEY, GlobalAtoms::new(1_000_000_000))
+            .deposit_global(&TRADER_KEY, GlobalAtoms::new(10))
             .expect("deposit quote global");
 
         // Clone so the consumed bytes are available for the global trade
@@ -535,6 +549,19 @@ mod test {
                 market_vault_opt: None,
                 token_program_opt: None,
                 system_program: None,
+                gas_payer_opt: Some(gas_payer_account_info.clone()),
+                gas_receiver_opt: None,
+                market: MARKET_KEY,
+                num_deferred_gas_refunds: std::cell::Cell::new(0),
+            });
+        let second_quote_global_trade_accounts: Option<GlobalTradeAccounts<'_>> =
+            Some(GlobalTradeAccounts {
+                mint_opt: None,
+                global: ManifestAccountInfo::new(&quote_global_account_info).unwrap(),
+                global_vault_opt: None,
+                market_vault_opt: None,
+                token_program_opt: None,
+                system_program: None,
                 gas_payer_opt: Some(gas_payer_account_info),
                 gas_receiver_opt: None,
                 market: MARKET_KEY,
@@ -550,8 +577,8 @@ mod test {
 
         let mut market_value: DynamicAccount<MarketFixed, Vec<u8>> = MarketValue {
             fixed: MarketFixed::new_empty(&base_mint, &quote_mint, &MARKET_KEY),
-            // 5 because 2 extra, 1 seat, 2 orders.
-            dynamic: vec![0; MARKET_BLOCK_SIZE * 5],
+            // 7 because 2 extra, 1 seat, and 4 orders.
+            dynamic: vec![0; MARKET_BLOCK_SIZE * 7],
         };
         // Claim a seat and deposit plenty on both sides.
         market_value.market_expand().unwrap();
@@ -564,14 +591,30 @@ mod test {
             .deposit(trader_index, 1_000_000_000_000, false)
             .unwrap();
 
-        // Bid for 10 SOL@ 150USDC/SOL global
+        // Two global bids are each independently backed by the same deposit,
+        // but only the first is backed after cumulative consumption.
         market_value.market_expand().unwrap();
         market_value
             .place_order(AddOrderToMarketArgs {
                 market: &MARKET_KEY,
                 trader_index,
-                num_base_atoms: BaseAtoms::new(10_000),
-                price: 0.150.try_into().unwrap(),
+                num_base_atoms: BaseAtoms::new(5),
+                price: 2.0.try_into().unwrap(),
+                is_bid: true,
+                last_valid_slot: NO_EXPIRATION_LAST_VALID_SLOT,
+                order_type: OrderType::Global,
+                global_trade_accounts_opts: &[None, second_quote_global_trade_accounts],
+                current_slot: None,
+            })
+            .unwrap();
+
+        market_value.market_expand().unwrap();
+        market_value
+            .place_order(AddOrderToMarketArgs {
+                market: &MARKET_KEY,
+                trader_index,
+                num_base_atoms: BaseAtoms::new(5),
+                price: 2.0.try_into().unwrap(),
                 is_bid: true,
                 last_valid_slot: NO_EXPIRATION_LAST_VALID_SLOT,
                 order_type: OrderType::Global,
@@ -580,19 +623,37 @@ mod test {
             })
             .unwrap();
 
-        // Ask 10 SOL @ 180USDC/SOL
+        // Local liquidity remains available after the second global bid is
+        // skipped for lacking cumulative backing.
         market_value.market_expand().unwrap();
         market_value
             .place_order(AddOrderToMarketArgs {
                 market: &MARKET_KEY,
                 trader_index,
-                num_base_atoms: BaseAtoms::new(10_000),
-                price: 0.180.try_into().unwrap(),
-                is_bid: false,
+                num_base_atoms: BaseAtoms::new(5),
+                price: 1.0.try_into().unwrap(),
+                is_bid: true,
                 last_valid_slot: NO_EXPIRATION_LAST_VALID_SLOT,
                 order_type: OrderType::Limit,
                 global_trade_accounts_opts: &[None, None],
                 current_slot: None,
+            })
+            .unwrap();
+
+        // Ask 10 base atoms at 3 quote atoms each. This finite-expiration
+        // order is still live at CURRENT_SLOT.
+        market_value.market_expand().unwrap();
+        market_value
+            .place_order(AddOrderToMarketArgs {
+                market: &MARKET_KEY,
+                trader_index,
+                num_base_atoms: BaseAtoms::new(10),
+                price: 3.0.try_into().unwrap(),
+                is_bid: false,
+                last_valid_slot: LAST_VALID_SLOT,
+                order_type: OrderType::Limit,
+                global_trade_accounts_opts: &[None, None],
+                current_slot: Some(CURRENT_SLOT),
             })
             .unwrap();
 
@@ -608,8 +669,12 @@ mod test {
             params: None,
         };
 
+        let clock_ref: ClockRef = ClockRef::default();
+        clock_ref
+            .slot
+            .store(u64::from(CURRENT_SLOT), Ordering::Relaxed);
         let amm_context: AmmContext = AmmContext {
-            clock_ref: ClockRef::default(),
+            clock_ref: clock_ref.clone(),
         };
 
         let mut manifest_market: ManifestMarket =
@@ -646,8 +711,7 @@ mod test {
             (reserves[0], reserves[1])
         };
 
-        // Ask for 1 SOL, Bid for 180 USDC
-        for (side, in_amount) in [(Side::Ask, 1_000_000_000), (Side::Bid, 180_000_000)] {
+        for (side, in_amount) in [(Side::Ask, 10), (Side::Bid, 30)] {
             let (input_mint, output_mint) = match side {
                 Side::Ask => (base_mint, quote_mint),
                 Side::Bid => (quote_mint, base_mint),
@@ -664,12 +728,30 @@ mod test {
 
             match side {
                 Side::Ask => {
-                    assert_eq!(quote.out_amount, 1_499);
+                    // Raw impact is 10 from the first global bid plus 5 from
+                    // the local bid. The second global bid is skipped, and the
+                    // adapter applies its usual one-atom penalty.
+                    assert_eq!(quote.out_amount, 14);
                 }
                 Side::Bid => {
-                    assert_eq!(quote.out_amount, 9_999);
+                    assert_eq!(quote.out_amount, 9);
                 }
             };
         }
+
+        // The adapter retains the shared clock reference, so advancing the
+        // host clock expires the same ask without requiring an account update.
+        clock_ref
+            .slot
+            .store(u64::from(LAST_VALID_SLOT + 1), Ordering::Relaxed);
+        let expired_quote: Quote = manifest_market
+            .quote(&QuoteParams {
+                amount: 30,
+                swap_mode: SwapMode::ExactIn,
+                input_mint: quote_mint,
+                output_mint: base_mint,
+            })
+            .unwrap();
+        assert_eq!(expired_quote.out_amount, 0);
     }
 }
