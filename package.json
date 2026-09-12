@@ -43,7 +43,7 @@
     "@metaplex-foundation/rustbin": "^0.3.1",
     "@metaplex-foundation/solita": "^0.12.2",
     "@solana/spl-token": "^0.4.8",
-    "@solana/web3.js": "^1.98.2",
+    "@solana/web3.js": "^1.99.0",
     "bn.js": "^5.2.1",
     "borsh": "^0.7.0",
     "bs58": "^6.0.0",
@@ -103,6 +103,7 @@
     "strip-ansi": "6.0.1",
     "string-width": "4.2.2",
     "wrap-ansi": "7.0.0",
-    "base-x": "^3.0.11"
+    "base-x": "^3.0.11",
+    "@solana/web3.js": "^1.99.0"
   }
 }
