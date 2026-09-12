@@ -6,8 +6,10 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import subprocess
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -22,6 +24,15 @@ OUTCOME_FIELDS = (
     "restingAskDelta",
     "newRestingOrders",
 )
+RPC_QUERY = re.compile(r"(https?://[^?\s]+)\?[^\s)]+")
+
+
+def redact_rpc_queries(path: Path) -> None:
+    """Keep retry diagnostics without persisting RPC credentials."""
+    contents = path.read_text()
+    redacted = RPC_QUERY.sub(r"\1?[REDACTED]", contents)
+    if redacted != contents:
+        path.write_text(redacted)
 
 
 def parse_args() -> argparse.Namespace:
@@ -146,8 +157,9 @@ def main() -> None:
                     "--output",
                     str(output),
                 ]
+                log_path.write_text("")
                 for attempt in range(1, args.attempts + 1):
-                    with log_path.open("w") as log:
+                    with log_path.open("a") as log:
                         log.write(f"attempt {attempt}/{args.attempts}\n")
                         completed = subprocess.run(
                             command,
@@ -156,6 +168,7 @@ def main() -> None:
                             stderr=subprocess.STDOUT,
                             check=False,
                         )
+                    redact_rpc_queries(log_path)
                     if completed.returncode == 0 and report_path.is_file():
                         report = json.loads(report_path.read_text())
                         row = {
@@ -165,6 +178,8 @@ def main() -> None:
                             "outcomeMismatches": outcome_mismatches(report),
                         }
                         break
+                    if attempt < args.attempts:
+                        time.sleep(min(2 ** (attempt - 1), 30))
                 if row["status"] == "failed":
                     row["log"] = str(log_path)
             with lock:
