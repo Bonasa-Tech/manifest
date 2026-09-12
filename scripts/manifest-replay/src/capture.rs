@@ -458,6 +458,16 @@ fn capture_ix<F: Fn(usize) -> (bool, bool)>(
         .as_array()
         .ok_or_else(|| anyhow!("compiled instruction has no accounts"))?;
     let discriminator = data.first().copied();
+    // Both swap discriminators are accepted by the shared loader. Routers can
+    // therefore use the separate-owner layout with the legacy discriminator.
+    // Inner-instruction records omit invoke_signed signer privileges, so infer
+    // that layout from the system program occupying account position three.
+    let has_separate_swap_owner = matches!(discriminator, Some(4 | 13))
+        && account_indices
+            .get(3)
+            .and_then(Value::as_u64)
+            .and_then(|index| keys.get(index as usize))
+            .is_some_and(|address| address == SYSTEM_PROGRAM);
     let accounts = account_indices
         .iter()
         .enumerate()
@@ -468,7 +478,7 @@ fn capture_ix<F: Fn(usize) -> (bool, bool)>(
             let (transaction_signer, is_writable) = privilege(index);
             // Inner-instruction records omit invoke_signed privileges. Restore
             // signer requirements from Manifest's instruction ABI.
-            let abi_signer = position == 0 || (discriminator == Some(13) && position == 1);
+            let abi_signer = position == 0 || (has_separate_swap_owner && position == 1);
             Ok(CapturedAccountMeta {
                 address: keys
                     .get(index)
@@ -712,6 +722,52 @@ mod tests {
         assert!(result[0].accounts[0].is_signer);
         assert!(result[0].accounts[1].is_writable);
         assert_eq!(result[1].inner_instruction_index, Some(0));
+    }
+
+    #[test]
+    fn restores_separate_owner_signer_for_legacy_swap_discriminator() {
+        let data = bs58::encode([4u8]).into_string();
+        let market = "SysvarC1ock11111111111111111111111111111111";
+        let tx = json!({
+            "transaction": {"message": {
+                "accountKeys": [
+                    "payer",
+                    "owner",
+                    market,
+                    SYSTEM_PROGRAM,
+                    MANIFEST_PROGRAM,
+                    "outer-program"
+                ],
+                "header": {
+                    "numRequiredSignatures": 1,
+                    "numReadonlySignedAccounts": 0,
+                    "numReadonlyUnsignedAccounts": 2
+                },
+                "instructions": [
+                    {"programIdIndex": 5, "accounts": [], "data": ""}
+                ]
+            }},
+            "meta": {
+                "loadedAddresses": {"writable": [], "readonly": []},
+                "innerInstructions": [{
+                    "index": 0,
+                    "instructions": [{
+                        "programIdIndex": 4,
+                        "accounts": [0, 1, 2, 3],
+                        "data": data
+                    }]
+                }]
+            }
+        });
+        let signature = SignatureInfo {
+            signature: "sig".to_owned(),
+            slot: 42,
+            err: None,
+        };
+        let result = extract_manifest_instructions(&tx, &signature, 0, market).unwrap();
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].name, "Swap");
+        assert!(result[0].accounts[1].is_signer);
     }
 
     #[test]
