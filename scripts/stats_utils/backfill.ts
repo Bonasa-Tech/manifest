@@ -79,7 +79,7 @@ export const parseTransactionForFills = async (
   const fills: FillLogResult[] = [];
 
   const tx = await connection.getTransaction(signature, {
-    maxSupportedTransactionVersion: 0,
+    maxSupportedTransactionVersion: 1,
   });
 
   if (!tx?.meta?.logMessages) {

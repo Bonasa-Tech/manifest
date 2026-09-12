@@ -61,6 +61,11 @@ export class FillFeed {
   private ended: boolean = false;
   private lastUpdateUnix: number = Date.now();
   private txHistoryErrorCount: number = 0;
+  /**
+   * Transactions skipped because this client could not decode their version.
+   * Surfaced so an operator can see silent fill loss instead of guessing.
+   */
+  private unsupportedVersionCount: number = 0;
 
   constructor(
     private connection: Connection,
@@ -219,12 +224,32 @@ export class FillFeed {
     let tx: VersionedTransactionResponse | null;
     try {
       tx = await this.connection.getTransaction(signature.signature, {
-        maxSupportedTransactionVersion: 0,
+        maxSupportedTransactionVersion: 1,
       });
     } catch (e: unknown) {
       // Skip transactions that are no longer available on this node (non-archival RPC)
       // Error code -32011 = "Transaction history is not available from this node"
       const error = e as { code?: number; message?: string };
+      // A transaction the client cannot decode must not take down the whole
+      // polling batch: parseLogs would unwind and resume from the newest
+      // signature, silently dropping every fill in the skipped window.
+      // Error code -32015 = "Transaction version ... is not supported by the
+      // requesting client", which also covers a future format this build
+      // predates.
+      if (
+        error.code === -32015 ||
+        error.message?.includes('is not supported by the requesting client')
+      ) {
+        this.unsupportedVersionCount++;
+        console.error(
+          `Unsupported transaction version, skipping (${this.unsupportedVersionCount} so far):`,
+          signature.signature,
+          'slot',
+          signature.slot,
+          error.message,
+        );
+        return;
+      }
       if (
         error.code === -32011 ||
         error.message?.includes('Transaction history is not available')

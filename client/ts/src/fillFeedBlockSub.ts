@@ -133,7 +133,7 @@ export class FillFeedBlockSub {
           // Fetch all blocks in parallel
           const blockPromises = slotsToProcess.map((slot) =>
             this.connection.getBlock(slot, {
-              maxSupportedTransactionVersion: 0,
+              maxSupportedTransactionVersion: 1,
               transactionDetails: 'full',
               commitment: 'finalized',
             }),

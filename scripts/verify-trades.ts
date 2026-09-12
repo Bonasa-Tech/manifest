@@ -29,7 +29,7 @@ const hasTokenTransfer = async (
 ): Promise<boolean> => {
   try {
     const tx = await connection.getTransaction(signature, {
-      maxSupportedTransactionVersion: 0,
+      maxSupportedTransactionVersion: 1,
     });
 
     if (!tx) {
@@ -265,7 +265,7 @@ const parseTransactionForFills = async (
 
     try {
       tx = await connection.getTransaction(signature, {
-        maxSupportedTransactionVersion: 0,
+        maxSupportedTransactionVersion: 1,
       });
     } catch (error) {
       fetchError = error;
@@ -284,7 +284,7 @@ const parseTransactionForFills = async (
       await sleep(10000);
       try {
         tx = await connection.getTransaction(signature, {
-          maxSupportedTransactionVersion: 0,
+          maxSupportedTransactionVersion: 1,
         });
       } catch (retryError) {
         // Log non-429 errors with full details
