@@ -1,7 +1,9 @@
 use pinocchio::ProgramResult;
 use std::mem::size_of;
 
-use crate::quantities::{BaseAtoms, PriceConversionError, QuoteAtomsPerBaseAtom};
+use crate::quantities::{
+    u64_slice_to_u128, BaseAtoms, PriceConversionError, QuoteAtomsPerBaseAtom,
+};
 #[cfg(feature = "certora")]
 use crate::quantities::{QuoteAtoms, WrapperU64};
 use borsh::{BorshDeserialize, BorshSerialize};
@@ -258,71 +260,21 @@ impl RestingOrder {
         self.num_base_atoms = self.num_base_atoms.checked_add(size)?;
         Ok(())
     }
-
-    /// Build one of the alternate keys used only by reverse-order coalescing.
-    ///
-    /// Reverse orders may coalesce when their encoded prices differ by one
-    /// unit. That tolerance must not be implemented in `PartialEq`: doing so
-    /// would make equality disagree with the tree ordering and could force the
-    /// tree to scan an entire same-price bucket. Instead, the caller performs
-    /// at most three normal lookups using the exact price and the two adjacent
-    /// prices. Each lookup still uses the total `(price, trader, order type)`
-    /// key and therefore remains logarithmic.
-    pub(crate) fn with_price_offset(mut self, offset: i8) -> Option<Self> {
-        self.price.inner = match offset {
-            -1 => {
-                if self.price.inner == [0, 0] {
-                    return None;
-                }
-                let (low, borrow) = self.price.inner[0].overflowing_sub(1);
-                [low, self.price.inner[1] - u64::from(borrow)]
-            }
-            0 => self.price.inner,
-            1 => {
-                let (low, carry) = self.price.inner[0].overflowing_add(1);
-                let high = self.price.inner[1].checked_add(u64::from(carry))?;
-                [low, high]
-            }
-            _ => return None,
-        };
-        Some(self)
-    }
-
-    pub(crate) fn has_same_coalescing_key(&self, other: &Self) -> bool {
-        self.price == other.price
-            && self.trader_index == other.trader_index
-            && self.order_type == other.order_type
-    }
 }
 
 impl Ord for RestingOrder {
     fn cmp(&self, other: &Self) -> Ordering {
-        // Bids and asks live in separate trees. Price remains the primary key,
-        // including the existing reversed price order for asks, so this does
-        // not change price priority.
+        // Preserve the deployed market ordering for this compatibility
+        // upgrade: sequence, trader, and order type do not affect priority at
+        // an equal price. A later upgrade can introduce a total key together
+        // with the state/index changes needed to keep broad coalescing.
         debug_assert!(self.get_is_bid() == other.get_is_bid());
 
-        let price_ordering = if self.get_is_bid() {
+        if self.get_is_bid() {
             (self.price).cmp(&other.price)
         } else {
             (other.price).cmp(&(self.price))
-        };
-
-        // The generic red-black-tree lookup has to search both subtrees when
-        // `cmp` returns Equal but `eq` returns false. Price alone is therefore
-        // not a sufficient key: many unrelated traders can place orders at the
-        // same price, and a reverse-order lookup for one trader could scan that
-        // attacker-controlled bucket until it exhausts the compute budget.
-        //
-        // Earlier sequence numbers have priority within a price level. The
-        // tree's maximum is the next order to match, so reverse the sequence
-        // comparison: a lower (earlier) sequence sorts higher. Trader and
-        // order type remain deterministic final tie breakers for defensive
-        // handling of malformed duplicate sequences.
-        price_ordering
-            .then_with(|| other.sequence_number.cmp(&self.sequence_number))
-            .then_with(|| self.trader_index.cmp(&other.trader_index))
-            .then_with(|| self.order_type.cmp(&other.order_type))
+        }
     }
 }
 
@@ -334,10 +286,18 @@ impl PartialOrd for RestingOrder {
 
 impl PartialEq for RestingOrder {
     fn eq(&self, other: &Self) -> bool {
-        self.sequence_number == other.sequence_number
-            && self.trader_index == other.trader_index
-            && self.order_type == other.order_type
-            && self.price == other.price
+        if self.trader_index != other.trader_index || self.order_type != other.order_type {
+            return false;
+        }
+        if self.order_type.is_reversible() {
+            // Allow off by 1 for reverse orders to enable coalescing. Otherwise there is a back and forth that fragments into many orders.
+            self.price == other.price
+                || u64_slice_to_u128(self.price.inner) + 1 == u64_slice_to_u128(other.price.inner)
+                || u64_slice_to_u128(self.price.inner) - 1 == u64_slice_to_u128(other.price.inner)
+        } else {
+            // Only used in equality check of lookups, so we can ignore size, seqnum, ...
+            self.price == other.price
+        }
     }
 }
 
@@ -424,7 +384,7 @@ mod test {
     }
 
     #[test]
-    fn same_price_orders_have_total_identity_keys() {
+    fn same_price_orders_use_deployed_price_ordering() {
         let first = RestingOrder::new(
             1,
             BaseAtoms::ONE,
@@ -458,39 +418,7 @@ mod test {
 
         for unrelated in [unrelated_same_price, unrelated_same_trader] {
             assert_ne!(first, unrelated);
-            assert_ne!(
-                first.cmp(&unrelated),
-                Ordering::Equal,
-                "same-price attacker orders must not enter the tree's equal-key subtree scan"
-            );
-        }
-    }
-
-    #[test]
-    fn same_price_orders_are_fifo_on_both_sides() {
-        for is_bid in [true, false] {
-            let is_bid: bool = is_bid;
-            let earlier: RestingOrder = RestingOrder::new(
-                9,
-                BaseAtoms::ONE,
-                1.0.try_into().unwrap(),
-                41,
-                NO_EXPIRATION_LAST_VALID_SLOT,
-                is_bid,
-                OrderType::Limit,
-            )
-            .unwrap();
-            let later: RestingOrder = RestingOrder::new(
-                1,
-                BaseAtoms::ONE,
-                earlier.get_price(),
-                42,
-                NO_EXPIRATION_LAST_VALID_SLOT,
-                is_bid,
-                OrderType::Limit,
-            )
-            .unwrap();
-            assert!(earlier > later, "earlier order must be tree maximum");
+            assert_eq!(first.cmp(&unrelated), Ordering::Equal);
         }
     }
 

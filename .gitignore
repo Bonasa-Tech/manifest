@@ -9,6 +9,8 @@ target
 dist
 **/nyc_output/*
 test-ledger
+manifest-replay-*
+replay-runs/
 idl/yarn.lock
 client/nyc_output
 **nyc_output
