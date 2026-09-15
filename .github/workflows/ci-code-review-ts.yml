@@ -113,6 +113,20 @@ jobs:
           echo "Generating keypair..."
           solana-keygen new -o "$HOME/.config/solana/id.json" --no-passphrase --silent
 
+      - name: Report SBF toolchain
+        # Every config in this repo asks for platform-tools v1.57 (Rust 1.95),
+        # but builds have been running rustc 1.84.1-dev, which is v1.51. The
+        # mismatch is silent: cargo-build-sbf falls back instead of failing, and
+        # it only surfaced when a dependency finally required a newer rustc.
+        # Print what is actually resolved so the toolchain in use is visible
+        # rather than inferred from an error message.
+        run: |
+          echo "requested PLATFORM_TOOLS: ${{ env.PLATFORM_TOOLS }}"
+          echo "workspace metadata:      $(grep -A1 'metadata.solana' Cargo.toml | tail -1)"
+          cargo build-sbf --version
+          echo "--- with explicit --tools-version ---"
+          cargo build-sbf --tools-version ${{ env.PLATFORM_TOOLS }} --version
+
       - name: Start validator
         run: |
           cargo build-sbf --tools-version ${{ env.PLATFORM_TOOLS }}

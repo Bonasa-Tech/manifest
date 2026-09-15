@@ -136,6 +136,18 @@ jobs:
           echo "Generating keypair..."
           solana-keygen new -o "$HOME/.config/solana/id.json" --no-passphrase --silent
 
+      - name: Report SBF toolchain
+        # Every config here asks for platform-tools v1.57 (Rust 1.95), but the
+        # builds have been running rustc 1.84.1-dev, which is v1.51. The
+        # fallback is silent, so print what is actually resolved. This matters
+        # for CU: the programs measured below are only comparable across runs
+        # if they were built by the same compiler.
+        run: |
+          echo "requested PLATFORM_TOOLS: ${{ env.PLATFORM_TOOLS }}"
+          cargo build-sbf --version
+          echo "--- with explicit --tools-version ---"
+          cargo build-sbf --tools-version ${{ env.PLATFORM_TOOLS }} --version
+
       - name: Run benchmark
         run: cd $GITHUB_WORKSPACE/manifest-private; ./benchmarking/benchmark.sh
 
