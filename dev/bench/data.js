@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1789476265339,
+  "lastUpdate": 1789487082962,
   "repoUrl": "https://github.com/Bonasa-Tech/manifest",
   "entries": {
     "CU Benchmark": [
@@ -13955,6 +13955,72 @@ window.BENCHMARK_DATA = {
           {
             "name": "MFX_99",
             "value": 2739,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "cyrbritt@gmail.com",
+            "name": "Britt Cyr",
+            "username": "brittcyr"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "6c16be68d1b0ffe37937614da7f4a663a2286b16",
+          "message": "Pin platform-tools v1.54 and make the version we ask for the one we get (#721)\n\n* Build on platform-tools v1.54 instead of falling back to v1.48\n\ncargo-build-sbf resolves --tools-version against the redirect target of\ngithub.com/anza-xyz/platform-tools/releases/latest and refuses anything\nnewer, falling back to its built-in version with only a warn!. GitHub\ndefines \"latest\" as most recently published, not highest version, and\nupstream published v1.42.1, v1.46.1 and v1.51.1 on 2026-09-15. That\npointer now resolves to v1.51.1, so our requested v1.57 is treated as\ninvalid and every build silently used the built-in v1.48 - rustc 1.84.1\nrather than the 1.95 v1.57 ships.\n\nNothing in this repo changed to cause that. It surfaced as a red build\non a TypeScript-only commit, because rustc 1.84.1 cannot compile\nsolana-address 2.6.0+, which requires 1.89.\n\nResolution short-circuits before any network call when the requested\nversion equals the built-in one, so pin to exactly that: agave 4.0.3\nships built-in v1.54 (Rust 1.89.0). Requesting v1.54 there is hermetic -\nno /releases/latest lookup, so upstream publishing order cannot move our\ncompiler again. Requesting v1.57 would reintroduce the network path even\non a newer CLI.\n\nSOLANA_VERSION moves 2.2.12/2.2.20 -> 4.0.3 and the install script\nchecksum is updated to match; verified by reproducing the existing\n2.2.20 checksum from the same URL before replacing it.\n\nThis changes the compiler that builds the programs (v1.48 -> v1.54,\nLLVM 19 -> 20, Rust 1.84 -> 1.89), so CU will move. The solana-address\npins are deliberately left in place so the benchmark attributes any\nchange to the toolchain alone; dropping them is a separate change.\n\n* Drop the solana-address pin now the toolchain is 1.89 (#722)\n\n#716 pinned solana-address to 2.5.0 because builds were running rustc\n1.84.1 and 2.6.0+ requires 1.89. That was a workaround for the toolchain\nsilently falling back to platform-tools v1.48, not a real\nincompatibility - and it cost CU, because the downgraded crate is in the\non-chain path:\n\n  MFX_50  1442 -> 1511  (+4.8%)\n  MFX_95  2432 -> 2573  (+5.8%)\n  MFX_99  2655 -> 2739  (+3.2%)\n\nwith the Phoenix control unchanged, so the delta was real rather than\nharness drift.\n\nThe parent commit pins the build to platform-tools v1.54 (Rust 1.89.0),\nwhich satisfies 2.7.0, so the workaround is no longer needed. This\nrestores Cargo.lock to exactly its pre-#716 state: two lines, version\nand checksum.\n\nStacked on ci/bump-platform-tools-v154 deliberately. Unpinning without\nthe toolchain fix would put the MSRV failure straight back.\n\n* Preinstall platform-tools v1.57 instead of downgrading to v1.54\n\nReplaces the earlier approach on this branch, which pinned the build to\nv1.54 to escape the fallback. That was wrong: v1.57 is not aspirational\nhere, it is what these builds actually used until 2026-09-15, and\nci-code-review-rust.yml records why it was chosen - v1.57 ships rustc\n1.95 and is worth about 4% of MFX compute per order over the default.\nPinning to v1.54 would have paid for a CI fix with on-chain compute.\n\nWhat broke is resolution, not the version. cargo-build-sbf validates\n--tools-version against the redirect target of\nplatform-tools/releases/latest and refuses anything newer, falling back\nto its built-in v1.48 with only a warn!. GitHub's \"latest\" is the most\nrecently published release, not the highest version, so when upstream\npublished v1.51.1 that pointer went backwards and every build silently\ndropped from rustc 1.95 to 1.84.1. Nothing in this repo changed; it\nsurfaced on a TypeScript-only commit because 1.84.1 cannot compile\nsolana-address 2.6.0+.\n\nResolution checks ~/.cache/solana for an installed toolchain before it\nconsults that pointer, so install v1.57 there first and the requested\nversion is the one used, whatever upstream publishes next. The tarball\nis verified against the digest GitHub publishes for the release asset.\n\nSOLANA_VERSION, PLATFORM_TOOLS and workspace.metadata.solana.tools-version\nall return to their previous values, so the only change to how the\nprograms are compiled is that they are compiled with what was asked for.\n\nAdded to every job that runs cargo build-sbf: both jobs in\nci-code-review-rust, ci-code-review-ts, and the benchmark, whose three\nbuilds share the same cache directory. ci-verifiable-build builds inside\na container and resolves separately; it is untouched here.\n\n* Cover the verifiable build and harden the preinstall\n\nThe verifiable build is exposed to the same fallback, and it is the\nworst place for it: cargo-build-sbf runs inside the base image, so a\nsilent downgrade there changes the emitted bytes and publishes a\n\"verifiable\" artifact built by a compiler this workflow did not pin.\n\nThe host preinstall cannot reach it. solana-verify mounts only the\nsource directory - `format!(\"{mount_path}:{workdir}\")` in v0.5.1 - and\nnever ~/.cache/solana, so the container resolves against its own cache\nand its own built-in version.\n\nWhat does hold there is the same short-circuit: resolution returns early\nwhen the requested version equals the built-in one. So assert that\nbefore building, by asking the pinned image what it ships, and fail if\nit does not match. A failed build is recoverable; a release tag carrying\na hash built by the wrong compiler is not. It has not bitten yet - the\nlast run was program-v3.0.19 on 2026-07-21, before upstream moved the\npointer - so this closes it ahead of the next tag rather than after.\n\nAlso verify the extracted toolchain actually runs, in all four\npreinstall steps. An empty or malformed extract still satisfies the\ncache lookup, which would send the build back to the fallback without\nsaying so - the same silence this change exists to remove.\n\nAudited per job rather than per file, since jobs get their own runners:\nbenchmark, ci-code-review-rust's test and coverage, ci-code-review-ts's\ntest, and ci-verifiable-build's build are each covered.\n\n* Seed the pinned toolchain into the verifiable-build image\n\nThe base image cannot produce a v1.57 build any more. It installs agave\n2.2.20 (built-in platform-tools v1.48) and warms its cache by running\ncargo build-sbf with no --tools-version, so v1.48 is the only version\npresent. Asking it for v1.57 misses both short-circuits - requested is\nnot the built-in, and no cached version is >= requested - and falls\nthrough to platform-tools/releases/latest, which now redirects to\nv1.51.1 and sends the build back to v1.48. It worked in July only\nbecause that pointer happened to name v1.57 then.\n\nThe host preinstall used by the other workflows cannot fix this:\nsolana-verify mounts only the source directory, never ~/.cache/solana.\n\nSo seed the toolchain into the image. The upstream base stays pinned by\ndigest and nothing else about it changes; the derived layer adds the\nrelease this workflow already asks for, verified against the sha256\nGitHub publishes for the asset. That makes the cache short-circuit hit,\nso the requested version is the version used regardless of what upstream\npublishes next.\n\nThe gate now asserts a cached toolchain rather than a matching built-in.\nThat is the condition that actually makes resolution hermetic; the\nprevious check would have failed forever against a base shipping v1.48.\n\nWorth being explicit about what this does not fix: a third party running\nsolana-verify against the public base image still resolves through\nreleases/latest and can get different bytes. Reproducibility here has\nbeen time-dependent, not just now - the same tag and source would have\nproduced v1.57 bytes in July and v1.48 bytes today. Publishing this\nimage, or verifying against it, is what would close that.\n\n* Document how to reproduce the release hashes with stock solana-verify\n\nThe program bytes follow the platform-tools release, not the image that\nhosts it, so any image with that toolchain cached reproduces the hashes\nwith unmodified solana-verify commands. Say so in the release body, name\nthe toolchain and its sha256, and give the one docker build needed until\na published image carries it.\n\nAlso mark the derived image as temporary. cargo-build-sbf 4.3.0 already\ndefaults to v1.57; the images just have not been rebuilt on it - Docker\nHub's newest tags, 4.1.2 and master, still ship 4.1.0 (default v1.54).\nWhen one appears, pointing SOLANA_VERIFIABLE_BUILD_IMAGE at it and\ndeleting the Dockerfile makes verification fully stock, with identical\nhashes.\n\n* Pin platform-tools v1.54 and make the version we ask for the one we get\n\ncargo-build-sbf validates --tools-version against the redirect target of\nplatform-tools/releases/latest and refuses anything newer, falling back\nto its built-in version with only a warn!. GitHub reports \"latest\" as the\nmost recently published release rather than the highest, so when upstream\npublished v1.51.1 on 2026-09-15 that pointer went backwards and every\nbuild silently dropped to the built-in v1.48 - rustc 1.84.1. Nothing here\nchanged; it surfaced on a TypeScript-only commit because 1.84.1 cannot\ncompile solana-address 2.6.0+.\n\nPin v1.54 rather than the v1.57 this repo asked for before. Measured on\nthe replay benchmark, v1.54 is not slower - MFX_50 1435 vs 1442, MFX_95\nidentical, MFX_99 2605 vs 2655, with the Phoenix control byte-identical\nacross runs - and it is the newest version reachable from a published\nverifiable-build image, so releases stay reproducible with unmodified\nsolana-verify. v1.57 would have required building an image locally for no\nmeasured gain.\n\nResolution is now deterministic in both places. The workflows install\nv1.54 into ~/.cache/solana before building, which short-circuits\nresolution ahead of the releases/latest lookup. The verifiable build\ncannot use that cache - solana-verify mounts only the source directory -\nso it pins the 4.1.2 image, whose built-in is v1.54, making requested and\nbuilt-in equal; that path is asserted before any artifact is produced,\nbecause a release tag carrying a hash from the wrong compiler is worse\nthan a failed build.\n\nEvery job that builds SBF is covered: both jobs in ci-code-review-rust,\nci-code-review-ts, ci-benchmark, and ci-verifiable-build.\n\nAlso drops the solana-address 2.5.0 pin from #716. That was a workaround\nfor the fallback, and it cost compute - MFX_50 1442 vs 1511, MFX_95 2432\nvs 2573, MFX_99 2655 vs 2739. v1.54 ships rustc 1.89, which 2.7.0\nrequires, so the lock returns to its pre-#716 state.",
+          "timestamp": "2026-09-15T11:32:34-04:00",
+          "tree_id": "c78d2d74a85d48b602d927286f1ca3c3d6a2d06e",
+          "url": "https://github.com/Bonasa-Tech/manifest/commit/6c16be68d1b0ffe37937614da7f4a663a2286b16"
+        },
+        "date": 1789487079817,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "PHX_50",
+            "value": 6897,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "PHX_95",
+            "value": 13208,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "PHX_99",
+            "value": 13902,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_50",
+            "value": 1435,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_95",
+            "value": 2432,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_99",
+            "value": 2605,
             "range": "",
             "unit": "CU",
             "extra": ""
