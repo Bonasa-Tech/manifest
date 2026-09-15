@@ -39,6 +39,12 @@ declare_id!("UMnFStVeG1ecZFc2gc5K3vFy3sMpotq8C91mXBQDGwh");
 pinocchio::program_entrypoint!(process_instruction, {
     manifest::state::constants::MAX_ACCOUNTS
 });
+// program_entrypoint! does not install a global allocator. Without one the
+// toolchain links the deprecated Solana allocator, which calls sol_alloc_free_,
+// a syscall the runtime does not register for SBPF v2. The resulting binary is
+// rejected at deploy time.
+#[cfg(not(feature = "no-entrypoint"))]
+pinocchio::default_allocator!();
 
 pub fn process_instruction(
     program_id_raw: &pinocchio::address::Address,
