@@ -250,11 +250,19 @@ const run = async () => {
   // no way to reach the rest, so the endpoint silently stopped returning
   // complete data. Restore the depth the endpoint had before that change.
   //
-  // limit still has a ceiling because it bounds the size of a single response;
-  // an unbounded one lets a request try to materialize the whole table. offset
-  // only costs scan depth, which is bounded by the table itself, so it is
-  // capped at the safe-integer range rather than an arbitrary row count.
-  const MAX_COMPLETE_FILLS_LIMIT = 1000;
+  // Neither is capped, matching the behaviour before #663. A 1000 ceiling was
+  // tried first and was still too low for real callers: manifest-app's
+  // destinyCalculations requests limit=10000, and OrderFlowAnalysis passes the
+  // number of fills already loaded, which grows without bound. Both were 400ing
+  // on every call.
+  //
+  // The tradeoff is explicit: limit bounds the size of one response, so an
+  // unbounded value lets a single request ask the server to materialize a very
+  // large result. At the measured 665 bytes/fill a 10k page is ~6.4MB, which is
+  // fine, but nothing stops a caller asking for far more. The durable fix is
+  // cursor pagination over (slot, id) plus clients that page instead of asking
+  // for everything at once.
+  const MAX_COMPLETE_FILLS_LIMIT = Number.MAX_SAFE_INTEGER;
   const MAX_COMPLETE_FILLS_OFFSET = Number.MAX_SAFE_INTEGER;
 
   const completeFillsHandler: RequestHandler = async (req, res) => {
