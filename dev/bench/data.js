@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1789065015399,
+  "lastUpdate": 1789474756407,
   "repoUrl": "https://github.com/Bonasa-Tech/manifest",
   "entries": {
     "CU Benchmark": [
@@ -13823,6 +13823,72 @@ window.BENCHMARK_DATA = {
           {
             "name": "MFX_99",
             "value": 2655,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "cyrbritt@gmail.com",
+            "name": "Britt Cyr",
+            "username": "brittcyr"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "31a5fa211ea3503abf731299a88ee4eab7575421",
+          "message": "Pin solana-address to 2.5.0 to match the SBF toolchain MSRV (#716)\n\ncargo build-sbf runs the rustc bundled with platform tools v1.57, which\nis 1.84.1-dev. solana-address 2.6.0 raised its rust-version to 1.89.0,\nso once the build cache missed and the graph was resolved fresh, the\nStart validator step failed:\n\n  error: rustc 1.84.1-dev is not supported by the following package:\n    solana-address@2.7.0 requires rustc 1.89.0\n\nNothing in this repo changed to cause it - solana-address is a\ntransitive dependency and the failure surfaced on a TypeScript-only\ncommit. 2.5.0 is the last release with rust-version 1.81.0, and cargo\nreported solana-address as the only incompatible package, so pinning it\nis enough. Only that entry moves; the other 355 dependencies are\nunchanged.\n\nThe durable fix is raising PLATFORM_TOOLS to a release whose bundled\nrustc is >= 1.89 and dropping this pin, but that is a toolchain upgrade\nworth doing deliberately rather than under a red build.",
+          "timestamp": "2026-09-15T08:10:54-04:00",
+          "tree_id": "b440103e1bcb17ce939296a7d70bb65c6f96b3ee",
+          "url": "https://github.com/Bonasa-Tech/manifest/commit/31a5fa211ea3503abf731299a88ee4eab7575421"
+        },
+        "date": 1789474754113,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "PHX_50",
+            "value": 6897,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "PHX_95",
+            "value": 13208,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "PHX_99",
+            "value": 13902,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_50",
+            "value": 1511,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_95",
+            "value": 2573,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_99",
+            "value": 2739,
             "range": "",
             "unit": "CU",
             "extra": ""
