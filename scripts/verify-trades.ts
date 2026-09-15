@@ -424,7 +424,9 @@ const fetchDatabaseFills = async (
 ): Promise<FillLogResult[]> => {
   const fills: FillLogResult[] = [];
   let offset = 0;
-  const limit = 1000;
+  // Must not exceed the server's completeFills cap (500) or every request is
+  // rejected with a 400 before any fills come back.
+  const limit = 500;
 
   console.log(logPrefix, `Fetching fills from database...`);
 
@@ -604,7 +606,7 @@ const fetchOnchainFills = async (
     try {
       const signatures = await connection.getSignaturesForAddress(baseVault, {
         before: lastSignature,
-        limit: 1000,
+        limit: 500,
       });
 
       if (signatures.length === 0) {

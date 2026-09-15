@@ -2250,7 +2250,10 @@ export class ManifestStatsServer {
       return {
         fills,
         total: 0,
-        hasMore: true,
+        // A short page means the index scan ran out of rows, so this is the
+        // last one. Previously hardcoded true, which told every paginating
+        // client to request one more page than exists.
+        hasMore: fills.length === limit,
         effectiveSlotRange: {
           fromSlot: fromSlot ?? null,
           toSlot: effectiveToSlot ?? null,
