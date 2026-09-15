@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1789488867865,
+  "lastUpdate": 1789492638328,
   "repoUrl": "https://github.com/Bonasa-Tech/manifest",
   "entries": {
     "CU Benchmark": [
@@ -14047,6 +14047,72 @@ window.BENCHMARK_DATA = {
           "url": "https://github.com/Bonasa-Tech/manifest/commit/95fe91430fb3c97d583c7dadc77afe08f005da3e"
         },
         "date": 1789488864550,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "PHX_50",
+            "value": 6897,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "PHX_95",
+            "value": 13208,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "PHX_99",
+            "value": 13902,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_50",
+            "value": 1391,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_95",
+            "value": 2380,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_99",
+            "value": 2489,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "cyrbritt@gmail.com",
+            "name": "Britt Cyr",
+            "username": "brittcyr"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "db2ede800553c350e2f04fe3f68e7b8748fa0ecb",
+          "message": "Update the wrapper fee (#725)\n\nNow 10_000 lamports on the wrapper's own constant instead of manifest's\nGAS_DEPOSIT_LAMPORTS. Core gas deposits are unchanged.",
+          "timestamp": "2026-09-15T13:10:44-04:00",
+          "tree_id": "728010516f8a6ef5ee21bf68c1f5db78afde5374",
+          "url": "https://github.com/Bonasa-Tech/manifest/commit/db2ede800553c350e2f04fe3f68e7b8748fa0ecb"
+        },
+        "date": 1789492635073,
         "tool": "customSmallerIsBetter",
         "benches": [
           {
