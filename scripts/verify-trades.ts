@@ -16,8 +16,10 @@ import {
   resolveTakerFromSigners,
 } from '@/../../client/ts/src/aggregators';
 import { TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID } from '@solana/spl-token';
+import { createVerificationFetch } from './stats_utils/verificationFetch';
 
 const MARKET_VERIFY_CONCURRENCY = 10;
+const fetchVerificationPage = createVerificationFetch();
 
 // Helper function to sleep
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -464,45 +466,10 @@ const fetchDatabaseFills = async (
         params.set('fromSlot', fromSlot.toString());
       }
 
-      // The stats server can return transient 503s when the database is
-      // temporarily unavailable, and slow queries can stall long enough to
-      // trip undici's body timeout (thrown as "TypeError: terminated"). Retry
-      // both with backoff before giving up so a brief blip doesn't abort the
-      // whole market. The body read is inside the retried block because body
-      // timeouts fire while streaming the response, after fetch() resolves.
-      const maxFetchAttempts = 5;
-      let data: { fills?: FillLogResult[]; hasMore?: boolean } | undefined;
-      for (let attempt = 1; attempt <= maxFetchAttempts; attempt++) {
-        try {
-          const response: Response = await fetch(
-            `${statsServerUrl}/completeFills?${params}`,
-          );
-          if (!response.ok) {
-            if (response.status === 503 && attempt < maxFetchAttempts) {
-              throw new Error(`completeFills returned 503`);
-            }
-            throw new Error(
-              `Failed to fetch fills: ${response.status} ${response.statusText}`,
-            );
-          }
-          data = await response.json();
-          break;
-        } catch (error) {
-          if (attempt >= maxFetchAttempts) {
-            throw error;
-          }
-          const delayMs = 1000 * 2 ** (attempt - 1);
-          const errorMsg: string =
-            error instanceof Error ? error.message : String(error);
-          console.warn(
-            logPrefix,
-            `completeFills fetch failed (${errorMsg}), retrying in ${delayMs / 1000}s (attempt ${attempt}/${maxFetchAttempts})...`,
-          );
-          await sleep(delayMs);
-        }
-      }
-
-      const { fills: batchFills, hasMore } = data!;
+      const { fills: batchFills, hasMore } = await fetchVerificationPage<{
+        fills?: FillLogResult[];
+        hasMore?: boolean;
+      }>(`${statsServerUrl}/completeFills?${params}`, logPrefix);
 
       if (!batchFills || batchFills.length === 0) {
         break;
