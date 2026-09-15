@@ -20,7 +20,7 @@ env:
   # toolchain moves up with them.
   RUST_TOOLCHAIN: '1.89.0'
   # Must match workspace.metadata.solana.tools-version.
-  PLATFORM_TOOLS: 'v1.57'
+  PLATFORM_TOOLS: 'v1.54'
 
 jobs:
   format:
@@ -136,7 +136,7 @@ jobs:
           curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
             --output "$TARBALL" \
             "https://github.com/anza-xyz/platform-tools/releases/download/${{ env.PLATFORM_TOOLS }}/$TARBALL"
-          echo 'b0f7af104adf726fff2a6a09ea2eb2f2d2965c92295f4d7388c08d140e0c2b00  '"$TARBALL" \
+          echo 'fcc41631c7f77561bf5412218bf297501dccf0305ea280f338f0ace2aab9f31e  '"$TARBALL" \
             | sha256sum --check --strict
           mkdir -p "$DEST"
           tar -xjf "$TARBALL" -C "$DEST"

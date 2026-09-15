@@ -14,11 +14,11 @@ env:
   SOLANA_TOOLCHAIN: '2.2.20'
   SVM_ARCH: 'v2'
   # Must match workspace.metadata.solana.tools-version.
-  PLATFORM_TOOLS: 'v1.57'
+  PLATFORM_TOOLS: 'v1.54'
   SOLANA_VERIFIABLE_BUILD_IMAGE: 'solanafoundation/solana-verifiable-build@sha256:a1c0d5899ee0ffc81412428760662d9ba4643c2003ec3a92ab6f75a6e2e52a1b'
   # sha256 of platform-tools-linux-x86_64.tar.bz2 for the release above, as
   # published by GitHub for that asset.
-  PLATFORM_TOOLS_SHA256: 'b0f7af104adf726fff2a6a09ea2eb2f2d2965c92295f4d7388c08d140e0c2b00'
+  PLATFORM_TOOLS_SHA256: 'fcc41631c7f77561bf5412218bf297501dccf0305ea280f338f0ace2aab9f31e'
   # Built in-job from the digest above; never pushed.
   VERIFIABLE_BUILD_IMAGE: 'manifest-verifiable-build:local'
 
