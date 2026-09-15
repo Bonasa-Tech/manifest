@@ -2059,12 +2059,14 @@ export class ManifestStatsServer {
       offset = 0,
       toSlot,
     } = options;
-    // Bound pagination before building the query to prevent oversized scans.
-    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 500) {
-      throw new RangeError('limit must be an integer between 1 and 500');
+    // Bound the response size, but not how deep a caller may page. Capping
+    // offset put a hard ceiling on how much of a busy market was reachable at
+    // all; see the note on MAX_COMPLETE_FILLS_OFFSET in stats-server.ts.
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 1000) {
+      throw new RangeError('limit must be an integer between 1 and 1000');
     }
-    if (!Number.isSafeInteger(offset) || offset < 0 || offset > 10_000) {
-      throw new RangeError('offset must be an integer between 0 and 10000');
+    if (!Number.isSafeInteger(offset) || offset < 0) {
+      throw new RangeError('offset must be a non-negative safe integer');
     }
 
     for (const [name, value] of [

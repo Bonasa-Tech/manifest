@@ -244,6 +244,19 @@ const run = async () => {
   const recentFillsHandler: RequestHandler = (req, res) => {
     res.send(statsServer.getRecentFills(req.query.market as string));
   };
+  // Pagination bounds for /completeFills. #663 capped these at 500/10_000,
+  // which put a hard ceiling of limit+offset rows on any filter: callers
+  // paginating a busy market hit offset 10_000 with a still-full page and had
+  // no way to reach the rest, so the endpoint silently stopped returning
+  // complete data. Restore the depth the endpoint had before that change.
+  //
+  // limit still has a ceiling because it bounds the size of a single response;
+  // an unbounded one lets a request try to materialize the whole table. offset
+  // only costs scan depth, which is bounded by the table itself, so it is
+  // capped at the safe-integer range rather than an arbitrary row count.
+  const MAX_COMPLETE_FILLS_LIMIT = 1000;
+  const MAX_COMPLETE_FILLS_OFFSET = Number.MAX_SAFE_INTEGER;
+
   const completeFillsHandler: RequestHandler = async (req, res) => {
     try {
       const options: CompleteFillsQueryOptions = {
@@ -252,12 +265,18 @@ const run = async () => {
         maker: req.query.maker as string,
         wallet: req.query.wallet as string,
         signature: req.query.signature as string,
-        limit: parseBoundedQueryInteger(req.query.limit, 100, 1, 500, 'limit'),
+        limit: parseBoundedQueryInteger(
+          req.query.limit,
+          100,
+          1,
+          MAX_COMPLETE_FILLS_LIMIT,
+          'limit',
+        ),
         offset: parseBoundedQueryInteger(
           req.query.offset,
           0,
           0,
-          10_000,
+          MAX_COMPLETE_FILLS_OFFSET,
           'offset',
         ),
         fromSlot:
