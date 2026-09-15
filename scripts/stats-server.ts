@@ -285,11 +285,15 @@ const run = async () => {
       const result = await statsServer.getCompleteFillsFromDatabase(options);
       res.send(result);
     } catch (error) {
-      console.error('Error in completeFills handler:', error);
+      // A RangeError here is a malformed client query, not a server fault.
+      // Log it as a single line instead of a stack trace: these arrive in
+      // tight retry loops and previously crowded real errors out of the log.
       if (error instanceof RangeError) {
+        console.warn('Rejected completeFills query:', error.message);
         res.status(400).send({ error: error.message });
         return;
       }
+      console.error('Error in completeFills handler:', error);
       res.status(500).send({ error: 'Internal server error' });
     }
   };
@@ -364,6 +368,12 @@ const run = async () => {
   };
 
   const app = express();
+  // Fly terminates TLS and proxies to us, so the socket peer is always the
+  // proxy. Without this, req.ip is that single proxy address for every caller
+  // and the per-client admission limiter below collapses into one global
+  // bucket - one noisy client then 429s everyone else off /completeFills,
+  // /alts and /events.
+  app.set('trust proxy', true);
   const expensiveQueryAdmission = createExpensiveQueryAdmission({
     maxConcurrent: 8,
     maxRequestsPerMinute: 30,
