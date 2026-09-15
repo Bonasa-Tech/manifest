@@ -155,6 +155,32 @@ jobs:
             wrapper sha256 checksum: ${{ env.WRAPPER_CHECKSUM }}
             ui_wrapper sha256 checksum: ${{ env.UI_WRAPPER_CHECKSUM }}
             github commit: ${{ github.sha }}
+
+            built with platform-tools ${{ env.PLATFORM_TOOLS }}
+            platform-tools sha256: ${{ env.PLATFORM_TOOLS_SHA256 }}
+
+            Reproducing these hashes: the output depends on the platform-tools
+            release above, not on which image hosts it. Any image with that
+            toolchain extracted under
+            /root/.cache/solana/${{ env.PLATFORM_TOOLS }}/platform-tools
+            reproduces them with stock solana-verify. No published image caches
+            it yet - the images still ship cargo-build-sbf 4.1.0, whose default
+            is v1.54 - so build one from this repo first:
+
+              docker build \
+                --build-arg BASE_IMAGE=${{ env.SOLANA_VERIFIABLE_BUILD_IMAGE }} \
+                --build-arg PLATFORM_TOOLS=${{ env.PLATFORM_TOOLS }} \
+                --build-arg PLATFORM_TOOLS_SHA256=${{ env.PLATFORM_TOOLS_SHA256 }} \
+                -f .github/docker/verifiable-build.Dockerfile -t verify-manifest:local \
+                .github/docker
+
+              solana-verify build --arch ${{ env.SVM_ARCH }} \
+                --cargo-build-sbf-args="--tools-version ${{ env.PLATFORM_TOOLS }}" \
+                --base-image verify-manifest:local --library-name manifest
+
+            Once an image ships cargo-build-sbf 4.3.0 or newer (its default is
+            ${{ env.PLATFORM_TOOLS }}), pass that image instead and drop the
+            build step - the hashes are unchanged either way.
           files: |
             ./target/deploy/${{ env.MANIFEST_NAME }}.so
             ./${{ env.MANIFEST_NAME }}-${{ github.ref_name }}-sbom.json

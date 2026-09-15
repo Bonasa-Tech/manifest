@@ -1,6 +1,15 @@
 # Upstream's verifiable-build image with one thing added: the platform-tools
 # release this repository pins.
 #
+# TEMPORARY. cargo-build-sbf 4.3.0 (2026-09-03) already defaults to v1.57, so an
+# image built on it needs nothing from this file: requested would equal built-in
+# and resolution short-circuits. No such image is published yet - Docker Hub's
+# newest tags, 4.1.2 and master, both still ship cargo-build-sbf 4.1.0, whose
+# default is v1.54. When one appears, point SOLANA_VERIFIABLE_BUILD_IMAGE at it,
+# delete this file and the docker build step, and verification becomes stock
+# with no local image at all. The program hashes do not change: they follow the
+# toolchain, which is the same either way.
+#
 # The image installs agave 2.2.20 (built-in platform-tools v1.48) and warms its
 # toolchain cache by running `cargo build-sbf` with no --tools-version, so v1.48
 # is the only version present. Asking that container for v1.57 therefore misses
