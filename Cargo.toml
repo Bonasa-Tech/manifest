@@ -8,6 +8,7 @@ members = [
   "programs/manifest",
   "programs/wrapper",
   "programs/ui-wrapper",
+  "scripts/manifest-replay",
 ]
 
 # Keep every SBF entry point on the compiler used for CU measurements,

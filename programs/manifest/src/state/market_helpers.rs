@@ -591,13 +591,10 @@ fn place_reverse_order(
     // num_base_atoms_reverse * price_reverse.
     let mut reverse_quote_atoms_debited: QuoteAtoms = QuoteAtoms::ZERO;
     {
-        let top_index: DataIndex = {
-            let other_tree: Bookside = if is_bid {
-                Bookside::new(dynamic, fixed.bids_root_index, fixed.bids_best_index)
-            } else {
-                Bookside::new(dynamic, fixed.asks_root_index, fixed.asks_best_index)
-            };
-            other_tree.get_max_index()
+        let other_tree: Bookside = if is_bid {
+            Bookside::new(dynamic, fixed.bids_root_index, fixed.bids_best_index)
+        } else {
+            Bookside::new(dynamic, fixed.asks_root_index, fixed.asks_best_index)
         };
         let lookup_resting_order: RestingOrder = RestingOrder::new(
             maker_trader_index,
@@ -609,22 +606,7 @@ fn place_reverse_order(
             maker_order_type,
         )?;
 
-        // Coalesce only at top of book so reverse-order reuse stays bounded
-        // while preserving FIFO priority for distinct same-price orders.
-        let lookup_index: DataIndex = if top_index != NIL {
-            let top_order: &RestingOrder = get_helper_order(dynamic, top_index).get_value();
-            if [0, -1, 1]
-                .into_iter()
-                .filter_map(|offset: i8| lookup_resting_order.with_price_offset(offset))
-                .any(|candidate: RestingOrder| top_order.has_same_coalescing_key(&candidate))
-            {
-                top_index
-            } else {
-                NIL
-            }
-        } else {
-            NIL
-        };
+        let lookup_index: DataIndex = other_tree.lookup_index(&lookup_resting_order);
         if lookup_index != NIL {
             #[cfg(feature = "certora")]
             remove_from_orderbook_balance(fixed, dynamic, lookup_index);
