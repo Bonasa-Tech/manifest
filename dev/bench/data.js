@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1789487082962,
+  "lastUpdate": 1789488867865,
   "repoUrl": "https://github.com/Bonasa-Tech/manifest",
   "entries": {
     "CU Benchmark": [
@@ -14021,6 +14021,72 @@ window.BENCHMARK_DATA = {
           {
             "name": "MFX_99",
             "value": 2605,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "cyrbritt@gmail.com",
+            "name": "Britt Cyr",
+            "username": "brittcyr"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "95fe91430fb3c97d583c7dadc77afe08f005da3e",
+          "message": "Upgrade replay (#723)\n\n* Add mainnet upgrade replay harness\n\nRestore deployed reverse-order coalescing and equal-price ordering for the cache-only compatibility upgrade.\n\n* Back off and redact RPC retries in replay batches\n\n* Handle legacy swap separate-owner replays\n\n* Format replay tool with nightly rustfmt",
+          "timestamp": "2026-09-15T12:07:54-04:00",
+          "tree_id": "298be16c8c34853f0f4e5fe9ffe510028369dcd0",
+          "url": "https://github.com/Bonasa-Tech/manifest/commit/95fe91430fb3c97d583c7dadc77afe08f005da3e"
+        },
+        "date": 1789488864550,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "PHX_50",
+            "value": 6897,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "PHX_95",
+            "value": 13208,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "PHX_99",
+            "value": 13902,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_50",
+            "value": 1391,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_95",
+            "value": 2380,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_99",
+            "value": 2489,
             "range": "",
             "unit": "CU",
             "extra": ""
