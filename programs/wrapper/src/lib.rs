@@ -34,6 +34,15 @@ security_txt! {
 
 declare_id!("wMNFSTkir3HgyZTsB7uqu3i7FA73grFCptPXgrZjksL");
 
+/// Fee charged per batch update, in lamports, transferred from the payer to
+/// the wrapper state.
+///
+/// This used to borrow manifest's GAS_DEPOSIT_LAMPORTS, which happened to be
+/// the same number but means something else entirely: that constant is the
+/// core program's gas prepayment and refund for a global order. The two are
+/// independent knobs, so the wrapper fee gets its own.
+pub const WRAPPER_FEE_LAMPORTS: u64 = 10_000;
+
 #[cfg(not(feature = "no-entrypoint"))]
 pinocchio::program_entrypoint!(process_instruction, {
     manifest::state::constants::MAX_ACCOUNTS
