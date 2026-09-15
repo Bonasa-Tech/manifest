@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1789492638328,
+  "lastUpdate": 1789504747191,
   "repoUrl": "https://github.com/Bonasa-Tech/manifest",
   "entries": {
     "CU Benchmark": [
@@ -14153,6 +14153,72 @@ window.BENCHMARK_DATA = {
           {
             "name": "MFX_99",
             "value": 2489,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "cyrbritt@gmail.com",
+            "name": "Britt Cyr",
+            "username": "brittcyr"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "f6eb1305338cba4a2e98d8571c9f3ad3a730aeaa",
+          "message": "Install a global allocator so SBPF v2 builds can deploy (#727)\n\nprogram_entrypoint! does not install a global allocator, and none of the\nthree programs declared one. Without it the toolchain links the deprecated\nSolana allocator, which calls sol_alloc_free_ - a syscall the runtime only\nregisters for SBPF v0/v1. Every v2 artifact therefore carried an\nunresolvable symbol, and write-buffer rejected it:\n\n  ELF error: Unresolved symbol (sol_alloc_free_) at instruction #35028\n\nThe live program is itself v2 and free of the symbol, so this is a\nregression in the current tree rather than something inherent to v2.\n\nDeclare pinocchio's bump allocator, gated on the same no-entrypoint cfg as\nthe entrypoint so the wrappers, which depend on manifest-dex with\nno-entrypoint, do not end up with two global allocators.\n\nVerified per program at --arch=v2: the symbol is gone from all three.\nTests pass (manifest 139+78, wrapper 29, ui-wrapper 10+9). CU moves by at\nmost +1.5%, well inside the benchmark's default alert threshold.\n\nNeither CI nor the test suites could have caught this: the verifiable\nbuild only builds and hashes, and solana-program-test registers the\ndeprecated syscall, so the suites pass against a binary mainnet rejects.",
+          "timestamp": "2026-09-15T16:34:19-04:00",
+          "tree_id": "9968cc9063119a40bd217bc85b59daa7ff2c0fb0",
+          "url": "https://github.com/Bonasa-Tech/manifest/commit/f6eb1305338cba4a2e98d8571c9f3ad3a730aeaa"
+        },
+        "date": 1789504744719,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "PHX_50",
+            "value": 6897,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "PHX_95",
+            "value": 13208,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "PHX_99",
+            "value": 13902,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_50",
+            "value": 1389,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_95",
+            "value": 2371,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_99",
+            "value": 2480,
             "range": "",
             "unit": "CU",
             "extra": ""
