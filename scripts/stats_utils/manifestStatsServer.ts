@@ -213,6 +213,8 @@ export class ManifestStatsServer {
   // Ticker lookup backoff: global throttle to avoid spamming RPC
   private tickerLookupLastAttempt: number = 0;
   private readonly TICKER_LOOKUP_BACKOFF_MS: number = 5_000; // 5 seconds between attempts
+  // Delay between RPC lookups of distinct mints during the startup pass.
+  private readonly TICKER_LOOKUP_DELAY_MS: number = 500;
 
   // GeckoTerminal integration: block-indexed event storage
   // Map<slot, { blockTime: number, events: FillLogResult[] }>
@@ -1064,50 +1066,12 @@ export class ManifestStatsServer {
       }
     }
 
-    // Look up tickers for all markets, caching by mint to avoid duplicate lookups
-    const mintToSymbols: Map<string, string> = new Map();
-    this.markets.forEach(async (market: Market) => {
-      const baseMint: PublicKey = market.baseMint();
-      const quoteMint: PublicKey = market.quoteMint();
-
-      let baseSymbol = '';
-      let quoteSymbol = '';
-      if (mintToSymbols.has(baseMint.toBase58())) {
-        baseSymbol = mintToSymbols.get(baseMint.toBase58())!;
-      } else {
-        // Sleep to backoff on RPC load.
-        await new Promise((f) => setTimeout(f, 500));
-        baseSymbol = await lookupMintTicker(this.connection, baseMint);
-      }
-      mintToSymbols.set(baseMint.toBase58(), baseSymbol);
-
-      if (mintToSymbols.has(quoteMint.toBase58())) {
-        quoteSymbol = mintToSymbols.get(quoteMint.toBase58())!;
-      } else {
-        quoteSymbol = await lookupMintTicker(this.connection, quoteMint);
-      }
-      mintToSymbols.set(quoteMint.toBase58(), quoteSymbol);
-
-      this.tickers.set(market.address.toBase58(), [
-        mintToSymbols.get(market.baseMint()!.toBase58())!,
-        mintToSymbols.get(market.quoteMint()!.toBase58())!,
-      ]);
-
-      // GeckoTerminal: Build token metadata for /asset endpoint
-      const baseMintStr = baseMint.toBase58();
-      const quoteMintStr = quoteMint.toBase58();
-      if (!this.tokenMetadata.has(baseMintStr)) {
-        this.tokenMetadata.set(baseMintStr, {
-          symbol: baseSymbol,
-          decimals: market.baseDecimals(),
-        });
-      }
-      if (!this.tokenMetadata.has(quoteMintStr)) {
-        this.tokenMetadata.set(quoteMintStr, {
-          symbol: quoteSymbol,
-          decimals: market.quoteDecimals(),
-        });
-      }
+    // Look up tickers for all markets in the background. Serialized inside
+    // loadAllTickers() so we do not stampede the RPC with one request per
+    // market; fire-and-forget so initialization (and the fill websocket
+    // below) is not blocked on it.
+    this.loadAllTickers().catch((error) => {
+      console.error('Error loading tickers at startup:', error);
     });
 
     // Start background backfill of createdAtBlockTimestamp (non-blocking)
@@ -1116,6 +1080,70 @@ export class ManifestStatsServer {
     // Connect to fill feed after state is loaded to avoid race conditions
     // where fills arrive before checkpoint data is restored
     this.initWebSocket();
+  }
+
+  /**
+   * Look up tickers for every tracked market, caching by mint so each unique
+   * mint is resolved at most once.
+   *
+   * Runs strictly sequentially. Previously this used markets.forEach(async ...),
+   * which does not await its callback: every market resolved concurrently, so
+   * the mint cache below never had a value to hit, the backoff sleep did not
+   * serialize anything, and rejections escaped unhandled. That stampede is what
+   * drove the RPC 429s and ran the process out of memory.
+   */
+  private async loadAllTickers(): Promise<void> {
+    const mintToSymbols: Map<string, string> = new Map();
+
+    const resolveSymbol = async (mint: PublicKey): Promise<string> => {
+      const key: string = mint.toBase58();
+      const cached: string | undefined = mintToSymbols.get(key);
+      if (cached !== undefined) {
+        return cached;
+      }
+      // Sleep to backoff on RPC load. Only paid on a cache miss, and now
+      // actually rate limits because this loop is sequential.
+      await new Promise((f) => setTimeout(f, this.TICKER_LOOKUP_DELAY_MS));
+      const symbol: string = await lookupMintTicker(this.connection, mint);
+      mintToSymbols.set(key, symbol);
+      return symbol;
+    };
+
+    for (const market of Array.from(this.markets.values())) {
+      const baseMint: PublicKey = market.baseMint();
+      const quoteMint: PublicKey = market.quoteMint();
+
+      try {
+        const baseSymbol: string = await resolveSymbol(baseMint);
+        const quoteSymbol: string = await resolveSymbol(quoteMint);
+
+        this.tickers.set(market.address.toBase58(), [baseSymbol, quoteSymbol]);
+
+        // GeckoTerminal: Build token metadata for /asset endpoint
+        const baseMintStr: string = baseMint.toBase58();
+        const quoteMintStr: string = quoteMint.toBase58();
+        if (!this.tokenMetadata.has(baseMintStr)) {
+          this.tokenMetadata.set(baseMintStr, {
+            symbol: baseSymbol,
+            decimals: market.baseDecimals(),
+          });
+        }
+        if (!this.tokenMetadata.has(quoteMintStr)) {
+          this.tokenMetadata.set(quoteMintStr, {
+            symbol: quoteSymbol,
+            decimals: market.quoteDecimals(),
+          });
+        }
+      } catch (error) {
+        // Leave this market's ticker empty; attemptTickerLookup() retries it
+        // lazily. One bad mint must not abort the whole pass.
+        console.error(
+          'Error looking up tickers for market',
+          market.address.toBase58(),
+          error,
+        );
+      }
+    }
   }
 
   /**
