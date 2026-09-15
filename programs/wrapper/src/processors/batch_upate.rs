@@ -346,10 +346,10 @@ fn process_orders<'a>(
     Ok(())
 }
 
-// Fee here is 5_000 lamports stored on the wrapper state. This is stored on the
-// wrapper state because it prevents the need for a contentious extra write
-// lock. Users who do not wish to pay this fee should use their own wrapper or
-// interact directly with the manifest program.
+// Fee here is WRAPPER_FEE_LAMPORTS stored on the wrapper state. This is stored
+// on the wrapper state because it prevents the need for a contentious extra
+// write lock. Users who do not wish to pay this fee should use their own
+// wrapper or interact directly with the manifest program.
 fn collect_fee<'a>(
     payer: &Signer<'a>,
     wrapper_state: &WrapperStateAccountInfo<'a>,
@@ -360,7 +360,7 @@ fn collect_fee<'a>(
     // this runs on every batch update.
     let mut data: [u8; 12] = [0; 12];
     data[0] = 2;
-    data[4..].copy_from_slice(&manifest::state::GAS_DEPOSIT_LAMPORTS.to_le_bytes());
+    data[4..].copy_from_slice(&crate::WRAPPER_FEE_LAMPORTS.to_le_bytes());
     invoke_passthrough_refs(
         &system_program::id(),
         &[payer.as_ref(), wrapper_state.info],
