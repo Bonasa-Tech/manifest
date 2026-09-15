@@ -15,12 +15,12 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
-  SOLANA_VERSION: '2.2.12'
+  SOLANA_VERSION: '4.0.3'
   # pinocchio's account view crates need rustc 1.89 to build, so the host
   # toolchain moves up with them.
   RUST_TOOLCHAIN: '1.89.0'
   # Must match workspace.metadata.solana.tools-version.
-  PLATFORM_TOOLS: 'v1.57'
+  PLATFORM_TOOLS: 'v1.54'
 
 jobs:
   format:
@@ -105,7 +105,7 @@ jobs:
         run: |
           curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
             --output solana-install.sh https://release.anza.xyz/v${{ env.SOLANA_VERSION }}/install
-          echo '1430da752981d0b3b09cb35d73adede97ec82f04a8e2d2fb0780d547b01c555a  solana-install.sh' | sha256sum --check --strict
+          echo '9cefdb7493c9b42e91bf5d44663aea84042c5d2e6420a70aea10be11b7d74aaa  solana-install.sh' | sha256sum --check --strict
           sh solana-install.sh
           echo "$HOME/.local/share/solana/install/active_release/bin" >> $GITHUB_PATH
           export PATH="/home/runner/.local/share/solana/install/active_release/bin:$PATH"

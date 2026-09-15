@@ -14,7 +14,7 @@ env:
   SOLANA_TOOLCHAIN: '2.2.20'
   SVM_ARCH: 'v2'
   # Must match workspace.metadata.solana.tools-version.
-  PLATFORM_TOOLS: 'v1.57'
+  PLATFORM_TOOLS: 'v1.54'
   SOLANA_VERIFIABLE_BUILD_IMAGE: 'solanafoundation/solana-verifiable-build@sha256:a1c0d5899ee0ffc81412428760662d9ba4643c2003ec3a92ab6f75a6e2e52a1b'
 
 

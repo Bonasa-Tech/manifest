@@ -43,14 +43,14 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
-  SOLANA_VERSION: '2.2.20'
+  SOLANA_VERSION: '4.0.3'
   # pinocchio's account view crates need rustc 1.89 to build, so the host
   # toolchain moves up with them.
   RUST_TOOLCHAIN: '1.89.0'
   # Must match workspace.metadata.solana.tools-version. The benchmark harness
   # builds this checkout from its workspace, so the workspace pin is what
   # selects this SBF compiler for the measured programs.
-  PLATFORM_TOOLS: 'v1.57'
+  PLATFORM_TOOLS: 'v1.54'
   # Must be configured as a full, reviewed commit SHA. Mutable branch names
   # are rejected before any private-repository code is checked out.
   BENCHMARK_REPOSITORY_SHA: ${{ vars.MANIFEST_PRIVATE_BENCHMARK_SHA }}
@@ -128,7 +128,7 @@ jobs:
         run: |
           curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
             --output solana-install.sh https://release.anza.xyz/v${{ env.SOLANA_VERSION }}/install
-          echo '4caed81545b20ddcbc06d65ca8ef8dc69fc9e68fe93a868f5b508309021b49af  solana-install.sh' | sha256sum --check --strict
+          echo '9cefdb7493c9b42e91bf5d44663aea84042c5d2e6420a70aea10be11b7d74aaa  solana-install.sh' | sha256sum --check --strict
           sh solana-install.sh
           echo "$HOME/.local/share/solana/install/active_release/bin" >> $GITHUB_PATH
           export PATH="/home/runner/.local/share/solana/install/active_release/bin:$PATH"
