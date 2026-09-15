@@ -47,6 +47,33 @@ jobs:
           # verifiable container build to enforce the platform-tools pin.
           cargo +${{ env.RUST_TOOLCHAIN }} install solana-verify --version 0.5.1 --locked
 
+      - name: Verify the image ships the pinned platform-tools
+        # cargo-build-sbf runs inside the base image here, so the host cache
+        # cannot pin it the way it does in the other workflows: solana-verify
+        # mounts only the source directory ({mount_path}:{workdir}), never
+        # ~/.cache/solana.
+        #
+        # Resolution short-circuits when the requested version equals the
+        # built-in one, so the build is hermetic if the image already ships
+        # v1.57. If it does not, cargo-build-sbf consults
+        # platform-tools/releases/latest - which now redirects to v1.51.1 -
+        # judges v1.57 invalid and falls back with only a warn!, emitting a
+        # "verifiable" artifact built by a different compiler than the one this
+        # workflow pins. A wrong hash published under a release tag is far worse
+        # than a failed build, so fail here instead.
+        run: |
+          set -euo pipefail
+          BUILTIN=$(docker run --rm ${{ env.SOLANA_VERIFIABLE_BUILD_IMAGE }} \
+            cargo-build-sbf --version 2>/dev/null \
+            | grep -oE 'platform-tools v[0-9.]+' | head -1 || true)
+          echo "image built-in: ${BUILTIN:-<unknown>}"
+          echo "workflow pins:  platform-tools ${{ env.PLATFORM_TOOLS }}"
+          if [ "$BUILTIN" != "platform-tools ${{ env.PLATFORM_TOOLS }}" ]; then
+            echo "::error::Base image ships ${BUILTIN:-an unknown toolchain}, but this build pins ${{ env.PLATFORM_TOOLS }}. cargo-build-sbf would fall back silently and the artifact would not match the pinned compiler. Pin a base image whose built-in toolchain is ${{ env.PLATFORM_TOOLS }}."
+            exit 1
+          fi
+          echo "hermetic: requested version equals the image built-in"
+
       - name: Verifiable build manifest
         run: |
           solana-verify build --arch=${{ env.SVM_ARCH }} --cargo-build-sbf-args="--tools-version ${{ env.PLATFORM_TOOLS }}" --base-image ${{ env.SOLANA_VERIFIABLE_BUILD_IMAGE }} --library-name ${{ env.MANIFEST_NAME }}

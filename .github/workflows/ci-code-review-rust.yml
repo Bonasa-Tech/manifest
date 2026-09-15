@@ -126,6 +126,10 @@ jobs:
           mkdir -p "$DEST"
           tar -xjf "$TARBALL" -C "$DEST"
           rm -f "$TARBALL"
+          # Confirm the extract is what we think it is. An empty or wrong
+          # directory would still satisfy the cache lookup and send the build
+          # back to the fallback without saying so.
+          "$DEST/rust/bin/rustc" --version
           echo "installed ${{ env.PLATFORM_TOOLS }} to $DEST"
 
       - name: Build all deps
@@ -207,6 +211,10 @@ jobs:
           mkdir -p "$DEST"
           tar -xjf "$TARBALL" -C "$DEST"
           rm -f "$TARBALL"
+          # Confirm the extract is what we think it is. An empty or wrong
+          # directory would still satisfy the cache lookup and send the build
+          # back to the fallback without saying so.
+          "$DEST/rust/bin/rustc" --version
           echo "installed ${{ env.PLATFORM_TOOLS }} to $DEST"
 
       - name: Build the programs for the integration tests
