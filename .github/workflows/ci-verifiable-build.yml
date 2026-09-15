@@ -14,8 +14,11 @@ env:
   SOLANA_TOOLCHAIN: '2.2.20'
   SVM_ARCH: 'v2'
   # Must match workspace.metadata.solana.tools-version.
-  PLATFORM_TOOLS: 'v1.57'
-  SOLANA_VERIFIABLE_BUILD_IMAGE: 'solanafoundation/solana-verifiable-build@sha256:a1c0d5899ee0ffc81412428760662d9ba4643c2003ec3a92ab6f75a6e2e52a1b'
+  PLATFORM_TOOLS: 'v1.54'
+  # 4.1.2. Ships cargo-build-sbf 4.1.0, whose built-in platform-tools is
+  # v1.54 - the same version pinned below, so cargo-build-sbf returns early
+  # and never consults releases/latest.
+  SOLANA_VERIFIABLE_BUILD_IMAGE: 'solanafoundation/solana-verifiable-build@sha256:2e0b78f44ee76612e9260c7c988570c5e14de6fbd93e0ab07115ec7054473b4f'
 
 
 jobs:
@@ -46,6 +49,28 @@ jobs:
           # 0.5.1 adds forwarding of cargo-build-sbf arguments, allowing the
           # verifiable container build to enforce the platform-tools pin.
           cargo +${{ env.RUST_TOOLCHAIN }} install solana-verify --version 0.5.1 --locked
+
+      - name: Verify the image resolves to the pinned platform-tools
+        # cargo-build-sbf returns early when the requested version equals its
+        # built-in one, and only then - otherwise it consults
+        # platform-tools/releases/latest, which reports the most recently
+        # published release rather than the highest, and silently downgrades.
+        # The image above is chosen so those match, which is what makes this
+        # build hermetic and reproducible with stock solana-verify.
+        #
+        # Assert it rather than assume it: a release tag carrying a hash built
+        # by the wrong compiler is worse than a failed build.
+        run: |
+          set -euo pipefail
+          BUILTIN=$(docker run --rm ${{ env.SOLANA_VERIFIABLE_BUILD_IMAGE }} \
+            cargo-build-sbf --version 2>/dev/null \
+            | grep -oE 'platform-tools v[0-9.]+' | head -1 || true)
+          echo "image built-in: ${BUILTIN:-<unknown>}"
+          echo "workflow pins:  platform-tools ${{ env.PLATFORM_TOOLS }}"
+          if [ "$BUILTIN" != "platform-tools ${{ env.PLATFORM_TOOLS }}" ]; then
+            echo "::error::Base image ships ${BUILTIN:-an unknown toolchain} but this build pins ${{ env.PLATFORM_TOOLS }}. cargo-build-sbf would fall back silently and the artifact would not match the pinned compiler."
+            exit 1
+          fi
 
       - name: Verifiable build manifest
         run: |
@@ -115,6 +140,18 @@ jobs:
             wrapper sha256 checksum: ${{ env.WRAPPER_CHECKSUM }}
             ui_wrapper sha256 checksum: ${{ env.UI_WRAPPER_CHECKSUM }}
             github commit: ${{ github.sha }}
+
+            built with platform-tools ${{ env.PLATFORM_TOOLS }}
+            base image: ${{ env.SOLANA_VERIFIABLE_BUILD_IMAGE }}
+
+            Reproduce with stock solana-verify - the image's built-in
+            platform-tools matches the pinned version, so resolution is
+            deterministic:
+
+              solana-verify build --arch ${{ env.SVM_ARCH }} \
+                --cargo-build-sbf-args="--tools-version ${{ env.PLATFORM_TOOLS }}" \
+                --base-image ${{ env.SOLANA_VERIFIABLE_BUILD_IMAGE }} \
+                --library-name manifest
           files: |
             ./target/deploy/${{ env.MANIFEST_NAME }}.so
             ./${{ env.MANIFEST_NAME }}-${{ github.ref_name }}-sbom.json

@@ -21,11 +21,13 @@ env:
   # toolchain moves up with them.
   RUST_TOOLCHAIN: '1.89.0'
   # Must match workspace.metadata.solana.tools-version. The SBF programs are
-  # built with platform tools v1.57, which ships a newer
-  # rustc (1.95) than the default. Same source, better codegen: measured on
-  # the replay benchmark it is worth about 4% of MFX compute per order. The
+  # built with platform tools v1.54 (rustc 1.89, LLVM 20), which is worth about
+  # 4% of MFX compute per order over the v1.48 that cargo-build-sbf defaults to
+  # here. v1.57 was tried and measured no better - MFX_50 1442 vs 1435, MFX_99
+  # 2655 vs 2605, Phoenix control identical - and it is not reachable from any
+  # published verifiable-build image, so v1.54 is both faster and stock. The
   # host toolchain above is unchanged; this only selects the SBF compiler.
-  PLATFORM_TOOLS: 'v1.57'
+  PLATFORM_TOOLS: 'v1.54'
 
 jobs:
   format:
@@ -102,6 +104,36 @@ jobs:
           echo "Generating keypair..."
           solana-keygen new -o "$HOME/.config/solana/id.json" --no-passphrase --silent
 
+      - name: Preinstall platform-tools ${{ env.PLATFORM_TOOLS }}
+        # cargo-build-sbf refuses a --tools-version newer than whatever
+        # platform-tools/releases/latest currently redirects to, falling back to
+        # its built-in version with only a warn!. GitHub's "latest" is the most
+        # recently published release, not the highest version, so the v1.51.1
+        # published on 2026-09-15 silently downgraded builds to the
+        # built-in v1.48 (rustc 1.84.1). Resolution checks
+        # ~/.cache/solana first, so installing it here pins what we actually get.
+        run: |
+          set -euo pipefail
+          DEST="$HOME/.cache/solana/${{ env.PLATFORM_TOOLS }}/platform-tools"
+          if [ -d "$DEST" ]; then
+            echo "already present: $DEST"
+            exit 0
+          fi
+          TARBALL=platform-tools-linux-x86_64.tar.bz2
+          curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
+            --output "$TARBALL" \
+            "https://github.com/anza-xyz/platform-tools/releases/download/${{ env.PLATFORM_TOOLS }}/$TARBALL"
+          echo 'fcc41631c7f77561bf5412218bf297501dccf0305ea280f338f0ace2aab9f31e  '"$TARBALL" \
+            | sha256sum --check --strict
+          mkdir -p "$DEST"
+          tar -xjf "$TARBALL" -C "$DEST"
+          rm -f "$TARBALL"
+          # Confirm the extract is what we think it is. An empty or wrong
+          # directory would still satisfy the cache lookup and send the build
+          # back to the fallback without saying so.
+          "$DEST/rust/bin/rustc" --version
+          echo "installed ${{ env.PLATFORM_TOOLS }} to $DEST"
+
       - name: Build all deps
         run: |
           cargo build-sbf --arch=${{ env.SVM_ARCH }} --tools-version ${{ env.PLATFORM_TOOLS }} -- -p manifest-dex -p wrapper -p ui-wrapper
@@ -157,6 +189,36 @@ jobs:
       # file metadata"; building them together instead unifies features, and
       # the wrapper's `manifest-dex/no-entrypoint` would strip manifest's
       # entrypoint and leave every instruction failing as UnsupportedProgramId.
+      - name: Preinstall platform-tools ${{ env.PLATFORM_TOOLS }}
+        # cargo-build-sbf refuses a --tools-version newer than whatever
+        # platform-tools/releases/latest currently redirects to, falling back to
+        # its built-in version with only a warn!. GitHub's "latest" is the most
+        # recently published release, not the highest version, so the v1.51.1
+        # published on 2026-09-15 silently downgraded builds to the
+        # built-in v1.48 (rustc 1.84.1). Resolution checks
+        # ~/.cache/solana first, so installing it here pins what we actually get.
+        run: |
+          set -euo pipefail
+          DEST="$HOME/.cache/solana/${{ env.PLATFORM_TOOLS }}/platform-tools"
+          if [ -d "$DEST" ]; then
+            echo "already present: $DEST"
+            exit 0
+          fi
+          TARBALL=platform-tools-linux-x86_64.tar.bz2
+          curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
+            --output "$TARBALL" \
+            "https://github.com/anza-xyz/platform-tools/releases/download/${{ env.PLATFORM_TOOLS }}/$TARBALL"
+          echo 'fcc41631c7f77561bf5412218bf297501dccf0305ea280f338f0ace2aab9f31e  '"$TARBALL" \
+            | sha256sum --check --strict
+          mkdir -p "$DEST"
+          tar -xjf "$TARBALL" -C "$DEST"
+          rm -f "$TARBALL"
+          # Confirm the extract is what we think it is. An empty or wrong
+          # directory would still satisfy the cache lookup and send the build
+          # back to the fallback without saying so.
+          "$DEST/rust/bin/rustc" --version
+          echo "installed ${{ env.PLATFORM_TOOLS }} to $DEST"
+
       - name: Build the programs for the integration tests
         run: |
           (cd programs/manifest && cargo build-sbf --arch=${{ env.SVM_ARCH }} --tools-version ${{ env.PLATFORM_TOOLS }} --features test)
