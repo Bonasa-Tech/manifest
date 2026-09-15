@@ -43,14 +43,14 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
-  SOLANA_VERSION: '4.0.3'
+  SOLANA_VERSION: '2.2.20'
   # pinocchio's account view crates need rustc 1.89 to build, so the host
   # toolchain moves up with them.
   RUST_TOOLCHAIN: '1.89.0'
   # Must match workspace.metadata.solana.tools-version. The benchmark harness
   # builds this checkout from its workspace, so the workspace pin is what
   # selects this SBF compiler for the measured programs.
-  PLATFORM_TOOLS: 'v1.54'
+  PLATFORM_TOOLS: 'v1.57'
   # Must be configured as a full, reviewed commit SHA. Mutable branch names
   # are rejected before any private-repository code is checked out.
   BENCHMARK_REPOSITORY_SHA: ${{ vars.MANIFEST_PRIVATE_BENCHMARK_SHA }}
@@ -128,13 +128,43 @@ jobs:
         run: |
           curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
             --output solana-install.sh https://release.anza.xyz/v${{ env.SOLANA_VERSION }}/install
-          echo '9cefdb7493c9b42e91bf5d44663aea84042c5d2e6420a70aea10be11b7d74aaa  solana-install.sh' | sha256sum --check --strict
+          echo '4caed81545b20ddcbc06d65ca8ef8dc69fc9e68fe93a868f5b508309021b49af  solana-install.sh' | sha256sum --check --strict
           sh solana-install.sh
           echo "$HOME/.local/share/solana/install/active_release/bin" >> $GITHUB_PATH
           export PATH="/home/runner/.local/share/solana/install/active_release/bin:$PATH"
           solana --version
           echo "Generating keypair..."
           solana-keygen new -o "$HOME/.config/solana/id.json" --no-passphrase --silent
+
+      - name: Preinstall platform-tools ${{ env.PLATFORM_TOOLS }}
+        # cargo-build-sbf validates --tools-version against the redirect target
+        # of platform-tools/releases/latest and refuses anything newer, falling
+        # back to its built-in version with only a warn!. GitHub's "latest" is
+        # the most recently published release, not the highest version, so the
+        # v1.51.1 upstream published on 2026-09-15 silently downgraded every
+        # build from the v1.57 we ask for (rustc 1.95) to the built-in v1.48
+        # (rustc 1.84.1) - which is why a TypeScript-only commit went red.
+        #
+        # Resolution checks ~/.cache/solana for an installed toolchain before it
+        # consults that pointer, so extracting it here means the version we ask
+        # for is the version we get, whatever upstream publishes next.
+        run: |
+          set -euo pipefail
+          DEST="$HOME/.cache/solana/${{ env.PLATFORM_TOOLS }}/platform-tools"
+          if [ -d "$DEST" ]; then
+            echo "already present: $DEST"
+            exit 0
+          fi
+          TARBALL=platform-tools-linux-x86_64.tar.bz2
+          curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
+            --output "$TARBALL" \
+            "https://github.com/anza-xyz/platform-tools/releases/download/${{ env.PLATFORM_TOOLS }}/$TARBALL"
+          echo 'b0f7af104adf726fff2a6a09ea2eb2f2d2965c92295f4d7388c08d140e0c2b00  '"$TARBALL" \
+            | sha256sum --check --strict
+          mkdir -p "$DEST"
+          tar -xjf "$TARBALL" -C "$DEST"
+          rm -f "$TARBALL"
+          echo "installed ${{ env.PLATFORM_TOOLS }} to $DEST"
 
       - name: Report SBF toolchain
         # Every config here asks for platform-tools v1.57 (Rust 1.95), but the
