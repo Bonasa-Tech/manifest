@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1789474756407,
+  "lastUpdate": 1789476265339,
   "repoUrl": "https://github.com/Bonasa-Tech/manifest",
   "entries": {
     "CU Benchmark": [
@@ -13849,6 +13849,72 @@ window.BENCHMARK_DATA = {
           "url": "https://github.com/Bonasa-Tech/manifest/commit/31a5fa211ea3503abf731299a88ee4eab7575421"
         },
         "date": 1789474754113,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "PHX_50",
+            "value": 6897,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "PHX_95",
+            "value": 13208,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "PHX_99",
+            "value": 13902,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_50",
+            "value": 1511,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_95",
+            "value": 2573,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_99",
+            "value": 2739,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "cyrbritt@gmail.com",
+            "name": "Britt Cyr",
+            "username": "brittcyr"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "267e19dadb1b7aecfd8fc0f5748a482b7d9e556e",
+          "message": "Report the SBF toolchain actually in use (#720)\n\nCargo.toml pins tools-version v1.57 and every workflow sets\nPLATFORM_TOOLS v1.57, which upstream ships with Rust 1.95. The builds\nhave been running rustc 1.84.1-dev, which is v1.51. cargo-build-sbf\nfalls back rather than failing, so the mismatch is invisible until\nsomething demands a newer compiler - which is how it finally surfaced,\nas solana-address 2.6.0 raising its MSRV to 1.89 and breaking CI on a\nTypeScript-only commit.\n\nThat is worth knowing directly instead of inferring it from an error\nmessage. Print the requested version and what cargo-build-sbf actually\nresolves, both with and without an explicit --tools-version, before the\nbuilds run.\n\nThis is diagnostic only and changes no build. It gates the real fix:\nif v1.57 can be made to apply, both solana-address pins can be dropped,\nwhich also reverses the CU increase that pinning to 2.5.0 caused\n(MFX_50 1442 -> 1511, MFX_95 2432 -> 2573, MFX_99 2655 -> 2739, with\nthe Phoenix control unchanged).\n\nIt matters for the benchmark in particular: CU numbers are only\ncomparable across runs if the same compiler produced them.",
+          "timestamp": "2026-09-15T08:40:03-04:00",
+          "tree_id": "7d2b0390ac978130d775e6e52d752f43b4b43e16",
+          "url": "https://github.com/Bonasa-Tech/manifest/commit/267e19dadb1b7aecfd8fc0f5748a482b7d9e556e"
+        },
+        "date": 1789476262428,
         "tool": "customSmallerIsBetter",
         "benches": [
           {
