@@ -1,5 +1,8 @@
 import { assert } from 'chai';
-import { extractProgramDataLogs } from '../src/utils/programLogs';
+import {
+  extractProgramComputeUnits,
+  extractProgramDataLogs,
+} from '../src/utils/programLogs';
 import {
   detectAggregatorFromKeys,
   getInvokedProgramIds,
@@ -39,6 +42,34 @@ describe('program log attribution', () => {
       { data: 'first', invocationIndex: 0 },
       { data: 'second', invocationIndex: 1 },
     ]);
+  });
+
+  it('reports compute units per Manifest invocation, including CPIs', () => {
+    const logs = [
+      `Program ${OTHER} invoke [1]`,
+      `Program ${MANIFEST} invoke [2]`,
+      `Program ${OTHER} invoke [3]`,
+      `Program ${OTHER} consumed 1000 of 100000 compute units`,
+      `Program ${OTHER} success`,
+      `Program log: Program ${MANIFEST} consumed 9 of 9 compute units`,
+      `Program ${MANIFEST} consumed 25000 of 100000 compute units`,
+      `Program ${MANIFEST} success`,
+      `Program ${OTHER} consumed 40000 of 200000 compute units`,
+      `Program ${OTHER} success`,
+      `Program ${MANIFEST} invoke [1]`,
+      `Program ${MANIFEST} consumed 7000 of 50000 compute units`,
+      `Program ${MANIFEST} success`,
+      `Program ${MANIFEST} invoke [1]`,
+      'Log truncated',
+    ];
+
+    assert.deepEqual(
+      [...extractProgramComputeUnits(logs, MANIFEST)],
+      [
+        [0, 25000],
+        [1, 7000],
+      ],
+    );
   });
 
   it('attributes aggregators only when the runtime invoked them', () => {

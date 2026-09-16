@@ -18,6 +18,7 @@ import {
 import * as promClient from 'prom-client';
 import { FillLogResult } from './types';
 import { extractProgramDataLogs } from './utils/programLogs';
+import { recordManifestInstructionMetrics } from './utils/instructionMetrics';
 import {
   detectAggregatorFromKeys,
   detectOriginatingProtocolFromKeys,
@@ -327,6 +328,11 @@ export class FillFeed {
       truncatedTransactions.inc();
       this.onTruncatedLogs?.(signature.signature, signature.slot);
     }
+
+    // Count every Manifest instruction in the transaction, not only the ones
+    // that filled, so instruction rates and compute usage cover order
+    // placement as well as swaps.
+    recordManifestInstructionMetrics(tx);
 
     // Attribute logs to the active invocation stack; any program can emit the
     // same "Program data" bytes, so transaction account presence is not proof.

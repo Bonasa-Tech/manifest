@@ -1,7 +1,12 @@
-import bs58 from 'bs58';
 import { PROGRAM_ID } from '../manifest';
 import { FillLogResult } from '../types';
 import { resolveTakerFromSigners } from '../aggregators';
+import {
+  NormalizedInstruction,
+  innerInstructionGroups,
+  resolveAccountKeys,
+  topLevelInstructions,
+} from './transactionInstructions';
 
 // The maker cannot be recovered from a transaction with truncated logs.
 // Inferred fills carry an empty maker, which is how subscribers can tell a
@@ -46,13 +51,6 @@ const SWAP_V2_LAYOUT: SwapAccountLayout = {
   minAccounts: 9,
 };
 
-interface NormalizedInstruction {
-  programId: string;
-  accountKeys: string[];
-  data: Uint8Array;
-  stackHeight: number;
-}
-
 export interface InferFillsExtras {
   originalSigner?: string;
   aggregator?: string;
@@ -61,80 +59,12 @@ export interface InferFillsExtras {
   blockTime?: number;
 }
 
-function toBase58(key: unknown): string {
-  return typeof key === 'string'
-    ? key
-    : (key as { toBase58(): string }).toBase58();
-}
-
 function readU64LE(data: Uint8Array, offset: number): bigint {
   let value: bigint = 0n;
   for (let i = 7; i >= 0; i--) {
     value = (value << 8n) | BigInt(data[offset + i]);
   }
   return value;
-}
-
-/**
- * Resolve the full ordered account key list (static keys followed by keys
- * loaded from address lookup tables) as base58 strings.
- */
-function resolveAccountKeys(tx: any): string[] {
-  const message = tx.transaction.message;
-  let keys: string[];
-  if ('accountKeys' in message && message.accountKeys) {
-    keys = message.accountKeys.map(toBase58);
-  } else {
-    keys = message.staticAccountKeys.map(toBase58);
-  }
-  const loadedAddresses = tx.meta?.loadedAddresses;
-  if (loadedAddresses) {
-    keys = keys.concat(
-      (loadedAddresses.writable ?? []).map(toBase58),
-      (loadedAddresses.readonly ?? []).map(toBase58),
-    );
-  }
-  return keys;
-}
-
-/**
- * Normalize a top-level instruction. Legacy messages expose `instructions`
- * (base58 data, `accounts` indexes); v0 messages expose `compiledInstructions`
- * (Uint8Array data, `accountKeyIndexes`).
- */
-function topLevelInstructions(
-  tx: any,
-  accountKeys: string[],
-): NormalizedInstruction[] {
-  const message = tx.transaction.message;
-  const result: NormalizedInstruction[] = [];
-  const rawInstructions: any[] =
-    'instructions' in message && message.instructions
-      ? message.instructions
-      : message.compiledInstructions;
-  for (const ix of rawInstructions) {
-    const accountIndexes: number[] = ix.accounts ?? ix.accountKeyIndexes;
-    const data: Uint8Array =
-      typeof ix.data === 'string' ? bs58.decode(ix.data) : ix.data;
-    result.push({
-      programId: accountKeys[ix.programIdIndex],
-      accountKeys: accountIndexes.map((i: number) => accountKeys[i]),
-      data,
-      stackHeight: 1,
-    });
-  }
-  return result;
-}
-
-function normalizeInner(ix: any, accountKeys: string[]): NormalizedInstruction {
-  return {
-    programId: accountKeys[ix.programIdIndex],
-    accountKeys: (ix.accounts as number[]).map((i: number) => accountKeys[i]),
-    data: bs58.decode(ix.data as string),
-    // Inner instructions are at least stack height 2. Old RPC responses may
-    // omit stackHeight; default to 2 so direct CPIs are still attributed.
-    stackHeight: ix.stackHeight ?? 2,
-  };
 }
 
 interface TokenTransfer {
@@ -207,14 +137,8 @@ function swapAccountLayout(
 function findSwapSites(tx: any, accountKeys: string[]): SwapSite[] {
   const sites: SwapSite[] = [];
   const manifestProgramId = PROGRAM_ID.toBase58();
-  const innerGroups: any[] = tx.meta?.innerInstructions ?? [];
-  const innerByTopIndex: Map<number, NormalizedInstruction[]> = new Map();
-  for (const group of innerGroups) {
-    innerByTopIndex.set(
-      group.index,
-      group.instructions.map((ix: any) => normalizeInner(ix, accountKeys)),
-    );
-  }
+  const innerByTopIndex: Map<number, NormalizedInstruction[]> =
+    innerInstructionGroups(tx, accountKeys);
 
   let manifestInvocationIndex = 0;
   topLevelInstructions(tx, accountKeys).forEach((topIx, topIndex) => {
