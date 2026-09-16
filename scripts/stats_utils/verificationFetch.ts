@@ -1,5 +1,8 @@
-// /completeFills shares a 30 requests/minute admission limit. Serialize requests
-// (including body reads) and leave a little headroom below that limit.
+// Serialize /completeFills requests (including body reads) so verification
+// never has more than one page in flight, and back off when the server asks us
+// to. The stats server no longer applies a per-minute cap - it queues on
+// concurrency instead - so there is no fixed pace to hold below; an edge proxy
+// in front of it can still return 429, which is what the cooldown handles.
 export function createVerificationFetch({
   fetchImpl = fetch,
   now = Date.now,
@@ -17,7 +20,6 @@ export function createVerificationFetch({
         while (now() < nextRequestAt) {
           await sleep(nextRequestAt - now());
         }
-        nextRequestAt = now() + 2100;
         let retryable = true;
         try {
           const response = await fetchImpl(url);
@@ -29,9 +31,10 @@ export function createVerificationFetch({
               const retryAfterMs = Number.isFinite(seconds)
                 ? seconds * 1000
                 : Date.parse(header ?? '') - now();
-              // Older servers send no Retry-After. A 429 needs a full window
-              // cooldown, shared even when this request exhausts its retries.
-              const fallbackMs = response.status === 429 ? 60_000 : 0;
+              // Servers that send no Retry-After get a conservative cooldown,
+              // shared even when this request exhausts its retries: a 429 waits
+              // out a full window, a 503 is transient congestion.
+              const fallbackMs = response.status === 429 ? 60_000 : 1_000;
               nextRequestAt = Math.max(
                 nextRequestAt,
                 now() +

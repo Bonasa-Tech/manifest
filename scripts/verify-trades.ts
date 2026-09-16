@@ -426,9 +426,10 @@ const fetchDatabaseFills = async (
 ): Promise<FillLogResult[]> => {
   const fills: FillLogResult[] = [];
   let offset = 0;
-  // Must not exceed the server's completeFills cap (500) or every request is
-  // rejected with a 400 before any fills come back.
-  const limit = 500;
+  // The server's 500 limit cap was removed in #719, and requests - not bytes -
+  // are the scarce resource when paging a busy market, so take large pages.
+  // At the measured ~665 bytes/fill this is ~3.3MB per response.
+  const limit = 5000;
 
   console.log(logPrefix, `Fetching fills from database...`);
 

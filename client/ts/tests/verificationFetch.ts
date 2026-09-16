@@ -25,15 +25,16 @@ describe('verification fills request pacing', () => {
   }
   const ok = () => Response.json({ fills: [], hasMore: false });
 
-  it('paces all markets and pages below 30 requests per minute', async () => {
-    const { request, starts } = harness(Array.from({ length: 40 }, ok));
+  it('serializes markets and pages without an artificial pace', async () => {
+    const { request, starts, urls } = harness(Array.from({ length: 40 }, ok));
     await Promise.all(
       Array.from({ length: 40 }, (_, i) => request(`page-${i}`, '')),
     );
-    for (let i = 1; i < starts.length; i++) {
-      assert.ok(starts[i] - starts[i - 1] >= 2100);
-    }
-    assert.ok(starts[30] - starts[0] > 60_000);
+    assert.deepEqual(
+      urls,
+      Array.from({ length: 40 }, (_, i) => `page-${i}`),
+    );
+    assert.equal(starts[starts.length - 1] - starts[0], 0);
   });
 
   for (const retryAfter of [
@@ -57,7 +58,6 @@ describe('verification fills request pacing', () => {
         starts[1] - starts[0] >=
           (retryAfter && retryAfter !== 'invalid' ? 90_000 : 60_000),
       );
-      assert.ok(starts[2] - starts[1] >= 2100);
     });
   }
 
