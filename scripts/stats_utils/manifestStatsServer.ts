@@ -48,6 +48,7 @@ import {
 import { calculateTraderPnL } from './pnl';
 import { TraderVolumeIndex } from './traderVolumeIndex';
 import { CompleteFillsQueryOptions, CompleteFillsQueryResult } from './types';
+import { positiveIntFromEnv } from './httpValidation';
 import { withRetry } from './utils';
 import { WebSocketManager } from './websocketManager';
 import { parseTransactionForFills } from './backfill';
@@ -300,6 +301,11 @@ export class ManifestStatsServer {
       // Never silently accept a forged database certificate.
       ssl: { rejectUnauthorized: true },
       statement_timeout: 15_000,
+      // pg defaults to 10, which is below what the read API alone wants and is
+      // shared with fill ingestion, so reads could starve writes. Sized so the
+      // /completeFills concurrency limit (STATS_MAX_CONCURRENT_QUERIES) leaves
+      // headroom for the writers; raise both together.
+      max: positiveIntFromEnv('STATS_DB_POOL_MAX', 40),
     });
 
     this.pool.on('error', (err) => {

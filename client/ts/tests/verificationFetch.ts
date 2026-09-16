@@ -2,7 +2,9 @@ import { strict as assert } from 'node:assert';
 import { createVerificationFetch } from '../../../scripts/stats_utils/verificationFetch';
 
 describe('verification fills request pacing', () => {
-  function harness(responses: Array<Response | Error>) {
+  // Requests are issued in the order they are made, so a shifted response queue
+  // still lines up 1:1 with the urls even when several are in flight at once.
+  function harness(responses: Array<Response | Error>, concurrency?: number) {
     let time = Date.parse('2026-01-01T00:00:00Z');
     const starts: number[] = [];
     const urls: string[] = [];
@@ -12,6 +14,7 @@ describe('verification fills request pacing', () => {
         time += ms;
       },
       warn: () => {},
+      concurrency,
       fetchImpl: (async (url) => {
         starts.push(time);
         urls.push(String(url));
@@ -24,16 +27,71 @@ describe('verification fills request pacing', () => {
     return { request, starts, urls };
   }
   const ok = () => Response.json({ fills: [], hasMore: false });
+  const tick = (): Promise<void> =>
+    new Promise<void>((resolve) => setImmediate(resolve));
 
-  it('paces all markets and pages below 30 requests per minute', async () => {
-    const { request, starts } = harness(Array.from({ length: 40 }, ok));
+  it('issues markets and pages in order without an artificial pace', async () => {
+    const { request, starts, urls } = harness(Array.from({ length: 40 }, ok));
     await Promise.all(
       Array.from({ length: 40 }, (_, i) => request(`page-${i}`, '')),
     );
-    for (let i = 1; i < starts.length; i++) {
-      assert.ok(starts[i] - starts[i - 1] >= 2100);
+    assert.deepEqual(
+      urls,
+      Array.from({ length: 40 }, (_, i) => `page-${i}`),
+    );
+    assert.equal(starts[starts.length - 1] - starts[0], 0);
+  });
+
+  it('caps requests in flight and hands each freed slot to the next waiter', async () => {
+    const concurrency = 3;
+    const gate: Array<() => void> = [];
+    const urls: string[] = [];
+    const request = createVerificationFetch({
+      warn: () => {},
+      concurrency,
+      fetchImpl: (async (url) => {
+        urls.push(String(url));
+        await new Promise<void>((resolve) => gate.push(resolve));
+        return ok();
+      }) as typeof fetch,
+    });
+
+    const pageCount = 8;
+    const all = Promise.all(
+      Array.from({ length: pageCount }, (_, i) => request(`page-${i}`, '')),
+    );
+    await tick();
+    assert.deepEqual(urls, ['page-0', 'page-1', 'page-2']);
+
+    while (gate.length > 0) {
+      gate.shift()!();
+      await tick();
     }
-    assert.ok(starts[30] - starts[0] > 60_000);
+    await all;
+    assert.deepEqual(
+      urls,
+      Array.from({ length: pageCount }, (_, i) => `page-${i}`),
+    );
+  });
+
+  it('frees the slot of a request that exhausts its retries', async () => {
+    const { request, urls } = harness(
+      [
+        ...Array.from({ length: 5 }, () => new Response('', { status: 503 })),
+        ok(),
+      ],
+      1,
+    );
+    await assert.rejects(request('failed', ''));
+    assert.deepEqual(await request('next', ''), { fills: [], hasMore: false });
+    assert.deepEqual(urls, [
+      'failed',
+      'failed',
+      'failed',
+      'failed',
+      'failed',
+      'next',
+    ]);
   });
 
   for (const retryAfter of [
@@ -43,29 +101,34 @@ describe('verification fills request pacing', () => {
     'invalid',
   ]) {
     it(`shares 429 cooldown and retries the same page (${retryAfter})`, async () => {
-      const { request, starts, urls } = harness([
-        new Response('', {
-          status: 429,
-          headers: retryAfter ? { 'Retry-After': retryAfter } : {},
-        }),
-        ok(),
-        ok(),
-      ]);
+      const { request, starts, urls } = harness(
+        [
+          new Response('', {
+            status: 429,
+            headers: retryAfter ? { 'Retry-After': retryAfter } : {},
+          }),
+          ok(),
+          ok(),
+        ],
+        1,
+      );
       await Promise.all([request('page-a', ''), request('page-b', '')]);
       assert.deepEqual(urls, ['page-a', 'page-a', 'page-b']);
       assert.ok(
         starts[1] - starts[0] >=
           (retryAfter && retryAfter !== 'invalid' ? 90_000 : 60_000),
       );
-      assert.ok(starts[2] - starts[1] >= 2100);
     });
   }
 
   it('preserves cooldown after retry exhaustion and keeps the queue usable', async () => {
-    const { request, starts } = harness([
-      ...Array.from({ length: 5 }, () => new Response('', { status: 429 })),
-      ok(),
-    ]);
+    const { request, starts } = harness(
+      [
+        ...Array.from({ length: 5 }, () => new Response('', { status: 429 })),
+        ok(),
+      ],
+      1,
+    );
     const results = await Promise.allSettled([
       request('failed', ''),
       request('next', ''),
@@ -77,10 +140,10 @@ describe('verification fills request pacing', () => {
   });
 
   it('fails permanent HTTP errors immediately and continues the queue', async () => {
-    const { request, urls } = harness([
-      new Response('', { status: 400 }),
-      ok(),
-    ]);
+    const { request, urls } = harness(
+      [new Response('', { status: 400 }), ok()],
+      1,
+    );
     const results = await Promise.allSettled([
       request('bad', ''),
       request('good', ''),

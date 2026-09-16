@@ -1,5 +1,5 @@
 import 'dotenv/config';
-import { Connection, PublicKey } from '@solana/web3.js';
+import { ConfirmedSignatureInfo, Connection, PublicKey } from '@solana/web3.js';
 import { FillLogResult } from '@/../../client/ts/src/types';
 import { FillLog } from '@/../../client/ts/src/manifest/accounts/FillLog';
 import { getVaultAddress } from '@/../../client/ts/src/utils/market';
@@ -23,6 +23,36 @@ const fetchVerificationPage = createVerificationFetch();
 
 // Helper function to sleep
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+// getSignaturesForAddress has no retry of its own, unlike getTransaction and the
+// /completeFills fetch. A single transient RPC failure - a 502 from the
+// provider's edge, say - failed the whole market, and any failed market fails
+// the run, so one blip discarded a two-hour run's findings. Retry with backoff
+// so only a persistent RPC outage does that.
+const SIGNATURE_FETCH_ATTEMPTS = 5;
+
+const getSignaturesWithRetry = async (
+  connection: Connection,
+  address: PublicKey,
+  options: { before?: string; limit: number },
+  logPrefix: string,
+): Promise<ConfirmedSignatureInfo[]> => {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await connection.getSignaturesForAddress(address, options);
+    } catch (error) {
+      if (attempt === SIGNATURE_FETCH_ATTEMPTS) {
+        throw error;
+      }
+      const delayMs: number = 1000 * 2 ** (attempt - 1);
+      console.warn(
+        logPrefix,
+        `getSignaturesForAddress failed (${error instanceof Error ? error.message : String(error)}), retrying in ${delayMs / 1000}s (attempt ${attempt}/${SIGNATURE_FETCH_ATTEMPTS})...`,
+      );
+      await sleep(delayMs);
+    }
+  }
+};
 
 // Helper function to check if a transaction has token program transfers
 const hasTokenTransfer = async (
@@ -426,9 +456,10 @@ const fetchDatabaseFills = async (
 ): Promise<FillLogResult[]> => {
   const fills: FillLogResult[] = [];
   let offset = 0;
-  // Must not exceed the server's completeFills cap (500) or every request is
-  // rejected with a 400 before any fills come back.
-  const limit = 500;
+  // The server's 500 limit cap was removed in #719, and requests - not bytes -
+  // are the scarce resource when paging a busy market, so take large pages.
+  // At the measured ~665 bytes/fill this is ~3.3MB per response.
+  const limit = 5000;
 
   console.log(logPrefix, `Fetching fills from database...`);
 
@@ -571,10 +602,12 @@ const fetchOnchainFills = async (
 
   while (!done) {
     try {
-      const signatures = await connection.getSignaturesForAddress(baseVault, {
-        before: lastSignature,
-        limit: 500,
-      });
+      const signatures = await getSignaturesWithRetry(
+        connection,
+        baseVault,
+        { before: lastSignature, limit: 500 },
+        logPrefix,
+      );
 
       if (signatures.length === 0) {
         break;
@@ -1065,13 +1098,17 @@ const run = async () => {
       }
     }
 
-    // Attempt to backfill any missing_in_db mismatches
+    // A market that failed to verify is reported at the end of the run, not
+    // here: exiting now threw away every mismatch the other markets found,
+    // un-backfilled and unprinted, because one market hit a transient RPC error.
     if (failedMarkets.length > 0) {
       console.error(
         `Verification failed for ${failedMarkets.length} market(s): ${failedMarkets.join(', ')}`,
       );
-      process.exit(1);
-    } else if (allMismatches.length > 0) {
+    }
+
+    // Attempt to backfill any missing_in_db mismatches
+    if (allMismatches.length > 0) {
       const missingInDbMismatches = allMismatches.filter(
         (m) => m.type === 'missing_in_db',
       );
@@ -1250,21 +1287,34 @@ const run = async () => {
 
       console.log(`\nTotal mismatches: ${allMismatches.length}`);
       console.log(`Unique transactions: ${allMismatchSignatures.size}`);
-      printTxFetchSummary();
-      printTruncatedSummary(allTruncatedSignatures);
-      process.exit(1);
     } else {
+      // Only the markets that completed were verified, so say so rather than
+      // claiming a clean run when some markets never produced a result.
+      const scope: string =
+        failedMarkets.length > 0
+          ? ` for the ${validMarkets.length - failedMarkets.length} of ${validMarkets.length} markets that completed`
+          : '';
       if (allUnparseableFills.length > 0) {
         console.log(
-          `\n✅ All trades verified successfully! (${allUnparseableFills.length} fills had unparseable onchain transactions - see above)`,
+          `\n✅ All trades verified successfully${scope}! (${allUnparseableFills.length} fills had unparseable onchain transactions - see above)`,
         );
       } else {
         console.log(
-          '\n✅ All trades verified successfully! No mismatches found.',
+          `\n✅ All trades verified successfully${scope}! No mismatches found.`,
         );
       }
-      printTxFetchSummary();
-      printTruncatedSummary(allTruncatedSignatures);
+    }
+
+    printTxFetchSummary();
+    printTruncatedSummary(allTruncatedSignatures);
+
+    if (failedMarkets.length > 0) {
+      console.error(
+        `\n🚨 ${failedMarkets.length} market(s) could not be verified: ${failedMarkets.join(', ')}`,
+      );
+    }
+    if (allMismatches.length > 0 || failedMarkets.length > 0) {
+      process.exit(1);
     }
   } catch (error) {
     console.error('Fatal error:', error);

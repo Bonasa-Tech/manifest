@@ -78,3 +78,21 @@ export function isValidSolanaSignature(value: unknown): value is string {
     /^[1-9A-HJ-NP-Za-km-z]+$/.test(value)
   );
 }
+
+/**
+ * Read a positive integer tuning knob from the environment. A malformed value
+ * falls back to the default rather than misconfiguring capacity silently at a
+ * value nobody intended - e.g. a pool of NaN connections.
+ */
+export function positiveIntFromEnv(name: string, fallback: number): number {
+  const raw: string | undefined = process.env[name];
+  if (raw === undefined || raw.trim() === '') {
+    return fallback;
+  }
+  const parsed: number = Number(raw);
+  if (!Number.isSafeInteger(parsed) || parsed < 1) {
+    console.warn(`Ignoring invalid ${name}=${raw}; using ${fallback}`);
+    return fallback;
+  }
+  return parsed;
+}

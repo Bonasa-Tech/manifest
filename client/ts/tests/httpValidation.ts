@@ -5,6 +5,7 @@ import {
   isValidSolanaSignature,
   parseBoundedQueryInteger,
   parseOptionalUnixTimestamp,
+  positiveIntFromEnv,
   validateUnixTimestampRange,
 } from '../../../scripts/stats_utils/httpValidation';
 import { enforceMarketAccountLimit } from '../../../scripts/stats_utils/marketFetcher';
@@ -77,5 +78,18 @@ describe('stats HTTP validation', () => {
       /refusing to track more than 2/,
     );
     assert.lengthOf(enforceMarketAccountLimit(syntheticAccounts, 3), 3);
+  });
+
+  it('falls back to the default for invalid capacity env values', () => {
+    const name = 'STATS_TEST_CAPACITY';
+    delete process.env[name];
+    assert.equal(positiveIntFromEnv(name, 40), 40);
+    for (const value of ['', ' ', '0', '-1', '1.5', 'lots']) {
+      process.env[name] = value;
+      assert.equal(positiveIntFromEnv(name, 40), 40);
+    }
+    process.env[name] = '64';
+    assert.equal(positiveIntFromEnv(name, 40), 64);
+    delete process.env[name];
   });
 });

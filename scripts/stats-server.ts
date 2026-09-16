@@ -21,6 +21,7 @@ import {
   isAuthorizedBearer,
   isValidSolanaSignature,
   parseBoundedQueryInteger,
+  positiveIntFromEnv,
 } from './stats_utils/httpValidation';
 import { createExpensiveQueryAdmission } from './stats_utils/httpAdmission';
 
@@ -396,14 +397,29 @@ const run = async () => {
 
   const app = express();
   // Fly terminates TLS and proxies to us, so the socket peer is always the
-  // proxy. Without this, req.ip is that single proxy address for every caller
-  // and the per-client admission limiter below collapses into one global
-  // bucket - one noisy client then 429s everyone else off /completeFills,
-  // /alts and /events.
-  app.set('trust proxy', true);
+  // proxy. Trust exactly one hop: Fly appends the real client to
+  // X-Forwarded-For, so the last entry is the only one it vouches for.
+  // 'true' would take the leftmost entry instead, which is whatever the caller
+  // put in the header - spoofable, and wrong for clients behind their own
+  // proxy. req.ip is used for logging only now that the per-minute cap is off.
+  app.set('trust proxy', 1);
+  // No per-minute request cap. The 30/minute cap was shared across
+  // /completeFills, /alts and /events, and our own bots page through
+  // /completeFills far faster than that - they spent the budget legitimately
+  // and then 429d themselves off the API.
+  //
+  // What remains is a concurrency ceiling, sized to serve load rather than to
+  // ration it: 32 in flight against a 40-connection pool, leaving headroom for
+  // fill ingestion, which shares the pool and must not be starved by reads.
+  // Over the ceiling, requests queue (and are paced) instead of failing; a
+  // request only fails once the queue is 1024 deep or it has waited 15s, which
+  // leaves it time to run before the 30s request timeout below. Both knobs are
+  // env-tunable so capacity can be raised without a deploy of this file, and
+  // STATS_DB_POOL_MAX should move with them.
   const expensiveQueryAdmission = createExpensiveQueryAdmission({
-    maxConcurrent: 8,
-    maxRequestsPerMinute: 30,
+    maxConcurrent: positiveIntFromEnv('STATS_MAX_CONCURRENT_QUERIES', 32),
+    maxQueued: positiveIntFromEnv('STATS_MAX_QUEUED_QUERIES', 1024),
+    maxQueueWaitMs: 15_000,
   });
   app.use(express.json({ limit: '4kb' }));
   app.use(cors());
