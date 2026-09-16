@@ -3,6 +3,7 @@ import { extractProgramDataLogs } from '../src/utils/programLogs';
 import {
   detectAggregatorFromKeys,
   getInvokedProgramIds,
+  resolveOriginatingProtocol,
 } from '../src/aggregators';
 
 const MANIFEST = 'MNFSTqtC93rEfYHB6hF82sKdZpUDFWkViLByLd1k1Ms';
@@ -58,5 +59,16 @@ describe('program log attribution', () => {
 
     tx.meta.logMessages.splice(1, 0, `Program ${jupiter} invoke [2]`);
     assert.equal(detectAggregatorFromKeys(getInvokedProgramIds(tx)), 'Jupiter');
+  });
+
+  it('attributes protocols that sign rather than invoke', () => {
+    // Relay's solver signs the transaction directly; it is never an invoked
+    // program, so invoked program ids alone can never tag it.
+    const relaySigner = 'F7p3dFrjRTbtRp8FRF6qHLomXbKRBzpvBLjtQcfcgmNe';
+    assert.isUndefined(resolveOriginatingProtocol([OTHER], undefined));
+    assert.equal(resolveOriginatingProtocol([OTHER], [relaySigner]), 'relay');
+    // A protocol program still wins over the signers.
+    const kamino = 'LiMoM9rMhrdYrfzUCxQppvxCSG1FcrUK9G8uLq4A1GF';
+    assert.equal(resolveOriginatingProtocol([kamino], [relaySigner]), 'kamino');
   });
 });

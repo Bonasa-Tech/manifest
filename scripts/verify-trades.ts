@@ -11,7 +11,7 @@ import { hasTruncatedLogs as checkTruncatedLogs } from '@/../../client/ts/src/ut
 import { slotsForDurationMs } from '@/../../client/ts/src/constants';
 import {
   detectAggregatorFromKeys,
-  detectOriginatingProtocolFromKeys,
+  resolveOriginatingProtocol,
   getInvokedProgramIds,
   resolveTakerFromSigners,
 } from '@/../../client/ts/src/aggregators';
@@ -393,8 +393,10 @@ const parseTransactionForFills = async (
     try {
       const invokedProgramIds = getInvokedProgramIds(tx);
       aggregator = detectAggregatorFromKeys(invokedProgramIds);
-      originatingProtocol =
-        detectOriginatingProtocolFromKeys(invokedProgramIds);
+      originatingProtocol = resolveOriginatingProtocol(
+        invokedProgramIds,
+        signers,
+      );
     } catch (error) {
       console.warn(logPrefix, 'Error detecting aggregator/protocol:', error);
     }

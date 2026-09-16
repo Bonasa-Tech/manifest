@@ -7,7 +7,7 @@ import {
 } from '../../client/ts/src/utils';
 import {
   detectAggregatorFromKeys,
-  detectOriginatingProtocolFromKeys,
+  resolveOriginatingProtocol,
   getInvokedProgramIds,
   resolveTakerFromSigners,
 } from '../../client/ts/src/aggregators';
@@ -124,7 +124,7 @@ export const parseTransactionForFills = async (
 
   const invokedProgramIds = getInvokedProgramIds(tx);
   aggregator = detectAggregatorFromKeys(invokedProgramIds);
-  originatingProtocol = detectOriginatingProtocolFromKeys(invokedProgramIds);
+  originatingProtocol = resolveOriginatingProtocol(invokedProgramIds, signers);
 
   const programDatas = extractProgramDataLogs(
     tx.meta.logMessages,

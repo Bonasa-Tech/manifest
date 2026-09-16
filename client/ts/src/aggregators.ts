@@ -125,6 +125,28 @@ export function detectAggregatorFromKeys(
 }
 
 /**
+ * Detect the originating protocol of a transaction. Entries in
+ * ORIGINATING_PROTOCOL_IDS are a mix of programs and of wallets that sign on
+ * the protocol's behalf: relay's solver, the Jupiter frontend signers, phantom
+ * and coinbase all sign directly and never show up as an invoked program, so
+ * matching invoked programs alone silently drops them. Signers are execution
+ * evidence just like an invoke log is, unlike the arbitrary readonly account
+ * keys a caller can append, so they are safe to match against.
+ * @param invokedProgramIds - Programs the runtime reported as invoked
+ * @param signers - Base58-encoded signers of the transaction
+ * @returns The name of the detected originating protocol, or undefined
+ */
+export function resolveOriginatingProtocol(
+  invokedProgramIds: string[],
+  signers?: string[],
+): string | undefined {
+  return (
+    detectOriginatingProtocolFromKeys(invokedProgramIds) ??
+    detectOriginatingProtocolFromKeys(signers ?? [])
+  );
+}
+
+/**
  * Detect originating protocol from a list of account key strings.
  * @param accountKeys - Array of base58-encoded public key strings
  * @returns The name of the detected originating protocol, or undefined if none found
