@@ -206,36 +206,56 @@ describe('manifest instruction metrics', () => {
     assert.deepEqual(summarizeManifestInstructions(tx), []);
   });
 
-  it('records counts, orders and compute units to prometheus', async () => {
-    const metricValue = async (
-      metricName: string,
-      labels: Record<string, string> = {},
-      series: string = metricName,
-    ): Promise<number> => {
-      const metric = promClient.register.getSingleMetric(metricName);
-      assert.isDefined(metric, `metric ${metricName} is registered`);
-      // Histogram values carry a per-series metricName (_bucket, _sum, _count)
-      // that the shared Metric type does not declare.
-      const { values } = (await metric!.get()) as {
-        values: {
-          metricName?: string;
-          value: number;
-          labels: Partial<Record<string, string | number>>;
-        }[];
-      };
-      return (
-        values.find(
-          (v) =>
-            (v.metricName ?? metricName) === series &&
-            Object.entries(labels).every(
-              ([key, value]) => v.labels[key] === value,
-            ),
-        )?.value ?? 0
-      );
+  const metricValue = async (
+    metricName: string,
+    labels: Record<string, string> = {},
+    series: string = metricName,
+  ): Promise<number> => {
+    const metric = promClient.register.getSingleMetric(metricName);
+    assert.isDefined(metric, `metric ${metricName} is registered`);
+    // Histogram values carry a per-series metricName (_bucket, _sum, _count)
+    // that the shared Metric type does not declare.
+    const { values } = (await metric!.get()) as {
+      values: {
+        metricName?: string;
+        value: number;
+        labels: Partial<Record<string, string | number>>;
+      }[];
     };
-    const snapshot = async (): Promise<Record<string, number>> => ({
+    return (
+      values.find(
+        (v) =>
+          (v.metricName ?? metricName) === series &&
+          Object.entries(labels).every(
+            ([key, value]) => v.labels[key] === value,
+          ),
+      )?.value ?? 0
+    );
+  };
+
+  /**
+   * Every series the feed's averages are built from, so a test can assert
+   * exactly which ones a transaction moves and by how much.
+   */
+  const snapshot = async (): Promise<Record<string, number>> => {
+    const instructionCu = (instruction: string, series: string) =>
+      metricValue(
+        'manifest_instruction_compute_units',
+        { instruction },
+        `manifest_instruction_compute_units_${series}`,
+      );
+    const orderCu = (orderType: string, series: string) =>
+      metricValue(
+        'manifest_order_compute_units',
+        { orderType },
+        `manifest_order_compute_units_${series}`,
+      );
+    return {
       swaps: await metricValue('manifest_instructions', {
         instruction: 'Swap',
+      }),
+      swapV2s: await metricValue('manifest_instructions', {
+        instruction: 'SwapV2',
       }),
       batchUpdates: await metricValue('manifest_instructions', {
         instruction: 'BatchUpdate',
@@ -246,51 +266,68 @@ describe('manifest instruction metrics', () => {
       postOnlyOrders: await metricValue('manifest_batch_update_orders', {
         orderType: 'PostOnly',
       }),
-      limitOrderCuSum: await metricValue(
-        'manifest_order_compute_units',
-        { orderType: 'Limit' },
-        'manifest_order_compute_units_sum',
-      ),
-      limitOrderCuCount: await metricValue(
-        'manifest_order_compute_units',
-        { orderType: 'Limit' },
-        'manifest_order_compute_units_count',
-      ),
-      postOnlyOrderCuSum: await metricValue(
-        'manifest_order_compute_units',
-        { orderType: 'PostOnly' },
-        'manifest_order_compute_units_sum',
-      ),
-      swapCuCount: await metricValue(
-        'manifest_instruction_compute_units',
-        { instruction: 'Swap' },
-        'manifest_instruction_compute_units_count',
-      ),
-      swapCuSum: await metricValue(
-        'manifest_instruction_compute_units',
-        { instruction: 'Swap' },
-        'manifest_instruction_compute_units_sum',
-      ),
-    });
+      swapCuCount: await instructionCu('Swap', 'count'),
+      swapCuSum: await instructionCu('Swap', 'sum'),
+      swapV2CuCount: await instructionCu('SwapV2', 'count'),
+      batchUpdateCuCount: await instructionCu('BatchUpdate', 'count'),
+      batchUpdateCuSum: await instructionCu('BatchUpdate', 'sum'),
+      limitOrderCuCount: await orderCu('Limit', 'count'),
+      limitOrderCuSum: await orderCu('Limit', 'sum'),
+      postOnlyOrderCuCount: await orderCu('PostOnly', 'count'),
+      postOnlyOrderCuSum: await orderCu('PostOnly', 'sum'),
+    };
+  };
 
+  const metricDelta = async (tx: any): Promise<Record<string, number>> => {
     const before = await snapshot();
-    recordManifestInstructionMetrics(legacyTx(FULL_LOGS));
+    recordManifestInstructionMetrics(tx);
     const after = await snapshot();
-
-    const delta: Record<string, number> = Object.fromEntries(
+    return Object.fromEntries(
       Object.keys(after).map((key) => [key, after[key] - before[key]]),
     );
-    assert.deepEqual(delta, {
+  };
+
+  it('records counts, orders and compute units to prometheus', async () => {
+    assert.deepEqual(await metricDelta(legacyTx(FULL_LOGS)), {
       swaps: 1,
+      swapV2s: 1,
       batchUpdates: 1,
       limitOrders: 1,
       postOnlyOrders: 1,
-      // The batch consumed 45000 units across its two orders.
-      limitOrderCuSum: 22500,
-      limitOrderCuCount: 1,
-      postOnlyOrderCuSum: 22500,
       swapCuCount: 1,
       swapCuSum: 30000,
+      swapV2CuCount: 1,
+      batchUpdateCuCount: 1,
+      batchUpdateCuSum: 45000,
+      // The batch's 45000 units split evenly across its two orders.
+      limitOrderCuCount: 1,
+      limitOrderCuSum: 22500,
+      postOnlyOrderCuCount: 1,
+      postOnlyOrderCuSum: 22500,
+    });
+  });
+
+  it('counts truncated instructions and orders without adding compute unit samples', async () => {
+    // The logs end after the first Swap, so the BatchUpdate and SwapV2 have
+    // no consumed line. They must still be counted, and their compute unit
+    // series must not move at all: a zero or partial sample would drag the
+    // per-swap and per-order averages down.
+    const truncated: string[] = [...FULL_LOGS.slice(0, 6), 'Log truncated'];
+    assert.deepEqual(await metricDelta(legacyTx(truncated)), {
+      swaps: 1,
+      swapV2s: 1,
+      batchUpdates: 1,
+      limitOrders: 1,
+      postOnlyOrders: 1,
+      swapCuCount: 1,
+      swapCuSum: 30000,
+      swapV2CuCount: 0,
+      batchUpdateCuCount: 0,
+      batchUpdateCuSum: 0,
+      limitOrderCuCount: 0,
+      limitOrderCuSum: 0,
+      postOnlyOrderCuCount: 0,
+      postOnlyOrderCuSum: 0,
     });
   });
 
