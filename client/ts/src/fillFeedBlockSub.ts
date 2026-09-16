@@ -17,6 +17,7 @@ import {
 } from './utils/inferFills';
 import { FillLogResult } from './types';
 import { extractProgramDataLogs } from './utils/programLogs';
+import { recordManifestInstructionMetrics } from './utils/instructionMetrics';
 
 // For live monitoring of the fill feed. For a more complete look at fill
 // history stats, need to index all trades.
@@ -325,6 +326,11 @@ export class FillFeedBlockSub {
       truncatedTransactions.inc();
       this.onTruncatedLogs?.(signature, slot);
     }
+
+    // Count every Manifest instruction in the transaction, not only the ones
+    // that filled, so instruction rates and compute usage cover order
+    // placement as well as swaps.
+    recordManifestInstructionMetrics(tx);
 
     // Do not deserialize spoofable data emitted by unrelated CPI programs.
     const programDatas = extractProgramDataLogs(
