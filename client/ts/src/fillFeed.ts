@@ -21,7 +21,7 @@ import { extractProgramDataLogs } from './utils/programLogs';
 import { recordManifestInstructionMetrics } from './utils/instructionMetrics';
 import {
   detectAggregatorFromKeys,
-  detectOriginatingProtocolFromKeys,
+  resolveOriginatingProtocol,
   getInvokedProgramIds,
   resolveTakerFromSigners,
 } from './aggregators';
@@ -309,8 +309,10 @@ export class FillFeed {
     }
 
     const aggregator: string | undefined = detectAggregator(tx);
-    const originatingProtocol: string | undefined =
-      detectOriginatingProtocol(tx);
+    const originatingProtocol: string | undefined = detectOriginatingProtocol(
+      tx,
+      signers,
+    );
 
     const messages: string[] = tx?.meta?.logMessages!;
 
@@ -423,9 +425,10 @@ function detectAggregator(
 
 function detectOriginatingProtocol(
   tx: VersionedTransactionResponse,
+  signers: string[] | undefined,
 ): string | undefined {
   try {
-    return detectOriginatingProtocolFromKeys(getInvokedProgramIds(tx));
+    return resolveOriginatingProtocol(getInvokedProgramIds(tx), signers);
   } catch (error) {
     console.warn('Error detecting originating protocol:', error);
     // Fall back to undefined if we can't detect the originating protocol

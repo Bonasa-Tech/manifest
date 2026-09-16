@@ -6,7 +6,7 @@ import * as promClient from 'prom-client';
 import { fillDiscriminant, toFillLogResult } from './fillFeed';
 import {
   detectAggregatorFromKeys,
-  detectOriginatingProtocolFromKeys,
+  resolveOriginatingProtocol,
   getInvokedProgramIds,
 } from './aggregators';
 import { WebSocketManager } from './utils/WebSocketManager';
@@ -312,8 +312,10 @@ export class FillFeedBlockSub {
 
     const invokedProgramIds = getInvokedProgramIds(tx);
     const aggregator = detectAggregatorFromKeys(invokedProgramIds);
-    const originatingProtocol =
-      detectOriginatingProtocolFromKeys(invokedProgramIds);
+    const originatingProtocol = resolveOriginatingProtocol(
+      invokedProgramIds,
+      signers,
+    );
 
     const messages: string[] = tx.meta.logMessages;
 
