@@ -1655,12 +1655,10 @@ export class ManifestClient {
   }
 
   /**
-   * CancelAll instruction. Cancels up to one core batch of wrapper-tracked
-   * orders. Repeat until the wrapper has no open orders when more than one
-   * batch is present. Orders placed directly through the Manifest program are
-   * intentionally not searched for; cancel them by sequence number/index or
-   * reload the market and use cancelAllOnCoreIx(). Global cancellation can
-   * abandon its gas prepayment.
+   * CancelAll instruction. Cancels wrapper-tracked orders and searches the
+   * full core book for this trader's direct-core orders. This matches the
+   * deployed wrapper behavior; very large books can consume substantial CU.
+   * Global cancellation can abandon its gas prepayment.
    *
    * @returns TransactionInstruction
    */
@@ -1690,8 +1688,8 @@ export class ManifestClient {
 
   /**
    * Whether the wrapper's latest reloaded view has no tracked orders left for
-   * this market. Despite its legacy name, this does not inspect or make any
-   * claim about orders placed directly through the Manifest program.
+   * this market. This does not prove that every direct-core order was removed
+   * if the instruction failed or the market changed after confirmation.
    *
    * Call reload() after confirming cancelAllIx() before reading this value.
    */

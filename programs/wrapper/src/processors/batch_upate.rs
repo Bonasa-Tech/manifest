@@ -3,16 +3,18 @@ use std::mem::size_of;
 use borsh::{BorshDeserialize, BorshSerialize};
 use hypertree::{
     get_helper, get_mut_helper, DataIndex, FreeList, HyperTreeReadOperations,
-    HyperTreeWriteOperations, RBNode, NIL,
+    HyperTreeValueIteratorTrait, HyperTreeWriteOperations, RBNode, NIL,
 };
 use manifest::{
     program::{
         batch_update::{BatchUpdateParams, CancelOrderParams, PlaceOrderParams},
-        get_mut_dynamic_account, invoke_passthrough, invoke_passthrough_refs, ManifestInstruction,
+        get_dynamic_account, get_mut_dynamic_account, invoke_passthrough, invoke_passthrough_refs,
+        ManifestInstruction,
     },
     quantities::{BaseAtoms, QuoteAtoms, QuoteAtomsPerBaseAtom, WrapperU64},
     state::{
-        utils::get_now_slot, DynamicAccount, MarketFixed, OrderType, NO_EXPIRATION_LAST_VALID_SLOT,
+        utils::get_now_slot, DynamicAccount, MarketFixed, OrderType, RestingOrder,
+        NO_EXPIRATION_LAST_VALID_SLOT,
     },
     validation::{next_account_info, AccountViewExt, ManifestAccountInfo, Program, Signer},
 };
@@ -101,6 +103,58 @@ impl WrapperBatchUpdateParams {
     }
 }
 
+/// Match the deployed wrapper's full core-book search for direct orders.
+/// The wrapper's own orders have already been matched while syncing.
+fn prepare_cancel_all(
+    matcher: &mut CancelMatcher,
+    market: &ManifestAccountInfo<MarketFixed>,
+    trader_index: DataIndex,
+) {
+    let market_data: Ref<[u8]> = market.try_borrow().unwrap();
+    let market_ref = get_dynamic_account::<MarketFixed>(&market_data);
+    for (index, resting_order) in market_ref.get_bids().iter::<RestingOrder>() {
+        if resting_order.get_trader_index() != trader_index {
+            continue;
+        }
+        let sequence_number = resting_order.get_sequence_number();
+        let already_cancelled = matcher
+            .core_cancels
+            .iter()
+            .any(|cancel| cancel.order_sequence_number() == sequence_number);
+        if !already_cancelled {
+            matcher.core_cancels.push(CancelOrderParams::new_with_hint(
+                sequence_number,
+                Some(index),
+            ));
+            if matcher.needs_quote {
+                matcher.freed_quote_atoms += resting_order
+                    .get_price()
+                    .checked_quote_for_base(resting_order.get_num_base_atoms(), true)
+                    .unwrap();
+            }
+        }
+    }
+    for (index, resting_order) in market_ref.get_asks().iter::<RestingOrder>() {
+        if resting_order.get_trader_index() != trader_index {
+            continue;
+        }
+        let sequence_number = resting_order.get_sequence_number();
+        let already_cancelled = matcher
+            .core_cancels
+            .iter()
+            .any(|cancel| cancel.order_sequence_number() == sequence_number);
+        if !already_cancelled {
+            matcher.core_cancels.push(CancelOrderParams::new_with_hint(
+                sequence_number,
+                Some(index),
+            ));
+            if matcher.needs_base {
+                matcher.freed_base_atoms += resting_order.get_num_base_atoms();
+            }
+        }
+    }
+}
+
 /// Possibly update orders due to insufficient funds. Reduce the quantity of the
 /// last orders in the vector so that they will not fail.
 fn prepare_orders(
@@ -114,7 +168,7 @@ fn prepare_orders(
     // authoritative PostOnly check, so wrapper-side discovery can only add an
     // attacker-controlled traversal or silently disagree with the core. A
     // crossing PostOnly order therefore fails the entire atomic batch,
-    // including cancels and cancel-all cursor progress; callers that need
+    // including cancels; callers that need
     // cancellation progress independent of replacement quotes must split the
     // operations into separate transactions.
 
@@ -433,6 +487,9 @@ pub(crate) fn process_batch_update(
         *get_helper::<RBNode<MarketInfo>>(wrapper_dynamic_data, market_info_index).get_value()
     };
     let trader_index_hint: Option<DataIndex> = Some(market_info.trader_index);
+    if cancel_all {
+        prepare_cancel_all(&mut matcher, &market, market_info.trader_index);
+    }
     let remaining_base_atoms: BaseAtoms = market_info.base_balance + matcher.freed_base_atoms;
     let remaining_quote_atoms: QuoteAtoms = market_info.quote_balance + matcher.freed_quote_atoms;
     let CancelMatcher {

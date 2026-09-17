@@ -28,9 +28,8 @@ pub struct MarketInfo {
     /// Quote volume traded over lifetime, can overflow.
     pub quote_volume: QuoteAtoms,
 
-    /// Reserved for byte-layout compatibility. A short-lived client release
-    /// exposed this as a cancel-all scan cursor, but cancel-all no longer scans
-    /// untracked core orders. Do not interpret or update this value.
+    /// Reserved for byte-layout compatibility. The deployed wrapper wrote its
+    /// last-updated slot here, but the candidate does not use it as a cursor.
     pub cancel_all_scan_cursor: u32,
     /// Open orders of type Global on this market that the wrapper tracks.
     /// Those can be removed by global clean and evict without any order being

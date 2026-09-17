@@ -12,12 +12,11 @@
   quotes resting. Market makers that require cancellations to make progress
   independently of replacement quotes should submit cancellation-only and
   placement transactions separately.
-- `cancel_all` only cancels orders tracked by the wrapper. It deliberately does
-  not scan the entire shared market for orders placed directly through the core
-  program; that fallback caused a large tail-compute regression. Direct orders
-  remain cancellable by sequence number/index or with `cancelAllOnCoreIx()`.
-  The `cancelAllScanCursor` market-info field remains reserved solely to retain
-  the existing on-chain byte layout.
+- `cancel_all` cancels wrapper-tracked orders and restores the deployed
+  wrapper's full core-book search for the trader's orders placed directly
+  through the core. This preserves replacement-order funding behavior, while
+  very large shared books can consume substantial CU. `cancelAllScanCursor`
+  remains reserved for byte-layout compatibility.
 
 ### Solana transaction v1 readiness
 
