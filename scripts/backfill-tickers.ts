@@ -10,14 +10,11 @@ const {
   STATS_SERVER_URL = 'https://mfx-stats-mainnet.fly.dev',
   PRIMARY_RPC_URL,
   FALLBACK_RPC_URL,
-  STATS_BACKFILL_API_KEY,
 } = process.env;
 
-// RPC credentials and the backfill bearer secret must never be committed.
-if (!PRIMARY_RPC_URL || !FALLBACK_RPC_URL || !STATS_BACKFILL_API_KEY) {
-  throw new Error(
-    'PRIMARY_RPC_URL, FALLBACK_RPC_URL, and STATS_BACKFILL_API_KEY are required',
-  );
+// RPC credentials must never be committed.
+if (!PRIMARY_RPC_URL || !FALLBACK_RPC_URL) {
+  throw new Error('PRIMARY_RPC_URL and FALLBACK_RPC_URL are required');
 }
 
 // Rate limiting - be conservative to avoid RPC spam
@@ -106,7 +103,6 @@ async function backfillSignature(signature: string): Promise<boolean> {
       const response = await fetch(url, {
         method: 'POST',
         headers: {
-          authorization: `Bearer ${STATS_BACKFILL_API_KEY}`,
           'content-type': 'application/json',
         },
         body: JSON.stringify({ signature }),
