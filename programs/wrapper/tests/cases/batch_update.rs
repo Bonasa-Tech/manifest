@@ -5,10 +5,7 @@ use hypertree::{
 };
 use manifest::{
     program::{
-        batch_update::{
-            CancelOrderParams as ManifestCancelOrderParams,
-            PlaceOrderParams as ManifestPlaceOrderParams,
-        },
+        batch_update::PlaceOrderParams as ManifestPlaceOrderParams,
         instruction_builders::batch_update_instruction as manifest_batch_update_instruction,
         ManifestInstruction,
     },
@@ -471,12 +468,11 @@ async fn wrapper_batch_update_cancel_all_test() -> anyhow::Result<()> {
             .get_asks()
             .iter::<RestingOrder>()
             .count(),
-        1,
-        "One cancel_all clears all 17 tracked asks, leaving only the direct-core one",
+        0,
+        "One cancel_all clears tracked and direct-core asks",
     );
 
-    // Every tracked order went in one pass. The reserved legacy scan field
-    // remains untouched.
+    // The full book search does not use the reserved legacy cursor.
     let mut wrapper_account_after_first_pass: Account = test_fixture
         .context
         .borrow_mut()
@@ -548,13 +544,10 @@ async fn wrapper_batch_update_cancel_all_test() -> anyhow::Result<()> {
     assert_eq!(orders_root_index, NIL, "Deleted all orders in cancel all");
     assert_eq!(
         market_info.cancel_all_scan_cursor, 0,
-        "cancel_all does not update the reserved legacy scan field",
+        "The reserved scan field is unchanged",
     );
 
-    // The direct-core order remains: a second cancel_all is a no-op because
-    // the wrapper tracks nothing more. cancel_all still limits its work to
-    // orders tracked by this wrapper, so unrelated market size cannot affect
-    // its compute cost.
+    // A second cancel_all is harmless after the first one removed every order.
     test_fixture.market.reload().await;
     assert_eq!(
         test_fixture
@@ -563,8 +556,8 @@ async fn wrapper_batch_update_cancel_all_test() -> anyhow::Result<()> {
             .get_asks()
             .iter::<RestingOrder>()
             .count(),
-        1,
-        "The direct-core ask remains after wrapper cancel_all"
+        0,
+        "The direct-core ask remains removed"
     );
     assert_eq!(
         test_fixture
@@ -577,62 +570,18 @@ async fn wrapper_batch_update_cancel_all_test() -> anyhow::Result<()> {
         "No bids remaining on market"
     );
 
-    // A caller that bypassed the wrapper already has the core order identity
-    // and can cancel it directly, with its physical index as a validated hint.
-    let (direct_index, direct_sequence_number): (DataIndex, u64) = {
-        let asks = test_fixture.market.market.get_asks();
-        let (index, order) = asks
-            .iter::<RestingOrder>()
-            .next()
-            .expect("Direct order remains");
-        (index, order.get_sequence_number())
-    };
-    let direct_cancel_ix: Instruction = manifest_batch_update_instruction(
-        &test_fixture.market.key,
-        &payer,
-        None,
-        vec![ManifestCancelOrderParams::new_with_hint(
-            direct_sequence_number,
-            Some(direct_index),
-        )],
-        vec![],
-        None,
-        None,
-        None,
-        None,
-    );
-    send_tx_with_retry(
-        Rc::clone(&test_fixture.context),
-        &[direct_cancel_ix],
-        Some(&payer),
-        &[&payer_keypair],
-    )
-    .await?;
-    test_fixture.market.reload().await;
-    assert_eq!(
-        test_fixture
-            .market
-            .market
-            .get_asks()
-            .iter::<RestingOrder>()
-            .count(),
-        0,
-        "The direct-core ask can be cancelled explicitly",
-    );
-
     Ok(())
 }
 
 #[tokio::test]
-async fn wrapper_cancel_all_does_not_scan_a_large_market() -> anyhow::Result<()> {
+async fn wrapper_cancel_all_scans_a_large_empty_market() -> anyhow::Result<()> {
     let test_fixture: TestFixture = TestFixture::new().await;
     test_fixture.claim_seat().await?;
 
     let payer: Pubkey = test_fixture.payer();
     let payer_keypair: Keypair = test_fixture.payer_keypair().insecure_clone();
 
-    // Grow the market beyond the size that previously triggered a second
-    // 1,024-block scan transaction. A single instruction may only realloc
+    // Grow the market beyond 1,024 blocks. A single instruction may only realloc
     // 10 KiB, so increase the requested free-block target in bounded steps.
     let mut free_block_target: u32 = 128;
     while free_block_target <= 1_024 {
@@ -733,7 +682,7 @@ async fn wrapper_cancel_all_does_not_scan_a_large_market() -> anyhow::Result<()>
     };
     assert_eq!(
         cursor_after_first_call, 0,
-        "cancel_all leaves the reserved legacy scan field untouched",
+        "The full book search does not persist a market cursor",
     );
 
     send_tx_with_retry(
@@ -764,14 +713,14 @@ async fn wrapper_cancel_all_does_not_scan_a_large_market() -> anyhow::Result<()>
         get_helper::<RBNode<MarketInfo>>(dynamic_data, market_info_index).get_value();
     assert_eq!(
         market_info.cancel_all_scan_cursor, 0,
-        "repeated cancel_all calls do not scan the market",
+        "Repeated calls do not update the reserved field",
     );
 
     Ok(())
 }
 
 #[tokio::test]
-async fn wrapper_cancel_all_does_not_scan_unrelated_trader_orders() -> anyhow::Result<()> {
+async fn wrapper_cancel_all_scans_past_unrelated_trader_orders() -> anyhow::Result<()> {
     let mut test_fixture: TestFixture = TestFixture::new().await;
     test_fixture.claim_seat().await?;
     test_fixture.deposit(Token::SOL, SOL_UNIT_SIZE).await?;
@@ -802,8 +751,7 @@ async fn wrapper_cancel_all_does_not_scan_unrelated_trader_orders() -> anyhow::R
         )
         .await?;
 
-    // Allocate enough unrelated resting orders to verify that cancellation is
-    // not bounded by the 16-entry core cancel batch size.
+    // Allocate unrelated resting orders before the victim's direct-core order.
     for batch_start in (0_u64..40).step_by(8) {
         let orders: Vec<WrapperPlaceOrderParams> = (batch_start..batch_start + 8)
             .map(|client_order_id: u64| {
@@ -885,8 +833,8 @@ async fn wrapper_cancel_all_does_not_scan_unrelated_trader_orders() -> anyhow::R
             .get_asks()
             .iter::<RestingOrder>()
             .count(),
-        41,
-        "Wrapper cancel_all does not search for the untracked victim order",
+        40,
+        "The full book search reaches the victim order",
     );
 
     Ok(())

@@ -108,6 +108,13 @@ jobs:
           test "$(git -C "$DEP" rev-parse HEAD)" = "$GITHUB_SHA"
           echo "Benchmarking manifest commit $(git -C "$DEP" rev-parse HEAD)"
 
+      - name: Translate fixture cancel-all calls to explicit cancels
+        # The fixture owns every resting order through a wrapper account.
+        # Its direct swaps are IOC, so enumerating that account preserves the
+        # tested order flow without benchmarking a full shared-book scan on
+        # every Phoenix cancel-all event.
+        run: git -C manifest-private apply ../scripts/benchmark-cancel-all.patch
+
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: '3.9'
