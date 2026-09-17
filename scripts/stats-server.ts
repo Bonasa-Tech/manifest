@@ -18,7 +18,6 @@ import { CompleteFillsQueryOptions } from './stats_utils/types';
 import { ManifestStatsServer } from './stats_utils/manifestStatsServer';
 import { TvlMonitor } from './stats_utils/tvlMonitor';
 import {
-  isAuthorizedBearer,
   isValidSolanaSignature,
   parseBoundedQueryInteger,
   positiveIntFromEnv,
@@ -41,10 +40,6 @@ process.on('uncaughtException', (error) => {
 const { READ_ONLY } = process.env;
 
 const IS_READ_ONLY = READ_ONLY === 'true';
-const BACKFILL_API_KEY = process.env.STATS_BACKFILL_API_KEY;
-if (!BACKFILL_API_KEY) {
-  throw new Error('STATS_BACKFILL_API_KEY missing from env');
-}
 if (IS_READ_ONLY) {
   console.log('⚠️  Running in READ-ONLY mode - database writes are disabled');
 }
@@ -338,15 +333,12 @@ const run = async () => {
     res.send(statsServer.getCheckpointStatus());
   };
 
-  // Backfills trigger expensive RPC/database work. Authentication plus a small
-  // in-process queue prevents the endpoint from being used for resource abuse.
+  // Backfills trigger expensive RPC/database work. A small in-process queue
+  // keeps the endpoint from being used for resource abuse.
   const activeBackfills = new Set<string>();
   const backfillHandler: RequestHandler = async (req, res) => {
-    if (!isAuthorizedBearer(req.header('authorization'), BACKFILL_API_KEY)) {
-      res.status(401).send({ error: 'Unauthorized' });
-      return;
-    }
-    const signature = req.body?.signature;
+    // Accept the signature either as a query param (GET) or a JSON body (POST).
+    const signature: unknown = req.query.signature ?? req.body?.signature;
     if (!isValidSolanaSignature(signature)) {
       res.status(400).send({ error: 'A valid signature is required' });
       return;
@@ -483,6 +475,7 @@ const run = async () => {
   app.get('/notional', notionalHandler);
   app.get('/checkpoints', checkpointsHandler);
   app.get('/checkpointStatus', checkpointStatusHandler);
+  app.get('/backfill', backfillHandler);
   app.post('/backfill', backfillHandler);
   app.get('/wrapper', wrapperHandler);
   app.get('/wrappers', wrappersHandler);
