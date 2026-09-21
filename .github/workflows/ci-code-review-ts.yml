@@ -21,9 +21,8 @@ env:
   CARGO_TERM_COLOR: always
   SOLANA_VERSION: '4.2.2'
   SVM_ARCH: 'v3'
-  # pinocchio's account view crates need rustc 1.89 to build, so the host
-  # toolchain moves up with them.
-  RUST_TOOLCHAIN: '1.89.0'
+  # Keep cargo-build-sbf invocation aligned with the workspace toolchain.
+  RUST_TOOLCHAIN: '1.93.0'
   # Must match workspace.metadata.solana.tools-version.
   PLATFORM_TOOLS: 'v1.54'
 

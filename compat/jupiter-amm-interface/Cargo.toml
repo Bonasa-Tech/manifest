@@ -7,11 +7,13 @@ description = "AMM interface to integrate a DEX into jupiter-core"
 keywords = ["solana", "jupiter", "aggregator"]
 
 [dependencies]
-solana-sdk = "=3.0.0"
-solana-account-decoder = "=3.1.12"
+solana-sdk = "=4.0.1"
+solana-account-decoder = "=4.2.2"
 anyhow = "1"
 serde_json = "1.0.114"
 serde = "1.0.197"
 rust_decimal = "1.36.0"
 borsh = "~0.10"
 ahash = "0.8"
+# solana-sdk's keypair support requires five8_core's std Error implementation.
+five8_core = { workspace = true }

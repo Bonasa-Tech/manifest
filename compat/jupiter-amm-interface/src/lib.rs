@@ -6,9 +6,15 @@ use solana_account_decoder::{encode_ui_account, UiAccount, UiAccountEncoding};
 use solana_sdk::clock::Clock;
 use std::collections::HashSet;
 
-use std::sync::atomic::{AtomicI64, AtomicU64};
-use std::sync::Arc;
-use std::{collections::HashMap, convert::TryFrom, str::FromStr};
+use std::{
+    collections::HashMap,
+    convert::TryFrom,
+    str::FromStr,
+    sync::{
+        atomic::{AtomicI64, AtomicU64},
+        Arc,
+    },
+};
 mod custom_serde;
 mod swap;
 use custom_serde::field_as_string;
@@ -279,7 +285,7 @@ impl TryFrom<KeyedUiAccount> for KeyedAccount {
             params,
         } = keyed_ui_account;
         let account = ui_account
-            .decode()
+            .to_account()
             .unwrap_or_else(|| panic!("Failed to decode ui_account for {}", pubkey));
 
         Ok(KeyedAccount {

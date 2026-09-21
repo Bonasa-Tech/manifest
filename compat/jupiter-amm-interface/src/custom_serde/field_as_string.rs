@@ -1,8 +1,5 @@
-use {
-    serde::{de, Deserializer, Serializer},
-    serde::{Deserialize, Serialize},
-    std::str::FromStr,
-};
+use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
+use std::str::FromStr;
 
 pub fn serialize<T, S>(t: &T, serializer: S) -> Result<S::Ok, S::Error>
 where

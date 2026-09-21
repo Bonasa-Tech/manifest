@@ -117,7 +117,7 @@ impl Dex for Manifest {
     }
 
     fn fetch_pool_addresses(&self, client: &RpcClient) -> Vec<String> {
-        let accounts = match client.get_program_accounts_with_config(
+        let accounts = match client.get_program_ui_accounts_with_config(
             &manifest::id().to_bytes().into(),
             RpcProgramAccountsConfig {
                 filters: Some(vec![RpcFilterType::Memcmp(Memcmp::new_raw_bytes(

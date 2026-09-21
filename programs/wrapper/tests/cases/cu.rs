@@ -6,7 +6,7 @@
 //! commit, so two shapes measured from the same state are comparable.
 //!
 //! The numbers are only meaningful with the compiled programs loaded
-//! (`cargo test-sbf --arch=v2 --features "test,test-sbf"`); the native
+//! (`cargo test-sbf --arch=v3 --features "test,test-sbf"`); the native
 //! processor plain `cargo test` uses does not meter compute.
 //!
 //! No test asserts a number. They exist so builds can be compared line by

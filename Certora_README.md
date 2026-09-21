@@ -218,9 +218,8 @@ sh solana-install.sh
 ```
 
 3. Install the Certora platform-tools version selected by
-   `.github/workflows/ci-certora.yml`. Formal builds intentionally remain on
-   the legacy SBF target because Certora's writable mock globals do not link
-   as sBPF v3; they do not produce deployable artifacts.
+   `.github/workflows/ci-certora.yml`. Formal builds use sBPF v3; Certora-only
+   writable mock globals are placed in the v3 writable ELF section.
 
    Go to https://github.com/Certora/certora-solana-platform-tools?tab=readme-ov-file#installation-of-executables and follow the instructions. 
 

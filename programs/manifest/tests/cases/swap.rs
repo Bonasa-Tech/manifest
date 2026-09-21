@@ -4378,10 +4378,9 @@ async fn ljitsps_test() -> anyhow::Result<()> {
 /// compute budget, as swap aggregators already do (see the 1_400_000 limit in
 /// `reverse.rs`).
 ///
-/// NOTE: real CU is only metered when the compiled BPF program is loaded, i.e.
-/// under `--features test-sbf`. The default native-processor `cargo test` run
-/// does not meter compute accurately, so the ceiling check is only meaningful
-/// under test-sbf; it still exercises the code path either way.
+/// NOTE: the ceiling is asserted only with `--features test-sbf`, when CI loads
+/// the canonical v3 artifact and treats the measurement as a CU regression
+/// gate. The code path is exercised in the ordinary test set too.
 #[tokio::test]
 async fn swap_across_many_reverse_orders_cu_test() -> anyhow::Result<()> {
     use hypertree::HyperTreeValueIteratorTrait;

@@ -29,14 +29,10 @@ jobs:
           working-directory: programs/manifest/src/certora/confs
           certora-key: ${{ secrets.CERTORAKEY }}
           cli-version: "8.13.0"
-          # Deliberately not workspace.metadata.solana.tools-version, which is
-          # v1.54. `cargo certora-sbf` refuses anything newer than v1.53, and
-          # the pinocchio account view crates need rustc 1.89, which v1.43 (on
-          # 1.79) does not have. v1.53 ships exactly 1.89, so it is the only
-          # version that satisfies both. Certora's writable mock globals also
-          # produce relocations that the v3 linker rejects, so formal builds
-          # remain a documented legacy-SBF exception. The prover verifies the
-          # program's semantics, not the deployed artifact or its compute.
-          certora-sbf-options: "-vvv --tools-version=v1.53"
+          # cargo-certora-sbf currently supports platform-tools through v1.53.
+          # The Certora-only writable globals are explicitly placed in a
+          # writable v3 ELF section, so formal builds use the same sBPF
+          # architecture as deployed artifacts.
+          certora-sbf-options: "-vvv --tools-version=v1.53 --arch=v3"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

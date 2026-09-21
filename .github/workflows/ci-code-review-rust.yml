@@ -19,15 +19,8 @@ env:
   CARGO_TERM_COLOR: always
   SOLANA_VERSION: '4.2.2'
   SVM_ARCH: 'v3'
-  # ProgramTest 3.x is the newest in-process runtime compatible with the
-  # current Program SDK/SPL/Jupiter types. It cannot parse platform-tools
-  # v1.57's canonical v3 ELF layout, so the broad Rust regression suite keeps
-  # a separate v2-only test artifact. The Agave 4.2 validator tests below in
-  # ci-code-review-ts.yml execute the release v3 artifacts.
-  PROGRAM_TEST_ARCH: 'v2'
-  # pinocchio's account view crates need rustc 1.89 to build, so the host
-  # toolchain moves up with them.
-  RUST_TOOLCHAIN: '1.89.0'
+  # Agave 4.2's ProgramTest runtime uses APIs stabilized in Rust 1.93.
+  RUST_TOOLCHAIN: '1.93.0'
   # Must match workspace.metadata.solana.tools-version. The SBF programs are
   # built with platform tools v1.54 (rustc 1.89, LLVM 20), which is worth about
   # 4% of MFX compute per order over the v1.48 that cargo-build-sbf defaults to
@@ -149,14 +142,21 @@ jobs:
           (cd programs/ui-wrapper && cargo build-sbf --arch=${{ env.SVM_ARCH }} --tools-version ${{ env.PLATFORM_TOOLS }})
           ./scripts/assert-sbpf-v3.sh target/deploy/manifest.so target/deploy/wrapper.so target/deploy/ui_wrapper.so
 
-      - name: Build ProgramTest compatibility artifacts
+      - name: Build ProgramTest artifacts
         run: |
           mkdir -p target/program-test-deploy
-          (cd programs/wrapper && cargo build-sbf --arch=${{ env.PROGRAM_TEST_ARCH }} --tools-version ${{ env.PLATFORM_TOOLS }} --sbf-out-dir "$GITHUB_WORKSPACE/target/program-test-deploy" --features test)
-          (cd programs/ui-wrapper && cargo build-sbf --arch=${{ env.PROGRAM_TEST_ARCH }} --tools-version ${{ env.PLATFORM_TOOLS }} --sbf-out-dir "$GITHUB_WORKSPACE/target/program-test-deploy" --features test)
+          (cd programs/manifest && cargo build-sbf --arch=${{ env.SVM_ARCH }} --tools-version ${{ env.PLATFORM_TOOLS }} --sbf-out-dir "$GITHUB_WORKSPACE/target/program-test-deploy" --features test)
+          (cd programs/wrapper && cargo build-sbf --arch=${{ env.SVM_ARCH }} --tools-version ${{ env.PLATFORM_TOOLS }} --sbf-out-dir "$GITHUB_WORKSPACE/target/program-test-deploy" --features test)
+          (cd programs/ui-wrapper && cargo build-sbf --arch=${{ env.SVM_ARCH }} --tools-version ${{ env.PLATFORM_TOOLS }} --sbf-out-dir "$GITHUB_WORKSPACE/target/program-test-deploy" --features test)
+          ./scripts/assert-sbpf-v3.sh target/program-test-deploy/manifest.so target/program-test-deploy/wrapper.so target/program-test-deploy/ui_wrapper.so
 
-      - name: Run SBF regression tests (legacy ProgramTest ELF)
-        run: cargo test-sbf --arch=${{ env.PROGRAM_TEST_ARCH }} --tools-version ${{ env.PLATFORM_TOOLS }} --sbf-out-dir "$GITHUB_WORKSPACE/target/program-test-deploy" --features "test,test-sbf" -- --test-threads 1
+      - name: Run SBF regression tests
+        env:
+          SBF_OUT_DIR: ${{ github.workspace }}/target/program-test-deploy
+        # Certora's vendored support crates have their own macro-test tooling;
+        # the formal job covers them. This runs every repository package
+        # against the prebuilt v3 programs.
+        run: cargo test --workspace --exclude calltrace --exclude cvt --exclude cvt-macros --exclude derive_nondet --exclude early-panic --exclude hook_macro --exclude nondet --exclude solana_cvt --exclude stubs --exclude vectors --features "test,test-sbf" -- --test-threads 1
 
   coverage:
     name: Coverage
@@ -196,11 +196,8 @@ jobs:
       #
       # `--features test` because the host tests are run with it, and it
       # selects a different fee collector; a program built without it rejects
-      # the collector the tests use. One program per invocation because
-      # building them together unifies features, and the wrapper's
-      # `manifest-dex/no-entrypoint` would then strip manifest's entrypoint
-      # and leave every instruction failing as UnsupportedProgramId.
-      # One program per invocation, from its own directory. Selecting a
+      # the collector the tests use. One program per invocation, from its own
+      # directory. Selecting a
       # package with `-p` from the workspace root makes cargo-build-sbf look
       # for the artifact under the wrong name and fail with "Unable to get
       # file metadata"; building them together instead unifies features, and
@@ -236,12 +233,13 @@ jobs:
           "$DEST/rust/bin/rustc" --version
           echo "installed ${{ env.PLATFORM_TOOLS }} to $DEST"
 
-      - name: Build the ProgramTest compatibility artifacts
+      - name: Build the ProgramTest artifacts
         run: |
           mkdir -p target/program-test-deploy
-          (cd programs/manifest && cargo build-sbf --arch=${{ env.PROGRAM_TEST_ARCH }} --tools-version ${{ env.PLATFORM_TOOLS }} --sbf-out-dir "$GITHUB_WORKSPACE/target/program-test-deploy" --features test)
-          (cd programs/wrapper && cargo build-sbf --arch=${{ env.PROGRAM_TEST_ARCH }} --tools-version ${{ env.PLATFORM_TOOLS }} --sbf-out-dir "$GITHUB_WORKSPACE/target/program-test-deploy" --features test)
-          (cd programs/ui-wrapper && cargo build-sbf --arch=${{ env.PROGRAM_TEST_ARCH }} --tools-version ${{ env.PLATFORM_TOOLS }} --sbf-out-dir "$GITHUB_WORKSPACE/target/program-test-deploy" --features test)
+          (cd programs/manifest && cargo build-sbf --arch=${{ env.SVM_ARCH }} --tools-version ${{ env.PLATFORM_TOOLS }} --sbf-out-dir "$GITHUB_WORKSPACE/target/program-test-deploy" --features test)
+          (cd programs/wrapper && cargo build-sbf --arch=${{ env.SVM_ARCH }} --tools-version ${{ env.PLATFORM_TOOLS }} --sbf-out-dir "$GITHUB_WORKSPACE/target/program-test-deploy" --features test)
+          (cd programs/ui-wrapper && cargo build-sbf --arch=${{ env.SVM_ARCH }} --tools-version ${{ env.PLATFORM_TOOLS }} --sbf-out-dir "$GITHUB_WORKSPACE/target/program-test-deploy" --features test)
+          ./scripts/assert-sbpf-v3.sh target/program-test-deploy/manifest.so target/program-test-deploy/wrapper.so target/program-test-deploy/ui_wrapper.so
 
       # split coverage test runs to avoid enabling no-clock feature during unit tests
       # and to handle packages with/without test features separately.

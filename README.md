@@ -106,15 +106,12 @@ artifact-size impact.
 ### Program Test
 
 ```
-cargo test-sbf --arch v2 --tools-version v1.57
+cargo test-sbf --arch v3 --tools-version v1.57
 ```
 
-This is a test-harness exception, not a deploy artifact. The current Solana
-Program SDK/SPL/Jupiter types require ProgramTest 3.x, while platform-tools
-v1.57 emits v3 in the canonical ELF layout only accepted by Agave 4.x.
-Release, verifiable, local-validator, TypeScript integration, and benchmark
-artifacts are all v3; CI keeps the broad in-process Rust regression suite on a
-separate v2 artifact until those SDK types can move together.
+The test harness uses Agave 4.2 ProgramTest, which parses the same canonical
+sBPF v3 ELF format used by release, verifiable, validator, and benchmark
+artifacts.
 
 ### Typescript client test
 

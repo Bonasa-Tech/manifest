@@ -73,6 +73,7 @@ solana-compute-budget-interface = { workspace = true }
 base64 = "0.21"
 tokio = { workspace = true }
 serde_json = "1.0.86"
+five8_core = { workspace = true }
 spl-associated-token-account = { version = "8", features = ["no-entrypoint"] }
 
 [package.metadata.certora]

@@ -7,9 +7,11 @@ enum CvtManifestOrder {
 }
 
 /// Keep track of which order was executed
+#[link_section = ".rodata.certora"]
 static mut LAST_ORDER_EXECUTED: CvtManifestOrder = CvtManifestOrder::None;
 
 /// Keep track of whether remove_order_from_tree_and_free was called
+#[link_section = ".rodata.certora"]
 static mut ORDER_REMOVED: bool = false;
 
 // Initialization

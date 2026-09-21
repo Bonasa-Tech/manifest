@@ -2,10 +2,9 @@
 //!
 //! Every test simulates a representative transaction, prints a line of the
 //! form `CU <name>: <units>` and then executes it. The numbers are only
-//! meaningful when the compiled BPF program is loaded
-//! (`cargo test-sbf --features "test,test-sbf"`); the native processor used by
-//! plain `cargo test` does not meter compute, but the tests still exercise the
-//! same instructions there.
+//! meaningful when the compiled SBF program is loaded. The `test-sbf` feature
+//! enables the CU-specific assertions and log checks; CI points ProgramTest at
+//! the prebuilt canonical v3 artifacts through `SBF_OUT_DIR`.
 //!
 //! The program derives its vault and global PDAs on chain with
 //! `find_program_address`, which costs about 1,500 CU per bump it has to try.

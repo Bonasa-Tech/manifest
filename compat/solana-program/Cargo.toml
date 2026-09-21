@@ -1,6 +1,6 @@
 [package]
 name = "solana-program"
-version = "3.0.0"
+version = "4.0.0"
 edition = "2021"
 publish = false
 
@@ -11,6 +11,6 @@ dev-context-only-utils = ["solana-program-upstream/dev-context-only-utils"]
 frozen-abi = ["solana-program-upstream/frozen-abi"]
 
 [dependencies]
-solana-program-upstream = { package = "solana-program", version = "=3.0.0" }
+solana-program-upstream = { package = "solana-program", version = "=4.0.0" }
 solana-sdk-ids = "=3.1.0"
 solana-system-interface = { version = "=3.2.0", features = ["bincode"] }

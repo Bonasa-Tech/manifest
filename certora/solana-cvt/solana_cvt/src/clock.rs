@@ -1,6 +1,7 @@
 use nondet::*;
 use solana_program::clock::Slot;
 
+#[link_section = ".rodata.certora"]
 static mut CVT_CLOCK_SLOT: Option<Slot> = None;
 
 // The prover by default does not inline functions that start with

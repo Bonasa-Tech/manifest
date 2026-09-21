@@ -153,8 +153,8 @@ fn cross_all(test_fixture: &TestFixture, count: usize) -> Instruction {
     )
 }
 
-/// Program data is only visible in the logs when the compiled program runs
-/// under `test-sbf`; the native processor test runtime drops it.
+/// This log-specific assertion is enabled with `test-sbf`, when CI loads the
+/// canonical v3 program artifact through ProgramTest.
 #[cfg(feature = "test-sbf")]
 #[tokio::test]
 async fn batch_update_logs_nothing_for_placing_and_cancelling_test() -> anyhow::Result<()> {

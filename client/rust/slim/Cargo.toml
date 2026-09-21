@@ -14,7 +14,7 @@ workspace = true
 default = []
 
 [dependencies]
-solana-pubkey = { version = "3", features = ["curve25519"] }
+solana-pubkey = { version = "4.2", features = ["curve25519"] }
 solana-instruction = { workspace = true }
 hypertree = { path = "../../../lib" }
 
