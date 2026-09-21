@@ -1,6 +1,14 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
-cargo build-sbf
+set -euo pipefail
+
+(cd programs/manifest && cargo build-sbf --arch v3 --tools-version v1.57)
+(cd programs/wrapper && cargo build-sbf --arch v3 --tools-version v1.57)
+(cd programs/ui-wrapper && cargo build-sbf --arch v3 --tools-version v1.57)
+./scripts/assert-sbpf-v3.sh \
+  target/deploy/manifest.so \
+  target/deploy/wrapper.so \
+  target/deploy/ui_wrapper.so
 echo "Rebuilt program"
 
 # Start a local validator

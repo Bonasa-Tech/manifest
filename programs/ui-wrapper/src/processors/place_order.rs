@@ -292,7 +292,7 @@ pub(crate) fn process_place_order(
                 .map_err(manifest::validation::to_program_error)?;
 
         if let Ok(extension) = deposit_mint.get_extension::<TransferHook>() {
-            if !extension.program_id.0.eq(&Pubkey::default()) {
+            if extension.program_id.get().is_some() {
                 solana_program::msg!(
                     "Warning, you are placing an order while using TransferHook. There is no accurate way to estimate deposits required for this trade. You might need to manually deposit using the core instruction before placing orders."
                 );

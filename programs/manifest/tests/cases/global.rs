@@ -1675,7 +1675,7 @@ async fn global_match_multiple_levels() -> anyhow::Result<()> {
 #[tokio::test]
 async fn global_create_with_dusted_address() -> anyhow::Result<()> {
     use manifest::validation::get_global_address;
-    use solana_program::system_instruction::transfer;
+    use solana_system_interface::instruction::transfer;
 
     let test_fixture: TestFixture = TestFixture::new().await;
     let payer: Pubkey = test_fixture.payer();
@@ -1908,7 +1908,7 @@ async fn global_match_multiple_levels_with_unbacked() -> anyhow::Result<()> {
 #[tokio::test]
 async fn global_create_with_dusted_vault_address() -> anyhow::Result<()> {
     use manifest::validation::get_global_vault_address;
-    use solana_program::system_instruction::transfer;
+    use solana_system_interface::instruction::transfer;
 
     let test_fixture: TestFixture = TestFixture::new().await;
     let payer: Pubkey = test_fixture.payer();

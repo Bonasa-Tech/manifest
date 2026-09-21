@@ -57,12 +57,7 @@ pub const SOL_UNIT_SIZE: u64 = 1_000_000_000;
 pub const USDC_UNIT_SIZE: u64 = 1_000_000;
 
 pub fn fee_authority_keypair() -> Keypair {
-    Keypair::from_bytes(&[
-        42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42,
-        42, 42, 42, 42, 42, 42, 42, 42, 42, 25, 127, 107, 35, 225, 108, 133, 50, 198, 171, 200, 56,
-        250, 205, 94, 167, 137, 190, 12, 118, 178, 146, 3, 52, 3, 155, 250, 139, 61, 54, 141, 97,
-    ])
-    .unwrap()
+    Keypair::new_from_array([42; 32])
 }
 
 pub struct TestFixture {
@@ -88,11 +83,11 @@ impl TestFixture {
         let second_keypair: Keypair = Keypair::new();
         program.add_account(
             second_keypair.pubkey(),
-            solana_account::Account::new(SOL_UNIT_SIZE, 0, &solana_program::system_program::id()),
+            solana_account::Account::new(SOL_UNIT_SIZE, 0, &solana_sdk_ids::system_program::id()),
         );
         program.add_account(
             fee_authority_keypair().pubkey(),
-            solana_account::Account::new(SOL_UNIT_SIZE, 0, &solana_program::system_program::id()),
+            solana_account::Account::new(SOL_UNIT_SIZE, 0, &solana_sdk_ids::system_program::id()),
         );
 
         let market_keypair: Keypair = Keypair::new();
@@ -176,11 +171,11 @@ impl TestFixture {
         let second_keypair: Keypair = Keypair::new();
         program.add_account(
             second_keypair.pubkey(),
-            solana_account::Account::new(SOL_UNIT_SIZE, 0, &solana_program::system_program::id()),
+            solana_account::Account::new(SOL_UNIT_SIZE, 0, &solana_sdk_ids::system_program::id()),
         );
         program.add_account(
             fee_authority_keypair().pubkey(),
-            solana_account::Account::new(SOL_UNIT_SIZE, 0, &solana_program::system_program::id()),
+            solana_account::Account::new(SOL_UNIT_SIZE, 0, &solana_sdk_ids::system_program::id()),
         );
 
         let market_keypair: Keypair = Keypair::new();

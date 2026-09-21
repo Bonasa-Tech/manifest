@@ -11,14 +11,11 @@ env:
   UI_WRAPPER_NAME: ui_wrapper
   # solana-verify 0.5.1's locked dependencies require Rust 1.89 or newer.
   RUST_TOOLCHAIN: '1.89.0'
-  SOLANA_TOOLCHAIN: '2.2.20'
-  SVM_ARCH: 'v2'
+  SOLANA_TOOLCHAIN: '4.2.2'
+  SVM_ARCH: 'v3'
   # Must match workspace.metadata.solana.tools-version.
-  PLATFORM_TOOLS: 'v1.54'
-  # 4.1.2. Ships cargo-build-sbf 4.1.0, whose built-in platform-tools is
-  # v1.54 - the same version pinned below, so cargo-build-sbf returns early
-  # and never consults releases/latest.
-  SOLANA_VERIFIABLE_BUILD_IMAGE: 'solanafoundation/solana-verifiable-build@sha256:2e0b78f44ee76612e9260c7c988570c5e14de6fbd93e0ab07115ec7054473b4f'
+  PLATFORM_TOOLS: 'v1.57'
+  SOLANA_VERIFIABLE_BUILD_IMAGE: 'solanafoundation/solana-verifiable-build@sha256:16053d845922e798ab1852d3fe222faf5a23eeb1db3a13d30b70d6b6e82184ae'
 
 
 jobs:
@@ -75,6 +72,7 @@ jobs:
       - name: Verifiable build manifest
         run: |
           solana-verify build --arch=${{ env.SVM_ARCH }} --cargo-build-sbf-args="--tools-version ${{ env.PLATFORM_TOOLS }}" --base-image ${{ env.SOLANA_VERIFIABLE_BUILD_IMAGE }} --library-name ${{ env.MANIFEST_NAME }}
+          ./scripts/assert-sbpf-v3.sh target/deploy/${{ env.MANIFEST_NAME }}.so
 
       - name: Get hash manifest
         run: |
@@ -94,6 +92,7 @@ jobs:
       - name: Verifiable build wrapper
         run: |
           solana-verify build --arch=${{ env.SVM_ARCH }} --cargo-build-sbf-args="--tools-version ${{ env.PLATFORM_TOOLS }}" --base-image ${{ env.SOLANA_VERIFIABLE_BUILD_IMAGE }} --library-name ${{ env.WRAPPER_NAME }}
+          ./scripts/assert-sbpf-v3.sh target/deploy/${{ env.WRAPPER_NAME }}.so
 
       - name: Get hash wrapper
         run: |
@@ -113,6 +112,7 @@ jobs:
       - name: Verifiable build ui wrapper
         run: |
           solana-verify build --arch=${{ env.SVM_ARCH }} --cargo-build-sbf-args="--tools-version ${{ env.PLATFORM_TOOLS }}" --base-image ${{ env.SOLANA_VERIFIABLE_BUILD_IMAGE }} --library-name ${{ env.UI_WRAPPER_NAME }}
+          ./scripts/assert-sbpf-v3.sh target/deploy/${{ env.UI_WRAPPER_NAME }}.so
 
       - name: Get hash ui wrapper
         run: |

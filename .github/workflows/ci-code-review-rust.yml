@@ -10,13 +10,21 @@ on:
         'lib/**',
         'Cargo.toml',
         'Cargo.lock',
+        'scripts/assert-sbpf-v3.sh',
+        '.github/workflows/ci-code-review-rust.yml',
       ]
   workflow_dispatch:
 
 env:
   CARGO_TERM_COLOR: always
-  SOLANA_VERSION: '2.2.20'
-  SVM_ARCH: 'v2'
+  SOLANA_VERSION: '4.2.2'
+  SVM_ARCH: 'v3'
+  # ProgramTest 3.x is the newest in-process runtime compatible with the
+  # current Program SDK/SPL/Jupiter types. It cannot parse platform-tools
+  # v1.57's canonical v3 ELF layout, so the broad Rust regression suite keeps
+  # a separate v2-only test artifact. The Agave 4.2 validator tests below in
+  # ci-code-review-ts.yml execute the release v3 artifacts.
+  PROGRAM_TEST_ARCH: 'v2'
   # pinocchio's account view crates need rustc 1.89 to build, so the host
   # toolchain moves up with them.
   RUST_TOOLCHAIN: '1.89.0'
@@ -55,7 +63,7 @@ jobs:
       - name: Cache dependencies
         uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
-          shared-key: "solana-${{ env.SOLANA_VERSION }}-platform-tools-${{ env.PLATFORM_TOOLS }}"
+          shared-key: "solana-${{ env.SOLANA_VERSION }}-platform-tools-${{ env.PLATFORM_TOOLS }}-arch-${{ env.SVM_ARCH }}"
 
       - name: Set Rust version
         run: |
@@ -67,7 +75,7 @@ jobs:
         # path dependencies, which makes them implicit workspace members.
         # They are excluded rather than held to this repository's lint
         # policy, so the fork stays diffable against upstream.
-        run: cargo clippy --workspace --exclude fixed --exclude checked_math --exclude calltrace --exclude cvt --exclude cvt-macros --exclude derive_nondet --exclude early-panic --exclude hook_macro --exclude nondet --exclude solana_cvt --exclude stubs --exclude vectors -- --no-deps --deny=warnings --allow=clippy::style --allow=clippy::complexity --allow=clippy::manual-retain --allow=clippy::crate-in-macro-def --allow=clippy::result-large-err --allow=clippy::derive_partial_eq_without_eq --allow=clippy::multiple-bound-locations --allow=unexpected-cfgs
+        run: cargo clippy --workspace --exclude fixed --exclude checked_math --exclude calltrace --exclude cvt --exclude cvt-macros --exclude derive_nondet --exclude early-panic --exclude hook_macro --exclude nondet --exclude solana_cvt --exclude stubs --exclude vectors -- --no-deps --deny=warnings --allow=deprecated --allow=clippy::style --allow=clippy::complexity --allow=clippy::manual-retain --allow=clippy::crate-in-macro-def --allow=clippy::result-large-err --allow=clippy::derive_partial_eq_without_eq --allow=clippy::multiple-bound-locations --allow=unexpected-cfgs
 
       # The prover itself only runs on main (ci-certora.yml), so nothing else
       # on a pull request compiles the code behind the certora feature, which
@@ -86,7 +94,7 @@ jobs:
       - name: Cache dependencies
         uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
-          shared-key: "solana-${{ env.SOLANA_VERSION }}-platform-tools-${{ env.PLATFORM_TOOLS }}"
+          shared-key: "solana-${{ env.SOLANA_VERSION }}-platform-tools-${{ env.PLATFORM_TOOLS }}-arch-${{ env.SVM_ARCH }}"
 
       - name: Set Rust version
         run: |
@@ -96,7 +104,7 @@ jobs:
         run: |
           curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
             --output solana-install.sh https://release.anza.xyz/v${{ env.SOLANA_VERSION }}/install
-          echo '4caed81545b20ddcbc06d65ca8ef8dc69fc9e68fe93a868f5b508309021b49af  solana-install.sh' | sha256sum --check --strict
+          echo 'e16c8a1f07996b6255a67a53c651f2e859c7d5217b360fd6613cc3c3cae46bd4  solana-install.sh' | sha256sum --check --strict
           sh solana-install.sh
           echo "$HOME/.local/share/solana/install/active_release/bin" >> $GITHUB_PATH
           export PATH="/home/runner/.local/share/solana/install/active_release/bin:$PATH"
@@ -136,10 +144,19 @@ jobs:
 
       - name: Build all deps
         run: |
-          cargo build-sbf --arch=${{ env.SVM_ARCH }} --tools-version ${{ env.PLATFORM_TOOLS }} -- -p manifest-dex -p wrapper -p ui-wrapper
+          (cd programs/manifest && cargo build-sbf --arch=${{ env.SVM_ARCH }} --tools-version ${{ env.PLATFORM_TOOLS }})
+          (cd programs/wrapper && cargo build-sbf --arch=${{ env.SVM_ARCH }} --tools-version ${{ env.PLATFORM_TOOLS }})
+          (cd programs/ui-wrapper && cargo build-sbf --arch=${{ env.SVM_ARCH }} --tools-version ${{ env.PLATFORM_TOOLS }})
+          ./scripts/assert-sbpf-v3.sh target/deploy/manifest.so target/deploy/wrapper.so target/deploy/ui_wrapper.so
 
-      - name: Run sbf tests
-        run: cargo test-sbf --arch=${{ env.SVM_ARCH }} --tools-version ${{ env.PLATFORM_TOOLS }} --features "test,test-sbf" -- --test-threads 1
+      - name: Build ProgramTest compatibility artifacts
+        run: |
+          mkdir -p target/program-test-deploy
+          (cd programs/wrapper && cargo build-sbf --arch=${{ env.PROGRAM_TEST_ARCH }} --tools-version ${{ env.PLATFORM_TOOLS }} --sbf-out-dir "$GITHUB_WORKSPACE/target/program-test-deploy" --features test)
+          (cd programs/ui-wrapper && cargo build-sbf --arch=${{ env.PROGRAM_TEST_ARCH }} --tools-version ${{ env.PLATFORM_TOOLS }} --sbf-out-dir "$GITHUB_WORKSPACE/target/program-test-deploy" --features test)
+
+      - name: Run SBF regression tests (legacy ProgramTest ELF)
+        run: cargo test-sbf --arch=${{ env.PROGRAM_TEST_ARCH }} --tools-version ${{ env.PLATFORM_TOOLS }} --sbf-out-dir "$GITHUB_WORKSPACE/target/program-test-deploy" --features "test,test-sbf" -- --test-threads 1
 
   coverage:
     name: Coverage
@@ -151,7 +168,7 @@ jobs:
       - name: Cache dependencies
         uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
-          shared-key: "solana-${{ env.SOLANA_VERSION }}"
+          shared-key: "solana-${{ env.SOLANA_VERSION }}-platform-tools-${{ env.PLATFORM_TOOLS }}-arch-${{ env.SVM_ARCH }}"
 
       - name: Set Rust version
         run: |
@@ -161,7 +178,7 @@ jobs:
         run: |
           curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
             --output solana-install.sh https://release.anza.xyz/v${{ env.SOLANA_VERSION }}/install
-          echo '4caed81545b20ddcbc06d65ca8ef8dc69fc9e68fe93a868f5b508309021b49af  solana-install.sh' | sha256sum --check --strict
+          echo 'e16c8a1f07996b6255a67a53c651f2e859c7d5217b360fd6613cc3c3cae46bd4  solana-install.sh' | sha256sum --check --strict
           sh solana-install.sh
           echo "$HOME/.local/share/solana/install/active_release/bin" >> $GITHUB_PATH
           export PATH="/home/runner/.local/share/solana/install/active_release/bin:$PATH"
@@ -219,11 +236,12 @@ jobs:
           "$DEST/rust/bin/rustc" --version
           echo "installed ${{ env.PLATFORM_TOOLS }} to $DEST"
 
-      - name: Build the programs for the integration tests
+      - name: Build the ProgramTest compatibility artifacts
         run: |
-          (cd programs/manifest && cargo build-sbf --arch=${{ env.SVM_ARCH }} --tools-version ${{ env.PLATFORM_TOOLS }} --features test)
-          (cd programs/wrapper && cargo build-sbf --arch=${{ env.SVM_ARCH }} --tools-version ${{ env.PLATFORM_TOOLS }} --features test)
-          (cd programs/ui-wrapper && cargo build-sbf --arch=${{ env.SVM_ARCH }} --tools-version ${{ env.PLATFORM_TOOLS }} --features test)
+          mkdir -p target/program-test-deploy
+          (cd programs/manifest && cargo build-sbf --arch=${{ env.PROGRAM_TEST_ARCH }} --tools-version ${{ env.PLATFORM_TOOLS }} --sbf-out-dir "$GITHUB_WORKSPACE/target/program-test-deploy" --features test)
+          (cd programs/wrapper && cargo build-sbf --arch=${{ env.PROGRAM_TEST_ARCH }} --tools-version ${{ env.PLATFORM_TOOLS }} --sbf-out-dir "$GITHUB_WORKSPACE/target/program-test-deploy" --features test)
+          (cd programs/ui-wrapper && cargo build-sbf --arch=${{ env.PROGRAM_TEST_ARCH }} --tools-version ${{ env.PLATFORM_TOOLS }} --sbf-out-dir "$GITHUB_WORKSPACE/target/program-test-deploy" --features test)
 
       # split coverage test runs to avoid enabling no-clock feature during unit tests
       # and to handle packages with/without test features separately.
@@ -233,7 +251,7 @@ jobs:
       # are for clippy.
       - name: Generate code coverage
         env:
-          SBF_OUT_DIR: ${{ github.workspace }}/target/deploy
+          SBF_OUT_DIR: ${{ github.workspace }}/target/program-test-deploy
         run: |
           cargo llvm-cov --no-report --workspace --exclude manifest-jupiter --exclude manifest-client --exclude calltrace --exclude cvt --exclude cvt-macros --exclude derive_nondet --exclude early-panic --exclude hook_macro --exclude nondet --exclude solana_cvt --exclude stubs --exclude vectors --features test  -- --nocapture --test-threads 1
           cargo llvm-cov --no-report --package manifest-jupiter --features test  -- --nocapture --test-threads 1

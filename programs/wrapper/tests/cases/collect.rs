@@ -13,11 +13,7 @@ use crate::program_test::{send_tx_with_retry, TestFixture};
 async fn collect_moves_only_lamports_above_rent_minimum() -> Result<()> {
     let test_fixture: TestFixture = TestFixture::new().await;
     let payer: Keypair = test_fixture.payer_keypair().insecure_clone();
-    let collector: Keypair = Keypair::from_bytes(&[
-        42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42,
-        42, 42, 42, 42, 42, 42, 42, 42, 42, 25, 127, 107, 35, 225, 108, 133, 50, 198, 171, 200, 56,
-        250, 205, 94, 167, 137, 190, 12, 118, 178, 146, 3, 52, 3, 155, 250, 139, 61, 54, 141, 97,
-    ])?;
+    let collector: Keypair = Keypair::new_from_array([42; 32]);
     let excess_lamports: u64 = 123_456;
 
     let fund_instruction: Instruction =

@@ -105,7 +105,7 @@ fn expand_dynamic<'a, T: ManifestAccount + Pod + Clone>(
     let payer: &AccountView = payer.info;
 
     invoke(
-        &solana_program::system_instruction::transfer(
+        &solana_system_interface::instruction::transfer(
             payer.pubkey(),
             expandable_account.pubkey(),
             lamports_diff,
@@ -116,7 +116,7 @@ fn expand_dynamic<'a, T: ManifestAccount + Pod + Clone>(
     #[cfg(feature = "fuzz")]
     {
         solana_program::program::invoke(
-            &solana_program::system_instruction::allocate(
+            &solana_system_interface::instruction::allocate(
                 expandable_account.pubkey(),
                 new_size as u64,
             ),

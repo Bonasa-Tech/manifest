@@ -484,7 +484,7 @@ mod test {
         ( $owned:ident, $name:ident) => {
             let mut $owned: OwnedAccount = OwnedAccount::new(
                 &TRADER_KEY,
-                &solana_program::system_program::id(),
+                &solana_sdk_ids::system_program::id(),
                 1_000_000_000,
                 &[],
             );

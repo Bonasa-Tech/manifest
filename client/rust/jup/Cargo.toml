@@ -20,6 +20,7 @@ manifest-dex = { path = "../../../programs/manifest" }
 hypertree = { path = "../../../lib" }
 jupiter-amm-interface = "0.5.1"
 solana-program = { workspace = true }
+solana-sdk-ids = { workspace = true }
 solana-account = { workspace = true }
 spl-token = { workspace = true }
 spl-token-2022 = { workspace = true }

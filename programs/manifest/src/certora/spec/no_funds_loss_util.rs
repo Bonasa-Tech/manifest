@@ -510,7 +510,7 @@ pub fn cvt_assume_global_trade_accounts_with_gas<'a>(
     system_program: &'a AccountView,
     is_global_base: bool,
 ) -> [Option<GlobalTradeAccounts<'a>>; 2] {
-    cvt_assume!(system_program.pubkey() == &solana_program::system_program::id());
+    cvt_assume!(system_program.pubkey() == &solana_sdk_ids::system_program::id());
     cvt_assume_global_trade_accounts_gen(
         market,
         trader,

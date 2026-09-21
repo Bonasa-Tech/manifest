@@ -28,6 +28,7 @@ on:
         'programs/**',
         'Cargo.toml',
         'Cargo.lock',
+        'scripts/assert-sbpf-v3.sh',
         '.github/workflows/ci-benchmark.yml',
       ]
   pull_request:
@@ -37,13 +38,15 @@ on:
         'programs/**',
         'Cargo.toml',
         'Cargo.lock',
+        'scripts/assert-sbpf-v3.sh',
         '.github/workflows/ci-benchmark.yml',
       ]
   workflow_dispatch:
 
 env:
   CARGO_TERM_COLOR: always
-  SOLANA_VERSION: '2.2.20'
+  SOLANA_VERSION: '4.2.2'
+  SVM_ARCH: 'v3'
   # pinocchio's account view crates need rustc 1.89 to build, so the host
   # toolchain moves up with them.
   RUST_TOOLCHAIN: '1.89.0'
@@ -122,7 +125,7 @@ jobs:
       - name: Cache dependencies
         uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
-          shared-key: 'solana-${{ env.SOLANA_VERSION }}-platform-tools-${{ env.PLATFORM_TOOLS }}'
+          shared-key: 'solana-${{ env.SOLANA_VERSION }}-platform-tools-${{ env.PLATFORM_TOOLS }}-arch-${{ env.SVM_ARCH }}'
           workspaces: |
             . -> target
             manifest-private/deps/manifest -> target
@@ -135,7 +138,7 @@ jobs:
         run: |
           curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
             --output solana-install.sh https://release.anza.xyz/v${{ env.SOLANA_VERSION }}/install
-          echo '4caed81545b20ddcbc06d65ca8ef8dc69fc9e68fe93a868f5b508309021b49af  solana-install.sh' | sha256sum --check --strict
+          echo 'e16c8a1f07996b6255a67a53c651f2e859c7d5217b360fd6613cc3c3cae46bd4  solana-install.sh' | sha256sum --check --strict
           sh solana-install.sh
           echo "$HOME/.local/share/solana/install/active_release/bin" >> $GITHUB_PATH
           export PATH="/home/runner/.local/share/solana/install/active_release/bin:$PATH"
@@ -190,7 +193,19 @@ jobs:
           cargo build-sbf --tools-version ${{ env.PLATFORM_TOOLS }} --version
 
       - name: Run benchmark
-        run: cd $GITHUB_WORKSPACE/manifest-private; ./benchmarking/benchmark.sh
+        run: cd $GITHUB_WORKSPACE/manifest-private; SVM_ARCH=${{ env.SVM_ARCH }} SBF_ARCH=${{ env.SVM_ARCH }} ./benchmarking/benchmark.sh
+
+      - name: Verify benchmark program architecture
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t manifest_artifacts < <(find "$GITHUB_WORKSPACE/manifest-private" -type f -path '*/target/deploy/manifest.so' -print)
+          mapfile -t wrapper_artifacts < <(find "$GITHUB_WORKSPACE/manifest-private" -type f -path '*/target/deploy/wrapper.so' -print)
+          if (( ${#manifest_artifacts[@]} == 0 || ${#wrapper_artifacts[@]} == 0 )); then
+            echo 'benchmark did not leave manifest.so and wrapper.so artifacts to validate' >&2
+            exit 1
+          fi
+          ./scripts/assert-sbpf-v3.sh "${manifest_artifacts[@]}" "${wrapper_artifacts[@]}"
 
       - name: Move benchmark results
         run: |

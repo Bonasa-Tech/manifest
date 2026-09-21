@@ -191,7 +191,7 @@ fn charge_eviction_fee<'a>(
 ) -> ProgramResult {
     let rent: Rent = Rent::get()?;
     invoke(
-        &solana_program::system_instruction::transfer(
+        &solana_system_interface::instruction::transfer(
             &payer.pubkey(),
             &global.pubkey(),
             rent.try_minimum_balance(Account::LEN as usize)? * 2 + 10000 * GAS_DEPOSIT_LAMPORTS,

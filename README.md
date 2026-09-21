@@ -86,12 +86,16 @@ Reverse orders are a special type of order available on Manifest designed to rep
 ### Building
 
 The workspace pins the SBF compiler through `workspace.metadata.solana` in
-`Cargo.toml`, so both `cargo build-sbf` and `cargo test-sbf` use the same
-platform-tools version as CI and the CU benchmark.
+`Cargo.toml`. The target architecture is explicit because Cargo metadata does
+not pin it; use v3 locally just as CI, verifiable builds, and the CU benchmark
+do.
 
 ```
-cargo build-sbf
+cargo build-sbf --arch v3
 ```
+
+See [docs/sbpf-v3.md](docs/sbpf-v3.md) for the CI exceptions and measured
+artifact-size impact.
 
 ### Open Questions
 - Is tickless a good idea? This inverts time priority since it makes the most recent order able to provide negligible price improvement. This could disrupt behavior near mid and lead to unforeseen patterns.
@@ -102,8 +106,15 @@ cargo build-sbf
 ### Program Test
 
 ```
-cargo test-sbf
+cargo test-sbf --arch v2 --tools-version v1.57
 ```
+
+This is a test-harness exception, not a deploy artifact. The current Solana
+Program SDK/SPL/Jupiter types require ProgramTest 3.x, while platform-tools
+v1.57 emits v3 in the canonical ELF layout only accepted by Agave 4.x.
+Release, verifiable, local-validator, TypeScript integration, and benchmark
+artifacts are all v3; CI keeps the broad in-process Rust regression suite on a
+separate v2 artifact until those SDK types can move together.
 
 ### Typescript client test
 
