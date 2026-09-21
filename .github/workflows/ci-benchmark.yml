@@ -29,6 +29,7 @@ on:
         'Cargo.toml',
         'Cargo.lock',
         'scripts/assert-sbpf-v3.sh',
+        'scripts/benchmark-cancel-all.patch',
         '.github/workflows/ci-benchmark.yml',
       ]
   pull_request:
@@ -39,6 +40,7 @@ on:
         'Cargo.toml',
         'Cargo.lock',
         'scripts/assert-sbpf-v3.sh',
+        'scripts/benchmark-cancel-all.patch',
         '.github/workflows/ci-benchmark.yml',
       ]
   workflow_dispatch:
@@ -115,6 +117,8 @@ jobs:
         # Its direct swaps are IOC, so enumerating that account preserves the
         # tested order flow without benchmarking a full shared-book scan on
         # every Phoenix cancel-all event.
+        # The adapter retains the historical order-count denominator and
+        # zero-order transactions, so the fixed v2 budget remains comparable.
         run: git -C manifest-private apply ../scripts/benchmark-cancel-all.patch
 
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
@@ -192,7 +196,7 @@ jobs:
           cargo build-sbf --tools-version ${{ env.PLATFORM_TOOLS }} --version
 
       - name: Run benchmark
-        run: cd $GITHUB_WORKSPACE/manifest-private; SVM_ARCH=${{ env.SVM_ARCH }} SBF_ARCH=${{ env.SVM_ARCH }} ./benchmarking/benchmark.sh
+        run: cd $GITHUB_WORKSPACE/manifest-private; RUSTUP_TOOLCHAIN=${{ env.RUST_TOOLCHAIN }} SVM_ARCH=${{ env.SVM_ARCH }} SBF_ARCH=${{ env.SVM_ARCH }} ./benchmarking/benchmark.sh
 
       - name: Verify benchmark program architecture
         shell: bash

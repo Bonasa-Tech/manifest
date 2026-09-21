@@ -7,6 +7,9 @@ on:
       [
         'programs/**',
         'client/rust/**',
+        'compat/**',
+        'scripts/manifest-replay/**',
+        'scripts/verify-mainnet-upgrade.sh',
         'lib/**',
         'Cargo.toml',
         'Cargo.lock',

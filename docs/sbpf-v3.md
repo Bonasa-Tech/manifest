@@ -12,6 +12,10 @@ when isolating the effect of the architecture change.
 
 ## Performance recovery
 
+These sections record the pre-rebase optimization set. See the
+[main-rebase follow-up](sbpf-v3-followup.md) for subsequent source changes,
+benchmark-adapter accounting, and further optimizations.
+
 The original v2 private-replay budget is met without raising any limit. The
 controlled replay uses the same 4,158 recorded rows and Agave 4.2.2 runtime:
 

@@ -272,6 +272,10 @@ fn process_cancels(
     cancel_indices: &[DataIndex],
     market_info_index: DataIndex,
 ) {
+    // Placement-only batches have no list/free-list bookkeeping to perform.
+    if cancel_indices.is_empty() {
+        return;
+    }
     let mut wrapper_data: RefMut<[u8]> = wrapper_state.info.try_borrow_mut().unwrap();
     let wrapper: DynamicAccount<&mut ManifestWrapperStateFixed, &mut [u8]> =
         get_mut_dynamic_account(&mut wrapper_data);
@@ -325,6 +329,11 @@ fn process_orders<'a>(
     original_indices: &[usize],
     market_info_index: DataIndex,
 ) -> ProgramResult {
+    // A successful core batch returns one record per forwarded placement.
+    // With none forwarded, avoid allocating/copying its empty return vector.
+    if original_indices.is_empty() {
+        return Ok(());
+    }
     // The core returns `BatchUpdateReturn`, borsh: a u32 count followed by
     // (u64 order sequence number, u32 order index) records. Read them in
     // place instead of deserializing into vectors.

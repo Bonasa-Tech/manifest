@@ -1,5 +1,5 @@
 diff --git a/benchmarking/tests/utils/runner.rs b/benchmarking/tests/utils/runner.rs
-index d7d913a..a9ea6c9 100644
+index d7d913a..b4648a0 100644
 --- a/benchmarking/tests/utils/runner.rs
 +++ b/benchmarking/tests/utils/runner.rs
 @@ -21,8 +21,9 @@ use wrapper::{
@@ -14,20 +14,19 @@ index d7d913a..a9ea6c9 100644
      parse_ioc_decoded_data, parse_limit_decoded_data, parse_post_only_decoded_data,
      parse_transaction_object, value_get_obj, value_get_str, value_get_u64, Obj, ParsedTransaction,
      PhoenixIOCOrderPacket, PhoenixLimitOrderPacket, PhoenixPostOnlyOrderPacket, Side, TestFixture,
-@@ -61,7 +62,6 @@ pub async fn run_transactions(transactions_filepath: String, test_fixture: TestF
+@@ -61,6 +62,7 @@ pub async fn run_transactions(transactions_filepath: String, test_fixture: TestF
          let mut direct_place_orders: Vec<PlaceOrderParams> = Vec::new();
          let mut wrapper_place_orders: Vec<WrapperPlaceOrderParams> = Vec::new();
          let mut wrapper_cancel_orders: Vec<WrapperCancelOrderParams> = Vec::new();
--        let mut cancel_all: bool = false;
++        let mut cancel_all_orders: Vec<WrapperCancelOrderParams> = Vec::new();
+         let mut cancel_all: bool = false;
  
          let wrapper_state: &Pubkey = test_fixture.trader_to_wrapper.get(&payer).unwrap();
- 
-@@ -155,10 +155,24 @@ pub async fn run_transactions(transactions_filepath: String, test_fixture: TestF
-                     .await;
+@@ -156,9 +158,25 @@ pub async fn run_transactions(transactions_filepath: String, test_fixture: TestF
                  }
                  "CancelAllOrdersWithFreeFunds" => {
--                    cancel_all = true;
-+                    wrapper_cancel_orders.extend(
+                     cancel_all = true;
++                    cancel_all_orders.extend(
 +                        cancel_all_wrapper_orders(
 +                            &mut program_test_context,
 +                            wrapper_state,
@@ -37,8 +36,8 @@ index d7d913a..a9ea6c9 100644
 +                    );
                  }
                  "CancelAllOrders" => {
--                    cancel_all = true;
-+                    wrapper_cancel_orders.extend(
+                     cancel_all = true;
++                    cancel_all_orders.extend(
 +                        cancel_all_wrapper_orders(
 +                            &mut program_test_context,
 +                            wrapper_state,
@@ -49,13 +48,15 @@ index d7d913a..a9ea6c9 100644
                  }
                  "CancelMultipleOrdersById" => {
                      let decoded_data_object: &Obj = value_get_obj(&instruction, "decodedData");
-@@ -180,15 +194,14 @@ pub async fn run_transactions(transactions_filepath: String, test_fixture: TestF
-             }
+@@ -181,14 +199,17 @@ pub async fn run_transactions(transactions_filepath: String, test_fixture: TestF
          }
  
--        if !wrapper_cancel_orders.is_empty() || !wrapper_place_orders.is_empty() || cancel_all {
-+        if !wrapper_cancel_orders.is_empty() || !wrapper_place_orders.is_empty() {
+         if !wrapper_cancel_orders.is_empty() || !wrapper_place_orders.is_empty() || cancel_all {
++            // Keep the historical CU/order denominator and zero-order rows.
++            // Expanding cancel-all must not make the same trace look cheaper
++            // merely by counting more orders (including its Phoenix control).
              let num_orders: usize = wrapper_cancel_orders.len() + wrapper_place_orders.len();
++            wrapper_cancel_orders.extend(cancel_all_orders);
              println!(
 -                "Sending batch update for {} {} {} {} {}",
 +                "Sending batch update for {} {} {} {}",
@@ -68,7 +69,7 @@ index d7d913a..a9ea6c9 100644
              );
              // TODO: Lookup trader index hint
              let batch_update_ix: Instruction = batch_update_instruction(
-@@ -196,7 +209,7 @@ pub async fn run_transactions(transactions_filepath: String, test_fixture: TestF
+@@ -196,7 +217,7 @@ pub async fn run_transactions(transactions_filepath: String, test_fixture: TestF
                  &payer,
                  wrapper_state,
                  wrapper_cancel_orders,
