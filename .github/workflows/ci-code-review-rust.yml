@@ -21,14 +21,9 @@ env:
   SVM_ARCH: 'v3'
   # Agave 4.2's ProgramTest runtime uses APIs stabilized in Rust 1.93.
   RUST_TOOLCHAIN: '1.93.0'
-  # Must match workspace.metadata.solana.tools-version. The SBF programs are
-  # built with platform tools v1.54 (rustc 1.89, LLVM 20), which is worth about
-  # 4% of MFX compute per order over the v1.48 that cargo-build-sbf defaults to
-  # here. v1.57 was tried and measured no better - MFX_50 1442 vs 1435, MFX_99
-  # 2655 vs 2605, Phoenix control identical - and it is not reachable from any
-  # published verifiable-build image, so v1.54 is both faster and stock. The
-  # host toolchain above is unchanged; this only selects the SBF compiler.
-  PLATFORM_TOOLS: 'v1.54'
+  # Match workspace.metadata.solana.tools-version and the compiler used in
+  # docs/sbpf-v3.md. The host test runtime uses the separate Rust pin above.
+  PLATFORM_TOOLS: 'v1.57'
 
 jobs:
   format:
@@ -124,7 +119,7 @@ jobs:
           curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
             --output "$TARBALL" \
             "https://github.com/anza-xyz/platform-tools/releases/download/${{ env.PLATFORM_TOOLS }}/$TARBALL"
-          echo 'fcc41631c7f77561bf5412218bf297501dccf0305ea280f338f0ace2aab9f31e  '"$TARBALL" \
+          echo 'b0f7af104adf726fff2a6a09ea2eb2f2d2965c92295f4d7388c08d140e0c2b00  '"$TARBALL" \
             | sha256sum --check --strict
           mkdir -p "$DEST"
           tar -xjf "$TARBALL" -C "$DEST"
@@ -222,7 +217,7 @@ jobs:
           curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
             --output "$TARBALL" \
             "https://github.com/anza-xyz/platform-tools/releases/download/${{ env.PLATFORM_TOOLS }}/$TARBALL"
-          echo 'fcc41631c7f77561bf5412218bf297501dccf0305ea280f338f0ace2aab9f31e  '"$TARBALL" \
+          echo 'b0f7af104adf726fff2a6a09ea2eb2f2d2965c92295f4d7388c08d140e0c2b00  '"$TARBALL" \
             | sha256sum --check --strict
           mkdir -p "$DEST"
           tar -xjf "$TARBALL" -C "$DEST"

@@ -51,21 +51,11 @@ pub async fn replay(fixture: &Fixture, label: &str, program_path: &Path) -> Resu
     let manifest_id = Pubkey::from_str(&fixture.manifest_program)?;
     let market_id = Pubkey::from_str(&fixture.market)?;
     let mut test = ProgramTest::new("manifest_replay", manifest_id, None);
-    // ProgramTest::new already loaded the target SBF file. The SPL programs
-    // below intentionally use their native processors.
-    test.prefer_bpf(false);
+    // ProgramTest 4 preloads runtime-matched SBF Token/Token-2022 programs.
+    // Native SPL processors use a different solana-sysvar generation and
+    // cannot safely share this runtime's syscall stubs.
     test.set_compute_max_units(1_400_000);
     test.set_transaction_account_lock_limit(128);
-    test.add_program(
-        "spl_token",
-        spl_token::id(),
-        solana_program_test::processor!(spl_token::processor::Processor::process),
-    );
-    test.add_program(
-        "spl_token_2022",
-        spl_token_2022::id(),
-        solana_program_test::processor!(spl_token_2022::processor::Processor::process),
-    );
     let program_test_rent = Rent::default();
     let mut program_test_rent_top_ups = std::collections::BTreeMap::new();
     for snapshot in &fixture.accounts {
@@ -287,9 +277,9 @@ fn decode_token_account(owner: &str, data: &[u8]) -> Result<Option<(Pubkey, u64)
     let is_account = if owner == TOKEN_PROGRAM {
         spl_token::state::Account::unpack(data).is_ok()
     } else if owner == TOKEN_2022_PROGRAM {
-        spl_token_2022::extension::StateWithExtensions::<spl_token_2022::state::Account>::unpack(
-            data,
-        )
+        spl_token_2022_interface::extension::StateWithExtensions::<
+            spl_token_2022_interface::state::Account,
+        >::unpack(data)
         .is_ok()
     } else {
         false

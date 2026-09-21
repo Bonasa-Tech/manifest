@@ -11,7 +11,9 @@ For an end-to-end check, run:
   --slots 5
 ```
 
-When `--new-program` is omitted, the wrapper builds the current checkout with the repository's pinned verifiable-build recipe: `solana-verify 0.5.1`, SVM v2, platform-tools v1.57, and the Docker image digest used by CI. If the pinned `solana-verify` is unavailable, the wrapper installs it under `target/manifest-replay-tools/`. It then uses `target/deploy/manifest.so` as the candidate. Pass `--new-program <ELF>` to use an already-built candidate and skip that build.
+When `--new-program` is omitted, the wrapper builds the current checkout with the repository's pinned verifiable-build recipe: `solana-verify 0.5.1`, sBPF v3, platform-tools v1.57, and the Docker image digest used by CI. If the pinned `solana-verify` is unavailable, the wrapper installs it under `target/manifest-replay-tools/`. It verifies the ELF version and uses `target/deploy/manifest.so` as the candidate. Pass `--new-program <ELF>` to use an already-built candidate and skip that build; this also allows controlled comparisons with historical v2 artifacts.
+
+The replay runs on Agave 4.2.2 ProgramTest (host Rust 1.93), including its runtime-matched SBF Token and Token-2022 programs. It does not register native SPL processors from a different SDK generation. Re-run both old and new artifacts on this runtime when comparing CU; historical results from an older runtime are not directly interchangeable.
 
 `run` writes a reusable `fixture.json`, the downloaded deployed program, the captured chain-final market, both replay-final markets, every final writable account under `old-final-accounts/` and `new-final-accounts/`, and `report.json`. The terminal summary shows instruction counts, success and failure results, CU totals and min/average/max by instruction type, the old-to-new CU delta and percentage by instruction type, per-swap net trader token deltas (positive means received by the trader accounts), new resting-order details, order and resting-book changes, decoded final market summaries including cached global keys, writable-account differences, and byte ranges that differ.
 
