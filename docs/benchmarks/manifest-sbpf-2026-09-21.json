@@ -1,0 +1,38 @@
+{
+  "platform_tools": "v1.57",
+  "program_test": "4.2.2",
+  "original_source_commit": "2092f3ef",
+  "rows_per_run": 4158,
+  "rows_with_orders_per_run": 4157,
+  "same_signatures_and_replay_accounting": true,
+  "percentiles": [50, 95, 99],
+  "unit": "CU/order",
+  "manifest": {
+    "original_v2": [1438, 2424, 2651],
+    "initial_v3": [1875, 3236, 3504],
+    "optimized_v2": [1324, 2238, 2432],
+    "optimized_v3_repeated_runs": [
+      [1385, 2357, 2558],
+      [1385, 2357, 2558],
+      [1385, 2357, 2558]
+    ]
+  },
+  "artifacts_sha256": {
+    "original_v2": {
+      "manifest": "35cb13b8f8f0977b3066ef34d60d11a27252a85ac8af63ea1d1c0257c0768ddd",
+      "wrapper": "288bbdf150c5e868fb1313b59645734816f5e4ff3a09d23898f256be5479a354"
+    },
+    "initial_v3": {
+      "manifest": "cdc2023016d03edc0fa1b789908c5a3e29bda18a849cbe45fcf7265f5f628673",
+      "wrapper": "4ddbe781dbe19c764d3e5eb29959f917d548907a3640a9c83d4a1da6cc101dd0"
+    },
+    "optimized_v2": {
+      "manifest": "3a6df99432e347be2b845c81facfd03017db20c59394cd096b63de170442fbc0",
+      "wrapper": "a543f1f159bc49471d8ef4d3c2ef1588f44639304a45a01cd75b341423c15b06"
+    },
+    "optimized_v3": {
+      "manifest": "07ccbe87462f67deaa84f30db59aaa34f5dace42ea89b0516ee7fb9df309b155",
+      "wrapper": "452b0c58ec36f263ed05a3c49bfc015329ea24701a17b394973119657c2a880f"
+    }
+  }
+}

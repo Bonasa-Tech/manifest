@@ -12572,6 +12572,7 @@ dependencies = [
  "anyhow",
  "borsh 0.10.4",
  "bytemuck",
+ "five8_core 0.1.2",
  "hypertree",
  "manifest-dex",
  "num_enum 0.5.11",

@@ -41,6 +41,8 @@ const MARKET_FIXED_DISCRIMINANT = 4859840929024028656n;
  * RestingOrder on the market.
  */
 export type RestingOrder = {
+  /** Dynamic-account node offset for a checked core cancellation hint. */
+  dataIndex?: number;
   /** Trader public key. */
   trader: PublicKey;
   /** Number of base tokens remaining in the order. */
@@ -830,8 +832,14 @@ export class Market {
             restingOrderBeet,
             parseContext,
           )
-            .map(({ value }: IndexedRedBlackTreeValue<RestingOrderRaw>) =>
-              toRestingOrder(value),
+            .map(
+              ({
+                index,
+                value,
+              }: IndexedRedBlackTreeValue<RestingOrderRaw>) => ({
+                ...toRestingOrder(value),
+                dataIndex: index,
+              }),
             )
             .filter((bid: RestingOrder) => {
               return (
@@ -849,8 +857,14 @@ export class Market {
             restingOrderBeet,
             parseContext,
           )
-            .map(({ value }: IndexedRedBlackTreeValue<RestingOrderRaw>) =>
-              toRestingOrder(value),
+            .map(
+              ({
+                index,
+                value,
+              }: IndexedRedBlackTreeValue<RestingOrderRaw>) => ({
+                ...toRestingOrder(value),
+                dataIndex: index,
+              }),
             )
             .filter((ask: RestingOrder) => {
               return (

@@ -18,3 +18,4 @@ client/nyc_output
 
 .certora_internal
 certora_out
+__pycache__/

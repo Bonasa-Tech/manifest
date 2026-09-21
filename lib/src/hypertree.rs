@@ -110,14 +110,14 @@ impl<'a, T: HyperTreeReadOperations<'a> + HyperTreeData<'a>, V: Payload> Iterato
 {
     type Item = (DataIndex, &'a V);
 
+    #[inline(always)]
     fn next(&mut self) -> Option<Self::Item> {
         let index: DataIndex = self.index;
-        let next_index: DataIndex = self.tree.get_next_lower_index::<V>(self.index);
         if index == NIL {
             None
         } else {
             let result: &RBNode<V> = get_helper::<RBNode<V>>(self.tree.hypertree_data(), index);
-            self.index = next_index;
+            self.index = self.tree.get_next_lower_index::<V>(index);
             Some((index, result.get_value()))
         }
     }

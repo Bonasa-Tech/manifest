@@ -43,6 +43,7 @@ pinocchio = { workspace = true }
 
 [dev-dependencies]
 anyhow = { workspace = true }
+five8_core = { workspace = true }
 solana-program-test = { workspace = true }
 solana-logger = { workspace = true }
 solana-account = { workspace = true }

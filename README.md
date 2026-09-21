@@ -94,8 +94,8 @@ do.
 cargo build-sbf --arch v3
 ```
 
-See [docs/sbpf-v3.md](docs/sbpf-v3.md) for the CI exceptions and measured
-artifact-size impact.
+See [docs/sbpf-v3.md](docs/sbpf-v3.md) for the build policy, original CU budget,
+performance recovery and artifact sizes.
 
 ### Open Questions
 - Is tickless a good idea? This inverts time priority since it makes the most recent order able to provide negligible price improvement. This could disrupt behavior near mid and lead to unforeseen patterns.

@@ -14,12 +14,13 @@
 
 use std::{cell::RefMut, rc::Rc};
 
+use hypertree::HyperTreeValueIteratorTrait;
 use manifest::{
     program::{
         batch_update::{CancelOrderParams, PlaceOrderParams},
         instruction_builders::batch_update_instruction as core_batch_update_instruction,
     },
-    state::{constants::NO_EXPIRATION_LAST_VALID_SLOT, OrderType},
+    state::{constants::NO_EXPIRATION_LAST_VALID_SLOT, OrderType, RestingOrder},
 };
 use solana_keypair::Keypair;
 use solana_program::{instruction::Instruction, pubkey::Pubkey};
@@ -30,7 +31,7 @@ use wrapper::{
     processors::batch_upate::{WrapperCancelOrderParams, WrapperPlaceOrderParams},
 };
 
-use crate::{send_tx_with_retry, TestFixture, Token, SOL_UNIT_SIZE};
+use crate::{send_tx_with_retry, TestFixture, Token, SOL_UNIT_SIZE, USDC_UNIT_SIZE};
 
 /// Simulates `instructions` and returns the units consumed with the result.
 async fn simulate(
@@ -270,5 +271,91 @@ async fn cu_other_instructions() -> anyhow::Result<()> {
         &[wrapper_batch(&test_fixture, vec![], vec![])],
     )
     .await;
+    Ok(())
+}
+
+/// Populated two-sided books expose price arithmetic and traversal costs that
+/// shallow ask-only measurements miss. Every measured instruction simulates
+/// the same snapshot, including the hinted/unhinted core comparison.
+#[tokio::test]
+async fn cu_populated_book() -> anyhow::Result<()> {
+    let mut fixture = TestFixture::new().await;
+    fixture.claim_seat().await?;
+    fixture.deposit(Token::SOL, 100 * SOL_UNIT_SIZE).await?;
+    fixture.deposit(Token::USDC, 1_000 * USDC_UNIT_SIZE).await?;
+    let payer = fixture.payer();
+    let signer = fixture.payer_keypair().insecure_clone();
+    let replacement = |id: u64| {
+        let is_bid = id % 2 == 0;
+        WrapperPlaceOrderParams::new(
+            id,
+            SOL_UNIT_SIZE / 100,
+            if is_bid {
+                10 + (id / 2) as u32
+            } else {
+                1_000 + (id / 2) as u32
+            },
+            -3,
+            is_bid,
+            NO_EXPIRATION_LAST_VALID_SLOT,
+            OrderType::Limit,
+        )
+    };
+    for batch in 0..32u64 {
+        let orders = (batch * 8..(batch + 1) * 8).map(replacement).collect();
+        send_tx_with_retry(
+            Rc::clone(&fixture.context),
+            &[wrapper_batch(&fixture, vec![], orders)],
+            Some(&payer),
+            &[&signer],
+        )
+        .await?;
+        let count = (batch + 1) * 8;
+        if count != 64 && count != 256 {
+            continue;
+        }
+        fixture.market.reload().await;
+        let mut indexed_orders: Vec<_> = fixture
+            .market
+            .market
+            .get_bids()
+            .iter::<RestingOrder>()
+            .chain(fixture.market.market.get_asks().iter::<RestingOrder>())
+            .map(|(index, order)| (order.get_sequence_number(), index))
+            .collect();
+        indexed_orders.sort_unstable();
+        let hinted: Vec<_> = indexed_orders
+            .iter()
+            .take(10)
+            .map(|&(sequence, index)| CancelOrderParams::new_with_hint(sequence, Some(index)))
+            .collect();
+        let unhinted: Vec<_> = indexed_orders
+            .iter()
+            .take(10)
+            .map(|&(sequence, _)| CancelOrderParams::new(sequence))
+            .collect();
+        measure(
+            &fixture,
+            &format!("core_hinted_cancel_10_of_{count}"),
+            &[core_batch(&fixture, hinted, vec![])],
+        )
+        .await;
+        measure(
+            &fixture,
+            &format!("core_unhinted_cancel_10_of_{count}"),
+            &[core_batch(&fixture, unhinted, vec![])],
+        )
+        .await;
+        measure(
+            &fixture,
+            &format!("wrapper_replace_10_of_{count}"),
+            &[wrapper_batch(
+                &fixture,
+                (0..10).map(WrapperCancelOrderParams::new).collect(),
+                (count..count + 10).map(replacement).collect(),
+            )],
+        )
+        .await;
+    }
     Ok(())
 }
