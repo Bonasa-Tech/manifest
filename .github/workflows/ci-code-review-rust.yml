@@ -7,6 +7,7 @@ on:
       [
         'programs/**',
         'client/rust/**',
+        'client/okx/**',
         'compat/**',
         'scripts/manifest-replay/**',
         'scripts/verify-mainnet-upgrade.sh',
@@ -67,6 +68,14 @@ jobs:
         # They are excluded rather than held to this repository's lint
         # policy, so the fork stays diffable against upstream.
         run: cargo clippy --workspace --exclude fixed --exclude checked_math --exclude calltrace --exclude cvt --exclude cvt-macros --exclude derive_nondet --exclude early-panic --exclude hook_macro --exclude nondet --exclude solana_cvt --exclude stubs --exclude vectors -- --no-deps --deny=warnings --allow=deprecated --allow=clippy::style --allow=clippy::complexity --allow=clippy::manual-retain --allow=clippy::crate-in-macro-def --allow=clippy::result-large-err --allow=clippy::derive_partial_eq_without_eq --allow=clippy::multiple-bound-locations --allow=unexpected-cfgs
+
+      - name: Check adapter dependencies in isolation
+        # Workspace feature unification can hide missing Agave API opt-ins.
+        # Separate invocations also cover the isolated Jupiter coverage build.
+        run: |
+          cargo check --locked -p jupiter-amm-interface --all-targets
+          cargo check --locked -p manifest-jupiter --tests --features test
+          cargo check --locked -p manifest-okx --tests --features test
 
       # The prover itself only runs on main (ci-certora.yml), so nothing else
       # on a pull request compiles the code behind the certora feature, which
