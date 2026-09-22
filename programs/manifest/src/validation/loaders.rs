@@ -7,7 +7,8 @@ use pinocchio::{error::ProgramError, ProgramResult};
 
 use hypertree::{get_helper, trace};
 use pinocchio::account::AccountView;
-use solana_program::{pubkey::Pubkey, system_program};
+use solana_program::pubkey::Pubkey;
+use solana_sdk_ids::system_program;
 
 use crate::validation::AccountViewExt;
 

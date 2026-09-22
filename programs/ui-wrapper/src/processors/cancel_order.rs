@@ -19,7 +19,8 @@ use manifest::{
     state::{claimed_seat::ClaimedSeat, DynamicAccount, MarketFixed},
     validation::{ManifestAccountInfo, Program, Signer},
 };
-use solana_program::{pubkey::Pubkey, system_program};
+use solana_program::pubkey::Pubkey;
+use solana_sdk_ids::system_program;
 
 use crate::{
     market_info::MarketInfo, open_order::WrapperOpenOrder,

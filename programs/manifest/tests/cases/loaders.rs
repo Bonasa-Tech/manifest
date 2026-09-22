@@ -14,11 +14,12 @@ use solana_keypair::Keypair;
 use solana_program::{
     instruction::{AccountMeta, Instruction},
     pubkey::Pubkey,
-    system_instruction, system_program,
     sysvar::rent::Rent,
 };
 use solana_program_test::tokio;
+use solana_sdk_ids::system_program;
 use solana_signer::Signer;
+use solana_system_interface::instruction as system_instruction;
 
 use crate::{
     send_tx_with_retry, GlobalFixture, MintFixture, Side, TestFixture, Token, TokenAccountFixture,

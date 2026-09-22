@@ -4,8 +4,9 @@ use solana_program::{
     instruction::{AccountMeta, Instruction},
     pubkey::Pubkey,
     rent::Rent,
-    system_instruction, system_program,
 };
+use solana_sdk_ids::system_program;
+use solana_system_interface::instruction as system_instruction;
 
 pub fn create_wrapper_instructions(
     payer: &Pubkey,

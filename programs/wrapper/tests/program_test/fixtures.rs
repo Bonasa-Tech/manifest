@@ -14,10 +14,11 @@ use solana_instruction::Instruction;
 use solana_keypair::Keypair;
 use solana_program::{
     account_info::AccountInfo, clock::Clock, hash::Hash, program_pack::Pack, pubkey::Pubkey,
-    rent::Rent, system_instruction::create_account,
+    rent::Rent,
 };
 use solana_program_test::{processor, BanksClientError, ProgramTest, ProgramTestContext};
 use solana_signer::Signer;
+use solana_system_interface::instruction::create_account;
 use solana_transaction::Transaction;
 use spl_token_2022::state::Mint;
 use std::rc::Rc;

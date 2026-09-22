@@ -2,8 +2,8 @@ use crate::program::ManifestInstruction;
 use solana_program::{
     instruction::{AccountMeta, Instruction},
     pubkey::Pubkey,
-    system_program,
 };
+use solana_sdk_ids::system_program;
 
 pub fn global_add_trader_instruction(global: &Pubkey, payer: &Pubkey) -> Instruction {
     Instruction {

@@ -207,19 +207,17 @@ to be artifacts rather than bugs:
 pip install certora-cli
 ```
 
-2. Solana CLI: 4.2.2
+2. Solana CLI: 2.2.12
 
 ```shell
 curl --fail --silent --show-error --location \
-  --output solana-install.sh https://release.anza.xyz/v4.2.2/install
-echo 'e16c8a1f07996b6255a67a53c651f2e859c7d5217b360fd6613cc3c3cae46bd4  solana-install.sh' \
+  --output solana-install.sh https://release.anza.xyz/v2.2.12/install
+echo '4caed81545b20ddcbc06d65ca8ef8dc69fc9e68fe93a868f5b508309021b49af  solana-install.sh' \
   | sha256sum --check --strict
 sh solana-install.sh
 ```
 
-3. Install the Certora platform-tools version selected by
-   `.github/workflows/ci-certora.yml`. Formal builds use sBPF v3; Certora-only
-   writable mock globals are placed in the v3 writable ELF section.
+3. Install Certora version of platform-tools 1.41
 
    Go to https://github.com/Certora/certora-solana-platform-tools?tab=readme-ov-file#installation-of-executables and follow the instructions. 
 

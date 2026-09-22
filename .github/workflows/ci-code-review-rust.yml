@@ -8,7 +8,6 @@ on:
         'programs/**',
         'client/rust/**',
         'client/okx/**',
-        'compat/**',
         'scripts/manifest-replay/**',
         'scripts/verify-mainnet-upgrade.sh',
         'lib/**',
@@ -26,7 +25,7 @@ env:
   # Agave 4.2's ProgramTest runtime uses APIs stabilized in Rust 1.93.
   RUST_TOOLCHAIN: '1.93.0'
   # Match workspace.metadata.solana.tools-version and the compiler used in
-  # docs/sbpf-v3.md. The host test runtime uses the separate Rust pin above.
+  # the benchmarks. The host test runtime uses the separate Rust pin above.
   PLATFORM_TOOLS: 'v1.57'
 
 jobs:
@@ -69,13 +68,9 @@ jobs:
         # policy, so the fork stays diffable against upstream.
         run: cargo clippy --workspace --exclude fixed --exclude checked_math --exclude calltrace --exclude cvt --exclude cvt-macros --exclude derive_nondet --exclude early-panic --exclude hook_macro --exclude nondet --exclude solana_cvt --exclude stubs --exclude vectors -- --no-deps --deny=warnings --allow=deprecated --allow=clippy::style --allow=clippy::complexity --allow=clippy::manual-retain --allow=clippy::crate-in-macro-def --allow=clippy::result-large-err --allow=clippy::derive_partial_eq_without_eq --allow=clippy::multiple-bound-locations --allow=unexpected-cfgs
 
-      - name: Check adapter dependencies in isolation
+      - name: Check OKX dependencies in isolation
         # Workspace feature unification can hide missing Agave API opt-ins.
-        # Separate invocations also cover the isolated Jupiter coverage build.
-        run: |
-          cargo check --locked -p jupiter-amm-interface --all-targets
-          cargo check --locked -p manifest-jupiter --tests --features test
-          cargo check --locked -p manifest-okx --tests --features test
+        run: cargo check --locked -p manifest-okx --tests --features test
 
       # The prover itself only runs on main (ci-certora.yml), so nothing else
       # on a pull request compiles the code behind the certora feature, which
@@ -258,8 +253,7 @@ jobs:
         env:
           SBF_OUT_DIR: ${{ github.workspace }}/target/program-test-deploy
         run: |
-          cargo llvm-cov --no-report --workspace --exclude manifest-jupiter --exclude manifest-client --exclude calltrace --exclude cvt --exclude cvt-macros --exclude derive_nondet --exclude early-panic --exclude hook_macro --exclude nondet --exclude solana_cvt --exclude stubs --exclude vectors --features test  -- --nocapture --test-threads 1
-          cargo llvm-cov --no-report --package manifest-jupiter --features test  -- --nocapture --test-threads 1
+          cargo llvm-cov --no-report --workspace --exclude manifest-client --exclude calltrace --exclude cvt --exclude cvt-macros --exclude derive_nondet --exclude early-panic --exclude hook_macro --exclude nondet --exclude solana_cvt --exclude stubs --exclude vectors --features test  -- --nocapture --test-threads 1
           cargo llvm-cov --no-report --package manifest-client -- --nocapture --test-threads 1
           cargo llvm-cov report --lcov --output-path lcov.info
 

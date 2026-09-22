@@ -15,7 +15,8 @@ use crate::{
     validation::{get_global_vault_address, loaders::GlobalCreateContext},
 };
 use hypertree::{get_mut_helper, trace};
-use solana_program::{program_pack::Pack, pubkey::Pubkey, system_instruction};
+use solana_program::{program_pack::Pack, pubkey::Pubkey};
+use solana_system_interface::instruction as system_instruction;
 use spl_token_2022::{
     extension::{BaseStateWithExtensions, ExtensionType, PodStateWithExtensions},
     pod::PodMint,

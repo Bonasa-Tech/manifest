@@ -24,7 +24,8 @@ use manifest::{
     validation::{AccountViewExt, ManifestAccountInfo, Program, Signer},
 };
 use pinocchio::{account::AccountView, error::ProgramError, ProgramResult};
-use solana_program::{pubkey::Pubkey, system_instruction};
+use solana_program::pubkey::Pubkey;
+use solana_system_interface::instruction as system_instruction;
 use static_assertions::const_assert_eq;
 
 // Layout note on the wrapper's use of hypertree.

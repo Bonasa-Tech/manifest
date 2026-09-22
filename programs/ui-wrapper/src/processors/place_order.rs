@@ -26,8 +26,8 @@ use solana_program::{
     instruction::{AccountMeta, Instruction},
     program::get_return_data,
     pubkey::Pubkey,
-    system_program,
 };
+use solana_sdk_ids::system_program;
 use spl_token_2022::{
     extension::{
         transfer_fee::TransferFeeConfig, transfer_hook::TransferHook, BaseStateWithExtensions,

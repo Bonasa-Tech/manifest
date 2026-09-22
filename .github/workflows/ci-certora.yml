@@ -30,9 +30,8 @@ jobs:
           certora-key: ${{ secrets.CERTORAKEY }}
           cli-version: "8.13.0"
           # cargo-certora-sbf currently supports platform-tools through v1.53.
-          # The Certora-only writable globals are explicitly placed in a
-          # writable v3 ELF section, so formal builds use the same sBPF
-          # architecture as deployed artifacts.
+          # .rodata.certora preserves verification-only globals that the v3
+          # linker would discard from .bss/.data; this is not on-chain storage.
           certora-sbf-options: "-vvv --tools-version=v1.53 --arch=v3"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

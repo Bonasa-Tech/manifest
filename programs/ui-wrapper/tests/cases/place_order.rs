@@ -12,12 +12,11 @@ use manifest::{
 use solana_account::Account;
 use solana_instruction::Instruction;
 use solana_keypair::Keypair;
-use solana_program::{
-    instruction::AccountMeta, program_pack::Pack, pubkey::Pubkey, system_instruction::transfer,
-    system_program,
-};
+use solana_program::{instruction::AccountMeta, program_pack::Pack, pubkey::Pubkey};
 use solana_program_test::tokio;
+use solana_sdk_ids::system_program;
 use solana_signer::Signer;
+use solana_system_interface::instruction::transfer;
 use spl_token;
 use spl_token_2022::extension::StateWithExtensions;
 use ui_wrapper::{

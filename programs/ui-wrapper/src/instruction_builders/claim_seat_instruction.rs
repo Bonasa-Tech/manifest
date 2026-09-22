@@ -1,9 +1,6 @@
 use crate::ManifestWrapperInstruction;
-use solana_program::{
-    instruction::{AccountMeta, Instruction},
-    pubkey::Pubkey,
-    system_program,
-};
+use solana_program::{instruction::{AccountMeta, Instruction}, pubkey::Pubkey};
+use solana_sdk_ids::system_program;
 
 pub fn claim_seat_instruction(
     market: &Pubkey,

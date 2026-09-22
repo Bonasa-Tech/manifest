@@ -22,7 +22,8 @@ use pinocchio::{
     account::{AccountView, Ref, RefMut},
     ProgramResult,
 };
-use solana_program::{program::get_return_data, pubkey::Pubkey, system_program};
+use solana_program::{program::get_return_data, pubkey::Pubkey};
+use solana_sdk_ids::system_program;
 
 use crate::{
     loader::{check_signer, WrapperStateAccountInfo},

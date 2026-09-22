@@ -18,8 +18,9 @@ use manifest::{
 use solana_account::{Account, AccountSharedData};
 use solana_instruction::{AccountMeta, Instruction};
 use solana_keypair::Keypair;
-use solana_program::{pubkey::Pubkey, system_program};
+use solana_program::pubkey::Pubkey;
 use solana_program_test::tokio;
+use solana_sdk_ids::system_program;
 
 use crate::{send_tx_with_retry, TestFixture};
 

@@ -10,11 +10,10 @@ use manifest::{
 };
 use solana_instruction::Instruction;
 use solana_keypair::Keypair;
-use solana_program::{
-    program_pack::Pack, pubkey::Pubkey, rent::Rent, system_instruction::create_account,
-};
+use solana_program::{program_pack::Pack, pubkey::Pubkey, rent::Rent};
 use solana_program_test::{ProgramTest, ProgramTestContext};
 use solana_signer::Signer;
+use solana_system_interface::instruction::create_account;
 
 use crate::{manifest_program_test, send_tx_with_retry, MintFixture, RUST_LOG_DEFAULT};
 

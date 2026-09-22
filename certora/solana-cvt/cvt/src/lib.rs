@@ -109,7 +109,6 @@ extern "C" {
 /// Returns an arbitrary usize but always the same
 macro_rules! cvt_deterministic_usize {
     ($fname:ident, $gname: ident) => {
-        #[link_section = ".rodata.certora"]
         static mut $gname: *mut usize = std::ptr::null_mut();
         #[allow(non_snake_case)]
         /// Returns an arbitrary usize but always the same

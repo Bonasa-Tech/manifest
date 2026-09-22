@@ -1,6 +1,7 @@
 use crate::{require, validation::AccountViewExt};
 use pinocchio::{account::AccountView, error::ProgramError};
-use solana_program::{pubkey::Pubkey, system_program};
+use solana_program::pubkey::Pubkey;
+use solana_sdk_ids::system_program;
 use std::ops::Deref;
 
 #[derive(Clone)]

@@ -86,16 +86,12 @@ Reverse orders are a special type of order available on Manifest designed to rep
 ### Building
 
 The workspace pins the SBF compiler through `workspace.metadata.solana` in
-`Cargo.toml`. The target architecture is explicit because Cargo metadata does
-not pin it; use v3 locally just as CI, verifiable builds, and the CU benchmark
-do.
+`Cargo.toml`, so both `cargo build-sbf` and `cargo test-sbf` use the same
+platform-tools version as CI and the CU benchmark.
 
 ```
-cargo build-sbf --arch v3
+cargo build-sbf
 ```
-
-See [docs/sbpf-v3.md](docs/sbpf-v3.md) for the build policy, original CU budget,
-performance recovery and artifact sizes.
 
 ### Open Questions
 - Is tickless a good idea? This inverts time priority since it makes the most recent order able to provide negligible price improvement. This could disrupt behavior near mid and lead to unforeseen patterns.
@@ -106,12 +102,8 @@ performance recovery and artifact sizes.
 ### Program Test
 
 ```
-cargo test-sbf --arch v3 --tools-version v1.57
+cargo test-sbf
 ```
-
-The test harness uses Agave 4.2 ProgramTest, which parses the same canonical
-sBPF v3 ELF format used by release, verifiable, validator, and benchmark
-artifacts.
 
 ### Typescript client test
 

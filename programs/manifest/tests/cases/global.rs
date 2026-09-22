@@ -16,9 +16,10 @@ use manifest::{
 };
 use solana_instruction::Instruction;
 use solana_keypair::Keypair;
-use solana_program::{pubkey::Pubkey, system_instruction::transfer};
+use solana_program::pubkey::Pubkey;
 use solana_program_test::tokio;
 use solana_signer::Signer;
+use solana_system_interface::instruction::transfer;
 
 use crate::{
     send_tx_with_retry, GlobalFixture, MarketFixture, MintFixture, TestFixture, Token,

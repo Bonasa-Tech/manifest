@@ -31,9 +31,10 @@ use manifest::{
 use solana_account::{Account, AccountSharedData};
 use solana_instruction::{AccountMeta, Instruction};
 use solana_keypair::Keypair;
-use solana_program::{program_pack::Pack, pubkey::Pubkey, rent::Rent, system_instruction};
+use solana_program::{program_pack::Pack, pubkey::Pubkey, rent::Rent};
 use solana_program_test::{tokio, ProgramTestContext};
 use solana_signer::Signer;
+use solana_system_interface::instruction as system_instruction;
 use solana_transaction::Transaction;
 
 use crate::{send_tx_with_retry, TestFixture, TokenAccountFixture, SOL_UNIT_SIZE, USDC_UNIT_SIZE};

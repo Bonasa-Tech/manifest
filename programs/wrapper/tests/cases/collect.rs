@@ -3,8 +3,10 @@ use std::rc::Rc;
 use anyhow::Result;
 use solana_instruction::{AccountMeta, Instruction};
 use solana_keypair::Keypair;
-use solana_program::{rent::Rent, system_instruction, system_program};
+use solana_program::rent::Rent;
+use solana_sdk_ids::system_program;
 use solana_signer::Signer;
+use solana_system_interface::instruction as system_instruction;
 use wrapper::instruction::ManifestWrapperInstruction;
 
 use crate::program_test::{send_tx_with_retry, TestFixture};
