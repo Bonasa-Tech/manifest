@@ -1,0 +1,46 @@
+name: Production price arithmetic
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  arithmetic:
+    name: Full-width equivalence
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Install pinned verification tools
+        run: |
+          rustup toolchain install 1.93.0
+          cargo +1.93.0 install kani-verifier --version 0.68.0 --locked
+          cargo +1.93.0 kani setup
+          curl --fail --location --retry 3 https://github.com/cvc5/cvc5/releases/download/cvc5-1.4.0/cvc5-Linux-x86_64-static.zip --output "$RUNNER_TEMP/cvc5.zip"
+          echo "61d13483ec9c4e8d05c7f3d532225255b2183a0c03b161d37d942d1ba089ec6d  $RUNNER_TEMP/cvc5.zip" | sha256sum --check
+          unzip -q "$RUNNER_TEMP/cvc5.zip" -d "$RUNNER_TEMP/cvc5"
+          python3 -m venv "$RUNNER_TEMP/proof-python"
+          "$RUNNER_TEMP/proof-python/bin/pip" install z3-solver==4.15.4.0
+          echo "KANI_CVC5=$RUNNER_TEMP/cvc5/cvc5-Linux-x86_64-static/bin/cvc5" >> "$GITHUB_ENV"
+          echo "$RUNNER_TEMP/proof-python/bin" >> "$GITHUB_PATH"
+          echo "$GITHUB_WORKSPACE/scripts/kani" >> "$GITHUB_PATH"
+      - name: Check solver certificates and fail-closed behavior
+        run: python3 -m unittest discover -s scripts/kani -p 'test_*.py' -v
+      - name: Check every production arithmetic obligation
+        # No certora feature, reduced integers, disabled overflow checks, or
+        # optimistic loop bounds. The entire module must pass together.
+        # Only assertion-reachability queries are disabled, not assertions.
+        shell: bash
+        run: |
+          cargo kani -p manifest-dex --lib --no-default-features \
+            --harness quantities::quantities_kani \
+            --no-assertion-reach-checks -Z stubbing -Z unstable-options \
+            --harness-timeout 5m --jobs 2 --output-format terse \
+            | tee "$RUNNER_TEMP/arithmetic-proof.log"
+          # A missing/cfg-disabled module must not silently reduce coverage.
+          grep -Fx 'Complete - 36 successfully verified harnesses, 0 failures, 36 total.' "$RUNNER_TEMP/arithmetic-proof.log"
+          git diff --exit-code -- Cargo.lock

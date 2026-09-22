@@ -1,4 +1,6 @@
 #![cfg(feature = "certora")]
+// Reduced price model for state-machine proofs only. Production arithmetic is
+// checked separately by quantities_kani.rs with the certora feature disabled.
 use super::*;
 
 impl QuoteAtomsPerBaseAtom {

@@ -266,14 +266,12 @@ fn div_d18(x: u128) -> u128 {
 
 /// Formal verification keeps the plain division.
 ///
-/// The Certora Solana prover does not model 128-bit arithmetic bit-precisely:
-/// the compiler-rt helpers that implement u128 multiplication and division
-/// (`__multi3`, `__udivti3`) are summarized in `certora/cvt_summaries.txt` as
-/// typed but otherwise unconstrained numbers. Existing rules reason on top
-/// of those summaries, so formal builds retain the original full-width
-/// expressions. `div_d18_test` separately checks the optimized arithmetic
-/// against Rust's full-width operations on boundaries, bit patterns, random
-/// inputs, and complete price conversions, including overflow and rounding.
+/// The state-machine Certora rules use the reduced price implementation in
+/// `quantities_certora.rs`; they do not prove the deployed 128-bit arithmetic.
+/// `quantities_kani.rs` separately checks the actual production functions
+/// against full-width bit-vector arithmetic, including overflow and rounding.
+/// `div_d18_test` additionally exercises boundaries, bit patterns and random
+/// inputs. Passing the reduced-model Certora rules alone is not sufficient.
 #[cfg(feature = "certora")]
 #[allow(dead_code)]
 #[inline(always)]
@@ -299,34 +297,38 @@ fn div_ceil_d18(x: u128) -> u128 {
     }
 }
 
-/// Divide in base 2^32 using two quotient digits. Normalizing 10^18 by four
-/// bits makes its high digit at least 2^31, so each quotient estimate needs
-/// at most two corrections. All products fit u64; the wrapping operations
-/// discard the high base-2^32 digits that cancel in the subtraction.
+/// One base-2^32 quotient digit. Normalizing 10^18 by four bits makes its
+/// high digit at least 2^31, so each estimate needs at most two corrections.
+/// The caller supplies top < (10^18 << 4) and next < 2^32.
+#[cfg(not(feature = "certora"))]
+#[inline(always)]
+fn div_d18_digit(top: u64, next: u64) -> u64 {
+    const NORMALIZED: u64 = (D18 as u64) << 4;
+    const HIGH: u64 = NORMALIZED >> 32;
+    const LOW: u64 = NORMALIZED & u32::MAX as u64;
+    const BASE: u64 = 1 << 32;
+
+    let mut quotient = top / HIGH;
+    let mut remainder = top - quotient * HIGH;
+    // LOW < HIGH, so quotient * LOW <= top and cannot overflow.
+    while quotient >= BASE || quotient * LOW > ((remainder << 32) | next) {
+        quotient -= 1;
+        remainder += HIGH;
+        if remainder >= BASE {
+            break;
+        }
+    }
+    quotient
+}
+
+/// Divide in base 2^32 using two quotient digits. All products fit u64; the
+/// wrapping operations discard high digits that cancel in the subtraction.
 #[cfg(not(feature = "certora"))]
 #[inline(always)]
 fn div_rem_d18(x: u128) -> (u128, u64) {
     const DIVISOR: u64 = D18 as u64;
     const NORMALIZED: u64 = DIVISOR << 4;
-    const HIGH: u64 = NORMALIZED >> 32;
-    const LOW: u64 = NORMALIZED & u32::MAX as u64;
-    const BASE: u64 = 1 << 32;
-    const MASK: u64 = BASE - 1;
-
-    #[inline(always)]
-    fn digit(top: u64, next: u64) -> u64 {
-        let mut quotient = top / HIGH;
-        let mut remainder = top - quotient * HIGH;
-        // LOW < HIGH, so quotient * LOW <= top and cannot overflow.
-        while quotient >= BASE || quotient * LOW > ((remainder << 32) | next) {
-            quotient -= 1;
-            remainder += HIGH;
-            if remainder >= BASE {
-                break;
-            }
-        }
-        quotient
-    }
+    const MASK: u64 = u32::MAX as u64;
 
     let high = (x >> 64) as u64;
     let low = x as u64;
@@ -342,11 +344,11 @@ fn div_rem_d18(x: u128) -> (u128, u64) {
     let bottom = low << 4;
     let next = bottom >> 32;
     let last = bottom & MASK;
-    let q1 = digit(top, next);
+    let q1 = div_d18_digit(top, next);
     let middle = (top << 32)
         .wrapping_add(next)
         .wrapping_sub(q1.wrapping_mul(NORMALIZED));
-    let q0 = digit(middle, last);
+    let q0 = div_d18_digit(middle, last);
     let remainder = (middle << 32)
         .wrapping_add(last)
         .wrapping_sub(q0.wrapping_mul(NORMALIZED))
@@ -354,20 +356,33 @@ fn div_rem_d18(x: u128) -> (u128, u64) {
     (((q1 << 32) | q0) as u128, remainder)
 }
 
+/// High word of a 64-by-64 product. Kept separate (and always inlined) so its
+/// carry arithmetic can be verified independently of overflow rejection.
+#[cfg(not(feature = "certora"))]
+#[inline(always)]
+fn mul_high_u64(a: u64, b: u64) -> u64 {
+    let a0 = a & u32::MAX as u64;
+    let a1 = a >> 32;
+    let b0 = b & u32::MAX as u64;
+    let b1 = b >> 32;
+    assemble_product_high(a0 * b0, a0 * b1, a1 * b0, a1 * b1)
+}
+
+#[cfg(not(feature = "certora"))]
+#[inline(always)]
+fn assemble_product_high(p00: u64, p01: u64, p10: u64, p11: u64) -> u64 {
+    // Each limb is at most 2^32-1, so these sums fit u64.
+    let middle = p10 + (p00 >> 32);
+    let carry = (middle & u32::MAX as u64) + p01;
+    p11 + (middle >> 32) + (carry >> 32)
+}
+
 /// Checked 128-by-64 product using 32-bit limbs for the high half. sBPF v3
 /// has native 64-bit low multiplication but no high multiplication opcode.
 #[cfg(not(feature = "certora"))]
 #[inline(always)]
 fn checked_price_product(price: [u64; 2], amount: u64) -> Option<u128> {
-    let a0 = price[0] & u32::MAX as u64;
-    let a1 = price[0] >> 32;
-    let b0 = amount & u32::MAX as u64;
-    let b1 = amount >> 32;
-    let p00 = a0 * b0;
-    // Each limb is at most 2^32-1, so these sums fit u64.
-    let middle = a1 * b0 + (p00 >> 32);
-    let carry = (middle & u32::MAX as u64) + a0 * b1;
-    let high = a1 * b1 + (middle >> 32) + (carry >> 32);
+    let high = mul_high_u64(price[0], amount);
     let high = if price[1] == 0 {
         high
     } else {
@@ -811,6 +826,11 @@ const_assert!(D18 * (u64::MAX as u128) < u128::MAX);
 #[cfg(feature = "certora")]
 #[path = "quantities_certora.rs"]
 mod quantities_certora;
+
+// These proofs compile the production implementation, not quantities_certora.
+#[cfg(all(kani, not(feature = "certora")))]
+#[path = "quantities_kani.rs"]
+mod quantities_kani;
 
 #[cfg(not(feature = "certora"))]
 impl QuoteAtomsPerBaseAtom {
