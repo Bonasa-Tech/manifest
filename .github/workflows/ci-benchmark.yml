@@ -10,8 +10,8 @@
 #
 # Requirements:
 #   * secret  MANIFEST_PAT: token that can read manifest-private.
-#   * Publish the reviewed private commit pinned below before pushing this
-#     workflow. It includes the cancel-all adapter and main's order accounting.
+#   * variable MANIFEST_PRIVATE_BENCHMARK_V3_SHA: full SHA of the published,
+#     reviewed v3 harness (including the cancel-all adapter and order accounting).
 #
 # The harness expects this repository at manifest-private/deps/manifest; that
 # directory is populated from the commit being benchmarked, so the private
@@ -53,7 +53,7 @@ env:
   PLATFORM_TOOLS: 'v1.57'
   # Keep the v3 build driver and Agave 4.2.2 harness on a separate reviewed pin
   # so preparing this migration does not change main's existing v2 harness.
-  BENCHMARK_REPOSITORY_SHA: '7ee1618cd2f582e06277c6cc6968d426a2a6f519'
+  BENCHMARK_REPOSITORY_SHA: ${{ vars.MANIFEST_PRIVATE_BENCHMARK_V3_SHA }}
 
 jobs:
   benchmark:
@@ -78,7 +78,7 @@ jobs:
         shell: bash
         run: |
           if [[ ! "$BENCHMARK_REPOSITORY_SHA" =~ ^[0-9a-f]{40}$ ]]; then
-            echo 'BENCHMARK_REPOSITORY_SHA must pin a published, reviewed private harness commit' >&2
+            echo 'Set repository variable MANIFEST_PRIVATE_BENCHMARK_V3_SHA to the full SHA of the published, reviewed v3 harness' >&2
             exit 1
           fi
 

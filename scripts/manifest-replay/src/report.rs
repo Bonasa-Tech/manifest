@@ -53,6 +53,9 @@ pub fn build_report(
 pub fn print_report(report: &ComparisonReport) {
     println!("\nManifest mainnet upgrade replay");
     println!("market: {}", report.market);
+    for (address, sha256) in &report.old.token_program_sha256 {
+        println!("captured token program: {address} sha256={sha256}");
+    }
     println!(
         "slots: {}..={} ({} slot span)",
         report.start_slot,
