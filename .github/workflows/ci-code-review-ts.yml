@@ -100,7 +100,7 @@ jobs:
       - name: Cache dependencies
         uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
-          shared-key: "solana-${{ env.SOLANA_VERSION }}-platform-tools-${{ env.PLATFORM_TOOLS }}-arch-${{ env.SVM_ARCH }}"
+          shared-key: "solana-${{ env.SOLANA_VERSION }}-platform-tools-${{ env.PLATFORM_TOOLS }}-arch-${{ env.SVM_ARCH }}-ts-${{ github.job }}"
 
       - name: Set Rust version
         run: rustup toolchain install ${{ env.RUST_TOOLCHAIN }}

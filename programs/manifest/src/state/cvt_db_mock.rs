@@ -16,29 +16,29 @@ const GLOBAL_DATA_LEN: usize = NUM_BLOCKS * MARKET_BLOCK_SIZE;
 const MAIN_SEAT_INDEX: u64 = 0;
 const SECOND_SEAT_INDEX: u64 = MARKET_BLOCK_SIZE as u64;
 
-#[link_section = ".rodata.certora"]
+#[link_section = ".certora"]
 static mut MAIN_SEAT_PK: *mut Pubkey = std::ptr::null_mut();
-#[link_section = ".rodata.certora"]
+#[link_section = ".certora"]
 static mut IS_MAIN_SEAT_TAKEN: u64 = 0;
 
-#[link_section = ".rodata.certora"]
+#[link_section = ".certora"]
 static mut SECOND_SEAT_PK: *mut Pubkey = std::ptr::null_mut();
-#[link_section = ".rodata.certora"]
+#[link_section = ".certora"]
 static mut IS_SECOND_SEAT_TAKEN: u64 = 0;
 
-#[link_section = ".rodata.certora"]
+#[link_section = ".certora"]
 static mut SEAT_DATA: *mut [u8; GLOBAL_DATA_LEN] = std::ptr::null_mut();
 
 const MAIN_BID_ORDER_INDEX: u64 = 3 * MARKET_BLOCK_SIZE as u64;
-#[link_section = ".rodata.certora"]
+#[link_section = ".certora"]
 static mut MAIN_BID_ORDER_TAKEN: u64 = 0;
-#[link_section = ".rodata.certora"]
+#[link_section = ".certora"]
 static mut BID_ORDER_DATA: *mut [u8; GLOBAL_DATA_LEN] = std::ptr::null_mut();
 
 const MAIN_ASK_ORDER_INDEX: u64 = 2 * MARKET_BLOCK_SIZE as u64;
-#[link_section = ".rodata.certora"]
+#[link_section = ".certora"]
 static mut MAIN_ASK_ORDER_TAKEN: u64 = 0;
-#[link_section = ".rodata.certora"]
+#[link_section = ".certora"]
 static mut ASK_ORDER_DATA: *mut [u8; GLOBAL_DATA_LEN] = std::ptr::null_mut();
 
 const MAIN_SEAT_DATA_IDX: DataIndex = 0u32;

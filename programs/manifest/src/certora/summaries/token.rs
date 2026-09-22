@@ -20,12 +20,12 @@ use solana_cvt::token::{spl_token_account_get_amount, spl_token_account_set_amou
 
 /// Whether transfers may charge a nondeterministic fee. Reset by
 /// `init_static`; havoced in rules that do not initialize statics.
-#[link_section = ".rodata.certora"]
+#[link_section = ".certora"]
 static mut TRANSFER_FEE_ENABLED: bool = false;
 
 /// Ghost sum of the fees charged by every fee-aware transfer since
 /// `init_static`.
-#[link_section = ".rodata.certora"]
+#[link_section = ".certora"]
 static mut TRANSFER_FEES_CHARGED: u64 = 0;
 
 pub fn init_transfer_fee() {

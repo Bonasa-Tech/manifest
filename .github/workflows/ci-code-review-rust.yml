@@ -14,6 +14,8 @@ on:
         'Cargo.toml',
         'Cargo.lock',
         'scripts/assert-sbpf-v3.sh',
+        'scripts/tests/**',
+        'local-validator-test.sh',
         '.github/workflows/ci-code-review-rust.yml',
       ]
   workflow_dispatch:
@@ -44,6 +46,9 @@ jobs:
       - name: Run fmt
         run: cargo +nightly fmt -- --check
 
+      - name: Test validator lifecycle and shell compatibility
+        run: python3 -m unittest discover -s scripts/tests -v
+
   clippy:
     name: Clippy
     runs-on: ubuntu-latest
@@ -54,7 +59,7 @@ jobs:
       - name: Cache dependencies
         uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
-          shared-key: "solana-${{ env.SOLANA_VERSION }}-platform-tools-${{ env.PLATFORM_TOOLS }}-arch-${{ env.SVM_ARCH }}"
+          shared-key: "solana-${{ env.SOLANA_VERSION }}-platform-tools-${{ env.PLATFORM_TOOLS }}-arch-${{ env.SVM_ARCH }}-${{ github.job }}"
 
       - name: Set Rust version
         run: |
@@ -66,18 +71,14 @@ jobs:
         # path dependencies, which makes them implicit workspace members.
         # They are excluded rather than held to this repository's lint
         # policy, so the fork stays diffable against upstream.
-        run: cargo clippy --workspace --exclude fixed --exclude checked_math --exclude calltrace --exclude cvt --exclude cvt-macros --exclude derive_nondet --exclude early-panic --exclude hook_macro --exclude nondet --exclude solana_cvt --exclude stubs --exclude vectors -- --no-deps --deny=warnings --allow=deprecated --allow=clippy::style --allow=clippy::complexity --allow=clippy::manual-retain --allow=clippy::crate-in-macro-def --allow=clippy::result-large-err --allow=clippy::derive_partial_eq_without_eq --allow=clippy::multiple-bound-locations --allow=unexpected-cfgs
+        run: cargo clippy --workspace --exclude fixed --exclude checked_math --exclude calltrace --exclude cvt --exclude cvt-macros --exclude derive_nondet --exclude early-panic --exclude hook_macro --exclude nondet --exclude solana_cvt --exclude stubs --exclude vectors -- --no-deps --deny=warnings --allow=clippy::style --allow=clippy::complexity --allow=clippy::manual-retain --allow=clippy::crate-in-macro-def --allow=clippy::result-large-err --allow=clippy::derive_partial_eq_without_eq --allow=clippy::multiple-bound-locations --allow=unexpected-cfgs
 
       - name: Check OKX dependencies in isolation
         # Workspace feature unification can hide missing Agave API opt-ins.
         run: cargo check --locked -p manifest-okx --tests --features test
 
-      # The prover itself only runs on main (ci-certora.yml), so nothing else
-      # on a pull request compiles the code behind the certora feature, which
-      # swaps in its own quantities and specs. Cheap to keep it building here
-      # rather than finding out after a merge.
-      - name: Build with the certora feature
-        run: cargo check -p manifest-dex --features certora --lib
+      # ci-certora.yml compiles the actual verification ELF on pull requests
+      # with Certora's Rust 1.89 compiler, not this job's newer host compiler.
 
   test:
     name: Test
@@ -89,7 +90,7 @@ jobs:
       - name: Cache dependencies
         uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
-          shared-key: "solana-${{ env.SOLANA_VERSION }}-platform-tools-${{ env.PLATFORM_TOOLS }}-arch-${{ env.SVM_ARCH }}"
+          shared-key: "solana-${{ env.SOLANA_VERSION }}-platform-tools-${{ env.PLATFORM_TOOLS }}-arch-${{ env.SVM_ARCH }}-${{ github.job }}"
 
       - name: Set Rust version
         run: |
@@ -170,7 +171,7 @@ jobs:
       - name: Cache dependencies
         uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
-          shared-key: "solana-${{ env.SOLANA_VERSION }}-platform-tools-${{ env.PLATFORM_TOOLS }}-arch-${{ env.SVM_ARCH }}"
+          shared-key: "solana-${{ env.SOLANA_VERSION }}-platform-tools-${{ env.PLATFORM_TOOLS }}-arch-${{ env.SVM_ARCH }}-${{ github.job }}"
 
       - name: Set Rust version
         run: |

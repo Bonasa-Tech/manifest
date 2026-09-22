@@ -133,6 +133,8 @@ pub(crate) fn process_global_create(
                 // its blast radius is the mint-wide global pool. This remains
                 // supported for backwards compatibility with permissionless
                 // Token-2022 mints and must be treated as unsafe custody.
+                // Preserve the existing Token-2022 vault sizing semantics.
+                #[allow(deprecated)]
                 let required_extensions: Vec<ExtensionType> =
                     ExtensionType::get_required_init_account_extensions(&mint_extensions);
                 let space: usize =

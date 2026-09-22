@@ -119,6 +119,8 @@ pub(crate) fn process_create_market(
                 let mint_extensions: Vec<ExtensionType> = mint_with_extension
                     .get_extension_types()
                     .map_err(to_program_error)?;
+                // Preserve the existing Token-2022 vault sizing semantics.
+                #[allow(deprecated)]
                 let required_extensions: Vec<ExtensionType> =
                     ExtensionType::get_required_init_account_extensions(&mint_extensions);
                 let space: usize =

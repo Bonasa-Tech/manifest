@@ -15,11 +15,11 @@ test-certora *TESTS:
 	cargo test --features certora-test {{TESTS}} -- --nocapture
 
 build-sbf extra_features="":
-	cargo certora-sbf --tools-version v1.53 --arch=v3 --features certora {{ extra_features }} ${CARGO_FEATURES}
+	python3 src/certora/build.py --cargo_features "{{ extra_features }} ${CARGO_FEATURES}"
 
 build-sbf-llvm:
 	env RUSTFLAGS="--emit=llvm-ir -C no-vectorize-slp -C opt-level=2" \
-	cargo certora-sbf --tools-version v1.53 --arch=v3 --features certora ${CARGO_FEATURES}
+	python3 src/certora/build.py --cargo_features "${CARGO_FEATURES}"
 
 build:
 	cargo build
