@@ -1,8 +1,0 @@
-#!/bin/sh
-set -eu
-
-# Kani emits bit-vectors from the actual Rust MIR. cvc5's integer translation
-# preserves their widths/wrapping; it makes the constant divisions tractable.
-# Bound the solver itself as well as Kani so timeouts do not orphan a solver.
-: "${KANI_CVC5:?Set KANI_CVC5 to the absolute path of cvc5 1.4.0}"
-exec "$KANI_CVC5" --solve-bv-as-int=sum --ext-rew-prep=agg --tlimit=240000 "$@"

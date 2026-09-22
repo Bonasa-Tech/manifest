@@ -38,7 +38,7 @@ jobs:
         run: |
           for conf in rules.conf rules-global.conf rules-reverse.conf rules-seat-integrity.conf hypertree.conf; do
             certoraSolanaProver "$conf" --compilation_steps_only
-            python3 ../check_elf.py ../../../../../target/sbpfv3-solana-solana/release/manifest.so
+            ../../../../../scripts/assert-sbpf-v3.sh ../../../../../target/sbpfv3-solana-solana/release/manifest.so
           done
  submit_verification_jobs:
     if: github.event_name != 'pull_request'
