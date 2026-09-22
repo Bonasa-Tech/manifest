@@ -2,7 +2,7 @@
 #
 # Replays real mainnet order flow (recorded from another Solana CLOB) through
 # the manifest and wrapper programs with the benchmarking harness that lives
-# in the private CKS-Systems/manifest-private repository, then records the CU
+# in the private Bonasa-Tech/manifest-private repository, then records the CU
 # per order percentiles with github-action-benchmark. Results for `main` are
 # published to the `gh-pages` branch; pull requests get a comparison against
 # `main` in the job summary (and a comment if a regression trips the alert
@@ -10,10 +10,9 @@
 #
 # Requirements:
 #   * secret  MANIFEST_PAT: token that can read manifest-private.
-#   * variable MANIFEST_PRIVATE_BENCHMARK_SHA: full commit SHA of the
-#     manifest-private revision to run. Mutable refs are rejected on purpose so
-#     that only a reviewed revision of the private harness can run against a
-#     pull request.
+#   * variable MANIFEST_PRIVATE_BENCHMARK_V3_SHA: full commit SHA of the
+#     reviewed v3-aware manifest-private harness. Publish that commit to the
+#     private repository before configuring the variable.
 #
 # The harness expects this repository at manifest-private/deps/manifest; that
 # directory is populated from the commit being benchmarked, so the private
@@ -55,9 +54,9 @@ env:
   # builds this checkout from its workspace, so the workspace pin is what
   # selects this SBF compiler for the measured programs.
   PLATFORM_TOOLS: 'v1.57'
-  # Must be configured as a full, reviewed commit SHA. Mutable branch names
-  # are rejected before any private-repository code is checked out.
-  BENCHMARK_REPOSITORY_SHA: ${{ vars.MANIFEST_PRIVATE_BENCHMARK_SHA }}
+  # Keep the v3 build driver and Agave 4.2.2 harness on a separate reviewed pin
+  # so preparing this migration does not change main's existing v2 harness.
+  BENCHMARK_REPOSITORY_SHA: ${{ vars.MANIFEST_PRIVATE_BENCHMARK_V3_SHA }}
 
 jobs:
   benchmark:
@@ -82,14 +81,14 @@ jobs:
         shell: bash
         run: |
           if [[ ! "$BENCHMARK_REPOSITORY_SHA" =~ ^[0-9a-f]{40}$ ]]; then
-            echo 'MANIFEST_PRIVATE_BENCHMARK_SHA must be a full commit SHA' >&2
+            echo 'Set MANIFEST_PRIVATE_BENCHMARK_V3_SHA to the full SHA of the published v3-aware private harness' >&2
             exit 1
           fi
 
       - name: Checkout benchmarking repo
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          repository: CKS-Systems/manifest-private
+          repository: Bonasa-Tech/manifest-private
           token: ${{ secrets.MANIFEST_PAT }}
           path: manifest-private
           ref: ${{ env.BENCHMARK_REPOSITORY_SHA }}

@@ -10,6 +10,30 @@ accepting its result. The original v2 replay remains the performance target.
 Compare identical source, platform tools, runtime, and recorded transactions
 when isolating the effect of the architecture change.
 
+The workflow uses the repository variable `MANIFEST_PRIVATE_BENCHMARK_V3_SHA`
+for a reviewed private harness that passes the architecture to both `build-sbf`
+and `test-sbf` and uses Agave 4.2.2 ProgramTest with host Rust 1.93. Publish the
+private commit before setting this variable in the public repository's Settings
+→ Secrets and variables → Actions → Variables. Leave the older
+`MANIFEST_PRIVATE_BENCHMARK_SHA` unchanged while main still uses the v2 workflow.
+An environment variable cannot override a private driver's hard-coded
+`--arch=v2`. Both the runtime and build-driver upgrades are required, and the
+post-replay ELF check remains mandatory.
+
+The validated private revision for this migration is
+`3268204f7e6c4606716501c5801fbcea2c60be12` on private branch `codex/sbpf-v3`.
+This includes the build-driver/runtime migration and a pre-replay check of the
+copied v3 binaries. Set `MANIFEST_PRIVATE_BENCHMARK_V3_SHA` to that full SHA
+after pushing the private branch. Push the updated public branch to start a new
+workflow run; rerunning the old failed job still uses its old workflow and pin.
+
+The complete private driver was rerun locally on 2026-09-22 with this revision
+and the existing cancel-all adapter. It reproduced the rebased source's
+**1,261 / 2,258 / 2,368** CU/order percentiles, all 4,158 recorded row controls,
+and the [final v3 artifact hashes](benchmarks/manifest-sbpf-followup-2026-09-21.json).
+Both original and copied replay ELFs passed the v3 check. This is local
+validation, not a successful remote CI run.
+
 ## Performance recovery
 
 These sections record the pre-rebase optimization set. See the
