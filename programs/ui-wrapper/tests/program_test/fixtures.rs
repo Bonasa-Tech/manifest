@@ -20,10 +20,11 @@ use solana_program_test::{processor, BanksClientError, ProgramTest, ProgramTestC
 use solana_signer::Signer;
 use solana_system_interface::instruction::create_account;
 use solana_transaction::Transaction;
-use spl_token_2022::{
+use spl_token_2022_interface::{
     extension::{
-        transfer_fee::instruction::initialize_transfer_fee_config, transfer_hook,
-        BaseStateWithExtensions, ExtensionType, StateWithExtensions,
+        account_len::try_calculate_account_len_from_mint_data,
+        transfer_fee::instruction::initialize_transfer_fee_config, transfer_hook, ExtensionType,
+        StateWithExtensions,
     },
     state::Mint,
 };
@@ -820,16 +821,7 @@ impl TokenAccountFixture {
             .unwrap()
             .unwrap();
 
-        let mut mint_account_data = mint_account.data.clone();
-        let mint_with_extensions =
-            StateWithExtensions::<Mint>::unpack(mint_account_data.as_mut_slice()).unwrap();
-        let mint_extensions = mint_with_extensions.get_extension_types().unwrap();
-        let account_extensions =
-            ExtensionType::get_required_init_account_extensions(&mint_extensions);
-        let space = ExtensionType::try_calculate_account_len::<spl_token_2022::state::Account>(
-            &account_extensions,
-        )
-        .unwrap();
+        let space = try_calculate_account_len_from_mint_data(&mint_account.data, &[]).unwrap();
 
         let instructions: [Instruction; 2] =
             Self::create_ixs_2022(rent, mint_pk, &payer, owner_pk, keypair, space).await;

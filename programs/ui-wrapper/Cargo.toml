@@ -44,6 +44,7 @@ solana-invoke = { workspace = true }
 
 [dev-dependencies]
 anyhow = { workspace = true }
+spl-token-2022-interface = { workspace = true }
 solana-program-test = { workspace = true }
 solana-logger = { workspace = true }
 solana-account = { workspace = true }

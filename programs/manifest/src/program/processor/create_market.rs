@@ -18,13 +18,13 @@ use crate::{
 };
 use hypertree::{get_mut_helper, trace};
 use solana_program::{program_pack::Pack, pubkey::Pubkey};
-use spl_token_2022::{
+use spl_token_2022_interface::{
     extension::{
+        account_len::try_calculate_account_len_from_mint_data,
         mint_close_authority::MintCloseAuthority, permanent_delegate::PermanentDelegate,
-        BaseStateWithExtensions, ExtensionType, PodStateWithExtensions, StateWithExtensions,
+        BaseStateWithExtensions, StateWithExtensions,
     },
-    pod::PodMint,
-    state::{Account, Mint},
+    state::Mint,
 };
 
 pub(crate) fn process_create_market(
@@ -114,18 +114,8 @@ pub(crate) fn process_create_market(
 
             if is_mint_22 {
                 let mint_data: pinocchio::account::Ref<[u8]> = mint.try_borrow()?;
-                let mint_with_extension: PodStateWithExtensions<'_, PodMint> =
-                    PodStateWithExtensions::<PodMint>::unpack(&mint_data).unwrap();
-                let mint_extensions: Vec<ExtensionType> = mint_with_extension
-                    .get_extension_types()
+                let space: usize = try_calculate_account_len_from_mint_data(&mint_data, &[])
                     .map_err(to_program_error)?;
-                // Preserve the existing Token-2022 vault sizing semantics.
-                #[allow(deprecated)]
-                let required_extensions: Vec<ExtensionType> =
-                    ExtensionType::get_required_init_account_extensions(&mint_extensions);
-                let space: usize =
-                    ExtensionType::try_calculate_account_len::<Account>(&required_extensions)
-                        .map_err(to_program_error)?;
                 create_account(
                     payer.as_ref(),
                     token_account,
@@ -215,4 +205,71 @@ pub(crate) fn process_create_market(
     expand_market_if_needed(&payer, &market)?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use spl_token_2022_interface::{
+        extension::{AccountType, ExtensionType},
+        state::{Account, Multisig},
+    };
+
+    #[test]
+    fn token22_vault_sizing_preserves_required_extensions() {
+        // Required account TLV sizes, including each extension's four-byte header.
+        // NonTransferable requires both NonTransferableAccount and ImmutableOwner.
+        let extensions = [
+            (ExtensionType::TransferFeeConfig, 12),
+            (ExtensionType::NonTransferable, 8),
+            (ExtensionType::TransferHook, 5),
+            (ExtensionType::Pausable, 4),
+            (ExtensionType::PermanentDelegate, 0),
+        ];
+        for mask in 0..(1 << extensions.len()) {
+            let mut mint_data = vec![0; Mint::LEN];
+            Mint::pack(
+                Mint {
+                    is_initialized: true,
+                    ..Mint::default()
+                },
+                &mut mint_data,
+            )
+            .unwrap();
+            let mut required_tlv_len = 0;
+            if mask != 0 {
+                mint_data.resize(Account::LEN, 0);
+                mint_data.push(AccountType::Mint.into());
+                for (index, (extension, required_len)) in extensions.iter().enumerate() {
+                    if mask & (1 << index) != 0 {
+                        let value_len =
+                            ExtensionType::try_calculate_account_len::<Mint>(&[*extension])
+                                .unwrap()
+                                - Account::LEN
+                                - 1
+                                - 4;
+                        mint_data.extend_from_slice(&u16::from(*extension).to_le_bytes());
+                        mint_data.extend_from_slice(&(value_len as u16).to_le_bytes());
+                        mint_data.resize(mint_data.len() + value_len, 0);
+                        required_tlv_len += required_len;
+                    }
+                }
+            }
+            // Extended mint layouts must not collide with the reserved multisig size.
+            if mint_data.len() == Multisig::LEN {
+                mint_data.resize(mint_data.len() + std::mem::size_of::<ExtensionType>(), 0);
+            }
+            let expected = if required_tlv_len == 0 {
+                Account::LEN
+            } else {
+                Account::LEN + 1 + required_tlv_len
+            };
+            assert_eq!(
+                try_calculate_account_len_from_mint_data(&mint_data, &[])
+                    .unwrap_or_else(|error| panic!("extension mask {mask}: {error:?}")),
+                expected,
+                "extension mask {mask}"
+            );
+        }
+    }
 }

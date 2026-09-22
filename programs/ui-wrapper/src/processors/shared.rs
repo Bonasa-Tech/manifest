@@ -87,7 +87,6 @@ pub(crate) fn expand_wrapper_if_needed<'a>(
         }
         #[cfg(not(feature = "fuzz"))]
         {
-            #[allow(deprecated)]
             wrapper_state.resize(new_size)?;
         }
     }

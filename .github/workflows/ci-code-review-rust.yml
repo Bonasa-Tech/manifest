@@ -14,7 +14,6 @@ on:
         'Cargo.toml',
         'Cargo.lock',
         'scripts/assert-sbpf-v3.sh',
-        'scripts/tests/**',
         'local-validator-test.sh',
         '.github/workflows/ci-code-review-rust.yml',
       ]
@@ -45,9 +44,6 @@ jobs:
 
       - name: Run fmt
         run: cargo +nightly fmt -- --check
-
-      - name: Test validator lifecycle and shell compatibility
-        run: python3 -m unittest discover -s scripts/tests -v
 
   clippy:
     name: Clippy

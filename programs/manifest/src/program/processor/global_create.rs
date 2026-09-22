@@ -17,11 +17,7 @@ use crate::{
 use hypertree::{get_mut_helper, trace};
 use solana_program::{program_pack::Pack, pubkey::Pubkey};
 use solana_system_interface::instruction as system_instruction;
-use spl_token_2022::{
-    extension::{BaseStateWithExtensions, ExtensionType, PodStateWithExtensions},
-    pod::PodMint,
-    state::Account,
-};
+use spl_token_2022_interface::extension::account_len::try_calculate_account_len_from_mint_data;
 
 pub(crate) fn process_global_create(
     _program_id: &Pubkey,
@@ -122,24 +118,14 @@ pub(crate) fn process_global_create(
 
             if is_mint_22 {
                 let mint_data: pinocchio::account::Ref<[u8]> = global_mint.info.try_borrow()?;
-                let mint_with_extension: PodStateWithExtensions<'_, PodMint> =
-                    PodStateWithExtensions::<PodMint>::unpack(&mint_data).unwrap();
-                let mint_extensions: Vec<ExtensionType> = mint_with_extension
-                    .get_extension_types()
-                    .map_err(to_program_error)?;
                 // Accepted risk: a PermanentDelegate can debit this vault
                 // outside Manifest's accounting. Unlike a market vault, a
                 // global vault is shared by every market using this mint, so
                 // its blast radius is the mint-wide global pool. This remains
                 // supported for backwards compatibility with permissionless
                 // Token-2022 mints and must be treated as unsafe custody.
-                // Preserve the existing Token-2022 vault sizing semantics.
-                #[allow(deprecated)]
-                let required_extensions: Vec<ExtensionType> =
-                    ExtensionType::get_required_init_account_extensions(&mint_extensions);
-                let space: usize =
-                    ExtensionType::try_calculate_account_len::<Account>(&required_extensions)
-                        .map_err(to_program_error)?;
+                let space: usize = try_calculate_account_len_from_mint_data(&mint_data, &[])
+                    .map_err(to_program_error)?;
                 create_account(
                     payer.as_ref(),
                     global_vault.info,

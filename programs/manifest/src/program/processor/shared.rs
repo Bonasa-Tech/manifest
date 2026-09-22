@@ -125,7 +125,6 @@ fn expand_dynamic<'a, T: ManifestAccount + Pod + Clone>(
     }
     #[cfg(not(feature = "fuzz"))]
     {
-        #[allow(deprecated)]
         expandable_account.resize(new_size)?;
     }
     Ok(())

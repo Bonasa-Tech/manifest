@@ -174,7 +174,6 @@ pub(crate) fn ensure_free_slots<'a>(
         }
         #[cfg(not(feature = "fuzz"))]
         {
-            #[allow(deprecated)]
             wrapper_state.resize(new_size)?;
         }
     }
