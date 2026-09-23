@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1789614029519,
+  "lastUpdate": 1790170261525,
   "repoUrl": "https://github.com/Bonasa-Tech/manifest",
   "entries": {
     "CU Benchmark": [
@@ -14285,6 +14285,72 @@ window.BENCHMARK_DATA = {
           {
             "name": "MFX_99",
             "value": 2103,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "cyrbritt@gmail.com",
+            "name": "Britt Cyr",
+            "username": "brittcyr"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "9a01051caeafcf07efbf9d2e73d214298c908357",
+          "message": "sbpf v3 (#733)\n\n* build: migrate deployable artifacts to sbpf v3\n\n* test: run ProgramTest and Certora on sbpf v3\n\n* Recover v3 replay CU budget\n\n* Integrate latest main replay and pinned toolchain with sbpf v3\n\n* Trim empty wrapper work and preserve replay accounting after main rebase\n\n* ci: select the v3-aware private benchmark harness\n\n* fix: enable Agave decoder API for isolated adapter builds\n\n* refactor: remove compatibility shims and trim Certora v3 changes\n\nUse Solana crates directly and retain Jupiter only as legacy source outside the v3 workspace. Remove branch-added documentation and reports. Limit Certora section workarounds to live Manifest proof state, restore vendored helpers, and pin local formal builds to v3.\n\n* ci: use the private harness built-in cancel-all adapter\n\nRemove the benchmark patch and its workflow application step. The pinned private harness must now include the fixture adapter directly.\n\n* fix: harden v3 verification builds and CI tooling\n\n* Verify deployed price arithmetic independently of Certora\n\nAdd 36 full-width Kani obligations for the actual production Rust arithmetic, covering limb carries, overflow rejection, division, mantissa conversion, rounding and errors. Independently prove every compositional helper specification.\n\nUse certified word decomposition and conservative partial-product abstraction for multiplication; reject unknowns, timeouts and missing obligations. Run the proof suite on pull requests without Certora credentials. Retain the v3 Certora state-machine proofs and document their reduced-model scope in source comments.\n\nValidated all 36 proofs, 26 arithmetic tests, 9 solver tests, validator lifecycle tests, formatting and strict Clippy. Deliberate carry and overflow mutations fail verification. Private replay retains identical raw CU for all 4158 rows: p50/p95/p99 1189/1447/2025. No baseline reset or docs changes.\n\n* Keep Certora verification and remove extra proof tooling\n\nRemove Kani harnesses, workflow, solver adapters and proof-only arithmetic refactors. Preserve the CU optimizations, ordinary arithmetic tests and existing reduced-model Certora rules.\n\nReplace the Python build wrapper and custom ELF checker with a small shell entry point using cargo-certora-sbf and its bundled llvm-objcopy. Keep the v3 pin and separate writable mock segment, and reuse the existing architecture assertion in CI.\n\nValidated 26 arithmetic tests, formatting, the local shell recipe and all five actual Certora compilation configurations. Checked each generated ELF has v3 flags, read-only constants and all 20 mutable globals in the separate RW segment. Remote prover execution on this head remains required before merge; compilation success is not a proof result.\n\n* Capture deployed token binaries for upgrade replay\n\nReplay the RPC-captured Token and Token-2022 ELFs instead of substituting ProgramTest binaries. Check code and deployment slots across capture, reject fixtures without captured token programs, and include token ELF hashes in reports. Keep ordinary ProgramTest fixtures pinned and clarify their ABI-testing scope.\n\nRestore the repository-controlled MANIFEST_PRIVATE_BENCHMARK_V3_SHA pin without a literal fallback. Validate six replay tests, both SBF token overrides, CI-policy Clippy, formatting, and five benchmark pin guard cases. On-chain code, CU optimizations, and Certora rules are unchanged; remote proof results remain pending.\n\n* Replace deprecated Token-2022 sizing and trim validator test tooling\n\n* Remove extra Token-2022 sizing test",
+          "timestamp": "2026-09-23T09:20:35-04:00",
+          "tree_id": "c57fe93e5e21b8f694013bb0088928db9820a41e",
+          "url": "https://github.com/Bonasa-Tech/manifest/commit/9a01051caeafcf07efbf9d2e73d214298c908357"
+        },
+        "date": 1790170258627,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "PHX_50",
+            "value": 6748,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "PHX_95",
+            "value": 8819,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "PHX_99",
+            "value": 10866,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_50",
+            "value": 1189,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_95",
+            "value": 1447,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_99",
+            "value": 2025,
             "range": "",
             "unit": "CU",
             "extra": ""
