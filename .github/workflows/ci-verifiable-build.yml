@@ -15,7 +15,9 @@ env:
   SVM_ARCH: 'v3'
   # Must match workspace.metadata.solana.tools-version.
   PLATFORM_TOOLS: 'v1.57'
-  SOLANA_VERIFIABLE_BUILD_IMAGE: 'solanafoundation/solana-verifiable-build@sha256:16053d845922e798ab1852d3fe222faf5a23eeb1db3a13d30b70d6b6e82184ae'
+  # The 4.3.0 image bundles cargo-build-sbf 4.3.0 with platform-tools v1.57.
+  # The 4.2.2 image defaults to v1.56 and fails the compiler-pin check below.
+  SOLANA_VERIFIABLE_BUILD_IMAGE: 'solanafoundation/solana-verifiable-build@sha256:12fd4c0a0790f0fc41ef74b0cdb6bccc167ba6137eb1adb749bac649481c86bd'
 
 
 jobs:

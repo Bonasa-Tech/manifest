@@ -44,6 +44,17 @@ jobs:
     if: github.event_name != 'pull_request'
     needs: build_verification_program
     runs-on: ubuntu-latest
+    # The pinned action reuses its first configuration's build directory.
+    # Separate runners keep Cargo and the post-build ELF fixup from racing.
+    strategy:
+      fail-fast: false
+      matrix:
+        configuration:
+          - rules.conf
+          - rules-global.conf
+          - rules-reverse.conf
+          - rules-seat-integrity.conf
+          - hypertree.conf
     permissions:
       contents: read
       id-token: write
@@ -55,13 +66,8 @@ jobs:
       - name: Submit verification jobs to Certora Prover
         uses: Certora/certora-run-action@5a48bad92e08e69dcff67fecbea42086bb9fe83d # v1.4.1
         with:
-          configurations: |-
-            rules.conf
-            rules-global.conf
-            rules-reverse.conf
-            rules-seat-integrity.conf
-            hypertree.conf
-          job-name:  "manifest rules"
+          configurations: ${{ matrix.configuration }}
+          job-name: "manifest ${{ matrix.configuration }}"
           ecosystem: solana
           working-directory: programs/manifest/src/certora/confs
           certora-key: ${{ secrets.CERTORAKEY }}
