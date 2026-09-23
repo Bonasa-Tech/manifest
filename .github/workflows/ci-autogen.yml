@@ -22,9 +22,8 @@ on:
   workflow_dispatch:
 
 env:
-  # pinocchio's account view crates need rustc 1.89 to build, so the host
-  # toolchain moves up with them.
-  RUST_TOOLCHAIN: '1.89.0'
+  # Keep host-side generation aligned with the workspace toolchain.
+  RUST_TOOLCHAIN: '1.93.0'
 
 jobs:
   autogen-check:

@@ -3,9 +3,46 @@ on:
   push:
     branches:
       - main
+  pull_request:
+    paths:
+      - 'programs/manifest/**'
+      - 'lib/**'
+      - 'certora/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - '.github/workflows/ci-certora.yml'
   workflow_dispatch:
 jobs:
+ build_verification_program:
+    name: Build and validate Certora v3 ELF
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.12'
+      - name: Install pinned verification tools
+        run: |
+          rustup toolchain install 1.93.0
+          cargo +1.93.0 install cargo-certora-sbf --version 0.3.5 --locked
+          python3 -m pip install certora-cli==8.13.0
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          shared-key: 'certora-v1.53-v3-${{ github.job }}'
+      - name: Compile the actual prover configurations without submitting jobs
+        # This uses Certora platform-tools v1.53's Rust 1.89, enforcing the
+        # verification compiler ceiling on PRs (including forks) without keys.
+        working-directory: programs/manifest/src/certora/confs
+        run: |
+          for conf in rules.conf rules-global.conf rules-reverse.conf rules-seat-integrity.conf hypertree.conf; do
+            certoraSolanaProver "$conf" --compilation_steps_only
+            ../../../../../scripts/assert-sbpf-v3.sh ../../../../../target/sbpfv3-solana-solana/release/manifest.so
+          done
  submit_verification_jobs:
+    if: github.event_name != 'pull_request'
+    needs: build_verification_program
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -29,13 +66,11 @@ jobs:
           working-directory: programs/manifest/src/certora/confs
           certora-key: ${{ secrets.CERTORAKEY }}
           cli-version: "8.13.0"
-          # Deliberately not workspace.metadata.solana.tools-version, which is
-          # v1.54. `cargo certora-sbf` refuses anything newer than v1.53, and
-          # the pinocchio account view crates need rustc 1.89, which v1.43 (on
-          # 1.79) does not have. v1.53 ships exactly 1.89, so it is the only
-          # version that satisfies both. The prover therefore verifies a build
-          # from a slightly older compiler than the deployed one; it reasons
-          # about the program's semantics, not its compute.
-          certora-sbf-options: "-vvv --tools-version=v1.53"
+          rust-version: "1.93.0"
+          certora-sbf-version: "0.3.5"
+          # cargo-certora-sbf currently supports platform-tools through v1.53.
+          # base.conf pins the actual proof build to v3. These options only
+          # preinstall its toolchain; build_verification_program checks the ELF.
+          certora-sbf-options: "-vvv --tools-version=v1.53 --arch=v3"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

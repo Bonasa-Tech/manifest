@@ -2,7 +2,7 @@
 #
 # Replays real mainnet order flow (recorded from another Solana CLOB) through
 # the manifest and wrapper programs with the benchmarking harness that lives
-# in the private CKS-Systems/manifest-private repository, then records the CU
+# in the private Bonasa-Tech/manifest-private repository, then records the CU
 # per order percentiles with github-action-benchmark. Results for `main` are
 # published to the `gh-pages` branch; pull requests get a comparison against
 # `main` in the job summary (and a comment if a regression trips the alert
@@ -10,10 +10,8 @@
 #
 # Requirements:
 #   * secret  MANIFEST_PAT: token that can read manifest-private.
-#   * variable MANIFEST_PRIVATE_BENCHMARK_SHA: full commit SHA of the
-#     manifest-private revision to run. Mutable refs are rejected on purpose so
-#     that only a reviewed revision of the private harness can run against a
-#     pull request.
+#   * variable MANIFEST_PRIVATE_BENCHMARK_V3_SHA: full SHA of the published,
+#     reviewed v3 harness (including the cancel-all adapter and order accounting).
 #
 # The harness expects this repository at manifest-private/deps/manifest; that
 # directory is populated from the commit being benchmarked, so the private
@@ -28,6 +26,7 @@ on:
         'programs/**',
         'Cargo.toml',
         'Cargo.lock',
+        'scripts/assert-sbpf-v3.sh',
         '.github/workflows/ci-benchmark.yml',
       ]
   pull_request:
@@ -37,23 +36,24 @@ on:
         'programs/**',
         'Cargo.toml',
         'Cargo.lock',
+        'scripts/assert-sbpf-v3.sh',
         '.github/workflows/ci-benchmark.yml',
       ]
   workflow_dispatch:
 
 env:
   CARGO_TERM_COLOR: always
-  SOLANA_VERSION: '2.2.20'
-  # pinocchio's account view crates need rustc 1.89 to build, so the host
-  # toolchain moves up with them.
-  RUST_TOOLCHAIN: '1.89.0'
+  SOLANA_VERSION: '4.2.2'
+  SVM_ARCH: 'v3'
+  # The Agave 4.2 ProgramTest replay harness requires Rust 1.93.
+  RUST_TOOLCHAIN: '1.93.0'
   # Must match workspace.metadata.solana.tools-version. The benchmark harness
   # builds this checkout from its workspace, so the workspace pin is what
   # selects this SBF compiler for the measured programs.
-  PLATFORM_TOOLS: 'v1.54'
-  # Must be configured as a full, reviewed commit SHA. Mutable branch names
-  # are rejected before any private-repository code is checked out.
-  BENCHMARK_REPOSITORY_SHA: ${{ vars.MANIFEST_PRIVATE_BENCHMARK_SHA }}
+  PLATFORM_TOOLS: 'v1.57'
+  # Keep the v3 build driver and Agave 4.2.2 harness on a separate reviewed pin
+  # so preparing this migration does not change main's existing v2 harness.
+  BENCHMARK_REPOSITORY_SHA: ${{ vars.MANIFEST_PRIVATE_BENCHMARK_V3_SHA }}
 
 jobs:
   benchmark:
@@ -78,14 +78,14 @@ jobs:
         shell: bash
         run: |
           if [[ ! "$BENCHMARK_REPOSITORY_SHA" =~ ^[0-9a-f]{40}$ ]]; then
-            echo 'MANIFEST_PRIVATE_BENCHMARK_SHA must be a full commit SHA' >&2
+            echo 'Set repository variable MANIFEST_PRIVATE_BENCHMARK_V3_SHA to the full SHA of the published, reviewed v3 harness' >&2
             exit 1
           fi
 
       - name: Checkout benchmarking repo
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          repository: CKS-Systems/manifest-private
+          repository: Bonasa-Tech/manifest-private
           token: ${{ secrets.MANIFEST_PAT }}
           path: manifest-private
           ref: ${{ env.BENCHMARK_REPOSITORY_SHA }}
@@ -108,13 +108,6 @@ jobs:
           test "$(git -C "$DEP" rev-parse HEAD)" = "$GITHUB_SHA"
           echo "Benchmarking manifest commit $(git -C "$DEP" rev-parse HEAD)"
 
-      - name: Translate fixture cancel-all calls to explicit cancels
-        # The fixture owns every resting order through a wrapper account.
-        # Its direct swaps are IOC, so enumerating that account preserves the
-        # tested order flow without benchmarking a full shared-book scan on
-        # every Phoenix cancel-all event.
-        run: git -C manifest-private apply ../scripts/benchmark-cancel-all.patch
-
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: '3.9'
@@ -122,7 +115,7 @@ jobs:
       - name: Cache dependencies
         uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
-          shared-key: 'solana-${{ env.SOLANA_VERSION }}-platform-tools-${{ env.PLATFORM_TOOLS }}'
+          shared-key: 'solana-${{ env.SOLANA_VERSION }}-platform-tools-${{ env.PLATFORM_TOOLS }}-arch-${{ env.SVM_ARCH }}-${{ github.job }}'
           workspaces: |
             . -> target
             manifest-private/deps/manifest -> target
@@ -135,7 +128,7 @@ jobs:
         run: |
           curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
             --output solana-install.sh https://release.anza.xyz/v${{ env.SOLANA_VERSION }}/install
-          echo '4caed81545b20ddcbc06d65ca8ef8dc69fc9e68fe93a868f5b508309021b49af  solana-install.sh' | sha256sum --check --strict
+          echo 'e16c8a1f07996b6255a67a53c651f2e859c7d5217b360fd6613cc3c3cae46bd4  solana-install.sh' | sha256sum --check --strict
           sh solana-install.sh
           echo "$HOME/.local/share/solana/install/active_release/bin" >> $GITHUB_PATH
           export PATH="/home/runner/.local/share/solana/install/active_release/bin:$PATH"
@@ -166,7 +159,7 @@ jobs:
           curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
             --output "$TARBALL" \
             "https://github.com/anza-xyz/platform-tools/releases/download/${{ env.PLATFORM_TOOLS }}/$TARBALL"
-          echo 'fcc41631c7f77561bf5412218bf297501dccf0305ea280f338f0ace2aab9f31e  '"$TARBALL" \
+          echo 'b0f7af104adf726fff2a6a09ea2eb2f2d2965c92295f4d7388c08d140e0c2b00  '"$TARBALL" \
             | sha256sum --check --strict
           mkdir -p "$DEST"
           tar -xjf "$TARBALL" -C "$DEST"
@@ -190,7 +183,33 @@ jobs:
           cargo build-sbf --tools-version ${{ env.PLATFORM_TOOLS }} --version
 
       - name: Run benchmark
-        run: cd $GITHUB_WORKSPACE/manifest-private; ./benchmarking/benchmark.sh
+        run: cd $GITHUB_WORKSPACE/manifest-private; RUSTUP_TOOLCHAIN=${{ env.RUST_TOOLCHAIN }} SVM_ARCH=${{ env.SVM_ARCH }} SBF_ARCH=${{ env.SVM_ARCH }} ./benchmarking/benchmark.sh
+
+      - name: Verify replay accounting
+        # These describe the pinned input corpus, not a Manifest CU baseline.
+        # Missing cancel-all adaptation or old normalization must fail loudly.
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import csv
+          with open('manifest-private/benchmarking/benchmark_results.csv', newline='') as file:
+              rows = list(csv.DictReader(file))
+          counts = [int(row['num_orders']) for row in rows]
+          if (len(rows), len({row['signature'] for row in rows}), counts.count(0), sum(counts)) != (4158, 4158, 1, 101618):
+              raise SystemExit('Replay corpus/accounting mismatch: check the cancel-all adapter and private harness pin')
+          PY
+
+      - name: Verify benchmark program architecture
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t manifest_artifacts < <(find "$GITHUB_WORKSPACE/manifest-private" -type f -path '*/target/deploy/manifest.so' -print)
+          mapfile -t wrapper_artifacts < <(find "$GITHUB_WORKSPACE/manifest-private" -type f -path '*/target/deploy/wrapper.so' -print)
+          if (( ${#manifest_artifacts[@]} == 0 || ${#wrapper_artifacts[@]} == 0 )); then
+            echo 'benchmark did not leave manifest.so and wrapper.so artifacts to validate' >&2
+            exit 1
+          fi
+          ./scripts/assert-sbpf-v3.sh "${manifest_artifacts[@]}" "${wrapper_artifacts[@]}"
 
       - name: Move benchmark results
         run: |

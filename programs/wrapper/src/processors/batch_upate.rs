@@ -22,7 +22,8 @@ use pinocchio::{
     account::{AccountView, Ref, RefMut},
     ProgramResult,
 };
-use solana_program::{program::get_return_data, pubkey::Pubkey, system_program};
+use solana_program::{program::get_return_data, pubkey::Pubkey};
+use solana_sdk_ids::system_program;
 
 use crate::{
     loader::{check_signer, WrapperStateAccountInfo},
@@ -176,16 +177,22 @@ fn prepare_orders(
     let mut original_indices: Vec<usize> = Vec::with_capacity(orders.len());
     for (i, order) in orders.iter().enumerate() {
         let mut num_base_atoms: u64 = order.base_atoms;
-        let price: QuoteAtomsPerBaseAtom = QuoteAtomsPerBaseAtom::try_from_mantissa_and_exponent(
-            order.price_mantissa,
-            order.price_exponent,
-        )
-        .unwrap();
+        // Reject invalid exponents even if balance checks drop the order.
+        // Only bids need the actual price here: asks reserve base atoms, and
+        // globals bypass these balances. The core converts every placed price.
+        assert!(
+            (QuoteAtomsPerBaseAtom::MIN_EXP..=QuoteAtomsPerBaseAtom::MAX_EXP)
+                .contains(&order.price_exponent)
+        );
         if order.order_type != OrderType::Global {
             if order.is_bid {
+                let price = QuoteAtomsPerBaseAtom::try_from_mantissa_and_exponent(
+                    order.price_mantissa,
+                    order.price_exponent,
+                )
+                .unwrap();
                 // Exact, like the core: a bid sized to the whole balance must
-                // pass. The division is the reciprocal fast path in
-                // quantities.
+                // pass. quantities preserves full precision and rounds up.
                 let desired: QuoteAtoms = BaseAtoms::new(order.base_atoms)
                     .checked_mul(price, true)
                     .unwrap();
@@ -266,6 +273,10 @@ fn process_cancels(
     cancel_indices: &[DataIndex],
     market_info_index: DataIndex,
 ) {
+    // Placement-only batches have no list/free-list bookkeeping to perform.
+    if cancel_indices.is_empty() {
+        return;
+    }
     let mut wrapper_data: RefMut<[u8]> = wrapper_state.info.try_borrow_mut().unwrap();
     let wrapper: DynamicAccount<&mut ManifestWrapperStateFixed, &mut [u8]> =
         get_mut_dynamic_account(&mut wrapper_data);
@@ -319,6 +330,11 @@ fn process_orders<'a>(
     original_indices: &[usize],
     market_info_index: DataIndex,
 ) -> ProgramResult {
+    // A successful core batch returns one record per forwarded placement.
+    // With none forwarded, avoid allocating/copying its empty return vector.
+    if original_indices.is_empty() {
+        return Ok(());
+    }
     // The core returns `BatchUpdateReturn`, borsh: a u32 count followed by
     // (u64 order sequence number, u32 order index) records. Read them in
     // place instead of deserializing into vectors.

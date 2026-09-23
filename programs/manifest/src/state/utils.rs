@@ -157,7 +157,7 @@ pub(crate) fn settle_global_gas_refunds(
         //
         // if let Some(system_program) = &global_trade_accounts.system_program {
         //     crate::program::invoke_signed(
-        //         &solana_program::system_instruction::transfer(
+        //         &solana_system_interface::instruction::transfer(
         //             &global.pubkey(),
         //             &trader.info.pubkey(),
         //             GAS_DEPOSIT_LAMPORTS,
@@ -234,7 +234,7 @@ pub(crate) fn pay_global_gas_prepayment(
     // to get the data on global which it cannot while there is a mut self
     // reference.
     invoke(
-        &solana_program::system_instruction::transfer(
+        &solana_system_interface::instruction::transfer(
             gas_payer_opt.as_ref().unwrap().info.pubkey(),
             &global.pubkey(),
             GAS_DEPOSIT_LAMPORTS
@@ -419,7 +419,7 @@ pub(crate) fn try_to_reduce_global_tokens<'a>(
         if StateWithExtensions::<Mint>::unpack(&mint_account_info.info.try_borrow()?)
             .map_err(to_program_error)?
             .get_extension::<TransferHook>()
-            .is_ok_and(|f| f.program_id.0 != Pubkey::default())
+            .is_ok_and(|f| f.program_id.get().is_some())
         {
             solana_program::msg!(
                 "Treating global order as unbacked because it has a transfer hook"

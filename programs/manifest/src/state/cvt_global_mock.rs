@@ -44,20 +44,27 @@ const SECOND_GLOBAL_TRADER_DATA_IDX: DataIndex = GLOBAL_BLOCK_SIZE as DataIndex;
 const MAIN_GLOBAL_DEPOSIT_DATA_IDX: DataIndex = 0;
 const SECOND_GLOBAL_DEPOSIT_DATA_IDX: DataIndex = GLOBAL_BLOCK_SIZE as DataIndex;
 
+#[link_section = ".certora"]
 static mut GLOBAL_TRADER_DATA: *mut [u8; GLOBAL_DATA_LEN] = std::ptr::null_mut();
+#[link_section = ".certora"]
 static mut GLOBAL_DEPOSIT_DATA: *mut [u8; GLOBAL_DATA_LEN] = std::ptr::null_mut();
 
 /// A seat in the trader tree. Tracked separately from the deposit tree because
 /// `reduce`, `deposit_global` and `withdraw_global` temporarily take the
 /// deposit out of its tree to re-sort it while the trader stays put.
+#[link_section = ".certora"]
 static mut IS_MAIN_GLOBAL_TRADER_TAKEN: u64 = 0;
+#[link_section = ".certora"]
 static mut IS_SECOND_GLOBAL_TRADER_TAKEN: u64 = 0;
+#[link_section = ".certora"]
 static mut IS_MAIN_GLOBAL_DEPOSIT_TAKEN: u64 = 0;
+#[link_section = ".certora"]
 static mut IS_SECOND_GLOBAL_DEPOSIT_TAKEN: u64 = 0;
 
 /// `add_trader` asks for two free blocks in a row, a trader block and then a
 /// deposit block, before it inserts either of them. Alternate between the two
 /// kinds so the second call does not hand out the block the first one did.
+#[link_section = ".certora"]
 static mut NEXT_FREE_BLOCK_IS_DEPOSIT: bool = false;
 
 pub fn init_global_mock() {

@@ -1710,10 +1710,19 @@ export class ManifestClient {
    * loaded market snapshot directly on the core program, including reverse
    * orders and global orders with rent prepayment. Reload the market first when
    * completeness matters.
+   * Snapshot index hints avoid a full book scan. Reload and rebuild the batch
+   * if intervening fills/cancels invalidate it; both hinted and unhinted
+   * cancels reject missing orders. Stale hints return WrongIndexHintParams
+   * (0xa); the unhinted scan returns InvalidCancel (0x3). Pass false to use it.
+   * Hints add four bytes per cancel. Send returned instructions separately or
+   * pack by serialized transaction size; the whole array may not fit one tx.
    *
+   * @param useOrderIndexHints Use validated node offsets from the snapshot.
    * @returns TransactionInstruction[]
    */
-  public async cancelAllOnCoreIx(): Promise<TransactionInstruction[]> {
+  public async cancelAllOnCoreIx(
+    useOrderIndexHints = true,
+  ): Promise<TransactionInstruction[]> {
     if (!this.payer) {
       throw new Error('Read only');
     }
@@ -1721,7 +1730,7 @@ export class ManifestClient {
     const openOrders: RestingOrder[] = this.market.openOrders();
     const ordersToCancel: {
       orderSequenceNumber: bignum;
-      orderIndexHint: null;
+      orderIndexHint: number | null;
     }[] = [];
 
     for (const openOrder of openOrders) {
@@ -1729,7 +1738,9 @@ export class ManifestClient {
         const seqNum: bignum = openOrder.sequenceNumber;
         ordersToCancel.push({
           orderSequenceNumber: seqNum,
-          orderIndexHint: null,
+          orderIndexHint: useOrderIndexHints
+            ? (openOrder.dataIndex ?? null)
+            : null,
         });
       }
     }
@@ -1788,10 +1799,17 @@ export class ManifestClient {
   /**
    * CancelBidsOnCore instruction. Cancels all bid orders on a market directly on the core program,
    * including reverse orders and global orders with rent prepayment.
+   * Snapshot hints avoid a full book scan. Reload and rebuild stale batches;
+   * both paths reject missing orders (hinted: 0xa, unhinted: 0x3).
+   * Pass false to retain the original scan and save four bytes per cancel.
+   * Send returned instructions separately or pack by serialized transaction size.
    *
+   * @param useOrderIndexHints Use validated node offsets from the snapshot.
    * @returns TransactionInstruction[]
    */
-  public async cancelBidsOnCoreIx(): Promise<TransactionInstruction[]> {
+  public async cancelBidsOnCoreIx(
+    useOrderIndexHints = true,
+  ): Promise<TransactionInstruction[]> {
     if (!this.payer) {
       throw new Error('Read only');
     }
@@ -1799,7 +1817,7 @@ export class ManifestClient {
     const bidOrders: RestingOrder[] = this.market.bidsL2();
     const ordersToCancel: {
       orderSequenceNumber: bignum;
-      orderIndexHint: null;
+      orderIndexHint: number | null;
     }[] = [];
 
     for (const bidOrder of bidOrders) {
@@ -1807,7 +1825,9 @@ export class ManifestClient {
         const seqNum: bignum = bidOrder.sequenceNumber;
         ordersToCancel.push({
           orderSequenceNumber: seqNum,
-          orderIndexHint: null,
+          orderIndexHint: useOrderIndexHints
+            ? (bidOrder.dataIndex ?? null)
+            : null,
         });
       }
     }
@@ -1866,10 +1886,17 @@ export class ManifestClient {
   /**
    * CancelAsksOnCore instruction. Cancels all ask orders on a market directly on the core program,
    * including reverse orders and global orders with rent prepayment.
+   * Snapshot hints avoid a full book scan. Reload and rebuild stale batches;
+   * both paths reject missing orders (hinted: 0xa, unhinted: 0x3).
+   * Pass false to retain the original scan and save four bytes per cancel.
+   * Send returned instructions separately or pack by serialized transaction size.
    *
+   * @param useOrderIndexHints Use validated node offsets from the snapshot.
    * @returns TransactionInstruction[]
    */
-  public async cancelAsksOnCoreIx(): Promise<TransactionInstruction[]> {
+  public async cancelAsksOnCoreIx(
+    useOrderIndexHints = true,
+  ): Promise<TransactionInstruction[]> {
     if (!this.payer) {
       throw new Error('Read only');
     }
@@ -1877,7 +1904,7 @@ export class ManifestClient {
     const askOrders: RestingOrder[] = this.market.asksL2();
     const ordersToCancel: {
       orderSequenceNumber: bignum;
-      orderIndexHint: null;
+      orderIndexHint: number | null;
     }[] = [];
 
     for (const askOrder of askOrders) {
@@ -1885,7 +1912,9 @@ export class ManifestClient {
         const seqNum: bignum = askOrder.sequenceNumber;
         ordersToCancel.push({
           orderSequenceNumber: seqNum,
-          orderIndexHint: null,
+          orderIndexHint: useOrderIndexHints
+            ? (askOrder.dataIndex ?? null)
+            : null,
         });
       }
     }

@@ -29,7 +29,7 @@ pub fn swap_instruction(
     let mut account_metas: Vec<AccountMeta> = vec![
         AccountMeta::new_readonly(*payer, true),
         AccountMeta::new(*market, false),
-        AccountMeta::new_readonly(solana_program::system_program::id(), false),
+        AccountMeta::new_readonly(solana_sdk_ids::system_program::id(), false),
         AccountMeta::new(*trader_base_account, false),
         AccountMeta::new(*trader_quote_account, false),
         AccountMeta::new(vault_base_account, false),

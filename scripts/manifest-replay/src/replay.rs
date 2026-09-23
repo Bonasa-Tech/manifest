@@ -16,7 +16,7 @@ use solana_pubkey::Pubkey;
 use solana_signer::Signer;
 use solana_transaction::Transaction;
 use std::{
-    collections::{BTreeSet, HashMap},
+    collections::{BTreeMap, BTreeSet, HashMap},
     fs,
     path::Path,
     str::FromStr,
@@ -30,6 +30,11 @@ const TOKEN_PROGRAM: &str = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
 const TOKEN_2022_PROGRAM: &str = "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb";
 
 pub async fn replay(fixture: &Fixture, label: &str, program_path: &Path) -> Result<ReplayResult> {
+    let token_programs = decode_token_programs(&fixture.token_programs)?;
+    let token_program_sha256 = token_programs
+        .iter()
+        .map(|(address, elf)| (address.clone(), hex(&Sha256::digest(elf))))
+        .collect();
     let program_bytes = fs::read(program_path).with_context(|| {
         format!(
             "could not read {} program {}",
@@ -51,21 +56,11 @@ pub async fn replay(fixture: &Fixture, label: &str, program_path: &Path) -> Resu
     let manifest_id = Pubkey::from_str(&fixture.manifest_program)?;
     let market_id = Pubkey::from_str(&fixture.market)?;
     let mut test = ProgramTest::new("manifest_replay", manifest_id, None);
-    // ProgramTest::new already loaded the target SBF file. The SPL programs
-    // below intentionally use their native processors.
-    test.prefer_bpf(false);
+    // Override the bundled token programs with the fixture's captured ELFs.
+    // Both Manifest builds must run against the same external implementations.
+    add_token_programs(&mut test, &token_programs)?;
     test.set_compute_max_units(1_400_000);
     test.set_transaction_account_lock_limit(128);
-    test.add_program(
-        "spl_token",
-        spl_token::id(),
-        solana_program_test::processor!(spl_token::processor::Processor::process),
-    );
-    test.add_program(
-        "spl_token_2022",
-        spl_token_2022::id(),
-        solana_program_test::processor!(spl_token_2022::processor::Processor::process),
-    );
     let program_test_rent = Rent::default();
     let mut program_test_rent_top_ups = std::collections::BTreeMap::new();
     for snapshot in &fixture.accounts {
@@ -242,6 +237,7 @@ pub async fn replay(fixture: &Fixture, label: &str, program_path: &Path) -> Resu
         label: label.to_owned(),
         program_path: program_path.display().to_string(),
         program_sha256,
+        token_program_sha256,
         instruction_results,
         final_market_data_base64: BASE64.encode(&final_market.data),
         final_market_sha256,
@@ -249,6 +245,38 @@ pub async fn replay(fixture: &Fixture, label: &str, program_path: &Path) -> Resu
         program_test_rent_top_ups,
         final_accounts,
     })
+}
+
+fn decode_token_programs(encoded: &BTreeMap<String, String>) -> Result<BTreeMap<String, Vec<u8>>> {
+    [TOKEN_PROGRAM, TOKEN_2022_PROGRAM]
+        .into_iter()
+        .map(|address| {
+            let data = encoded.get(address).ok_or_else(|| {
+                anyhow!("fixture has no captured token program {address}; recapture with the current tool (bundled token programs are not a mainnet substitute)")
+            })?;
+            let elf = BASE64.decode(data)?;
+            anyhow::ensure!(elf.starts_with(b"\x7fELF"), "captured token program {address} is not an ELF");
+            Ok((address.to_owned(), elf))
+        })
+        .collect()
+}
+
+fn add_token_programs(test: &mut ProgramTest, programs: &BTreeMap<String, Vec<u8>>) -> Result<()> {
+    for (address, elf) in programs {
+        // Like the Manifest ELF, load the exact code under the test SBF loader.
+        // Additional accounts override ProgramTest's convenience SPL programs.
+        test.add_account(
+            Pubkey::from_str(address)?,
+            Account {
+                lamports: Rent::default().minimum_balance(elf.len()),
+                data: elf.clone(),
+                owner: solana_sdk_ids::bpf_loader::id(),
+                executable: true,
+                rent_epoch: 0,
+            },
+        );
+    }
+    Ok(())
 }
 
 fn manifest_compute_units(logs: &[String], program: &str) -> Option<u64> {
@@ -287,9 +315,9 @@ fn decode_token_account(owner: &str, data: &[u8]) -> Result<Option<(Pubkey, u64)
     let is_account = if owner == TOKEN_PROGRAM {
         spl_token::state::Account::unpack(data).is_ok()
     } else if owner == TOKEN_2022_PROGRAM {
-        spl_token_2022::extension::StateWithExtensions::<spl_token_2022::state::Account>::unpack(
-            data,
-        )
+        spl_token_2022_interface::extension::StateWithExtensions::<
+            spl_token_2022_interface::state::Account,
+        >::unpack(data)
         .is_ok()
     } else {
         false
@@ -419,4 +447,91 @@ fn hex(bytes: &[u8]) -> String {
         output.push(DIGITS[(byte & 0xf) as usize] as char);
     }
     output
+}
+
+#[cfg(test)]
+mod token_program_tests {
+    use super::*;
+
+    #[test]
+    fn requires_both_captured_token_programs() {
+        let mut encoded = BTreeMap::new();
+        assert!(decode_token_programs(&encoded)
+            .unwrap_err()
+            .to_string()
+            .contains("recapture"));
+        encoded.insert(TOKEN_PROGRAM.to_owned(), BASE64.encode(b"\x7fELF"));
+        assert!(decode_token_programs(&encoded).is_err());
+        encoded.insert(TOKEN_2022_PROGRAM.to_owned(), BASE64.encode(b"not an ELF"));
+        assert!(decode_token_programs(&encoded).is_err());
+        encoded.insert(TOKEN_2022_PROGRAM.to_owned(), "invalid base64".to_owned());
+        assert!(decode_token_programs(&encoded).is_err());
+    }
+
+    #[tokio::test]
+    async fn captured_token_elf_overrides_bundled_program_and_executes() -> Result<()> {
+        let bundled = ProgramTest::default().start_with_context().await;
+        let mut encoded = BTreeMap::new();
+        for address in [TOKEN_PROGRAM, TOKEN_2022_PROGRAM] {
+            let account = bundled
+                .banks_client
+                .get_account(Pubkey::from_str(address)?)
+                .await?
+                .unwrap();
+            assert_eq!(account.owner, solana_sdk_ids::bpf_loader_upgradeable::id());
+            let programdata = Pubkey::new_from_array(account.data[4..36].try_into()?);
+            let data = bundled
+                .banks_client
+                .get_account(programdata)
+                .await?
+                .unwrap();
+            let mut elf = data.data[45..].to_vec();
+            // Distinguish the supplied ELF from the bundled one without changing
+            // its instructions. The loaded account and reported hash must match.
+            elf.extend_from_slice(b"captured fixture test");
+            encoded.insert(address.to_owned(), BASE64.encode(elf));
+        }
+        drop(bundled);
+        let programs = decode_token_programs(&encoded)?;
+        let mut test = ProgramTest::default();
+        add_token_programs(&mut test, &programs)?;
+        let mints = [Pubkey::new_unique(), Pubkey::new_unique()];
+        for (address, mint) in [TOKEN_PROGRAM, TOKEN_2022_PROGRAM].into_iter().zip(mints) {
+            test.add_account(
+                mint,
+                Account {
+                    lamports: Rent::default().minimum_balance(spl_token::state::Mint::LEN),
+                    data: vec![0; spl_token::state::Mint::LEN],
+                    owner: Pubkey::from_str(address)?,
+                    executable: false,
+                    rent_epoch: 0,
+                },
+            );
+        }
+        let context = test.start_with_context().await;
+        for (address, mint) in [TOKEN_PROGRAM, TOKEN_2022_PROGRAM].into_iter().zip(mints) {
+            let program_id = Pubkey::from_str(address)?;
+            let loaded = context.banks_client.get_account(program_id).await?.unwrap();
+            assert_eq!(loaded.data, programs[address]);
+            let initialize = if address == TOKEN_PROGRAM {
+                spl_token::instruction::initialize_mint2
+            } else {
+                spl_token_2022::instruction::initialize_mint2
+            };
+            let ix = initialize(&program_id, &mint, &context.payer.pubkey(), None, 6)?;
+            let transaction = Transaction::new_signed_with_payer(
+                &[ix],
+                Some(&context.payer.pubkey()),
+                &[&context.payer],
+                context.last_blockhash,
+            );
+            context
+                .banks_client
+                .process_transaction(transaction)
+                .await?;
+            let account = context.banks_client.get_account(mint).await?.unwrap();
+            assert!(spl_token::state::Mint::unpack(&account.data)?.is_initialized);
+        }
+        Ok(())
+    }
 }

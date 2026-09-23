@@ -41,13 +41,13 @@ jsm_root := canonicalize("../..")
 certora-scripts := jsm_root / "certora"
 inliner_cfg   := certora-scripts  / "cvt_inlining.txt"
 summaries_cfg := certora-scripts  / "cvt_summaries.txt"
-file := jsm_root / "target/sbf-solana-solana/release/manifest.so"
+file := jsm_root / "target/sbpfv3-solana-solana/release/manifest.so"
 
 remote_jsm_root := "../.."
 remote_certora-scripts := remote_jsm_root / "certora"
 remote_inliner_cfg   := remote_certora-scripts  / "cvt_inlining.txt"
 remote_summaries_cfg := remote_certora-scripts  / "cvt_summaries.txt"
-remote_file := remote_jsm_root / "target/sbf-solana-solana/release/manifest.so"
+remote_file := remote_jsm_root / "target/sbpfv3-solana-solana/release/manifest.so"
 
 
 doc:
@@ -58,11 +58,11 @@ test-certora *TESTS:
 	cargo test --features certora-test {{TESTS}} -- --nocapture
 
 build-sbf extra_features="":
-	cargo certora-sbf --tools-version v1.53 --features certora {{ extra_features }} ${CARGO_FEATURES}
+	src/certora/build.sh --cargo_features "{{ extra_features }} ${CARGO_FEATURES}"
 
 build-sbf-llvm:
 	env RUSTFLAGS="--emit=llvm-ir -C no-vectorize-slp -C opt-level=2" \
-	cargo certora-sbf --tools-version v1.53 --features certora ${CARGO_FEATURES}
+	src/certora/build.sh --cargo_features "${CARGO_FEATURES}"
 
 build:
 	cargo build
@@ -144,6 +144,3 @@ clean:
 	rm -Rf .certora_internal
 	rm -f log.txt
 	rm -rf certora_out
-
-
-

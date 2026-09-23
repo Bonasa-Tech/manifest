@@ -18,13 +18,13 @@ use crate::{
 };
 use hypertree::{get_mut_helper, trace};
 use solana_program::{program_pack::Pack, pubkey::Pubkey};
-use spl_token_2022::{
+use spl_token_2022_interface::{
     extension::{
+        account_len::try_calculate_account_len_from_mint_data,
         mint_close_authority::MintCloseAuthority, permanent_delegate::PermanentDelegate,
-        BaseStateWithExtensions, ExtensionType, PodStateWithExtensions, StateWithExtensions,
+        BaseStateWithExtensions, StateWithExtensions,
     },
-    pod::PodMint,
-    state::{Account, Mint},
+    state::Mint,
 };
 
 pub(crate) fn process_create_market(
@@ -114,16 +114,8 @@ pub(crate) fn process_create_market(
 
             if is_mint_22 {
                 let mint_data: pinocchio::account::Ref<[u8]> = mint.try_borrow()?;
-                let mint_with_extension: PodStateWithExtensions<'_, PodMint> =
-                    PodStateWithExtensions::<PodMint>::unpack(&mint_data).unwrap();
-                let mint_extensions: Vec<ExtensionType> = mint_with_extension
-                    .get_extension_types()
+                let space: usize = try_calculate_account_len_from_mint_data(&mint_data, &[])
                     .map_err(to_program_error)?;
-                let required_extensions: Vec<ExtensionType> =
-                    ExtensionType::get_required_init_account_extensions(&mint_extensions);
-                let space: usize =
-                    ExtensionType::try_calculate_account_len::<Account>(&required_extensions)
-                        .map_err(to_program_error)?;
                 create_account(
                     payer.as_ref(),
                     token_account,

@@ -8,6 +8,10 @@ pub struct Fixture {
     pub commitment: String,
     pub market: String,
     pub manifest_program: String,
+    // Program ID -> base64 ELF captured from the same RPC as the market.
+    // Old fixtures deserialize so replay can explain that recapture is required.
+    #[serde(default)]
+    pub token_programs: std::collections::BTreeMap<String, String>,
     pub start_slot: u64,
     pub end_slot: u64,
     pub transactions_touching_market: usize,
@@ -69,6 +73,7 @@ pub struct ReplayResult {
     pub label: String,
     pub program_path: String,
     pub program_sha256: String,
+    pub token_program_sha256: std::collections::BTreeMap<String, String>,
     pub instruction_results: Vec<InstructionResult>,
     pub final_market_data_base64: String,
     pub final_market_sha256: String,

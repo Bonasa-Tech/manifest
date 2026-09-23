@@ -311,8 +311,8 @@ impl GlobalFixed {
     pub fn new_nondet() -> Self {
         GlobalFixed {
             discriminant: GLOBAL_FIXED_DISCRIMINANT,
-            mint: ::nondet::nondet(),
-            vault: ::nondet::nondet(),
+            mint: Pubkey::new_from_array(::nondet::nondet()),
+            vault: Pubkey::new_from_array(::nondet::nondet()),
             global_traders_root_index: NIL,
             global_deposits_root_index: NIL,
             global_deposits_max_index: min_balance_deposit_index(),

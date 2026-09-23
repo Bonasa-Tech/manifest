@@ -49,7 +49,7 @@ impl ClaimedSeat {
 impl nondet::Nondet for ClaimedSeat {
     fn nondet() -> Self {
         ClaimedSeat {
-            trader: nondet::nondet(),
+            trader: Pubkey::new_from_array(nondet::nondet()),
             base_withdrawable_balance: BaseAtoms::new(nondet::nondet()),
             quote_withdrawable_balance: QuoteAtoms::new(nondet::nondet()),
             quote_volume: QuoteAtoms::new(nondet::nondet()),

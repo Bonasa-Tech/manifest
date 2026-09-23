@@ -2,7 +2,7 @@ use hypertree::DataIndex;
 use manifest::{
     program::{
         batch_update::{CancelOrderParams, PlaceOrderParams},
-        batch_update_instruction,
+        batch_update_instruction, ManifestError,
     },
     state::{OrderType, MARKET_BLOCK_SIZE, NO_EXPIRATION_LAST_VALID_SLOT},
 };
@@ -10,6 +10,7 @@ use solana_keypair::Keypair;
 use solana_program::instruction::Instruction;
 use solana_program_test::tokio;
 use solana_signer::Signer;
+use solana_transaction::{InstructionError, TransactionError};
 
 use crate::{send_tx_with_retry, TestFixture, Token, SOL_UNIT_SIZE, USDC_UNIT_SIZE};
 
@@ -103,8 +104,8 @@ async fn batch_update_test() -> anyhow::Result<()> {
         )
         .await?;
 
-    // Hinted cancel wrong seq num
-    assert!(test_fixture
+    // A stale snapshot must keep its documented error in either mode.
+    let hinted_error = test_fixture
         .batch_update_for_keypair(
             Some(0),
             vec![CancelOrderParams::new_with_hint(
@@ -115,7 +116,32 @@ async fn batch_update_test() -> anyhow::Result<()> {
             &test_fixture.payer_keypair(),
         )
         .await
-        .is_err());
+        .unwrap_err()
+        .unwrap();
+    assert_eq!(
+        hinted_error,
+        TransactionError::InstructionError(
+            0,
+            InstructionError::Custom(ManifestError::WrongIndexHintParams as u32),
+        )
+    );
+    let unhinted_error = test_fixture
+        .batch_update_for_keypair(
+            Some(0),
+            vec![CancelOrderParams::new(0)],
+            vec![],
+            &test_fixture.payer_keypair(),
+        )
+        .await
+        .unwrap_err()
+        .unwrap();
+    assert_eq!(
+        unhinted_error,
+        TransactionError::InstructionError(
+            0,
+            InstructionError::Custom(ManifestError::InvalidCancel as u32),
+        )
+    );
 
     // Hinted cancel
     test_fixture

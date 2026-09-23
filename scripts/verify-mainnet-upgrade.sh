@@ -35,14 +35,15 @@ case "${1:-}" in
       (
         cd "$repo_dir"
         "$solana_verify" build \
-          --arch=v2 \
+          --arch=v3 \
           --cargo-build-sbf-args="--tools-version v1.57" \
-          --base-image="solanafoundation/solana-verifiable-build@sha256:a1c0d5899ee0ffc81412428760662d9ba4643c2003ec3a92ab6f75a6e2e52a1b" \
+          --base-image="solanafoundation/solana-verifiable-build@sha256:16053d845922e798ab1852d3fe222faf5a23eeb1db3a13d30b70d6b6e82184ae" \
           --library-name=manifest
+        ./scripts/assert-sbpf-v3.sh target/deploy/manifest.so
       )
       args+=(--new-program "$repo_dir/target/deploy/manifest.so")
     fi
     ;;
 esac
 
-exec cargo run --manifest-path "$repo_dir/Cargo.toml" -p manifest-replay -- "${args[@]}"
+exec cargo run --locked --manifest-path "$repo_dir/Cargo.toml" -p manifest-replay -- "${args[@]}"

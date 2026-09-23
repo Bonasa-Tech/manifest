@@ -4,8 +4,8 @@ use hypertree::DataIndex;
 use solana_program::{
     instruction::{AccountMeta, Instruction},
     pubkey::Pubkey,
-    system_program,
 };
+use solana_sdk_ids::system_program;
 
 pub fn global_clean_instruction(
     global: &Pubkey,

@@ -17,8 +17,9 @@ use solana_program::{instruction::Instruction, pubkey::Pubkey};
 use solana_program::{
     instruction::{AccountMeta, Instruction},
     pubkey::Pubkey,
-    system_program,
 };
+#[cfg(not(feature = "certora"))]
+use solana_sdk_ids::system_program;
 
 // Token programs are needed for global orders with token22. Only include if
 // this is global or could match with global. Defaults to normal token program.

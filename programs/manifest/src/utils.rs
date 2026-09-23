@@ -1,5 +1,6 @@
 use pinocchio::{account::AccountView, error::ProgramError, sysvars::rent::Rent, ProgramResult};
-use solana_program::{keccak, pubkey::Pubkey, system_instruction};
+use solana_program::{keccak, pubkey::Pubkey};
+use solana_system_interface::instruction as system_instruction;
 
 use crate::{program::invoke_signed, validation::AccountViewExt};
 

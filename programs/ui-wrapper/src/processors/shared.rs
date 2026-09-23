@@ -22,7 +22,8 @@ use pinocchio::{
     sysvars::{rent::Rent, Sysvar},
     ProgramResult,
 };
-use solana_program::{pubkey::Pubkey, system_instruction};
+use solana_program::pubkey::Pubkey;
+use solana_system_interface::instruction as system_instruction;
 use static_assertions::const_assert_eq;
 
 pub const WRAPPER_BLOCK_PAYLOAD_SIZE: usize = 80;
@@ -86,7 +87,6 @@ pub(crate) fn expand_wrapper_if_needed<'a>(
         }
         #[cfg(not(feature = "fuzz"))]
         {
-            #[allow(deprecated)]
             wrapper_state.resize(new_size)?;
         }
     }

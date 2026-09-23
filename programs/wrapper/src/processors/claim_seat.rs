@@ -18,7 +18,8 @@ use crate::{
 };
 use manifest::validation::{next_account_info, AccountViewExt, Program, Signer};
 use pinocchio::{account::AccountView, ProgramResult};
-use solana_program::{pubkey::Pubkey, system_program};
+use solana_program::pubkey::Pubkey;
+use solana_sdk_ids::system_program;
 
 use super::shared::{
     expand_wrapper_if_needed, MarketInfosTree, UnusedWrapperFreeListPadding, ORDERS_LAYOUT_LIST,

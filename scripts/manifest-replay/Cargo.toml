@@ -23,9 +23,11 @@ solana-instruction = { workspace = true }
 solana-program = { workspace = true }
 solana-program-test = { workspace = true }
 solana-pubkey = { workspace = true }
+solana-sdk-ids = { workspace = true }
 solana-signer = { workspace = true }
 solana-transaction = { workspace = true }
 spl-token = { workspace = true }
 spl-token-2022 = { workspace = true }
+spl-token-2022-interface = { workspace = true }
 tempfile = "3"
 tokio = { workspace = true, features = ["time"] }

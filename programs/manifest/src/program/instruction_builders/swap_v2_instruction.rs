@@ -31,7 +31,7 @@ pub fn swap_v2_instruction(
         AccountMeta::new_readonly(*payer, true),
         AccountMeta::new_readonly(*owner, true),
         AccountMeta::new(*market, false),
-        AccountMeta::new_readonly(solana_program::system_program::id(), false),
+        AccountMeta::new_readonly(solana_sdk_ids::system_program::id(), false),
         AccountMeta::new(*trader_base_account, false),
         AccountMeta::new(*trader_quote_account, false),
         AccountMeta::new(vault_base_account, false),

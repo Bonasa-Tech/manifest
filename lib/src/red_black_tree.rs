@@ -721,6 +721,7 @@ where
     }
 
     /// Get the previous index. This walks the tree, so does not care about equal keys.
+    #[inline(always)]
     fn get_next_lower_index<V: Payload>(&'a self, index: DataIndex) -> DataIndex {
         if index == NIL {
             return NIL;
@@ -1089,12 +1090,6 @@ impl<V: Payload> std::fmt::Display for RBNode<V> {
 }
 
 impl<V: Payload> RBNode<V> {
-    fn get_left_index(&self) -> DataIndex {
-        self.left
-    }
-    fn get_right_index(&self) -> DataIndex {
-        self.right
-    }
     pub fn get_payload_type(&self) -> u8 {
         self.payload_type
     }
@@ -1364,58 +1359,21 @@ impl<'a, V: Payload> RedBlackTree<'a, V> {
         let mut current_parent: &RBNode<V> = get_helper::<RBNode<V>>(self.data, self.root_index);
         let mut current_parent_index: DataIndex = self.root_index;
 
-        // Which side of `current_parent` the new node belongs on, once the
-        // walk stops. The comparison that stopped the walk already decided it,
-        // so it is recorded here rather than read and compared a second time
-        // after the walk; only stopping at a node with no children at all
-        // leaves it undecided.
-        let mut insert_on_right: Option<bool> = None;
-
-        // Keep trying to walk while there are children. Breaks when there isnt
-        // the expected child or at a leaf.
-        while current_parent.left != NIL || current_parent.right != NIL {
-            match node_to_insert.cmp(current_parent) {
-                Ordering::Greater => {
-                    let right_index: DataIndex = current_parent.get_right_index();
-                    if right_index != NIL {
-                        // Keep going down the right subtree
-                        current_parent = get_helper::<RBNode<V>>(self.data, right_index);
-                        current_parent_index = right_index;
-                    } else {
-                        insert_on_right = Some(true);
-                        break;
-                    }
-                }
-                Ordering::Less => {
-                    let left_index: DataIndex = current_parent.get_left_index();
-                    if left_index != NIL {
-                        // Keep going down the left subtree
-                        current_parent = get_helper::<RBNode<V>>(self.data, left_index);
-                        current_parent_index = left_index;
-                    } else {
-                        insert_on_right = Some(false);
-                        break;
-                    }
-                }
-                Ordering::Equal => {
-                    // Equal. Defaults to left to preserve FIFO.
-                    let left_index: DataIndex = current_parent.get_left_index();
-                    if left_index != NIL {
-                        // Keep going down the left subtree
-                        current_parent = get_helper::<RBNode<V>>(self.data, left_index);
-                        current_parent_index = left_index;
-                    } else {
-                        insert_on_right = Some(false);
-                        break;
-                    }
-                }
+        // One comparison and one selected child per level, including the
+        // final leaf. Equal values still go left to preserve FIFO.
+        let insert_on_right: bool = loop {
+            let right = node_to_insert.value > current_parent.value;
+            let child = if right {
+                current_parent.right
+            } else {
+                current_parent.left
+            };
+            if child == NIL {
+                break right;
             }
-        }
-        // We ended at a leaf and need to add below. `current_parent` is still
-        // the node the walk stopped on, so the undecided case compares against
-        // it rather than fetching it again.
-        let insert_on_right: bool =
-            insert_on_right.unwrap_or_else(|| *current_parent < *node_to_insert);
+            current_parent = get_helper::<RBNode<V>>(self.data, child);
+            current_parent_index = child;
+        };
         if insert_on_right {
             self.set_right_index::<V>(current_parent_index, new_node_index);
         } else {

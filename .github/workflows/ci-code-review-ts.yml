@@ -7,6 +7,10 @@ on:
       'client/ts/**',
       'client/idl/*.json',
       'programs/**/instruction.rs',
+      'Cargo.toml',
+      'Cargo.lock',
+      'scripts/assert-sbpf-v3.sh',
+      '.github/workflows/ci-code-review-ts.yml',
       'yarn.lock'
     ]
   push:
@@ -15,12 +19,12 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
-  SOLANA_VERSION: '2.2.12'
-  # pinocchio's account view crates need rustc 1.89 to build, so the host
-  # toolchain moves up with them.
-  RUST_TOOLCHAIN: '1.89.0'
+  SOLANA_VERSION: '4.2.2'
+  SVM_ARCH: 'v3'
+  # Keep cargo-build-sbf invocation aligned with the workspace toolchain.
+  RUST_TOOLCHAIN: '1.93.0'
   # Must match workspace.metadata.solana.tools-version.
-  PLATFORM_TOOLS: 'v1.54'
+  PLATFORM_TOOLS: 'v1.57'
 
 jobs:
   format:
@@ -96,7 +100,7 @@ jobs:
       - name: Cache dependencies
         uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
-          shared-key: "solana-${{ env.SOLANA_VERSION }}-platform-tools-${{ env.PLATFORM_TOOLS }}"
+          shared-key: "solana-${{ env.SOLANA_VERSION }}-platform-tools-${{ env.PLATFORM_TOOLS }}-arch-${{ env.SVM_ARCH }}-ts-${{ github.job }}"
 
       - name: Set Rust version
         run: rustup toolchain install ${{ env.RUST_TOOLCHAIN }}
@@ -105,7 +109,7 @@ jobs:
         run: |
           curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
             --output solana-install.sh https://release.anza.xyz/v${{ env.SOLANA_VERSION }}/install
-          echo '1430da752981d0b3b09cb35d73adede97ec82f04a8e2d2fb0780d547b01c555a  solana-install.sh' | sha256sum --check --strict
+          echo 'e16c8a1f07996b6255a67a53c651f2e859c7d5217b360fd6613cc3c3cae46bd4  solana-install.sh' | sha256sum --check --strict
           sh solana-install.sh
           echo "$HOME/.local/share/solana/install/active_release/bin" >> $GITHUB_PATH
           export PATH="/home/runner/.local/share/solana/install/active_release/bin:$PATH"
@@ -136,7 +140,7 @@ jobs:
           curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
             --output "$TARBALL" \
             "https://github.com/anza-xyz/platform-tools/releases/download/${{ env.PLATFORM_TOOLS }}/$TARBALL"
-          echo 'fcc41631c7f77561bf5412218bf297501dccf0305ea280f338f0ace2aab9f31e  '"$TARBALL" \
+          echo 'b0f7af104adf726fff2a6a09ea2eb2f2d2965c92295f4d7388c08d140e0c2b00  '"$TARBALL" \
             | sha256sum --check --strict
           mkdir -p "$DEST"
           tar -xjf "$TARBALL" -C "$DEST"
@@ -163,7 +167,10 @@ jobs:
 
       - name: Start validator
         run: |
-          cargo build-sbf --tools-version ${{ env.PLATFORM_TOOLS }}
+          (cd programs/manifest && cargo build-sbf --arch=${{ env.SVM_ARCH }} --tools-version ${{ env.PLATFORM_TOOLS }})
+          (cd programs/wrapper && cargo build-sbf --arch=${{ env.SVM_ARCH }} --tools-version ${{ env.PLATFORM_TOOLS }})
+          (cd programs/ui-wrapper && cargo build-sbf --arch=${{ env.SVM_ARCH }} --tools-version ${{ env.PLATFORM_TOOLS }})
+          ./scripts/assert-sbpf-v3.sh target/deploy/manifest.so target/deploy/wrapper.so target/deploy/ui_wrapper.so
           solana-test-validator --bpf-program MNFSTqtC93rEfYHB6hF82sKdZpUDFWkViLByLd1k1Ms target/deploy/manifest.so --bpf-program UMnFStVeG1ecZFc2gc5K3vFy3sMpotq8C91mXBQDGwh target/deploy/ui_wrapper.so --bpf-program wMNFSTkir3HgyZTsB7uqu3i7FA73grFCptPXgrZjksL target/deploy/wrapper.so  >/dev/null 2>&1 &
           echo "Started test validator, sleeping for 15 seconds before starting"
           sleep 15

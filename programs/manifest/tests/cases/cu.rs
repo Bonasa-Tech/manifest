@@ -2,10 +2,9 @@
 //!
 //! Every test simulates a representative transaction, prints a line of the
 //! form `CU <name>: <units>` and then executes it. The numbers are only
-//! meaningful when the compiled BPF program is loaded
-//! (`cargo test-sbf --features "test,test-sbf"`); the native processor used by
-//! plain `cargo test` does not meter compute, but the tests still exercise the
-//! same instructions there.
+//! meaningful when the compiled SBF program is loaded. The `test-sbf` feature
+//! enables the CU-specific assertions and log checks; CI points ProgramTest at
+//! the prebuilt canonical v3 artifacts through `SBF_OUT_DIR`.
 //!
 //! The program derives its vault and global PDAs on chain with
 //! `find_program_address`, which costs about 1,500 CU per bump it has to try.
@@ -32,9 +31,10 @@ use manifest::{
 use solana_account::{Account, AccountSharedData};
 use solana_instruction::{AccountMeta, Instruction};
 use solana_keypair::Keypair;
-use solana_program::{program_pack::Pack, pubkey::Pubkey, rent::Rent, system_instruction};
+use solana_program::{program_pack::Pack, pubkey::Pubkey, rent::Rent};
 use solana_program_test::{tokio, ProgramTestContext};
 use solana_signer::Signer;
+use solana_system_interface::instruction as system_instruction;
 use solana_transaction::Transaction;
 
 use crate::{send_tx_with_retry, TestFixture, TokenAccountFixture, SOL_UNIT_SIZE, USDC_UNIT_SIZE};

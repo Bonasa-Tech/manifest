@@ -27,10 +27,11 @@ use solana_instruction::Instruction;
 use solana_keypair::Keypair;
 use solana_program::{
     account_info::AccountInfo, hash::Hash, instruction::AccountMeta, program_pack::Pack,
-    pubkey::Pubkey, rent::Rent, system_instruction::create_account,
+    pubkey::Pubkey, rent::Rent,
 };
 use solana_program_test::{BanksClientError, ProgramTest, ProgramTestContext};
 use solana_signer::Signer;
+use solana_system_interface::instruction::create_account;
 use solana_transaction::Transaction;
 use spl_token_2022::state::Mint;
 use std::rc::Rc;
@@ -79,7 +80,7 @@ impl TestFixture {
         let second_keypair: Keypair = Keypair::new();
         program.add_account(
             second_keypair.pubkey(),
-            solana_account::Account::new(u32::MAX as u64, 0, &solana_program::system_program::id()),
+            solana_account::Account::new(u32::MAX as u64, 0, &solana_sdk_ids::system_program::id()),
         );
 
         // Add testdata for the reverse coalesce test.
@@ -1864,7 +1865,7 @@ pub async fn expand_market(
     num_free_blocks: u32,
 ) -> Result<(), BanksClientError> {
     use manifest::program::ManifestInstruction;
-    use solana_program::system_program;
+    use solana_sdk_ids::system_program;
 
     let payer_keypair = context.borrow().payer.insecure_clone();
     let payer = payer_keypair.pubkey();

@@ -21,8 +21,10 @@ solana-program = { workspace = true }
 spl-token = { workspace = true }
 spl-token-2022 = { workspace = true }
 tokio = { workspace = true }
-solana-client = "2.2"
-solana-account-decoder = "2.2"
+solana-client = "4.2.2"
+solana-account-decoder = { version = "4.2.2", features = ["agave-unstable-api"] }
 async-trait = "0.1.88"
 serde_json = "1.0.140"
 log = "0.4.27"
+# solana-keypair 3.1 requires five8_core's std Error implementation on host.
+five8_core = { workspace = true }

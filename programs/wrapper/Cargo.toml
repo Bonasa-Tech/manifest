@@ -30,6 +30,8 @@ shank = "0.4.2"
 spl-token = { workspace = true, features = ["no-entrypoint"] }
 spl-token-2022 = { workspace = true, features = ["no-entrypoint"] }
 solana-program = { workspace = true }
+solana-sdk-ids = { workspace = true }
+solana-system-interface = { workspace = true }
 borsh = { workspace = true }
 bytemuck = { workspace = true }
 num_enum = { workspace = true }
@@ -41,6 +43,7 @@ pinocchio = { workspace = true }
 
 [dev-dependencies]
 anyhow = { workspace = true }
+five8_core = { workspace = true }
 solana-program-test = { workspace = true }
 solana-logger = { workspace = true }
 solana-account = { workspace = true }

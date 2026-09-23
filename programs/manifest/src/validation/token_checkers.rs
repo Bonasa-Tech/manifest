@@ -4,9 +4,8 @@ use crate::{
 };
 use pinocchio::{account::AccountView, error::ProgramError};
 use solana_program::pubkey::Pubkey;
-use spl_token_2022::{
-    check_spl_token_program_account, extension::StateWithExtensions, state::Mint,
-};
+use spl_token_2022::{extension::StateWithExtensions, state::Mint};
+use spl_token_2022_interface::check_spl_token_program_account;
 use std::ops::Deref;
 
 #[derive(Clone)]

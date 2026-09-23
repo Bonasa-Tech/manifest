@@ -19,10 +19,8 @@ use manifest::validation::AccountViewExt;
 use pinocchio::account::AccountView;
 use pinocchio::ProgramResult;
 use manifest::validation::{Program, Signer};
-use solana_program::{
-    pubkey::Pubkey,
-    system_program,
-};
+use solana_program::{pubkey::Pubkey};
+use solana_sdk_ids::system_program;
 
 use super::shared::{
     check_signer, expand_wrapper_if_needed, MarketInfosTree, UnusedWrapperFreeListPadding,

@@ -19,9 +19,9 @@ use solana_keypair::Keypair;
 use solana_program::{
     instruction::{AccountMeta, Instruction},
     pubkey::Pubkey,
-    system_program,
 };
 use solana_program_test::tokio;
+use solana_sdk_ids::system_program;
 use solana_signer::Signer;
 use wrapper::{
     instruction_builders::{batch_update_instruction, create_wrapper_instructions},

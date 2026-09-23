@@ -358,10 +358,9 @@ async fn convert_legacy_tree(num_orders: usize) -> anyhow::Result<u64> {
 /// can cancel and withdraw against directly without going through the wrapper
 /// at all.
 ///
-/// The numbers only mean something when the compiled program is loaded
-/// (`cargo test-sbf --features "test,test-sbf"`); the native processor plain
-/// `cargo test` uses does not meter compute, but the conversion still runs and
-/// is still checked there.
+/// The numbers only mean something when the compiled program is loaded. The
+/// `test-sbf` feature enables the CU bound below; CI points ProgramTest at the
+/// prebuilt canonical v3 artifacts through `SBF_OUT_DIR`.
 #[tokio::test]
 async fn migrate_a_large_legacy_tree_test() -> anyhow::Result<()> {
     let small: u64 = convert_legacy_tree(1_000).await?;

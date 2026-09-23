@@ -30,6 +30,12 @@ struct TokenHint {
     owner: String,
 }
 
+#[derive(Eq, PartialEq)]
+struct DeployedProgram {
+    elf: Vec<u8>,
+    last_deployed_slot: Option<u64>,
+}
+
 pub async fn capture(
     rpc_url: String,
     commitment: String,
@@ -39,6 +45,15 @@ pub async fn capture(
     Pubkey::from_str(&market).context("invalid market public key")?;
     let recorded_rpc_url = redact_rpc_url(&rpc_url);
     let rpc = Rpc::new(rpc_url.clone(), commitment.clone());
+    // Capture before the market baseline, then reject upgrades during capture.
+    // A crate version is not the version of the program deployed at its ID.
+    let mut token_programs = BTreeMap::new();
+    for address in [TOKEN_PROGRAM, TOKEN_2022_PROGRAM] {
+        token_programs.insert(
+            address.to_owned(),
+            fetch_deployed_program(&rpc, address, None).await?,
+        );
+    }
 
     let discovery = rpc.account(&market, None).await?;
     let discovery_account = discovery
@@ -241,14 +256,28 @@ pub async fn capture(
         }
     }
 
-    let deployed_program = fetch_deployed_program(&rpc).await?;
+    for (address, before) in &token_programs {
+        let after = fetch_deployed_program(&rpc, address, Some(end_slot)).await?;
+        if after != *before
+            || after
+                .last_deployed_slot
+                .is_some_and(|slot| slot > start_slot)
+        {
+            bail!("token program {address} changed during capture; retry the capture");
+        }
+    }
+    let deployed_program = fetch_deployed_program(&rpc, MANIFEST_PROGRAM, Some(end_slot)).await?;
     Ok((
         Fixture {
-            version: 1,
+            version: 2,
             rpc_url: recorded_rpc_url,
             commitment,
             market,
             manifest_program: MANIFEST_PROGRAM.to_owned(),
+            token_programs: token_programs
+                .into_iter()
+                .map(|(address, program)| (address, BASE64.encode(program.elf)))
+                .collect(),
             start_slot,
             end_slot,
             transactions_touching_market,
@@ -259,7 +288,7 @@ pub async fn capture(
             instructions,
             chain_final_market,
         },
-        deployed_program,
+        deployed_program.elf,
     ))
 }
 
@@ -649,28 +678,57 @@ fn is_runtime_account(address: &str) -> bool {
     ) || address.starts_with("Sysvar")
 }
 
-async fn fetch_deployed_program(rpc: &Rpc) -> Result<Vec<u8>> {
+async fn fetch_deployed_program(
+    rpc: &Rpc,
+    address: &str,
+    min_slot: Option<u64>,
+) -> Result<DeployedProgram> {
     let program = rpc
-        .account(MANIFEST_PROGRAM, None)
+        .account(address, min_slot)
         .await?
         .value
-        .ok_or_else(|| anyhow!("deployed Manifest program account is missing"))?;
+        .ok_or_else(|| anyhow!("deployed program {address} is missing"))?;
+    if !program.executable {
+        bail!("program {address} is not executable");
+    }
     let data = BASE64.decode(&program.data.0)?;
     // UpgradeableLoaderState::Program is bincode enum tag 2 followed by the ProgramData pubkey.
-    if data.len() >= 36 && u32::from_le_bytes(data[0..4].try_into()?) == 2 {
-        let programdata = Pubkey::new_from_array(data[4..36].try_into()?).to_string();
-        let account = rpc
-            .account(&programdata, None)
-            .await?
-            .value
-            .ok_or_else(|| anyhow!("program-data account {programdata} is missing"))?;
-        let bytes = BASE64.decode(&account.data.0)?;
-        if bytes.len() <= 45 {
-            bail!("program-data account is too short");
-        }
-        return Ok(bytes[45..].to_vec());
+    let (elf, last_deployed_slot) =
+        if program.owner == solana_sdk_ids::bpf_loader_upgradeable::id().to_string() {
+            if data.len() != 36 || u32::from_le_bytes(data[0..4].try_into()?) != 2 {
+                bail!("invalid upgradeable program account {address}");
+            }
+            let programdata = Pubkey::new_from_array(data[4..36].try_into()?).to_string();
+            let account = rpc
+                .account(&programdata, min_slot)
+                .await?
+                .value
+                .ok_or_else(|| anyhow!("program-data account {programdata} is missing"))?;
+            let bytes = BASE64.decode(&account.data.0)?;
+            if account.owner != program.owner
+                || bytes.len() <= 45
+                || u32::from_le_bytes(bytes[0..4].try_into()?) != 3
+            {
+                bail!("invalid program-data account {programdata}");
+            }
+            (
+                bytes[45..].to_vec(),
+                Some(u64::from_le_bytes(bytes[4..12].try_into()?)),
+            )
+        } else if program.owner == solana_sdk_ids::bpf_loader::id().to_string()
+            || program.owner == solana_sdk_ids::bpf_loader_deprecated::id().to_string()
+        {
+            (data, None)
+        } else {
+            bail!("unsupported loader {} for program {address}", program.owner);
+        };
+    if !elf.starts_with(b"\x7fELF") {
+        bail!("deployed program {address} does not contain an ELF");
     }
-    Ok(data)
+    Ok(DeployedProgram {
+        elf,
+        last_deployed_slot,
+    })
 }
 
 #[cfg(test)]

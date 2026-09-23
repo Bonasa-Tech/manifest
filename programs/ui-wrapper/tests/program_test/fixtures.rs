@@ -15,15 +15,16 @@ use solana_instruction::Instruction;
 use solana_keypair::Keypair;
 use solana_program::{
     account_info::AccountInfo, hash::Hash, program_pack::Pack, pubkey::Pubkey, rent::Rent,
-    system_instruction::create_account,
 };
 use solana_program_test::{processor, BanksClientError, ProgramTest, ProgramTestContext};
 use solana_signer::Signer;
+use solana_system_interface::instruction::create_account;
 use solana_transaction::Transaction;
-use spl_token_2022::{
+use spl_token_2022_interface::{
     extension::{
-        transfer_fee::instruction::initialize_transfer_fee_config, transfer_hook,
-        BaseStateWithExtensions, ExtensionType, StateWithExtensions,
+        account_len::try_calculate_account_len_from_mint_data,
+        transfer_fee::instruction::initialize_transfer_fee_config, transfer_hook, ExtensionType,
+        StateWithExtensions,
     },
     state::Mint,
 };
@@ -57,12 +58,7 @@ pub const SOL_UNIT_SIZE: u64 = 1_000_000_000;
 pub const USDC_UNIT_SIZE: u64 = 1_000_000;
 
 pub fn fee_authority_keypair() -> Keypair {
-    Keypair::from_bytes(&[
-        42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42,
-        42, 42, 42, 42, 42, 42, 42, 42, 42, 25, 127, 107, 35, 225, 108, 133, 50, 198, 171, 200, 56,
-        250, 205, 94, 167, 137, 190, 12, 118, 178, 146, 3, 52, 3, 155, 250, 139, 61, 54, 141, 97,
-    ])
-    .unwrap()
+    Keypair::new_from_array([42; 32])
 }
 
 pub struct TestFixture {
@@ -88,11 +84,11 @@ impl TestFixture {
         let second_keypair: Keypair = Keypair::new();
         program.add_account(
             second_keypair.pubkey(),
-            solana_account::Account::new(SOL_UNIT_SIZE, 0, &solana_program::system_program::id()),
+            solana_account::Account::new(SOL_UNIT_SIZE, 0, &solana_sdk_ids::system_program::id()),
         );
         program.add_account(
             fee_authority_keypair().pubkey(),
-            solana_account::Account::new(SOL_UNIT_SIZE, 0, &solana_program::system_program::id()),
+            solana_account::Account::new(SOL_UNIT_SIZE, 0, &solana_sdk_ids::system_program::id()),
         );
 
         let market_keypair: Keypair = Keypair::new();
@@ -176,11 +172,11 @@ impl TestFixture {
         let second_keypair: Keypair = Keypair::new();
         program.add_account(
             second_keypair.pubkey(),
-            solana_account::Account::new(SOL_UNIT_SIZE, 0, &solana_program::system_program::id()),
+            solana_account::Account::new(SOL_UNIT_SIZE, 0, &solana_sdk_ids::system_program::id()),
         );
         program.add_account(
             fee_authority_keypair().pubkey(),
-            solana_account::Account::new(SOL_UNIT_SIZE, 0, &solana_program::system_program::id()),
+            solana_account::Account::new(SOL_UNIT_SIZE, 0, &solana_sdk_ids::system_program::id()),
         );
 
         let market_keypair: Keypair = Keypair::new();
@@ -825,16 +821,7 @@ impl TokenAccountFixture {
             .unwrap()
             .unwrap();
 
-        let mut mint_account_data = mint_account.data.clone();
-        let mint_with_extensions =
-            StateWithExtensions::<Mint>::unpack(mint_account_data.as_mut_slice()).unwrap();
-        let mint_extensions = mint_with_extensions.get_extension_types().unwrap();
-        let account_extensions =
-            ExtensionType::get_required_init_account_extensions(&mint_extensions);
-        let space = ExtensionType::try_calculate_account_len::<spl_token_2022::state::Account>(
-            &account_extensions,
-        )
-        .unwrap();
+        let space = try_calculate_account_len_from_mint_data(&mint_account.data, &[]).unwrap();
 
         let instructions: [Instruction; 2] =
             Self::create_ixs_2022(rent, mint_pk, &payer, owner_pk, keypair, space).await;
