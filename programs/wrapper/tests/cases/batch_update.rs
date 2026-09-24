@@ -841,7 +841,7 @@ async fn wrapper_cancel_all_scans_past_unrelated_trader_orders() -> anyhow::Resu
 }
 
 #[tokio::test]
-async fn wrapper_returns_error_for_crossing_post_only() -> anyhow::Result<()> {
+async fn wrapper_filters_crossing_post_only() -> anyhow::Result<()> {
     let mut test_fixture: TestFixture = TestFixture::new().await;
     test_fixture.claim_seat().await?;
     test_fixture.deposit(Token::SOL, 2 * SOL_UNIT_SIZE).await?;
@@ -876,12 +876,14 @@ async fn wrapper_returns_error_for_crossing_post_only() -> anyhow::Result<()> {
     )
     .await?;
 
-    // This post only will cross, so it should not get placed.
+    // The replacement crosses the order being cancelled. Preserve deployed
+    // behavior by filtering the replacement while still committing the
+    // cancellation.
     let batch_update_ix: Instruction = batch_update_instruction(
         &test_fixture.market.key,
         &payer,
         &test_fixture.wrapper.key,
-        vec![],
+        vec![WrapperCancelOrderParams::new(0)],
         false,
         vec![WrapperPlaceOrderParams::new(
             0,
@@ -893,20 +895,17 @@ async fn wrapper_returns_error_for_crossing_post_only() -> anyhow::Result<()> {
             OrderType::PostOnly,
         )],
     );
-    assert!(
-        send_tx_with_retry(
-            Rc::clone(&test_fixture.context),
-            &[batch_update_ix],
-            Some(&payer),
-            &[&payer_keypair],
-        )
-        .await
-        .is_err(),
-        "The authoritative core reports PostOnlyCrosses",
-    );
+    send_tx_with_retry(
+        Rc::clone(&test_fixture.context),
+        &[batch_update_ix],
+        Some(&payer),
+        &[&payer_keypair],
+    )
+    .await?;
 
     test_fixture.market.reload().await;
-    // The failed PostOnly transaction leaves the original ask unchanged.
+    // The wrapper drops the crossing PostOnly order without rolling back the
+    // cancellation that shared its batch.
     assert_eq!(
         test_fixture
             .market
@@ -914,14 +913,14 @@ async fn wrapper_returns_error_for_crossing_post_only() -> anyhow::Result<()> {
             .get_asks()
             .iter::<RestingOrder>()
             .count(),
-        1
+        0
     );
 
     Ok(())
 }
 
 #[tokio::test]
-async fn wrapper_reports_crossing_post_only_after_expired_prefix() -> anyhow::Result<()> {
+async fn wrapper_filters_crossing_post_only_after_expired_prefix() -> anyhow::Result<()> {
     let mut test_fixture: TestFixture = TestFixture::new().await;
     test_fixture.claim_seat().await?;
     test_fixture
@@ -1012,8 +1011,8 @@ async fn wrapper_reports_crossing_post_only_after_expired_prefix() -> anyhow::Re
     .await?;
     test_fixture.advance_time_seconds(10_000).await;
 
-    // The wrapper forwards without trying to classify the expired prefix. The
-    // core prunes it, finds the live ask, and reports the real crossing order.
+    // The deployed behavior walks past the expired prefix, finds the live ask,
+    // and filters the crossing replacement before the core CPI.
     let post_only_bid_ix: Instruction = batch_update_instruction(
         &test_fixture.market.key,
         &payer,
@@ -1030,17 +1029,13 @@ async fn wrapper_reports_crossing_post_only_after_expired_prefix() -> anyhow::Re
             OrderType::PostOnly,
         )],
     );
-    assert!(
-        send_tx_with_retry(
-            Rc::clone(&test_fixture.context),
-            &[post_only_bid_ix],
-            Some(&payer),
-            &[&payer_keypair],
-        )
-        .await
-        .is_err(),
-        "The live crossing ask behind the expired prefix is reported",
-    );
+    send_tx_with_retry(
+        Rc::clone(&test_fixture.context),
+        &[post_only_bid_ix],
+        Some(&payer),
+        &[&payer_keypair],
+    )
+    .await?;
 
     test_fixture.market.reload().await;
     assert_eq!(
@@ -1061,7 +1056,7 @@ async fn wrapper_reports_crossing_post_only_after_expired_prefix() -> anyhow::Re
             .iter::<RestingOrder>()
             .count(),
         41,
-        "The failed transaction rolls back expired-order pruning",
+        "Wrapper-side inspection does not prune expired orders",
     );
 
     Ok(())

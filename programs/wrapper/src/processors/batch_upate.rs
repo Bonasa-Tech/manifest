@@ -162,16 +162,50 @@ fn prepare_orders(
     orders: &[WrapperPlaceOrderParams],
     mut remaining_base_atoms: BaseAtoms,
     mut remaining_quote_atoms: QuoteAtoms,
+    market: &ManifestAccountInfo<MarketFixed>,
     now_slot: u32,
 ) -> (Vec<PlaceOrderParams>, Vec<usize>) {
-    // The wrapper deliberately does not inspect the shared book to predict
-    // PostOnly crossing. The core prunes expired makers before its
-    // authoritative PostOnly check, so wrapper-side discovery can only add an
-    // attacker-controlled traversal or silently disagree with the core. A
-    // crossing PostOnly order therefore fails the entire atomic batch,
-    // including cancels; callers that need
-    // cancellation progress independent of replacement quotes must split the
-    // operations into separate transactions.
+    // Preserve the deployed wrapper behavior: crossing PostOnly orders are
+    // silently removed before the core CPI, so a stale replacement quote does
+    // not roll back the rest of an otherwise valid batch.
+    let market_data: Ref<[u8]> = market.try_borrow().unwrap();
+    let market_ref = get_dynamic_account::<MarketFixed>(&market_data);
+    let mut best_ask_index: DataIndex = market_ref.get_asks().get_max_index();
+    let mut best_bid_index: DataIndex = market_ref.get_bids().get_max_index();
+
+    while best_ask_index != NIL
+        && get_helper::<RBNode<RestingOrder>>(market_ref.dynamic, best_ask_index)
+            .get_value()
+            .is_expired(now_slot)
+    {
+        best_ask_index = market_ref
+            .get_asks()
+            .get_next_lower_index::<RestingOrder>(best_ask_index);
+    }
+    while best_bid_index != NIL
+        && get_helper::<RBNode<RestingOrder>>(market_ref.dynamic, best_bid_index)
+            .get_value()
+            .is_expired(now_slot)
+    {
+        best_bid_index = market_ref
+            .get_bids()
+            .get_next_lower_index::<RestingOrder>(best_bid_index);
+    }
+
+    let best_ask_price: QuoteAtomsPerBaseAtom = if best_ask_index == NIL {
+        QuoteAtomsPerBaseAtom::MAX
+    } else {
+        get_helper::<RBNode<RestingOrder>>(market_ref.dynamic, best_ask_index)
+            .get_value()
+            .get_price()
+    };
+    let best_bid_price: QuoteAtomsPerBaseAtom = if best_bid_index == NIL {
+        QuoteAtomsPerBaseAtom::MIN
+    } else {
+        get_helper::<RBNode<RestingOrder>>(market_ref.dynamic, best_bid_index)
+            .get_value()
+            .get_price()
+    };
 
     let mut result: Vec<PlaceOrderParams> = Vec::with_capacity(orders.len());
     let mut original_indices: Vec<usize> = Vec::with_capacity(orders.len());
@@ -184,27 +218,36 @@ fn prepare_orders(
             (QuoteAtomsPerBaseAtom::MIN_EXP..=QuoteAtomsPerBaseAtom::MAX_EXP)
                 .contains(&order.price_exponent)
         );
+        let price = QuoteAtomsPerBaseAtom::try_from_mantissa_and_exponent(
+            order.price_mantissa,
+            order.price_exponent,
+        )
+        .unwrap();
         if order.order_type != OrderType::Global {
             if order.is_bid {
-                let price = QuoteAtomsPerBaseAtom::try_from_mantissa_and_exponent(
-                    order.price_mantissa,
-                    order.price_exponent,
-                )
-                .unwrap();
-                // Exact, like the core: a bid sized to the whole balance must
-                // pass. quantities preserves full precision and rounds up.
-                let desired: QuoteAtoms = BaseAtoms::new(order.base_atoms)
-                    .checked_mul(price, true)
-                    .unwrap();
-                if desired > remaining_quote_atoms {
-                    solana_program::msg!("Removing bid for insufficient funds");
+                if price > best_ask_price && order.order_type == OrderType::PostOnly {
+                    solana_program::msg!("Removing post only bid that would cross");
                     num_base_atoms = 0;
                 } else {
-                    remaining_quote_atoms -= desired;
+                    // Exact, like the core: a bid sized to the whole balance
+                    // must pass. quantities preserves full precision and
+                    // rounds up.
+                    let desired: QuoteAtoms = BaseAtoms::new(order.base_atoms)
+                        .checked_mul(price, true)
+                        .unwrap();
+                    if desired > remaining_quote_atoms {
+                        solana_program::msg!("Removing bid for insufficient funds");
+                        num_base_atoms = 0;
+                    } else {
+                        remaining_quote_atoms -= desired;
+                    }
                 }
             } else {
                 let desired: BaseAtoms = BaseAtoms::new(order.base_atoms);
-                if desired > remaining_base_atoms {
+                if price < best_bid_price && order.order_type == OrderType::PostOnly {
+                    solana_program::msg!("Removing post only ask that would cross");
+                    num_base_atoms = 0;
+                } else if desired > remaining_base_atoms {
                     solana_program::msg!("Removing ask for insufficient funds");
                     num_base_atoms = 0;
                 } else {
@@ -523,6 +566,7 @@ pub(crate) fn process_batch_update(
             &orders,
             remaining_base_atoms,
             remaining_quote_atoms,
+            &market,
             now_slot,
         )
     };

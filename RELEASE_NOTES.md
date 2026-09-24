@@ -4,14 +4,11 @@
 
 ### Wrapper behavior changes
 
-- PostOnly crossing validation is now exclusively authoritative in the core
-  program. If any PostOnly order crosses when a wrapper batch lands, the core
-  returns `PostOnlyCrosses` and the entire transaction rolls back, including
-  cancellations and other replacement orders in that batch. During a fast
-  market move this can leave stale
-  quotes resting. Market makers that require cancellations to make progress
-  independently of replacement quotes should submit cancellation-only and
-  placement transactions separately.
+- The wrapper retains the deployed PostOnly behavior: it skips expired makers
+  while checking the top of book and silently removes a crossing PostOnly
+  replacement before invoking the core. This keeps a stale replacement quote
+  from rolling back cancellations and other valid work in the same batch. The
+  core remains authoritative for every order the wrapper forwards.
 - `cancel_all` cancels wrapper-tracked orders and restores the deployed
   wrapper's full core-book search for the trader's orders placed directly
   through the core. This preserves replacement-order funding behavior, while
