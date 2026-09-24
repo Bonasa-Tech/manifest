@@ -1,7 +1,7 @@
 use anyhow::{Error, Result};
 use jupiter_amm_interface::{
-    AccountMap, Amm, AmmContext, KeyedAccount, Quote, QuoteParams, Side, Swap, SwapAndAccountMetas,
-    SwapParams,
+    AccountMap, Amm, AmmContext, ClockRef, KeyedAccount, Quote, QuoteParams, Side, Swap,
+    SwapAndAccountMetas, SwapParams,
 };
 
 use hypertree::{
@@ -21,7 +21,11 @@ use manifest::{
     },
 };
 use solana_program::{instruction::AccountMeta, pubkey::Pubkey, system_program};
-use std::{collections::HashSet, mem::size_of};
+use spl_token_2022::{
+    extension::{transfer_fee::TransferFeeConfig, BaseStateWithExtensions, StateWithExtensions},
+    state::Mint,
+};
+use std::{collections::HashSet, mem::size_of, sync::atomic::Ordering};
 
 /// Lays out an account the way the runtime would, so this quoter can run the
 /// program's own matching code over bytes it fetched rather than a copy of
@@ -105,6 +109,43 @@ fn validated_market_value(market_account: &solana_account::Account) -> Result<Ma
     })
 }
 
+/// Read a mint's `TransferFeeConfig` if it is a Token-2022 mint that has one.
+///
+/// Only Token-2022 mints can carry transfer fees, so an SPL Token mint is
+/// reported as fee free without parsing. A Token-2022 mint that does not parse
+/// is an error rather than a silent no-fee, because treating a fee bearing
+/// mint as fee free overstates the quote.
+fn mint_transfer_fee_config(
+    mint_account: &solana_account::Account,
+) -> Result<Option<TransferFeeConfig>> {
+    if mint_account.owner != spl_token_2022::id() {
+        return Ok(None);
+    }
+    let mint_state: StateWithExtensions<'_, Mint> =
+        StateWithExtensions::<Mint>::unpack(&mint_account.data)
+            .map_err(|error| anyhow::anyhow!("mint account is invalid: {error}"))?;
+    Ok(mint_state
+        .get_extension::<TransferFeeConfig>()
+        .ok()
+        .copied())
+}
+
+/// Net `amount` of the transfer fee that Token-2022 withholds this epoch, the
+/// same way the program's `calculate_post_fee_amount` does on chain.
+fn post_transfer_fee_amount(
+    transfer_fee_config_opt: &Option<TransferFeeConfig>,
+    epoch: u64,
+    amount: u64,
+) -> Result<u64> {
+    let Some(transfer_fee_config) = transfer_fee_config_opt else {
+        return Ok(amount);
+    };
+    transfer_fee_config
+        .get_epoch_fee(epoch)
+        .calculate_post_fee_amount(amount)
+        .ok_or_else(|| anyhow::anyhow!("transfer fee calculation overflowed"))
+}
+
 #[derive(Clone)]
 pub struct ManifestMarket {
     market: MarketValue,
@@ -114,6 +155,11 @@ pub struct ManifestMarket {
     quote_global: Option<GlobalValue>,
     base_token_program: Pubkey,
     quote_token_program: Pubkey,
+    base_transfer_fee_config: Option<TransferFeeConfig>,
+    quote_transfer_fee_config: Option<TransferFeeConfig>,
+    /// Transfer fees are keyed by epoch, not slot, so the quote needs the
+    /// current epoch. Jupiter keeps this up to date for every Amm.
+    clock_ref: ClockRef,
 }
 
 impl ManifestMarket {
@@ -158,7 +204,7 @@ impl Amm for ManifestMarket {
         ]
     }
 
-    fn from_keyed_account(keyed_account: &KeyedAccount, _amm_context: &AmmContext) -> Result<Self> {
+    fn from_keyed_account(keyed_account: &KeyedAccount, amm_context: &AmmContext) -> Result<Self> {
         Ok(ManifestMarket {
             market: validated_market_value(&keyed_account.account)?,
             key: keyed_account.key,
@@ -166,8 +212,11 @@ impl Amm for ManifestMarket {
             // Gets updated on the first iter
             base_token_program: spl_token::id(),
             quote_token_program: spl_token::id(),
+            base_transfer_fee_config: None,
+            quote_transfer_fee_config: None,
             base_global: None,
             quote_global: None,
+            clock_ref: amm_context.clock_ref.clone(),
         })
     }
 
@@ -176,9 +225,11 @@ impl Amm for ManifestMarket {
         // absent or truncated during a slot transition.
         if let Some(mint) = account_map.get(&self.get_base_mint()) {
             self.base_token_program = mint.owner;
+            self.base_transfer_fee_config = mint_transfer_fee_config(mint)?;
         };
         if let Some(mint) = account_map.get(&self.get_quote_mint()) {
             self.quote_token_program = mint.owner;
+            self.quote_transfer_fee_config = mint_transfer_fee_config(mint)?;
         };
         if let Some(global) = account_map.get(&self.get_quote_global_address()) {
             if global.owner != manifest::ID {
@@ -303,23 +354,49 @@ impl Amm for ManifestMarket {
             quote_global_trade_accounts_opt,
         ];
 
-        let out_amount: u64 = if quote_params.input_mint == self.get_base_mint() {
-            let in_atoms: BaseAtoms = BaseAtoms::new(quote_params.amount);
+        // Token-2022 transfer fees are withheld on the way in and on the way
+        // out, so the book only ever sees the post fee input and the taker only
+        // ever receives the post fee output. Quoting the gross amounts would
+        // overstate the fill by exactly the fees the swap will pay.
+        let is_base_in: bool = quote_params.input_mint == self.get_base_mint();
+        let (input_transfer_fee_config, output_transfer_fee_config): (
+            &Option<TransferFeeConfig>,
+            &Option<TransferFeeConfig>,
+        ) = if is_base_in {
+            (
+                &self.base_transfer_fee_config,
+                &self.quote_transfer_fee_config,
+            )
+        } else {
+            (
+                &self.quote_transfer_fee_config,
+                &self.base_transfer_fee_config,
+            )
+        };
+        let epoch: u64 = self.clock_ref.epoch.load(Ordering::Relaxed);
+        let in_amount_after_transfer_fees: u64 =
+            post_transfer_fee_amount(input_transfer_fee_config, epoch, quote_params.amount)?;
+
+        let out_amount: u64 = if is_base_in {
+            let in_atoms: BaseAtoms = BaseAtoms::new(in_amount_after_transfer_fees);
             market
                 .impact_quote_atoms_with_slot(false, in_atoms, global_trade_accounts, u32::MAX)?
                 .as_u64()
         } else {
-            let in_atoms: QuoteAtoms = QuoteAtoms::new(quote_params.amount);
+            let in_atoms: QuoteAtoms = QuoteAtoms::new(in_amount_after_transfer_fees);
             market
                 .impact_base_atoms_with_slot(true, in_atoms, global_trade_accounts, u32::MAX)?
                 .as_u64()
         };
+        let out_amount_after_transfer_fees: u64 =
+            post_transfer_fee_amount(output_transfer_fee_config, epoch, out_amount)?;
+
         Ok(Quote {
             // Artificially penalize by 1 atom to be worse than the non-global version.
             // This ensures that routes that can be filled without global accounts cause less
             // lock contention on the global accounts, which will allow them to be included
             // the block earlier. The UX improvement should be worth at least 1 atom.
-            out_amount: out_amount.saturating_sub(1),
+            out_amount: out_amount_after_transfer_fees.saturating_sub(1),
             ..Quote::default()
         })
     }
@@ -419,7 +496,7 @@ impl Amm for ManifestMarket {
 mod test {
     use super::*;
     use hypertree::{get_mut_helper, DataIndex};
-    use jupiter_amm_interface::{ClockRef, SwapMode};
+    use jupiter_amm_interface::SwapMode;
     use manifest::{
         quantities::{BaseAtoms, GlobalAtoms},
         state::{
@@ -430,8 +507,11 @@ mod test {
     };
     use solana_account::Account;
     use solana_program::pubkey;
-    use spl_token_2022::state::Mint;
-    use std::{cell::RefCell, rc::Rc};
+    use spl_token_2022::extension::{
+        transfer_fee::TransferFee, BaseStateWithExtensionsMut, ExtensionType,
+        StateWithExtensionsMut,
+    };
+    use std::{cell::RefCell, rc::Rc, sync::atomic::AtomicU64, sync::Arc};
 
     const BASE_MINT_KEY: Pubkey = pubkey!("So11111111111111111111111111111111111111112");
     const QUOTE_MINT_KEY: Pubkey = pubkey!("EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v");
@@ -671,5 +751,169 @@ mod test {
                 }
             };
         }
+    }
+
+    /// Build a Token-2022 mint account whose `TransferFeeConfig` charges
+    /// `transfer_fee_basis_points` in every epoch.
+    fn token_2022_mint_with_transfer_fee(decimals: u8, transfer_fee_basis_points: u16) -> Account {
+        let account_len: usize =
+            ExtensionType::try_calculate_account_len::<Mint>(&[ExtensionType::TransferFeeConfig])
+                .expect("mint account len");
+        let mut data: Vec<u8> = vec![0; account_len];
+        {
+            let mut mint_state: StateWithExtensionsMut<'_, Mint> =
+                StateWithExtensionsMut::<Mint>::unpack_uninitialized(&mut data)
+                    .expect("uninitialized mint");
+            let transfer_fee: TransferFee = TransferFee {
+                epoch: 0.into(),
+                maximum_fee: u64::MAX.into(),
+                transfer_fee_basis_points: transfer_fee_basis_points.into(),
+            };
+            let transfer_fee_config: &mut TransferFeeConfig = mint_state
+                .init_extension::<TransferFeeConfig>(true)
+                .expect("init transfer fee config");
+            transfer_fee_config.older_transfer_fee = transfer_fee;
+            transfer_fee_config.newer_transfer_fee = transfer_fee;
+            mint_state.base = Mint {
+                mint_authority: None.into(),
+                supply: 0,
+                decimals,
+                is_initialized: true,
+                freeze_authority: None.into(),
+            };
+            mint_state.pack_base();
+            mint_state.init_account_type().expect("init account type");
+        }
+        Account {
+            lamports: 0,
+            data,
+            owner: spl_token_2022::id(),
+            executable: false,
+            rent_epoch: 0,
+        }
+    }
+
+    /// The book fills the same way with or without transfer fees, so the quote
+    /// has to shrink on both sides: the vault only receives the post fee input
+    /// and the taker only receives the post fee output.
+    #[test]
+    fn test_jupiter_quote_nets_token_2022_transfer_fees() {
+        mint_account_info!(base_mint_owned, base_mint, 9);
+        mint_account_info!(quote_mint_owned, quote_mint, 6);
+
+        let mut market_value: DynamicAccount<MarketFixed, Vec<u8>> = MarketValue {
+            fixed: MarketFixed::new_empty(&base_mint, &quote_mint, &MARKET_KEY),
+            // 5 because 2 extra, 1 seat, 2 orders.
+            dynamic: vec![0; MARKET_BLOCK_SIZE * 5],
+        };
+        market_value.market_expand().unwrap();
+        market_value.claim_seat(&TRADER_KEY).unwrap();
+        let trader_index: DataIndex = market_value.get_trader_index(&TRADER_KEY);
+        market_value
+            .deposit(trader_index, 1_000_000_000_000, true)
+            .unwrap();
+        market_value
+            .deposit(trader_index, 1_000_000_000_000, false)
+            .unwrap();
+
+        // Bid for 10 SOL @ 150USDC/SOL
+        market_value.market_expand().unwrap();
+        market_value
+            .place_order(AddOrderToMarketArgs {
+                market: &MARKET_KEY,
+                trader_index,
+                num_base_atoms: BaseAtoms::new(10_000),
+                price: 0.150.try_into().unwrap(),
+                is_bid: true,
+                last_valid_slot: NO_EXPIRATION_LAST_VALID_SLOT,
+                order_type: OrderType::Limit,
+                global_trade_accounts_opts: &[None, None],
+                current_slot: None,
+            })
+            .unwrap();
+
+        // Ask 10 SOL @ 180USDC/SOL
+        market_value.market_expand().unwrap();
+        market_value
+            .place_order(AddOrderToMarketArgs {
+                market: &MARKET_KEY,
+                trader_index,
+                num_base_atoms: BaseAtoms::new(10_000),
+                price: 0.180.try_into().unwrap(),
+                is_bid: false,
+                last_valid_slot: NO_EXPIRATION_LAST_VALID_SLOT,
+                order_type: OrderType::Limit,
+                global_trade_accounts_opts: &[None, None],
+                current_slot: None,
+            })
+            .unwrap();
+
+        market_value.market_expand().unwrap();
+        market_value.market_expand().unwrap();
+
+        dynamic_value_to_account!(market_account, market_value, MARKET_FIXED_SIZE, MarketFixed);
+
+        let market_keyed_account: KeyedAccount = KeyedAccount {
+            key: MARKET_KEY,
+            account: market_account.clone(),
+            params: None,
+        };
+
+        let amm_context: AmmContext = AmmContext {
+            clock_ref: ClockRef {
+                epoch: Arc::new(AtomicU64::new(7)),
+                ..ClockRef::default()
+            },
+        };
+
+        let mut manifest_market: ManifestMarket =
+            ManifestMarket::from_keyed_account(&market_keyed_account, &amm_context).unwrap();
+
+        // 10% on the base mint, 20% on the quote mint.
+        let accounts_map = AccountMap::from_iter([
+            (MARKET_KEY, market_account),
+            (BASE_MINT_KEY, token_2022_mint_with_transfer_fee(9, 1_000)),
+            (QUOTE_MINT_KEY, token_2022_mint_with_transfer_fee(6, 2_000)),
+        ]);
+        manifest_market.update(&accounts_map).unwrap();
+
+        // Selling 1 SOL sweeps the whole bid either way, so only the 20% fee on
+        // the quote payout moves the quote: 1_500 gross becomes 1_200, less the
+        // 1 atom penalty.
+        let ask_quote: Quote = manifest_market
+            .quote(&QuoteParams {
+                amount: 1_000_000_000,
+                swap_mode: SwapMode::ExactIn,
+                input_mint: BASE_MINT_KEY,
+                output_mint: QUOTE_MINT_KEY,
+            })
+            .unwrap();
+        assert_eq!(ask_quote.out_amount, 1_199);
+
+        // Buying with 180 USDC sweeps the whole ask either way, so only the 10%
+        // fee on the base payout moves the quote: 10_000 gross becomes 9_000.
+        let bid_quote: Quote = manifest_market
+            .quote(&QuoteParams {
+                amount: 180_000_000,
+                swap_mode: SwapMode::ExactIn,
+                input_mint: QUOTE_MINT_KEY,
+                output_mint: BASE_MINT_KEY,
+            })
+            .unwrap();
+        assert_eq!(bid_quote.out_amount, 8_999);
+
+        // A buy small enough that the 20% fee on the input changes the fill
+        // shows the input side is netted too: 1_000 quote atoms reach the book
+        // as 800, which buys 4_444 base atoms at 0.180, and the 10% base fee
+        // leaves 3_999 before the 1 atom penalty.
+        let small_bid_quote: Quote = manifest_market
+            .quote(&QuoteParams {
+                amount: 1_000,
+                swap_mode: SwapMode::ExactIn,
+                input_mint: QUOTE_MINT_KEY,
+                output_mint: BASE_MINT_KEY,
+            })
+            .unwrap();
+        assert_eq!(small_bid_quote.out_amount, 3_998);
     }
 }
