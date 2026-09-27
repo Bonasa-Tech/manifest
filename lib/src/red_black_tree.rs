@@ -482,17 +482,18 @@ where
         //        Y      X        U       Y
 
         let g_index: DataIndex = index;
-        let p_index: DataIndex = self.get_right_index::<V>(g_index);
-        let y_index: DataIndex = self.get_left_index::<V>(p_index);
-        let gg_index: DataIndex = self.get_parent_index::<V>(index);
+        let g_node: &RBNode<V> = get_helper::<RBNode<V>>(self.data(), g_index);
+        let (p_index, gg_index): (DataIndex, DataIndex) = (g_node.right, g_node.parent);
 
         // P
-        {
+        let y_index: DataIndex = {
             // Does not use the helpers to avoid redundant NIL checks.
             let p_node: &mut RBNode<V> = get_mut_helper::<RBNode<V>>(self.data(), p_index);
+            let y_index: DataIndex = p_node.left;
             p_node.parent = gg_index;
             p_node.left = g_index;
-        }
+            y_index
+        };
 
         // Y
         self.set_parent_index::<V>(y_index, g_index);
@@ -507,22 +508,20 @@ where
         // X
 
         // GG
-        if gg_index != NIL {
-            if self.get_left_index::<V>(gg_index) == index {
-                self.set_left_index::<V>(gg_index, p_index);
-            }
-            if self.get_right_index::<V>(gg_index) == index {
-                self.set_right_index::<V>(gg_index, p_index);
+        if gg_index == NIL {
+            self.set_root_index(p_index);
+        } else {
+            let gg_node: &mut RBNode<V> = get_mut_helper::<RBNode<V>>(self.data(), gg_index);
+            if gg_node.left == g_index {
+                gg_node.left = p_index;
+            } else {
+                debug_assert_eq!(gg_node.right, g_index);
+                gg_node.right = p_index;
             }
         }
 
         // U
         // Unchanged, just included for completeness
-
-        // Root
-        if self.root_index() == g_index {
-            self.set_root_index(p_index);
-        }
     }
 
     fn rotate_right<V: Payload>(&mut self, index: DataIndex) {
@@ -537,17 +536,18 @@ where
         //  X     Y                       Y       U
 
         let g_index: DataIndex = index;
-        let p_index: DataIndex = self.get_left_index::<V>(g_index);
-        let y_index: DataIndex = self.get_right_index::<V>(p_index);
-        let gg_index: DataIndex = self.get_parent_index::<V>(index);
+        let g_node: &RBNode<V> = get_helper::<RBNode<V>>(self.data(), g_index);
+        let (p_index, gg_index): (DataIndex, DataIndex) = (g_node.left, g_node.parent);
 
         // P
-        {
+        let y_index: DataIndex = {
             // Does not use the helpers to avoid redundant NIL checks.
             let p_node: &mut RBNode<V> = get_mut_helper::<RBNode<V>>(self.data(), p_index);
+            let y_index: DataIndex = p_node.right;
             p_node.parent = gg_index;
             p_node.right = g_index;
-        }
+            y_index
+        };
 
         // Y
         self.set_parent_index::<V>(y_index, g_index);
@@ -562,31 +562,72 @@ where
         }
 
         // GG
-        if gg_index != NIL {
-            if self.get_left_index::<V>(gg_index) == index {
-                self.set_left_index::<V>(gg_index, p_index);
-            }
-            if self.get_right_index::<V>(gg_index) == index {
-                self.set_right_index::<V>(gg_index, p_index);
+        if gg_index == NIL {
+            self.set_root_index(p_index);
+        } else {
+            let gg_node: &mut RBNode<V> = get_mut_helper::<RBNode<V>>(self.data(), gg_index);
+            if gg_node.left == g_index {
+                gg_node.left = p_index;
+            } else {
+                debug_assert_eq!(gg_node.right, g_index);
+                gg_node.right = p_index;
             }
         }
 
         // U
         // Unchanged, just included for completeness
-
-        // Root
-        if self.root_index() == g_index {
-            self.set_root_index(p_index);
-        }
     }
 
     fn swap_node_with_successor<V: Payload>(&mut self, index_0: DataIndex, index_1: DataIndex) {
-        let parent_0: DataIndex = self.get_parent_index::<V>(index_0);
-        let parent_1: DataIndex = self.get_parent_index::<V>(index_1);
-        let left_0: DataIndex = self.get_left_index::<V>(index_0);
-        let left_1: DataIndex = self.get_left_index::<V>(index_1);
-        let right_0: DataIndex = self.get_right_index::<V>(index_0);
-        let right_1: DataIndex = self.get_right_index::<V>(index_1);
+        // The left-leaning tree also uses this helper with a NIL successor.
+        // Preserve the field helpers' NIL semantics while reading each real
+        // node only once.
+        let (parent_0, left_0, right_0, color_0) = if index_0 == NIL {
+            (NIL, NIL, NIL, Color::Black)
+        } else {
+            let node: &RBNode<V> = get_helper::<RBNode<V>>(self.data(), index_0);
+            (node.parent, node.left, node.right, node.color)
+        };
+        let (parent_1, left_1, right_1, color_1) = if index_1 == NIL {
+            (NIL, NIL, NIL, Color::Black)
+        } else {
+            let node: &RBNode<V> = get_helper::<RBNode<V>>(self.data(), index_1);
+            (node.parent, node.left, node.right, node.color)
+        };
+
+        if index_0 != NIL && parent_1 == index_0 {
+            // The successor is the immediate right child. Write the final
+            // links directly instead of creating and repairing self-links.
+            {
+                let node: &mut RBNode<V> = get_mut_helper::<RBNode<V>>(self.data(), index_0);
+                node.left = left_1;
+                node.right = right_1;
+                node.parent = index_1;
+                node.color = color_1;
+            }
+            {
+                let node: &mut RBNode<V> = get_mut_helper::<RBNode<V>>(self.data(), index_1);
+                node.left = left_0;
+                node.right = index_0;
+                node.parent = parent_0;
+                node.color = color_0;
+            }
+            self.set_parent_index::<V>(left_0, index_1);
+            self.set_parent_index::<V>(left_1, index_0);
+            self.set_parent_index::<V>(right_1, index_0);
+            if parent_0 == NIL {
+                self.set_root_index(index_1);
+            } else {
+                let parent: &mut RBNode<V> = get_mut_helper::<RBNode<V>>(self.data(), parent_0);
+                if parent.left == index_0 {
+                    parent.left = index_1;
+                } else {
+                    debug_assert_eq!(parent.right, index_0);
+                    parent.right = index_1;
+                }
+            }
+            return;
+        }
 
         let is_left_0: bool = self.is_left_child::<V>(index_0);
         let is_left_1: bool = self.is_left_child::<V>(index_1);
@@ -603,13 +644,22 @@ where
             self.set_right_index::<V>(parent_1, index_0);
         }
 
-        self.set_left_index::<V>(index_0, left_1);
-        self.set_right_index::<V>(index_0, right_1);
-        self.set_parent_index::<V>(index_0, parent_1);
-
-        self.set_left_index::<V>(index_1, left_0);
-        self.set_right_index::<V>(index_1, right_0);
-        self.set_parent_index::<V>(index_1, parent_0);
+        // Update each node's metadata together, leaving each payload at its
+        // original address.
+        if index_0 != NIL {
+            let node: &mut RBNode<V> = get_mut_helper::<RBNode<V>>(self.data(), index_0);
+            node.left = left_1;
+            node.right = right_1;
+            node.parent = parent_1;
+            node.color = color_1;
+        }
+        if index_1 != NIL {
+            let node: &mut RBNode<V> = get_mut_helper::<RBNode<V>>(self.data(), index_1);
+            node.left = left_0;
+            node.right = right_0;
+            node.parent = parent_0;
+            node.color = color_0;
+        }
 
         self.set_parent_index::<V>(left_0, index_1);
         self.set_parent_index::<V>(left_1, index_0);
@@ -628,11 +678,6 @@ where
         if self.root_index() == index_0 {
             self.set_root_index(index_1);
         }
-
-        let index_0_color: Color = self.get_color::<V>(index_0);
-        let index_1_color: Color = self.get_color::<V>(index_1);
-        self.set_color::<V>(index_0, index_1_color);
-        self.set_color::<V>(index_1, index_0_color);
     }
 
     // Take out the node in the middle and fix parent child relationships
@@ -640,18 +685,28 @@ where
         debug_assert_ne!(index, NIL);
         debug_assert!(!self.is_internal::<V>(index));
 
-        let parent_index: DataIndex = self.get_parent_index::<V>(index);
-        let child_index: DataIndex = self.get_child_index::<V>(index);
+        let node: &RBNode<V> = get_helper::<RBNode<V>>(self.data(), index);
+        let parent_index: DataIndex = node.parent;
+        let child_index: DataIndex = if node.left != NIL {
+            node.left
+        } else {
+            node.right
+        };
 
         trace!("TREE update parent child {parent_index}<-{index}<-{child_index}");
         self.set_parent_index::<V>(child_index, parent_index);
-        if self.is_left_child::<V>(index) {
-            self.set_left_index::<V>(parent_index, child_index);
-        } else {
-            self.set_right_index::<V>(parent_index, child_index);
-        }
-        if self.root_index() == index {
+        if parent_index == NIL {
             self.set_root_index(child_index);
+        } else {
+            // The parent is already known, so inspect and update its link
+            // in the same access instead of following the child back up.
+            let parent: &mut RBNode<V> = get_mut_helper::<RBNode<V>>(self.data(), parent_index);
+            if parent.left == index {
+                parent.left = child_index;
+            } else {
+                debug_assert_eq!(parent.right, index);
+                parent.right = child_index;
+            }
         }
     }
 }
@@ -1402,6 +1457,10 @@ impl<'a, V: Payload> RedBlackTree<'a, V> {
         }
 
         let grandparent_index: DataIndex = self.get_parent_index::<V>(parent_index);
+        if grandparent_index == NIL {
+            self.set_color::<V>(parent_index, Color::Black);
+            return NIL;
+        }
 
         // 5 possibilities  https://www.geeksforgeeks.org/insertion-in-red-black-tree/#
         // 1. Uncle is red
@@ -1409,11 +1468,16 @@ impl<'a, V: Payload> RedBlackTree<'a, V> {
         // 3. Uncle is black LR
         // 4. Uncle is black RR
         // 5. Uncle is black RL
-        let uncle_index: DataIndex = if self.get_left_index::<V>(grandparent_index) == parent_index
-        {
-            self.get_right_index::<V>(grandparent_index)
+        // The same comparison identifies the uncle and the rotation direction.
+        // Keep the grandparent's fields together instead of walking back to it
+        // through the parent again after checking the uncle's color.
+        let grandparent: &RBNode<V> = get_helper::<RBNode<V>>(self.data, grandparent_index);
+        let parent_is_left: bool = grandparent.left == parent_index;
+        let grandparent_color: Color = grandparent.color;
+        let uncle_index: DataIndex = if parent_is_left {
+            grandparent.right
         } else {
-            self.get_left_index::<V>(grandparent_index)
+            grandparent.left
         };
         let uncle_color: Color = self.get_color::<V>(uncle_index);
 
@@ -1428,16 +1492,9 @@ impl<'a, V: Payload> RedBlackTree<'a, V> {
             return grandparent_index;
         }
 
-        let grandparent_color: Color = self.get_color::<V>(grandparent_index);
-        let parent_is_left: bool = self.is_left_child::<V>(parent_index);
-        let current_is_left: bool = self.is_left_child::<V>(index_to_fix);
+        let current_is_left: bool = self.get_left_index::<V>(parent_index) == index_to_fix;
 
         trace!("FIX G=[{grandparent_index}:{grandparent_color:?}] P=[{parent_index}:{parent_color:?}] Pi={parent_is_left} Ci={current_is_left}");
-
-        if grandparent_index == NIL && parent_color == Color::Red {
-            self.set_color::<V>(parent_index, Color::Black);
-            return NIL;
-        }
 
         let index_to_fix_color: Color = self.get_color::<V>(index_to_fix);
         // Case II: Uncle is black, left left
@@ -1710,6 +1767,53 @@ pub(crate) mod test {
             tree.remove_by_value(&TestOrderBid::new(i * 1_000));
         }
         tree.verify_rb_tree::<TestOrderBid>();
+    }
+
+    #[test]
+    fn test_adjacent_swap_preserves_payloads_and_is_reversible() {
+        let values = [8, 4, 12, 2, 6, 10, 14, 1, 3, 5, 7, 9, 11, 13, 15];
+        for count in 2..=values.len() {
+            let mut data = [0_u8; 4096];
+            let mut tree = RedBlackTree::<TestOrderBid>::new(&mut data, NIL, NIL);
+            for (slot, value) in values[..count].iter().enumerate() {
+                let mut order = TestOrderBid::new(*value);
+                order.padding.fill(slot as u8);
+                tree.insert(slot as DataIndex * TEST_BLOCK_WIDTH, order);
+            }
+
+            // Include root and internal swaps, and right children with their
+            // own left subtree (also covered by the Certora helper contract).
+            for slot in 0..count {
+                let index = slot as DataIndex * TEST_BLOCK_WIDTH;
+                let right = tree.get_right_index::<TestOrderBid>(index);
+                if right == NIL {
+                    continue;
+                }
+                let before = tree.data.to_vec();
+                let root = tree.root_index;
+                let color = tree.get_color::<TestOrderBid>(index);
+                let right_color = tree.get_color::<TestOrderBid>(right);
+                tree.swap_node_with_successor::<TestOrderBid>(index, right);
+
+                assert_eq!(tree.get_parent_index::<TestOrderBid>(index), right);
+                assert_eq!(tree.get_right_index::<TestOrderBid>(right), index);
+                assert_eq!(tree.get_color::<TestOrderBid>(index), right_color);
+                assert_eq!(tree.get_color::<TestOrderBid>(right), color);
+                for (value_slot, value) in values[..count].iter().enumerate() {
+                    let node = get_helper::<RBNode<TestOrderBid>>(
+                        tree.data,
+                        value_slot as DataIndex * TEST_BLOCK_WIDTH,
+                    );
+                    assert_eq!(node.value.order_id, *value);
+                    assert_eq!(node.value.padding, [value_slot as u8; 128]);
+                }
+
+                tree.swap_node_with_successor::<TestOrderBid>(right, index);
+                assert_eq!(tree.root_index, root);
+                assert_eq!(tree.data, before.as_slice());
+                tree.verify_rb_tree::<TestOrderBid>();
+            }
+        }
     }
 
     #[test]
