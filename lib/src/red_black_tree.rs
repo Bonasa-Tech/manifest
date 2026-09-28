@@ -1383,21 +1383,21 @@ impl<'a, V: Payload> RedBlackTree<'a, V> {
     /// Rotate a child and then its parent in opposite directions. The middle
     /// node becomes the subtree root; write the final links directly instead
     /// of connecting it to the old root only to detach it again.
-    fn rotate_double(&mut self, index: DataIndex, parent_is_left: bool) {
+    fn rotate_double<const PARENT_IS_LEFT: bool>(&mut self, index: DataIndex) {
         let root: &RBNode<V> = get_helper::<RBNode<V>>(self.data, index);
         let above_index: DataIndex = root.parent;
-        let parent_index: DataIndex = if parent_is_left {
+        let parent_index: DataIndex = if PARENT_IS_LEFT {
             root.left
         } else {
             root.right
         };
         let parent: &RBNode<V> = get_helper::<RBNode<V>>(self.data, parent_index);
-        let middle_index: DataIndex = if parent_is_left {
+        let middle_index: DataIndex = if PARENT_IS_LEFT {
             parent.right
         } else {
             parent.left
         };
-        let (left_index, right_index) = if parent_is_left {
+        let (left_index, right_index) = if PARENT_IS_LEFT {
             (parent_index, index)
         } else {
             (index, parent_index)
@@ -1493,7 +1493,7 @@ impl<'a, V: Payload> RedBlackTree<'a, V> {
                 self.set_color::<V>(sibling_right_child_index, parent_color);
                 self.set_color::<V>(parent_index, Color::Black);
                 self.set_color::<V>(sibling_index, Color::Black);
-                self.rotate_double(parent_index, true);
+                self.rotate_double::<true>(parent_index);
                 return (NIL, NIL);
             }
         } else {
@@ -1510,7 +1510,7 @@ impl<'a, V: Payload> RedBlackTree<'a, V> {
                 self.set_color::<V>(sibling_left_child_index, parent_color);
                 self.set_color::<V>(parent_index, Color::Black);
                 self.set_color::<V>(sibling_index, Color::Black);
-                self.rotate_double(parent_index, false);
+                self.rotate_double::<false>(parent_index);
                 return (NIL, NIL);
             }
         }
@@ -1636,7 +1636,7 @@ impl<'a, V: Payload> RedBlackTree<'a, V> {
         }
         // Case III: Uncle is black, left right
         else if parent_is_left && !current_is_left {
-            self.rotate_double(grandparent_index, true);
+            self.rotate_double::<true>(grandparent_index);
             self.set_color::<V>(index_to_fix, grandparent_color);
             self.set_color::<V>(grandparent_index, Color::Red);
         }
@@ -1648,7 +1648,7 @@ impl<'a, V: Payload> RedBlackTree<'a, V> {
         }
         // Case V: Uncle is black, right left
         else if !parent_is_left && current_is_left {
-            self.rotate_double(grandparent_index, false);
+            self.rotate_double::<false>(grandparent_index);
             self.set_color::<V>(index_to_fix, grandparent_color);
             self.set_color::<V>(grandparent_index, Color::Red);
         }
@@ -1989,7 +1989,11 @@ pub(crate) mod test {
                         reference.rotate_right::<TestOrderBid>(parent);
                         reference.rotate_left::<TestOrderBid>(index);
                     }
-                    actual.rotate_double(index, parent_is_left);
+                    if parent_is_left {
+                        actual.rotate_double::<true>(index);
+                    } else {
+                        actual.rotate_double::<false>(index);
+                    }
                     assert_eq!(actual.root_index, reference.root_index);
                     assert_eq!(actual.max_index, reference.max_index);
                     assert_eq!(actual.data, reference.data);
