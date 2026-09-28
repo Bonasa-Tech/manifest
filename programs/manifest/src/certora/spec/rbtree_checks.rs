@@ -3374,6 +3374,61 @@ pub fn rule_insert_updates_max_index_non_empty_tree_max() {
     cvt_vacuity_check!();
 }
 
+/// A stale cached maximum must not cause insertion to overwrite its right
+/// child. Keep the legacy cache update while descending from the root.
+#[rule]
+pub fn rule_insert_preserves_cached_max_right_subtree() {
+    init_static();
+    let acc_infos: [AccountView; 16] = account_views_with_mem_layout!();
+    let mut data = acc_infos[0].try_borrow_mut().unwrap();
+
+    let root = 0 * TEST_BLOCK_WIDTH;
+    let left = 1 * TEST_BLOCK_WIDTH;
+    let right = 2 * TEST_BLOCK_WIDTH;
+    let inserted = 3 * TEST_BLOCK_WIDTH;
+    let root_value: u64 = nondet();
+    let left_value: u64 = nondet_with(|x| *x < root_value);
+    let right_value: u64 = nondet_with(|x| *x > root_value);
+    let inserted_value: u64 = nondet_with(|x| *x > root_value);
+
+    *get_mut_helper(&mut data, root) =
+        mk_rb_node!(left, right, NIL, Color::Black, TestOrder::new(root_value));
+    *get_mut_helper(&mut data, left) =
+        mk_rb_node!(NIL, NIL, root, Color::Black, TestOrder::new(left_value));
+    *get_mut_helper(&mut data, right) =
+        mk_rb_node!(NIL, NIL, root, Color::Black, TestOrder::new(right_value));
+
+    let mut tree = RedBlackTree::<TestOrder>::new(&mut data, root, root);
+    tree.insert(inserted, TestOrder::new(inserted_value));
+
+    cvt_assert!(tree.root_index() == root);
+    cvt_assert!(tree.max_index() == inserted);
+    let data = GetRedBlackTreeReadOnlyData::data(&tree);
+    let root_node = get_helper::<RBNode<TestOrder>>(data, root);
+    let left_node = get_helper::<RBNode<TestOrder>>(data, left);
+    let right_node = get_helper::<RBNode<TestOrder>>(data, right);
+    let new_node = get_helper::<RBNode<TestOrder>>(data, inserted);
+    cvt_assert!(root_node.parent == NIL);
+    cvt_assert!(root_node.left == left && root_node.right == right);
+    cvt_assert!(left_node.parent == root && right_node.parent == root);
+    cvt_assert!(left_node.left == NIL && left_node.right == NIL);
+    if inserted_value > right_value {
+        cvt_assert!(right_node.left == NIL && right_node.right == inserted);
+    } else {
+        cvt_assert!(right_node.left == inserted && right_node.right == NIL);
+    }
+    cvt_assert!(new_node.parent == right);
+    cvt_assert!(new_node.left == NIL && new_node.right == NIL);
+    cvt_assert!(root_node.value == TestOrder::new(root_value));
+    cvt_assert!(left_node.value == TestOrder::new(left_value));
+    cvt_assert!(right_node.value == TestOrder::new(right_value));
+    cvt_assert!(new_node.value == TestOrder::new(inserted_value));
+    cvt_assert!(root_node.color == Color::Black);
+    cvt_assert!(left_node.color == Color::Black && right_node.color == Color::Black);
+    cvt_assert!(new_node.color == Color::Red);
+    cvt_vacuity_check!();
+}
+
 /// Builds the following tree:
 ///
 ///               B:0

@@ -1210,15 +1210,25 @@ impl<'a, V: Payload> HyperTreeWriteOperations<'a, V> for RedBlackTree<'a, V> {
             _unused_padding: 0,
         };
 
-        if self.max_index != NIL && *get_helper::<RBNode<V>>(self.data, self.max_index) < new_node {
-            // The cached maximum has no right child. A strictly larger key
-            // belongs there, so the comparison already made for the cache
-            // also avoids a descent from the root. Equal keys still take the
-            // ordinary insertion path to preserve FIFO.
-            new_node.parent = self.max_index;
-            self.set_right_index::<V>(self.max_index, index);
+        let old_max_index = self.max_index;
+        let append_to_max = old_max_index != NIL && {
+            let max_node: &RBNode<V> = get_helper::<RBNode<V>>(self.data, old_max_index);
+            if *max_node < new_node {
+                // Preserve the cache update even when insertion must descend
+                // from the root because the cached maximum is stale.
+                self.max_index = index;
+                max_node.right == NIL
+            } else {
+                false
+            }
+        };
+        if append_to_max {
+            // Legacy trees can have a stale cached maximum with a right
+            // subtree. Only append when its right link is empty. Equal keys
+            // still take the ordinary insertion path to preserve FIFO.
+            new_node.parent = old_max_index;
+            self.set_right_index::<V>(old_max_index, index);
             *get_mut_helper::<RBNode<V>>(self.data, index) = new_node;
-            self.max_index = index;
         } else {
             self.insert_node_no_fix(&new_node, index);
         }
@@ -1812,6 +1822,63 @@ pub(crate) mod test {
         tree.insert(TEST_BLOCK_WIDTH * 5, TestOrderBid::new(4000));
         tree.insert(TEST_BLOCK_WIDTH * 6, TestOrderBid::new(5000));
         tree.insert(TEST_BLOCK_WIDTH * 7, TestOrderBid::new(6000));
+    }
+
+    #[test]
+    fn test_insert_preserves_stale_max_right_subtree() {
+        let values = [40, 20, 60, 10, 30, 50, 70];
+        // Cover a cached root with a multi-node right subtree and cached
+        // non-root nodes. The new value can be below the actual maximum.
+        for cached_slot in [0, 1, 2] {
+            for new_value in [65, 80] {
+                let mut data = [0_u8; 4096];
+                let mut tree = RedBlackTree::<TestOrderBid>::new(&mut data, NIL, NIL);
+                for (slot, value) in values.iter().enumerate() {
+                    tree.insert(
+                        slot as DataIndex * TEST_BLOCK_WIDTH,
+                        TestOrderBid::new(*value),
+                    );
+                }
+                let cached_index = cached_slot * TEST_BLOCK_WIDTH;
+                assert_ne!(tree.get_right_index::<TestOrderBid>(cached_index), NIL);
+                tree.max_index = cached_index;
+
+                let inserted_index = values.len() as DataIndex * TEST_BLOCK_WIDTH;
+                tree.insert(inserted_index, TestOrderBid::new(new_value));
+                // This is the legacy cache-update behavior, including when
+                // the cache does not identify the actual greatest value.
+                assert_eq!(tree.max_index, inserted_index);
+                assert_eq!(
+                    tree.get_parent_index::<TestOrderBid>(inserted_index),
+                    6 * TEST_BLOCK_WIDTH
+                );
+
+                // Traverse links from the root rather than the stale cache.
+                // Every old payload and the new node must remain reachable,
+                // with consistent parent links and no duplicated children.
+                let mut pending = vec![(tree.root_index, NIL)];
+                let mut seen = std::collections::BTreeSet::new();
+                while let Some((index, parent)) = pending.pop() {
+                    assert!(seen.insert(index));
+                    let node = get_helper::<RBNode<TestOrderBid>>(tree.data, index);
+                    assert_eq!(node.parent, parent);
+                    let slot = (index / TEST_BLOCK_WIDTH) as usize;
+                    let expected = if slot == values.len() {
+                        new_value
+                    } else {
+                        values[slot]
+                    };
+                    assert_eq!(node.value.order_id, expected);
+                    for child in [node.left, node.right] {
+                        if child != NIL {
+                            pending.push((child, index));
+                        }
+                    }
+                }
+                assert_eq!(seen.len(), values.len() + 1);
+                tree.verify_rb_tree::<TestOrderBid>();
+            }
+        }
     }
 
     fn init_simple_tree(data: &mut [u8]) -> RedBlackTree<TestOrderBid> {
