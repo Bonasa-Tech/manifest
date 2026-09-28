@@ -3374,6 +3374,61 @@ pub fn rule_insert_updates_max_index_non_empty_tree_max() {
     cvt_vacuity_check!();
 }
 
+/// A stale cached maximum must not cause insertion to overwrite its right
+/// child. Keep the legacy cache update while descending from the root.
+#[rule]
+pub fn rule_insert_preserves_cached_max_right_subtree() {
+    init_static();
+    let acc_infos: [AccountView; 16] = account_views_with_mem_layout!();
+    let mut data = acc_infos[0].try_borrow_mut().unwrap();
+
+    let root = 0 * TEST_BLOCK_WIDTH;
+    let left = 1 * TEST_BLOCK_WIDTH;
+    let right = 2 * TEST_BLOCK_WIDTH;
+    let inserted = 3 * TEST_BLOCK_WIDTH;
+    let root_value: u64 = nondet();
+    let left_value: u64 = nondet_with(|x| *x < root_value);
+    let right_value: u64 = nondet_with(|x| *x > root_value);
+    let inserted_value: u64 = nondet_with(|x| *x > root_value);
+
+    *get_mut_helper(&mut data, root) =
+        mk_rb_node!(left, right, NIL, Color::Black, TestOrder::new(root_value));
+    *get_mut_helper(&mut data, left) =
+        mk_rb_node!(NIL, NIL, root, Color::Black, TestOrder::new(left_value));
+    *get_mut_helper(&mut data, right) =
+        mk_rb_node!(NIL, NIL, root, Color::Black, TestOrder::new(right_value));
+
+    let mut tree = RedBlackTree::<TestOrder>::new(&mut data, root, root);
+    tree.insert(inserted, TestOrder::new(inserted_value));
+
+    cvt_assert!(tree.root_index() == root);
+    cvt_assert!(tree.max_index() == inserted);
+    let data = GetRedBlackTreeReadOnlyData::data(&tree);
+    let root_node = get_helper::<RBNode<TestOrder>>(data, root);
+    let left_node = get_helper::<RBNode<TestOrder>>(data, left);
+    let right_node = get_helper::<RBNode<TestOrder>>(data, right);
+    let new_node = get_helper::<RBNode<TestOrder>>(data, inserted);
+    cvt_assert!(root_node.parent == NIL);
+    cvt_assert!(root_node.left == left && root_node.right == right);
+    cvt_assert!(left_node.parent == root && right_node.parent == root);
+    cvt_assert!(left_node.left == NIL && left_node.right == NIL);
+    if inserted_value > right_value {
+        cvt_assert!(right_node.left == NIL && right_node.right == inserted);
+    } else {
+        cvt_assert!(right_node.left == inserted && right_node.right == NIL);
+    }
+    cvt_assert!(new_node.parent == right);
+    cvt_assert!(new_node.left == NIL && new_node.right == NIL);
+    cvt_assert!(root_node.value == TestOrder::new(root_value));
+    cvt_assert!(left_node.value == TestOrder::new(left_value));
+    cvt_assert!(right_node.value == TestOrder::new(right_value));
+    cvt_assert!(new_node.value == TestOrder::new(inserted_value));
+    cvt_assert!(root_node.color == Color::Black);
+    cvt_assert!(left_node.color == Color::Black && right_node.color == Color::Black);
+    cvt_assert!(new_node.color == Color::Red);
+    cvt_vacuity_check!();
+}
+
 /// Builds the following tree:
 ///
 ///               B:0
@@ -3592,6 +3647,157 @@ pub fn rule_remove_updates_max_index_non_empty_tree_not_max() {
     // Check that remove did not update the max index.
     cvt_assert!(tree.max_index() == index_1);
 
+    cvt_vacuity_check!();
+}
+
+/// Direct successor transplantation must preserve the same links, colors,
+/// payloads, and removed-slot metadata as swapping and then splicing. Colors
+/// are arbitrary here because this helper returns the state for later repair.
+#[rule]
+pub fn rule_remove_internal_node_preserves_links_and_payloads() {
+    init_static();
+    let acc_infos: [AccountView; 16] = account_views_with_mem_layout!();
+    let mut data = acc_infos[0].try_borrow_mut().unwrap();
+
+    let parent = 0 * TEST_BLOCK_WIDTH;
+    let removed = 1 * TEST_BLOCK_WIDTH;
+    let left = 2 * TEST_BLOCK_WIDTH;
+    let successor = 3 * TEST_BLOCK_WIDTH;
+    let right = 4 * TEST_BLOCK_WIDTH;
+    let child_slot = 5 * TEST_BLOCK_WIDTH;
+    let other = 6 * TEST_BLOCK_WIDTH;
+
+    let is_root: bool = nondet();
+    let is_left: bool = nondet();
+    let adjacent: bool = nondet();
+    let has_child: bool = nondet();
+    let old_parent = if is_root { NIL } else { parent };
+    let old_right = if adjacent { successor } else { right };
+    let child = if has_child { child_slot } else { NIL };
+    let repair_parent = if adjacent { successor } else { right };
+
+    let mut expected = [
+        mk_rb_node!(
+            if is_root {
+                NIL
+            } else if is_left {
+                removed
+            } else {
+                other
+            },
+            if is_root {
+                NIL
+            } else if is_left {
+                other
+            } else {
+                removed
+            },
+            NIL,
+            nondet::<Color>(),
+            TestOrder::new(nondet())
+        ),
+        mk_rb_node!(
+            left,
+            old_right,
+            old_parent,
+            nondet::<Color>(),
+            TestOrder::new(nondet())
+        ),
+        mk_rb_node!(
+            NIL,
+            NIL,
+            removed,
+            nondet::<Color>(),
+            TestOrder::new(nondet())
+        ),
+        mk_rb_node!(
+            NIL,
+            child,
+            if adjacent { removed } else { right },
+            nondet::<Color>(),
+            TestOrder::new(nondet())
+        ),
+        mk_rb_node!(
+            if adjacent { NIL } else { successor },
+            NIL,
+            if adjacent { NIL } else { removed },
+            nondet::<Color>(),
+            TestOrder::new(nondet())
+        ),
+        mk_rb_node!(
+            NIL,
+            NIL,
+            if has_child { successor } else { NIL },
+            nondet::<Color>(),
+            TestOrder::new(nondet())
+        ),
+        mk_rb_node!(
+            NIL,
+            NIL,
+            old_parent,
+            nondet::<Color>(),
+            TestOrder::new(nondet())
+        ),
+    ];
+    // Expand fixed slots instead of adding setup/assertion loops to the proof.
+    macro_rules! initialize_slots {
+        ($($slot:expr),*) => { $(
+            expected[$slot as usize].payload_type = nondet();
+            expected[$slot as usize]._unused_padding = nondet();
+            *get_mut_helper::<RBNode<TestOrder>>(&mut data, $slot * TEST_BLOCK_WIDTH) = expected[$slot as usize];
+        )* };
+    }
+    initialize_slots!(0, 1, 2, 3, 4, 5, 6);
+    let removed_color = expected[3].color;
+    let original_color = expected[1].color;
+    let mut tree =
+        RedBlackTree::<TestOrder>::new(&mut data, if is_root { removed } else { parent }, NIL);
+    let result = tree.certora_remove_internal_node(removed);
+
+    cvt_assert!(result.0 == child);
+    cvt_assert!(result.1 == repair_parent);
+    cvt_assert!(result.2 == removed_color);
+    cvt_assert!(tree.root_index() == if is_root { successor } else { parent });
+    cvt_assert!(tree.max_index() == NIL);
+
+    if !is_root {
+        if is_left {
+            expected[0].left = successor;
+        } else {
+            expected[0].right = successor;
+        }
+    }
+    expected[1].parent = repair_parent;
+    expected[1].left = NIL;
+    expected[1].right = child;
+    expected[1].color = removed_color;
+    expected[2].parent = successor;
+    expected[3].parent = old_parent;
+    expected[3].left = left;
+    expected[3].right = if adjacent { child } else { right };
+    expected[3].color = original_color;
+    if !adjacent {
+        expected[4].parent = successor;
+        expected[4].left = child;
+    }
+    if has_child {
+        expected[5].parent = repair_parent;
+    }
+
+    macro_rules! assert_slots {
+        ($($slot:expr),*) => { $(
+            let actual = get_helper::<RBNode<TestOrder>>(GetRedBlackTreeReadOnlyData::data(&tree), $slot * TEST_BLOCK_WIDTH);
+            let node = &expected[$slot as usize];
+            cvt_assert!(actual.parent == node.parent);
+            cvt_assert!(actual.left == node.left);
+            cvt_assert!(actual.right == node.right);
+            cvt_assert!(actual.color == node.color);
+            cvt_assert!(actual.value == node.value);
+            cvt_assert!(actual.payload_type == node.payload_type);
+            cvt_assert!(actual._unused_padding == node._unused_padding);
+        )* };
+    }
+    assert_slots!(0, 1, 2, 3, 4, 5, 6);
     cvt_vacuity_check!();
 }
 
