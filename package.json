@@ -36,6 +36,7 @@
     "validate": "yarn lint && yarn format",
     "prepare": "yarn build",
     "clean": "rm -rf dist",
+    "collect:wrapper-fees": "tsx scripts/collect-wrapper-fees.ts",
     "test": "TS_NODE_PROJECT='./tsconfig.cjs.json' nyc --reporter=lcov ts-mocha client/ts/tests/*.ts --parallel --jobs ${TS_MOCHA_JOBS:-8} --timeout 1200000"
   },
   "dependencies": {
@@ -67,6 +68,7 @@
   "devDependencies": {
     "@cks-systems/manifest-sdk-old": "npm:@cks-systems/manifest-sdk@0.2.25",
     "@metaplex-foundation/js": "^0.20.1",
+    "@solana/kit": "^8.0.0",
     "@solana/spl-token-registry": "^0.2.4574",
     "@types/bn.js": "^5.1.1",
     "@types/chai": "^4.3.4",
