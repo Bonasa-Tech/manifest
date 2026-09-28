@@ -1083,17 +1083,29 @@ impl<
         &mut self,
         args: AddOrderToMarketArgs,
     ) -> Result<AddOrderToMarketResult, ProgramError> {
+        if args.is_bid {
+            self.place_order_on_side::<true>(args)
+        } else {
+            self.place_order_on_side::<false>(args)
+        }
+    }
+
+    fn place_order_on_side<const IS_BID: bool>(
+        &mut self,
+        args: AddOrderToMarketArgs,
+    ) -> Result<AddOrderToMarketResult, ProgramError> {
         let AddOrderToMarketArgs {
             market,
             trader_index,
             num_base_atoms,
             price,
-            is_bid,
+            is_bid: _,
             last_valid_slot,
             order_type,
             global_trade_accounts_opts,
             current_slot,
         } = args;
+        let is_bid: bool = IS_BID;
         assert_already_has_seat(trader_index)?;
         let now_slot: u32 = current_slot.unwrap_or_else(|| get_now_slot());
 
@@ -1104,6 +1116,9 @@ impl<
 
         let DynamicAccount { fixed, dynamic } = self.borrow_mut();
 
+        // The cursor is always the cached best on this side. Removing that
+        // node already finds its predecessor and updates the cache, so read
+        // the new best after removal instead of walking the tree twice.
         let mut current_maker_order_index: DataIndex = if is_bid {
             fixed.asks_best_index
         } else {
@@ -1137,19 +1152,17 @@ impl<
             // successful call makes monotonic progress rather than rolling the
             // entire prefix back with the taker's trade.
             if maker_order.is_expired(now_slot) || maker_order.get_num_base_atoms().as_u64() == 0 {
-                let next_maker_order_index: DataIndex = get_next_candidate_match_index(
-                    fixed,
-                    dynamic,
-                    current_maker_order_index,
-                    is_bid,
-                );
                 remove_and_update_balances(
                     fixed,
                     dynamic,
                     current_maker_order_index,
                     global_trade_accounts_opts,
                 )?;
-                current_maker_order_index = next_maker_order_index;
+                current_maker_order_index = if is_bid {
+                    fixed.asks_best_index
+                } else {
+                    fixed.bids_best_index
+                };
                 continue;
             }
 
@@ -1227,19 +1240,17 @@ impl<
                 )?;
 
                 if !has_enough_tokens {
-                    let next_maker_order_index: DataIndex = get_next_candidate_match_index(
-                        fixed,
-                        dynamic,
-                        current_maker_order_index,
-                        is_bid,
-                    );
                     remove_and_update_balances(
                         fixed,
                         dynamic,
                         current_maker_order_index,
                         global_trade_accounts_opts,
                     )?;
-                    current_maker_order_index = next_maker_order_index;
+                    current_maker_order_index = if is_bid {
+                        fixed.asks_best_index
+                    } else {
+                        fixed.bids_best_index
+                    };
                     continue;
                 }
                 global_atoms_to_transfer =
@@ -1364,10 +1375,7 @@ impl<
 
             if did_fully_match_resting_order {
                 // Get paid for removing a global order.
-                if get_helper::<RBNode<RestingOrder>>(dynamic, current_maker_order_index)
-                    .get_value()
-                    .is_global()
-                {
+                if is_global {
                     if is_bid {
                         remove_from_global(&global_trade_accounts_opts[0])?;
                     } else {
@@ -1375,12 +1383,6 @@ impl<
                     }
                 }
 
-                let next_maker_order_index: DataIndex = get_next_candidate_match_index(
-                    fixed,
-                    dynamic,
-                    current_maker_order_index,
-                    is_bid,
-                );
                 remove_order_from_tree_and_free(
                     fixed,
                     dynamic,
@@ -1388,7 +1390,11 @@ impl<
                     !is_bid,
                 )?;
                 remaining_base_atoms = remaining_base_atoms.checked_sub(base_atoms_traded)?;
-                current_maker_order_index = next_maker_order_index;
+                current_maker_order_index = if is_bid {
+                    fixed.asks_best_index
+                } else {
+                    fixed.bids_best_index
+                };
             } else {
                 #[cfg(feature = "certora")]
                 remove_from_orderbook_balance(fixed, dynamic, current_maker_order_index);
@@ -1594,7 +1600,7 @@ impl<
             });
         }
 
-        self.rest_remaining(
+        self.rest_remaining_on_side::<IS_BID>(
             args,
             remaining_base_atoms,
             this_order_sequence_number,
@@ -1613,13 +1619,23 @@ impl<
         total_base_atoms_traded: BaseAtoms,
         total_quote_atoms_traded: QuoteAtoms,
     ) -> Result<AddOrderToMarketResult, ProgramError> {
-        self.rest_remaining(
-            args,
-            remaining_base_atoms,
-            order_sequence_number,
-            total_base_atoms_traded,
-            total_quote_atoms_traded,
-        )
+        if args.is_bid {
+            self.rest_remaining_on_side::<true>(
+                args,
+                remaining_base_atoms,
+                order_sequence_number,
+                total_base_atoms_traded,
+                total_quote_atoms_traded,
+            )
+        } else {
+            self.rest_remaining_on_side::<false>(
+                args,
+                remaining_base_atoms,
+                order_sequence_number,
+                total_base_atoms_traded,
+                total_quote_atoms_traded,
+            )
+        }
     }
 
     fn rest_remaining(
@@ -1630,15 +1646,43 @@ impl<
         total_base_atoms_traded: BaseAtoms,
         total_quote_atoms_traded: QuoteAtoms,
     ) -> Result<AddOrderToMarketResult, ProgramError> {
+        if args.is_bid {
+            self.rest_remaining_on_side::<true>(
+                args,
+                remaining_base_atoms,
+                order_sequence_number,
+                total_base_atoms_traded,
+                total_quote_atoms_traded,
+            )
+        } else {
+            self.rest_remaining_on_side::<false>(
+                args,
+                remaining_base_atoms,
+                order_sequence_number,
+                total_base_atoms_traded,
+                total_quote_atoms_traded,
+            )
+        }
+    }
+
+    fn rest_remaining_on_side<const IS_BID: bool>(
+        &mut self,
+        args: AddOrderToMarketArgs,
+        remaining_base_atoms: BaseAtoms,
+        order_sequence_number: u64,
+        total_base_atoms_traded: BaseAtoms,
+        total_quote_atoms_traded: QuoteAtoms,
+    ) -> Result<AddOrderToMarketResult, ProgramError> {
         let AddOrderToMarketArgs {
             trader_index,
             price,
-            is_bid,
+            is_bid: _,
             last_valid_slot,
             order_type,
             global_trade_accounts_opts,
             ..
         } = args;
+        let is_bid: bool = IS_BID;
         let DynamicAccount { fixed, dynamic } = self.borrow_mut();
 
         // Put the remaining in an order on the other bookside.
@@ -1779,13 +1823,29 @@ impl<
         order_index: DataIndex,
         global_trade_accounts_opts: &[Option<GlobalTradeAccounts>; 2],
     ) -> ProgramResult {
+        let DynamicAccount { dynamic, .. } = self.borrow_market();
+        if get_helper_order(dynamic, order_index)
+            .get_value()
+            .get_is_bid()
+        {
+            self.cancel_order_on_side::<true>(order_index, global_trade_accounts_opts)
+        } else {
+            self.cancel_order_on_side::<false>(order_index, global_trade_accounts_opts)
+        }
+    }
+
+    fn cancel_order_on_side<const IS_BID: bool>(
+        &mut self,
+        order_index: DataIndex,
+        global_trade_accounts_opts: &[Option<GlobalTradeAccounts>; 2],
+    ) -> ProgramResult {
         let DynamicAccount { fixed, dynamic } = self.borrow_mut();
         // TODO: Undo expansion here when it was just
         // remove_and_update_balances(fixed, dynamic, order_index, global_trade_accounts_opts)?;
         // because the tracking for
 
         let resting_order: &RestingOrder = get_helper_order(dynamic, order_index).get_value();
-        let is_bid: bool = resting_order.get_is_bid();
+        let is_bid: bool = IS_BID;
 
         // Important to round up because there was an extra atom taken for full
         // taker rounding when the order was placed.
@@ -1859,6 +1919,7 @@ fn remove_from_orderbook_balance(
     fixed.orderbook_quote_atoms = fixed.orderbook_quote_atoms.saturating_sub(quote_amount);
 }
 
+#[inline(always)]
 fn remove_order_from_tree(
     fixed: &mut MarketFixed,
     dynamic: &mut [u8],
@@ -1904,6 +1965,7 @@ fn remove_order_from_tree(
     feature = "certora",
     cvt_hook_end(remove_order_from_tree_and_free_was_called())
 )]
+#[inline(always)]
 fn remove_order_from_tree_and_free(
     fixed: &mut MarketFixed,
     dynamic: &mut [u8],
@@ -1921,6 +1983,7 @@ fn remove_order_from_tree_and_free(
 }
 
 #[allow(unused_variables)]
+#[inline(always)]
 pub fn update_balance(
     fixed: &mut MarketFixed,
     dynamic: &mut [u8],

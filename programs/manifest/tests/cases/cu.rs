@@ -142,6 +142,14 @@ async fn create_first_bump_globals_mint(
     test_fixture: &TestFixture,
     decimals: u8,
 ) -> anyhow::Result<Pubkey> {
+    create_first_bump_globals_mint_with_program(test_fixture, decimals, &spl_token::id()).await
+}
+
+async fn create_first_bump_globals_mint_with_program(
+    test_fixture: &TestFixture,
+    decimals: u8,
+    token_program: &Pubkey,
+) -> anyhow::Result<Pubkey> {
     let payer: Pubkey = test_fixture.payer();
     let payer_keypair: Keypair = test_fixture.payer_keypair();
     let mint_keypair: Keypair = mint_keypair_with_first_bump_globals();
@@ -160,10 +168,10 @@ async fn create_first_bump_globals_mint(
                 &mint,
                 rent.minimum_balance(spl_token::state::Mint::LEN),
                 spl_token::state::Mint::LEN as u64,
-                &spl_token::id(),
+                token_program,
             ),
-            spl_token::instruction::initialize_mint(
-                &spl_token::id(),
+            spl_token_2022::instruction::initialize_mint(
+                token_program,
                 &mint,
                 &payer,
                 None,
@@ -781,5 +789,461 @@ async fn cu_batch_update_with_globals_test() -> anyhow::Result<()> {
     let market_fixed: &MarketFixed = get_helper::<MarketFixed>(&market_account.data, 0_u32);
     assert_ne!(*market_fixed.get_base_global(), Pubkey::default());
     assert_ne!(*market_fixed.get_quote_global(), Pubkey::default());
+    Ok(())
+}
+
+/// Use fixed trader keys and a full global account so eviction samples include
+/// the same lookup depths on every build. Cover equal zero balances and a
+/// funded minimum so eviction also exercises a nonzero token withdrawal.
+#[tokio::test]
+async fn cu_global_evict_test() -> anyhow::Result<()> {
+    use manifest::{
+        program::global_evict_instruction,
+        quantities::{GlobalAtoms, WrapperU64},
+        state::{DynamicAccount, GlobalFixed, GLOBAL_BLOCK_SIZE, MAX_GLOBAL_SEATS},
+    };
+
+    for (evictee_balance, other_balance, new_deposit, label) in [
+        (0u64, 0u64, 1u64, "global_evict_equal_balances"),
+        (50, 100, 101, "global_evict_nonzero_balance"),
+    ] {
+        let test_fixture: TestFixture = TestFixture::new().await;
+        let payer_keypair: Keypair = test_fixture.payer_keypair();
+        let payer: Pubkey = payer_keypair.pubkey();
+        let mint: Pubkey = create_first_bump_globals_mint(&test_fixture, 6).await?;
+        let evictor: Keypair = Keypair::new_from_array([7; 32]);
+        let evictee: Pubkey = Pubkey::new_from_array([8; 32]);
+        let evictor_token =
+            TokenAccountFixture::new(Rc::clone(&test_fixture.context), &mint, &evictor.pubkey())
+                .await;
+        let evictee_token =
+            TokenAccountFixture::new(Rc::clone(&test_fixture.context), &mint, &evictee).await;
+        send_tx_with_retry(
+            Rc::clone(&test_fixture.context),
+            &[
+                system_instruction::transfer(&payer, &evictor.pubkey(), 100_000_000),
+                create_global_instruction(&mint, &payer, &spl_token::id()),
+                spl_token::instruction::mint_to(
+                    &spl_token::id(),
+                    &mint,
+                    &evictor_token.key,
+                    &payer,
+                    &[&payer],
+                    new_deposit,
+                )?,
+                spl_token::instruction::mint_to(
+                    &spl_token::id(),
+                    &mint,
+                    &get_global_vault_address(&mint).0,
+                    &payer,
+                    &[&payer],
+                    evictee_balance + other_balance * u64::from(MAX_GLOBAL_SEATS - 1),
+                )?,
+            ],
+            Some(&payer),
+            &[&payer_keypair],
+        )
+        .await?;
+
+        let mut global_state = DynamicAccount {
+            fixed: GlobalFixed::new_empty(&mint),
+            dynamic: Vec::<u8>::new(),
+        };
+        for i in 0..MAX_GLOBAL_SEATS {
+            global_state
+                .dynamic
+                .resize(global_state.dynamic.len() + 2 * GLOBAL_BLOCK_SIZE, 0);
+            global_state.global_expand().unwrap();
+            let trader = if i == 0 {
+                evictee
+            } else {
+                let mut bytes = [0; 32];
+                bytes[..2].copy_from_slice(&i.to_be_bytes());
+                Pubkey::new_from_array(bytes)
+            };
+            global_state.add_trader(&trader).unwrap();
+            let balance = if i == 0 {
+                evictee_balance
+            } else {
+                other_balance
+            };
+            if balance != 0 {
+                global_state
+                    .deposit_global(&trader, GlobalAtoms::new(balance))
+                    .unwrap();
+            }
+        }
+        global_state.verify_min_balance(&evictee).unwrap();
+        let data = [
+            bytemuck::bytes_of(&global_state.fixed),
+            &global_state.dynamic,
+        ]
+        .concat();
+        let (global_key, _) = get_global_address(&mint);
+        test_fixture.context.borrow_mut().set_account(
+            &global_key,
+            &AccountSharedData::from(Account {
+                lamports: Rent::default().minimum_balance(data.len()),
+                data,
+                owner: manifest::ID,
+                executable: false,
+                rent_epoch: 0,
+            }),
+        );
+
+        measure_and_send(
+            &test_fixture,
+            label,
+            &[global_evict_instruction(
+                &mint,
+                &evictor.pubkey(),
+                &evictor_token.key,
+                &evictee_token.key,
+                &spl_token::id(),
+                new_deposit,
+            )],
+            &evictor.pubkey(),
+            &[&evictor],
+        )
+        .await?;
+        let account = test_fixture
+            .context
+            .borrow_mut()
+            .banks_client
+            .get_account(global_key)
+            .await?
+            .unwrap();
+        let final_global: manifest::state::GlobalRef = DynamicAccount {
+            fixed: get_helper::<GlobalFixed>(&account.data, 0),
+            dynamic: &account.data[std::mem::size_of::<GlobalFixed>()..],
+        };
+        assert!(!final_global.has_global_seat(&evictee));
+        assert!(final_global.has_global_seat(&evictor.pubkey()));
+        assert_eq!(
+            final_global.get_balance_atoms(&evictor.pubkey()),
+            GlobalAtoms::new(new_deposit)
+        );
+        for i in 1..MAX_GLOBAL_SEATS {
+            let mut bytes = [0; 32];
+            bytes[..2].copy_from_slice(&i.to_be_bytes());
+            let trader = Pubkey::new_from_array(bytes);
+            assert!(final_global.has_global_seat(&trader));
+            assert_eq!(
+                final_global.get_balance_atoms(&trader),
+                GlobalAtoms::new(other_balance)
+            );
+        }
+        // A cached deposit index must still debit and refund the right trader.
+        for (key, expected) in [
+            (evictee_token.key, evictee_balance),
+            (evictor_token.key, 0),
+            (
+                get_global_vault_address(&mint).0,
+                other_balance * u64::from(MAX_GLOBAL_SEATS - 1) + new_deposit,
+            ),
+        ] {
+            let account = test_fixture
+                .context
+                .borrow_mut()
+                .banks_client
+                .get_account(key)
+                .await?
+                .unwrap();
+            assert_eq!(
+                spl_token::state::Account::unpack(&account.data)?.amount,
+                expected
+            );
+        }
+    }
+    Ok(())
+}
+
+/// Fixed keys and balances keep lookup depths and rebalancing identical between
+/// builds. Exercise balance changes that move a deposit across the other keys.
+#[tokio::test]
+async fn cu_global_tree_sizes_test() -> anyhow::Result<()> {
+    use manifest::{
+        quantities::{GlobalAtoms, WrapperU64},
+        state::{validate_global_dynamic, DynamicAccount, GlobalFixed, GLOBAL_BLOCK_SIZE},
+    };
+
+    let mut test_fixture = TestFixture::new().await;
+    let payer_keypair = test_fixture.payer_keypair();
+    let payer = payer_keypair.pubkey();
+    let trader_keypair = Keypair::new_from_array([19; 32]);
+    let trader = trader_keypair.pubkey();
+    send_tx_with_retry(
+        Rc::clone(&test_fixture.context),
+        &[system_instruction::transfer(&payer, &trader, 100_000_000)],
+        Some(&payer),
+        &[&payer_keypair],
+    )
+    .await?;
+
+    for (seats, token_program) in [
+        (1u16, spl_token::id()),
+        (32, spl_token::id()),
+        (128, spl_token::id()),
+        (999, spl_token::id()),
+        (32, spl_token_2022::id()),
+    ] {
+        let is_token22 = token_program == spl_token_2022::id();
+        let suffix = if is_token22 { "_token22" } else { "" };
+        let quote_token_program = is_token22.then_some(token_program);
+        if seats > manifest::state::MAX_GLOBAL_SEATS {
+            continue;
+        }
+        let mint =
+            create_first_bump_globals_mint_with_program(&test_fixture, 6, &token_program).await?;
+        let token_account = if is_token22 {
+            TokenAccountFixture::new_with_keypair_2022(
+                Rc::clone(&test_fixture.context),
+                &mint,
+                &trader,
+                &Keypair::new(),
+            )
+            .await
+        } else {
+            TokenAccountFixture::new(Rc::clone(&test_fixture.context), &mint, &trader).await
+        };
+        send_tx_with_retry(
+            Rc::clone(&test_fixture.context),
+            &[create_global_instruction(&mint, &payer, &token_program)],
+            Some(&payer),
+            &[&payer_keypair],
+        )
+        .await?;
+        let mut global_state = DynamicAccount {
+            fixed: GlobalFixed::new_empty(&mint),
+            dynamic: Vec::<u8>::new(),
+        };
+        let mut balances = Vec::new();
+        for i in 0..seats {
+            global_state
+                .dynamic
+                .resize(global_state.dynamic.len() + 2 * GLOBAL_BLOCK_SIZE, 0);
+            global_state.global_expand().unwrap();
+            let key = if i == seats / 2 {
+                trader
+            } else {
+                let mut bytes = [0; 32];
+                bytes[..2].copy_from_slice(&i.to_be_bytes());
+                Pubkey::new_from_array(bytes)
+            };
+            let balance = if key == trader {
+                7
+            } else {
+                (u64::from(i) + 1) * 100
+            };
+            global_state.add_trader(&key).unwrap();
+            global_state
+                .deposit_global(&key, GlobalAtoms::new(balance))
+                .unwrap();
+            balances.push((key, balance));
+        }
+        validate_global_dynamic(&global_state.fixed, &global_state.dynamic).unwrap();
+        let data = [
+            bytemuck::bytes_of(&global_state.fixed),
+            &global_state.dynamic,
+        ]
+        .concat();
+        let (global_key, _) = get_global_address(&mint);
+        test_fixture.context.borrow_mut().set_account(
+            &global_key,
+            &AccountSharedData::from(Account {
+                lamports: Rent::default().minimum_balance(data.len()),
+                data,
+                owner: manifest::ID,
+                executable: false,
+                rent_epoch: 0,
+            }),
+        );
+        let (vault, _) = get_global_vault_address(&mint);
+        send_tx_with_retry(
+            Rc::clone(&test_fixture.context),
+            &[
+                spl_token_2022::instruction::mint_to(
+                    &token_program,
+                    &mint,
+                    &vault,
+                    &payer,
+                    &[&payer],
+                    balances.iter().map(|(_, amount)| *amount).sum(),
+                )?,
+                spl_token_2022::instruction::mint_to(
+                    &token_program,
+                    &mint,
+                    &token_account.key,
+                    &payer,
+                    &[&payer],
+                    1_000,
+                )?,
+            ],
+            Some(&payer),
+            &[&payer_keypair],
+        )
+        .await?;
+        measure_and_send(
+            &test_fixture,
+            &format!("global_deposit_{seats}_seats{suffix}"),
+            &[global_deposit_instruction(
+                &mint,
+                &trader,
+                &token_account.key,
+                &token_program,
+                1_000,
+            )],
+            &trader,
+            &[&trader_keypair],
+        )
+        .await?;
+        measure_and_send(
+            &test_fixture,
+            &format!("global_withdraw_{seats}_seats{suffix}"),
+            &[global_withdraw_instruction(
+                &mint,
+                &trader,
+                &token_account.key,
+                &token_program,
+                1_000,
+            )],
+            &trader,
+            &[&trader_keypair],
+        )
+        .await?;
+        let account = test_fixture
+            .context
+            .borrow_mut()
+            .banks_client
+            .get_account(global_key)
+            .await?
+            .unwrap();
+        let final_global: manifest::state::GlobalRef = DynamicAccount {
+            fixed: get_helper::<GlobalFixed>(&account.data, 0),
+            dynamic: &account.data[std::mem::size_of::<GlobalFixed>()..],
+        };
+        validate_global_dynamic(final_global.fixed, final_global.dynamic).unwrap();
+        for (key, balance) in balances {
+            assert!(final_global.has_global_seat(&key));
+            assert_eq!(
+                final_global.get_balance_atoms(&key),
+                GlobalAtoms::new(balance)
+            );
+        }
+        // Match against this same deposit tree, so the measurement includes
+        // trader lookup and reduction at each of the four tree sizes.
+        let taker_keypair = Keypair::new_from_array([20; 32]);
+        let taker = taker_keypair.pubkey();
+        let base_mint = test_fixture.sol_mint_fixture.key;
+        let market_keypair = market_keypair_with_first_bump_vaults(&base_mint, &mint);
+        let market = market_keypair.pubkey();
+        send_tx_with_retry(
+            Rc::clone(&test_fixture.context),
+            &create_market_instructions(&market, &base_mint, &mint, &payer)
+                .map_err(|error| anyhow::anyhow!("{error:?}"))?,
+            Some(&payer),
+            &[&payer_keypair, &market_keypair],
+        )
+        .await?;
+        send_tx_with_retry(
+            Rc::clone(&test_fixture.context),
+            &[system_instruction::transfer(&payer, &taker, 10_000_000)],
+            Some(&payer),
+            &[&payer_keypair],
+        )
+        .await?;
+        let taker_token =
+            TokenAccountFixture::new(Rc::clone(&test_fixture.context), &base_mint, &taker).await;
+        test_fixture
+            .sol_mint_fixture
+            .mint_to(&taker_token.key, 5)
+            .await;
+        send_tx_with_retry(
+            Rc::clone(&test_fixture.context),
+            &[claim_seat_instruction(&market, &trader)],
+            Some(&trader),
+            &[&trader_keypair],
+        )
+        .await?;
+        send_tx_with_retry(
+            Rc::clone(&test_fixture.context),
+            &[
+                claim_seat_instruction(&market, &taker),
+                deposit_instruction(
+                    &market,
+                    &taker,
+                    &base_mint,
+                    5,
+                    &taker_token.key,
+                    spl_token::id(),
+                    None,
+                ),
+            ],
+            Some(&taker),
+            &[&taker_keypair],
+        )
+        .await?;
+        send_tx_with_retry(
+            Rc::clone(&test_fixture.context),
+            &[batch_update_instruction(
+                &market,
+                &trader,
+                None,
+                vec![],
+                vec![PlaceOrderParams::new(
+                    5,
+                    1,
+                    0,
+                    true,
+                    OrderType::Global,
+                    NO_EXPIRATION_LAST_VALID_SLOT,
+                )],
+                None,
+                None,
+                Some(mint),
+                quote_token_program,
+            )],
+            Some(&trader),
+            &[&trader_keypair],
+        )
+        .await?;
+        measure_and_send(
+            &test_fixture,
+            &format!("global_match_{seats}_seats{suffix}"),
+            &[batch_update_instruction(
+                &market,
+                &taker,
+                None,
+                vec![],
+                vec![PlaceOrderParams::new(
+                    5,
+                    1,
+                    0,
+                    false,
+                    OrderType::ImmediateOrCancel,
+                    NO_EXPIRATION_LAST_VALID_SLOT,
+                )],
+                None,
+                None,
+                Some(mint),
+                quote_token_program,
+            )],
+            &taker,
+            &[&taker_keypair],
+        )
+        .await?;
+        let account = test_fixture
+            .context
+            .borrow_mut()
+            .banks_client
+            .get_account(global_key)
+            .await?
+            .unwrap();
+        let final_global: manifest::state::GlobalRef = DynamicAccount {
+            fixed: get_helper::<GlobalFixed>(&account.data, 0),
+            dynamic: &account.data[std::mem::size_of::<GlobalFixed>()..],
+        };
+        assert_eq!(final_global.get_balance_atoms(&trader), GlobalAtoms::new(2));
+    }
     Ok(())
 }

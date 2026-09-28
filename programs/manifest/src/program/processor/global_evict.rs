@@ -85,8 +85,8 @@ pub(crate) fn process_global_evict_core(
     // 3. Deposit for the evictor
     let global_data: &mut RefMut<[u8]> = &mut global.try_borrow_mut()?;
     let mut global_dynamic_account: GlobalRefMut = get_mut_dynamic_account(global_data);
-    let evictee_balance: GlobalAtoms =
-        global_dynamic_account.get_balance_atoms(&evictee_token.get_owner());
+    let (evictee_balance, evictee_deposit_index) =
+        global_dynamic_account.get_balance_atoms_with_index(&evictee_token.get_owner());
 
     {
         // Do verifications that this is a valid eviction.
@@ -95,14 +95,21 @@ pub(crate) fn process_global_evict_core(
             crate::program::ManifestError::InvalidEvict,
             "Eviction is only allowed when global is at capacity",
         )?;
-        global_dynamic_account.verify_min_balance(&evictee_token.get_owner())?;
+        global_dynamic_account.verify_min_balance_at_deposit_index(
+            &evictee_token.get_owner(),
+            evictee_deposit_index,
+        )?;
     }
 
     // Withdraw
     {
-        let evictee_balance: GlobalAtoms =
-            global_dynamic_account.get_balance_atoms(&evictee_token.get_owner());
-        global_dynamic_account.withdraw_global(&evictee_token.get_owner(), evictee_balance)?;
+        // Capacity and minimum-balance checks above only read the account.
+        // Reuse the authenticated deposit index while this mutable borrow is held.
+        global_dynamic_account.reduce_at_deposit_index(
+            &evictee_token.get_owner(),
+            evictee_balance,
+            evictee_deposit_index,
+        )?;
 
         spl_token_transfer_from_global_vault_to_evictee(
             &token_program,

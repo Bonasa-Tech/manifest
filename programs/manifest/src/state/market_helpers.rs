@@ -1214,6 +1214,55 @@ mod place_order_equivalence_tests {
         );
     }
 
+    /// Compare both sides, tied prices, expired makers, reverse orders, and
+    /// self-trades across partial fills and complete sweeps of the book.
+    #[test]
+    fn test_equivalence_tied_orders_with_expiration_and_reversals() {
+        for maker_is_bid in [false, true] {
+            for self_trade in [false, true] {
+                let (mut market, maker_index, taker_index, _, _) = new_market_with_seats();
+                for level in 0..12 {
+                    let price = if maker_is_bid {
+                        2.0 - (level / 4) as f64 * 0.25
+                    } else {
+                        1.0 + (level / 4) as f64 * 0.25
+                    };
+                    let order_type = if level % 4 == 2 {
+                        OrderType::Reverse
+                    } else {
+                        OrderType::Limit
+                    };
+                    place(
+                        &mut market,
+                        maker_index,
+                        (level + 1) * 10,
+                        price,
+                        maker_is_bid,
+                        order_type,
+                        if level % 4 == 0 {
+                            10
+                        } else {
+                            NO_EXPIRATION_LAST_VALID_SLOT
+                        },
+                        5,
+                    )
+                    .unwrap();
+                }
+                for size in [5, 95, 375, 1000] {
+                    assert_equivalent_taker(
+                        &market,
+                        if self_trade { maker_index } else { taker_index },
+                        size,
+                        if maker_is_bid { 0.5 } else { 2.0 },
+                        !maker_is_bid,
+                        OrderType::Limit,
+                        NO_EXPIRATION_LAST_VALID_SLOT,
+                    );
+                }
+            }
+        }
+    }
+
     #[test]
     fn oversized_global_bid_is_rejected_before_it_can_rest() {
         let (mut market, _, taker_index, _, _) = new_market_with_seats();

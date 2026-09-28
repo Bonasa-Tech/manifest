@@ -200,11 +200,18 @@ pub(crate) fn try_to_pay_all_global_gas_prepayment(
     orders: &[PlaceOrderParams],
     global_trade_accounts_opts: &[Option<GlobalTradeAccounts>; 2],
 ) -> ProgramResult {
-    for (is_bid, account_idx) in [(true, 1), (false, 0)] {
-        let global_order_count: usize = orders
-            .iter()
-            .filter(|o| o.order_type() == OrderType::Global && o.is_bid() == is_bid)
-            .count();
+    if orders.is_empty() {
+        return Ok(());
+    }
+    let mut global_order_counts = [0usize; 2];
+    for order in orders {
+        if order.order_type() == OrderType::Global {
+            global_order_counts[usize::from(order.is_bid())] += 1;
+        }
+    }
+    // Keep the existing quote-global, then base-global payment order.
+    for account_idx in [1, 0] {
+        let global_order_count = global_order_counts[account_idx];
         if global_order_count > 0 {
             pay_global_gas_prepayment(
                 global_trade_accounts_opts[account_idx].as_ref().unwrap(),
@@ -353,8 +360,8 @@ pub(crate) fn try_to_reduce_global_tokens<'a>(
     let global_data: &mut RefMut<[u8]> = &mut global.try_borrow_mut()?;
     let mut global_dynamic_account: GlobalRefMut = get_mut_dynamic_account(global_data);
 
-    let num_deposited_atoms: GlobalAtoms =
-        global_dynamic_account.get_balance_atoms(resting_order_trader);
+    let (num_deposited_atoms, deposit_index) =
+        global_dynamic_account.get_balance_atoms_with_index(resting_order_trader);
     // Cleanup is advisory logging; a non-signer SwapV2 has no gas receiver.
     // Never let that optional account turn an unbacked maker into a panic.
     let cleaner: Pubkey = gas_receiver_opt
@@ -402,8 +409,9 @@ pub(crate) fn try_to_reduce_global_tokens<'a>(
 
         // Prevent transfer from global to market vault if a token has a non-zero fee.
         let mint_account_info: &MintAccountInfo = mint_opt.as_ref().unwrap();
-        if StateWithExtensions::<Mint>::unpack(&mint_account_info.info.try_borrow()?)
-            .map_err(to_program_error)?
+        let mint_data = mint_account_info.info.try_borrow()?;
+        let mint = StateWithExtensions::<Mint>::unpack(&mint_data).map_err(to_program_error)?;
+        if mint
             .get_extension::<TransferFeeConfig>()
             .is_ok_and(|f| f.get_epoch_fee(get_now_epoch()).transfer_fee_basis_points != 0.into())
         {
@@ -416,8 +424,7 @@ pub(crate) fn try_to_reduce_global_tokens<'a>(
             })?;
             return Ok(false);
         }
-        if StateWithExtensions::<Mint>::unpack(&mint_account_info.info.try_borrow()?)
-            .map_err(to_program_error)?
+        if mint
             .get_extension::<TransferHook>()
             .is_ok_and(|f| f.program_id.get().is_some())
         {
@@ -435,7 +442,13 @@ pub(crate) fn try_to_reduce_global_tokens<'a>(
     }
 
     // Reduce balance only after confirming the transfer can proceed.
-    global_dynamic_account.reduce(resting_order_trader, desired_global_atoms)?;
+    // The mutable global borrow is held throughout the checks above. They
+    // only read the mint and emit logs, so the resolved deposit has not moved.
+    global_dynamic_account.reduce_at_deposit_index(
+        resting_order_trader,
+        desired_global_atoms,
+        deposit_index,
+    )?;
 
     Ok(true)
 }
