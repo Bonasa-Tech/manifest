@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1790285424964,
+  "lastUpdate": 1790606313270,
   "repoUrl": "https://github.com/Bonasa-Tech/manifest",
   "entries": {
     "CU Benchmark": [
@@ -14417,6 +14417,72 @@ window.BENCHMARK_DATA = {
           {
             "name": "MFX_99",
             "value": 2054,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "cyrbritt@gmail.com",
+            "name": "Britt Cyr",
+            "username": "brittcyr"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "2f1abe7738b26144a8bc5a4d30b6a57a3dd3ba82",
+          "message": "Reduce red-black tree compute usage (#738)\n\n* Reduce red-black tree compute usage\n\nUse the cached maximum for insertion and simplify deletion repair by\nreusing parent links, reordering color checks, and applying the sole-child\ninvariant. Add a deterministic FIFO model test.\n\nThe local Benchmark action reproduction saves 1.04% total CU, with\np50/p95/p99 improving from 1211/1483/2054 to 1201/1475/2035.\nAll 84 library tests, strict Clippy, formatting, and five Certora\ncompilation configurations pass. Remote proofs remain pending because\nCERTORAKEY is unavailable.\n\n* Reduce red-black tree repair and successor-swap CU\n\nReuse known ancestry in insertion repair, combine node-link access during\nrotations and deletion splices, and handle immediate successors without\nwriting temporary self-links. Preserve NIL successor behavior used by the\nleft-leaning tree and test adjacent-swap reversibility and payload stability.\n\nLocal Benchmark action replay versus 179493f3 (4,158 transactions and\n101,618 orders, Agave 4.2.2, platform-tools v1.57, SBF v3):\n- Total CU: 120,786,008 -> 119,307,247 (-1.2243%).\n- CU/order p50/p95/p99: 1201/1475/2035 -> 1186/1460/2023.\n- 2,875 transactions improve, 1,283 are unchanged, none regress.\n- Cumulative total CU savings versus ef1fb5f1: 2.2543%.\n\nAll 85 library tests, strict Clippy, formatting, and the five configured\nCertora compilation/SBF v3 checks pass. Full proof submission remains\nblocked by the unavailable CERTORAKEY; no proof results are claimed.\n\n* Fuse red-black tree rotations and internal deletion\n\nTransplant an internal node's successor directly, retaining the same payload\naddresses and removed-slot metadata as swap followed by splice. Reuse the\nsplice's child, parent, and color for deletion repair. Fuse opposite-direction\nrotations and avoid rereading the known-red insertion repair node's color.\n\nAdd byte-for-byte equivalence tests and a Certora rule for direct deletion,\ncovering root/internal nodes, adjacent/deeper successors, optional successor\nchildren, colors, payloads, and metadata. Keep all existing formal rules.\n\nLocal Benchmark action replay versus dd1e8dc4 (4,158 transactions and\n101,618 orders, Agave 4.2.2, platform-tools v1.57, SBF v3):\n- Total CU: 119,307,247 -> 118,763,254 (-543,993; -0.4560%).\n- CU/order p50/p95/p99: 1186/1460/2023 -> 1179/1456/2021.\n- 2,907 transactions improve, 1,241 are unchanged, 10 regress by at most 2 CU.\n- Cumulative total CU savings versus ef1fb5f1: 2.7000%.\n\nAll 87 library tests, strict Clippy, the fuzz-feature build, formatting,\nand five Certora compilation/SBF v3 checks pass, including the new rule.\nFull proofs remain unverified: submission stops without CERTORAKEY.\n\n* Specialize red-black tree double rotations by direction\n\nMake the known rotation direction a const generic so both repair paths use\nspecialized double rotations. Preserve the existing equivalence test for\nboth directions, without forcing inlining or changing the formal rules.\n\nLocal Benchmark action replay, same pinned harness/toolchain and 4,158\ntransactions / 101,618 orders:\n- Total MFX CU: 118,763,254 -> 118,627,499 (-135,755; -0.1143%).\n- CU/order p50/p95/p99: 1179/1456/2021 -> 1178/1455/2019.\n- 2,565 transactions improve, 1,392 unchanged, 201 regress by at most 5 CU.\n- Cumulative vs ef1fb5f1: -3,431,353 CU (-2.8112%); p50/p95/p99\n  1211/1483/2054 -> 1178/1455/2019.\n\nValidation: 87 library tests, strict Clippy, formatting and fuzz-feature\nbuild pass. All five Certora configurations compile and pass SBFv3 ELF\nvalidation. Full formal proofs remain unverified: submission requires\nCERTORAKEY, which is unavailable in this environment.\n\n* Guard cached-maximum insertion against an occupied right link\n\nOnly append directly to the cached maximum when its right link is NIL.\nRead the link from the node already loaded for comparison and otherwise\nuse root descent, preserving the legacy cached-maximum update.\n\nAdd a regression test covering stale caches at root and non-root nodes,\nsubtree reachability, parent links and preserved payloads. Add a Certora\nrule for the occupied-right-link fallback without weakening existing rules.\n\nLocal Benchmark action replay (4,158 transactions / 101,618 orders):\n- Total CU: 118,627,499 -> 118,692,977 (+65,478; +0.0552%).\n- CU/order p50/p95/p99: 1178/1455/2019 -> 1178/1456/2020.\n- 1,309 transactions unchanged; 2,849 increase, by at most 96 CU.\n- Cumulative savings vs ef1fb5f1: 3,365,875 CU (2.7576%).\n\nValidation: all 88 library tests, strict Clippy, formatting and fuzz-feature\nbuild pass. All five Certora configurations compile and pass SBFv3 ELF\nvalidation, with 33 hypertree rules. Formal proofs remain unverified:\nsubmission is blocked because CERTORAKEY is unavailable.",
+          "timestamp": "2026-09-28T10:35:08-04:00",
+          "tree_id": "bdad042f51fe26f58c228635894882c0128b4a5a",
+          "url": "https://github.com/Bonasa-Tech/manifest/commit/2f1abe7738b26144a8bc5a4d30b6a57a3dd3ba82"
+        },
+        "date": 1790606309998,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "PHX_50",
+            "value": 6748,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "PHX_95",
+            "value": 8819,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "PHX_99",
+            "value": 10866,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_50",
+            "value": 1178,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_95",
+            "value": 1456,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_99",
+            "value": 2020,
             "range": "",
             "unit": "CU",
             "extra": ""
