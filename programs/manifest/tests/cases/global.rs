@@ -2261,5 +2261,83 @@ async fn global_cancel_and_place_opposite_sides() -> anyhow::Result<()> {
     assert_eq!(orders.len(), 1, "Expected only the new bid to be resting");
     assert!(orders.get(0).unwrap().get_is_bid(), "Expected a bid");
 
+    // A mixed batch must prepay each global only for its own global orders.
+    // Include a local IOC so non-global orders cannot be counted accidentally.
+    let globals = [
+        test_fixture.sol_global_fixture.key,
+        test_fixture.global_fixture.key,
+    ];
+    let mut before = [0u64; 2];
+    for (i, key) in globals.iter().enumerate() {
+        before[i] = test_fixture
+            .context
+            .borrow_mut()
+            .banks_client
+            .get_account(*key)
+            .await?
+            .unwrap()
+            .lamports;
+    }
+    let mixed_orders = [
+        (true, OrderType::Global),
+        (false, OrderType::Global),
+        (false, OrderType::ImmediateOrCancel),
+        (true, OrderType::Global),
+        (false, OrderType::Global),
+        (false, OrderType::Global),
+    ]
+    .into_iter()
+    .map(|(is_bid, order_type)| {
+        PlaceOrderParams::new(
+            if order_type == OrderType::Global {
+                10
+            } else {
+                0
+            },
+            if is_bid { 1 } else { 2 },
+            0,
+            is_bid,
+            order_type,
+            NO_EXPIRATION_LAST_VALID_SLOT,
+        )
+    })
+    .collect();
+    send_tx_with_retry(
+        Rc::clone(&test_fixture.context),
+        &[batch_update_instruction(
+            &test_fixture.market_fixture.key,
+            &payer,
+            None,
+            vec![],
+            mixed_orders,
+            Some(base_mint),
+            None,
+            Some(quote_mint),
+            None,
+        )],
+        Some(&payer),
+        &[&payer_keypair],
+    )
+    .await?;
+    for (i, count) in [3u64, 2].into_iter().enumerate() {
+        let after = test_fixture
+            .context
+            .borrow_mut()
+            .banks_client
+            .get_account(globals[i])
+            .await?
+            .unwrap()
+            .lamports;
+        assert_eq!(
+            after - before[i],
+            count * manifest::state::GAS_DEPOSIT_LAMPORTS
+        );
+    }
+    test_fixture.market_fixture.reload().await;
+    assert_eq!(
+        test_fixture.market_fixture.get_resting_orders().await.len(),
+        6
+    );
+
     Ok(())
 }
