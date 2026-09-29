@@ -481,9 +481,70 @@ async fn cu_place_and_cancel_order_test() -> anyhow::Result<()> {
 
 #[tokio::test]
 async fn cu_swap_test() -> anyhow::Result<()> {
+    measure_swap_with_market_seats(1, false).await
+}
+
+/// The wrapper replay passes seat hints. Fixed multi-seat fixtures exercise
+/// the unhinted market lookups used by direct swaps instead.
+#[tokio::test]
+async fn cu_swap_market_seat_sizes_test() -> anyhow::Result<()> {
+    for seats in [32, 128, 999] {
+        measure_swap_with_market_seats(seats, false).await?;
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn cu_swap_temporary_seat_sizes_test() -> anyhow::Result<()> {
+    for seats in [1, 32, 128, 999] {
+        measure_swap_with_market_seats(seats, true).await?;
+    }
+    Ok(())
+}
+
+async fn measure_swap_with_market_seats(seats: u16, temporary_seat: bool) -> anyhow::Result<()> {
+    use hypertree::{HyperTreeValueIteratorTrait, NIL};
+    use manifest::state::{claimed_seat::ClaimedSeat, DynamicAccount, MARKET_BLOCK_SIZE};
+
     let mut test_fixture: TestFixture = TestFixture::new().await;
-    let payer: Pubkey = test_fixture.payer();
-    let payer_keypair: Keypair = test_fixture.payer_keypair();
+    let payer_keypair = if seats == 1 && !temporary_seat {
+        test_fixture.payer_keypair()
+    } else {
+        Keypair::new_from_array([23; 32])
+    };
+    let payer = payer_keypair.pubkey();
+    let (base_account, quote_account) = if seats == 1 && !temporary_seat {
+        (
+            test_fixture.payer_sol_fixture.key,
+            test_fixture.payer_usdc_fixture.key,
+        )
+    } else {
+        let funder = test_fixture.payer_keypair();
+        send_tx_with_retry(
+            Rc::clone(&test_fixture.context),
+            &[system_instruction::transfer(
+                &funder.pubkey(),
+                &payer,
+                100_000_000,
+            )],
+            Some(&funder.pubkey()),
+            &[&funder],
+        )
+        .await?;
+        let base = TokenAccountFixture::new(
+            Rc::clone(&test_fixture.context),
+            &test_fixture.sol_mint_fixture.key,
+            &payer,
+        )
+        .await;
+        let quote = TokenAccountFixture::new(
+            Rc::clone(&test_fixture.context),
+            &test_fixture.usdc_mint_fixture.key,
+            &payer,
+        )
+        .await;
+        (base.key, quote.key)
+    };
     let market: Pubkey = create_market_with_first_bump_vaults(&test_fixture).await?;
     let deposit_atoms: u64 = 10 * SOL_UNIT_SIZE;
 
@@ -495,9 +556,37 @@ async fn cu_swap_test() -> anyhow::Result<()> {
         &[&payer_keypair],
     )
     .await?;
+    if seats > 1 {
+        let mut account = test_fixture
+            .context
+            .borrow_mut()
+            .banks_client
+            .get_account(market)
+            .await?
+            .unwrap();
+        let mut state = DynamicAccount {
+            fixed: *get_helper::<MarketFixed>(&account.data, 0),
+            dynamic: account.data[std::mem::size_of::<MarketFixed>()..].to_vec(),
+        };
+        for i in 1..seats {
+            state
+                .dynamic
+                .resize(state.dynamic.len() + MARKET_BLOCK_SIZE, 0);
+            state.market_expand().unwrap();
+            let mut bytes = [0; 32];
+            bytes[..2].copy_from_slice(&i.to_be_bytes());
+            state.claim_seat(&Pubkey::new_from_array(bytes)).unwrap();
+        }
+        account.data = [bytemuck::bytes_of(&state.fixed), &state.dynamic].concat();
+        account.lamports = Rent::default().minimum_balance(account.data.len());
+        test_fixture
+            .context
+            .borrow_mut()
+            .set_account(&market, &AccountSharedData::from(account));
+    }
     test_fixture
         .sol_mint_fixture
-        .mint_to(&test_fixture.payer_sol_fixture.key, deposit_atoms)
+        .mint_to(&base_account, deposit_atoms)
         .await;
     send_tx_with_retry(
         Rc::clone(&test_fixture.context),
@@ -507,7 +596,7 @@ async fn cu_swap_test() -> anyhow::Result<()> {
                 &payer,
                 &test_fixture.sol_mint_fixture.key,
                 deposit_atoms,
-                &test_fixture.payer_sol_fixture.key,
+                &base_account,
                 spl_token::id(),
                 None,
             ),
@@ -535,19 +624,74 @@ async fn cu_swap_test() -> anyhow::Result<()> {
     )
     .await?;
 
+    // Exercise both a persistent seat and a different owner whose temporary
+    // seat must be removed without disturbing any other seat or its index.
+    let (swapper, base_account, quote_account) = if temporary_seat {
+        let swapper = Keypair::new_from_array([24; 32]);
+        send_tx_with_retry(
+            Rc::clone(&test_fixture.context),
+            &[system_instruction::transfer(
+                &payer,
+                &swapper.pubkey(),
+                10_000_000,
+            )],
+            Some(&payer),
+            &[&payer_keypair],
+        )
+        .await?;
+        let base = TokenAccountFixture::new(
+            Rc::clone(&test_fixture.context),
+            &test_fixture.sol_mint_fixture.key,
+            &swapper.pubkey(),
+        )
+        .await;
+        let quote = TokenAccountFixture::new(
+            Rc::clone(&test_fixture.context),
+            &test_fixture.usdc_mint_fixture.key,
+            &swapper.pubkey(),
+        )
+        .await;
+        (swapper, base.key, quote.key)
+    } else {
+        (payer_keypair, base_account, quote_account)
+    };
+    let account_before = test_fixture
+        .context
+        .borrow_mut()
+        .banks_client
+        .get_account(market)
+        .await?
+        .unwrap();
+    let state_before = DynamicAccount {
+        fixed: get_helper::<MarketFixed>(&account_before.data, 0),
+        dynamic: &account_before.data[std::mem::size_of::<MarketFixed>()..],
+    };
+    let seats_before: Vec<_> = state_before
+        .get_claimed_seats()
+        .iter::<ClaimedSeat>()
+        .map(|(index, seat)| (index, seat.trader))
+        .collect();
+    assert_eq!(seats_before.len(), seats as usize);
+    assert_eq!(
+        state_before.get_trader_index(&swapper.pubkey()) == NIL,
+        temporary_seat
+    );
+    let balances_before =
+        (!temporary_seat).then(|| state_before.get_trader_balance(&swapper.pubkey()));
+
     // Taker buys 1 SOL with 1 USDC from the wallet, filling the single ask.
     let quote_in_atoms: u64 = 1 * USDC_UNIT_SIZE;
     test_fixture
         .usdc_mint_fixture
-        .mint_to(&test_fixture.payer_usdc_fixture.key, quote_in_atoms)
+        .mint_to(&quote_account, quote_in_atoms)
         .await;
     let swap_ix: Instruction = swap_instruction(
         &market,
-        &payer,
+        &swapper.pubkey(),
         &test_fixture.sol_mint_fixture.key,
         &test_fixture.usdc_mint_fixture.key,
-        &test_fixture.payer_sol_fixture.key,
-        &test_fixture.payer_usdc_fixture.key,
+        &base_account,
+        &quote_account,
         quote_in_atoms,
         1 * SOL_UNIT_SIZE,
         false,
@@ -556,14 +700,44 @@ async fn cu_swap_test() -> anyhow::Result<()> {
         spl_token::id(),
         false,
     );
+    let label = if temporary_seat {
+        format!("swap_fill_1_{seats}_market_seats_temporary")
+    } else if seats == 1 {
+        "swap_fill_1".to_owned()
+    } else {
+        format!("swap_fill_1_{seats}_market_seats")
+    };
     measure_and_send(
         &test_fixture,
-        "swap_fill_1",
+        &label,
         &[swap_ix],
-        &payer,
-        &[&payer_keypair],
+        &swapper.pubkey(),
+        &[&swapper],
     )
     .await?;
+    let account_after = test_fixture
+        .context
+        .borrow_mut()
+        .banks_client
+        .get_account(market)
+        .await?
+        .unwrap();
+    let state_after = DynamicAccount {
+        fixed: get_helper::<MarketFixed>(&account_after.data, 0),
+        dynamic: &account_after.data[std::mem::size_of::<MarketFixed>()..],
+    };
+    let seats_after: Vec<_> = state_after
+        .get_claimed_seats()
+        .iter::<ClaimedSeat>()
+        .map(|(index, seat)| (index, seat.trader))
+        .collect();
+    assert_eq!(seats_after, seats_before);
+    assert!(state_after.has_free_block());
+    if let Some(balances) = balances_before {
+        assert_eq!(state_after.get_trader_balance(&swapper.pubkey()), balances);
+    } else {
+        assert_eq!(state_after.get_trader_index(&swapper.pubkey()), NIL);
+    }
     Ok(())
 }
 

@@ -205,6 +205,8 @@ async fn global_cancel_order() -> anyhow::Result<()> {
         )
         .await?;
 
+    let global_key = test_fixture.global_fixture.key;
+    let lamports_before_cancel = test_fixture.try_load(&global_key).await?.unwrap().lamports;
     test_fixture
         .batch_update_with_global_for_keypair(
             None,
@@ -218,6 +220,12 @@ async fn global_cancel_order() -> anyhow::Result<()> {
     let orders: Vec<RestingOrder> = test_fixture.market_fixture.get_resting_orders().await;
     assert_eq!(orders.len(), 0, "Did not cancel");
     test_fixture.global_fixture.reload().await;
+    let lamports_after_cancel = test_fixture.try_load(&global_key).await?.unwrap().lamports;
+    assert_eq!(
+        lamports_before_cancel - lamports_after_cancel,
+        manifest::state::GAS_DEPOSIT_LAMPORTS,
+        "a cancel-only batch must still settle the global gas refund",
+    );
 
     Ok(())
 }

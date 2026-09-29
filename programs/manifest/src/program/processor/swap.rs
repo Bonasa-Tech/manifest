@@ -129,13 +129,14 @@ pub(crate) fn process_swap_core(
 
         // Claim seat if needed
         let existing_seat_index: DataIndex = dynamic_account.get_trader_index(owner.pubkey());
-        if existing_seat_index == NIL {
-            dynamic_account.claim_seat(owner.pubkey())?;
-        }
-        let trader_index: DataIndex = dynamic_account.get_trader_index(owner.pubkey());
+        let trader_index: DataIndex = if existing_seat_index == NIL {
+            dynamic_account.claim_seat_with_index(owner.pubkey())?
+        } else {
+            existing_seat_index
+        };
 
         let (initial_base_atoms, initial_quote_atoms) =
-            dynamic_account.get_trader_balance(owner.pubkey());
+            dynamic_account.get_trader_balance_by_index(trader_index);
 
         (
             existing_seat_index,
@@ -342,7 +343,10 @@ pub(crate) fn process_swap_core(
         )?;
     }
 
-    let (end_base_atoms, end_quote_atoms) = dynamic_account.get_trader_balance(owner.pubkey());
+    // Seat indices survive account growth and tree rotations. Matching changes
+    // balances and orders but never releases this swapper's seat.
+    let (end_base_atoms, end_quote_atoms) =
+        dynamic_account.get_trader_balance_by_index(trader_index);
 
     let extra_base_atoms: BaseAtoms = end_base_atoms.checked_sub(initial_base_atoms)?;
     let extra_quote_atoms: QuoteAtoms = end_quote_atoms.checked_sub(initial_quote_atoms)?;
@@ -479,7 +483,7 @@ pub(crate) fn process_swap_core(
     }
 
     if existing_seat_index == NIL {
-        dynamic_account.release_seat(owner.pubkey())?;
+        dynamic_account.release_seat_by_index(trader_index)?;
     } else {
         // Withdraw in case there already was a seat so it doesnt mess with their
         // balances. Need to withdraw base and quote in case the order wasnt fully

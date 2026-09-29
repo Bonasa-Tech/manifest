@@ -663,6 +663,7 @@ fn place_reverse_order(
             free_address,
             &new_reverse_resting_order,
         );
+        #[cfg(feature = "certora")]
         set_payload_order(dynamic, free_address);
     }
 

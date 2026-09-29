@@ -264,7 +264,12 @@ pub(crate) fn process_batch_update_core(
         orders,
     } = params;
 
-    let current_slot: Option<u32> = Some(get_now_slot());
+    // Only placements need the clock for expiration checks.
+    let current_slot: Option<u32> = if orders.is_empty() {
+        None
+    } else {
+        Some(get_now_slot())
+    };
 
     trace!("batch_update trader_index_hint:{trader_index_hint:?} cancels:{cancels:?} orders:{orders:?}");
 
@@ -334,9 +339,14 @@ pub(crate) fn process_batch_update_core(
 
     try_to_pay_all_global_gas_prepayment(&orders, &global_trade_accounts_opts)?;
 
-    // Result is a vector of (order_sequence_number, data_index)
+    // Encode the Borsh vector directly: a u32 count followed by (u64, u32)
+    // pairs. This avoids a second allocation and serialization pass over
+    // the placement results while preserving BatchUpdateReturn's wire format.
     #[cfg(not(feature = "certora"))]
-    let mut result: Vec<(u64, DataIndex)> = Vec::with_capacity(orders.len());
+    let mut result: Vec<u8> = Vec::with_capacity(4 + orders.len() * 12);
+    // The input vector has a Borsh u32 length and is never extended here.
+    #[cfg(not(feature = "certora"))]
+    result.extend_from_slice(&(orders.len() as u32).to_le_bytes());
     #[cfg(feature = "certora")]
     let mut result = NoResizableVec::<(u64, DataIndex)>::new(10);
     // One borrow of the market for the whole loop. Placing an order does not
@@ -381,6 +391,11 @@ pub(crate) fn process_batch_update_core(
                 ..
             } = add_order_to_market_result;
 
+            #[cfg(not(feature = "certora"))]
+            (order_sequence_number, order_index)
+                .serialize(&mut result)
+                .unwrap();
+            #[cfg(feature = "certora")]
             result.push((order_sequence_number, order_index));
             !dynamic_account.fixed.has_free_block()
         };
@@ -400,15 +415,7 @@ pub(crate) fn process_batch_update_core(
 
     // Formal verification does not cover return values.
     #[cfg(not(feature = "certora"))]
-    {
-        let mut buffer: Vec<u8> = Vec::with_capacity(
-            std::mem::size_of::<BatchUpdateReturn>()
-                + result.len() * 2 * std::mem::size_of::<u64>(),
-        );
-        let return_data: BatchUpdateReturn = BatchUpdateReturn { orders: result };
-        return_data.serialize(&mut buffer).unwrap();
-        solana_program::program::set_return_data(&buffer[..]);
-    }
+    solana_program::program::set_return_data(&result);
 
     Ok(())
 }

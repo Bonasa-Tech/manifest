@@ -830,12 +830,15 @@ impl<Fixed: DerefOrBorrow<MarketFixed>, Dynamic: DerefOrBorrow<[u8]>>
     }
 
     pub fn get_trader_balance(&self, trader: &Pubkey) -> (BaseAtoms, QuoteAtoms) {
-        let DynamicAccount { fixed, dynamic } = self.borrow_market();
+        self.get_trader_balance_by_index(self.get_trader_index(trader))
+    }
 
-        let claimed_seats_tree: ClaimedSeatTreeReadOnly =
-            ClaimedSeatTreeReadOnly::new(dynamic, fixed.claimed_seats_root_index, NIL);
-        let trader_index: DataIndex =
-            claimed_seats_tree.lookup_index(&ClaimedSeat::new_empty(*trader));
+    /// The caller must supply an existing seat index obtained from this market.
+    pub(crate) fn get_trader_balance_by_index(
+        &self,
+        trader_index: DataIndex,
+    ) -> (BaseAtoms, QuoteAtoms) {
+        let DynamicAccount { dynamic, .. } = self.borrow_market();
         let claimed_seat: &ClaimedSeat = get_helper_seat(dynamic, trader_index).get_value();
         (
             claimed_seat.base_withdrawable_balance,
@@ -997,6 +1000,14 @@ impl<
     }
 
     pub fn claim_seat(&mut self, trader: &Pubkey) -> ProgramResult {
+        self.claim_seat_with_index(trader).map(|_| ())
+    }
+
+    /// Return the allocated index so callers do not need to look up the new seat.
+    pub(crate) fn claim_seat_with_index(
+        &mut self,
+        trader: &Pubkey,
+    ) -> Result<DataIndex, ProgramError> {
         let DynamicAccount { fixed, dynamic } = self.borrow_mut();
         let free_address: DataIndex = get_free_address_on_market_fixed_for_seat(fixed, dynamic);
 
@@ -1021,7 +1032,7 @@ impl<
 
         get_mut_helper::<RBNode<ClaimedSeat>>(dynamic, free_address)
             .set_payload_type(MarketDataTreeNodeType::ClaimedSeat as u8);
-        Ok(())
+        Ok(free_address)
     }
 
     // Only used when temporarily claiming for swap and we dont have the system
@@ -1029,6 +1040,11 @@ impl<
     // seat.
     pub fn release_seat(&mut self, trader: &Pubkey) -> ProgramResult {
         let trader_seat_index: DataIndex = self.get_trader_index(trader);
+        self.release_seat_by_index(trader_seat_index)
+    }
+
+    /// The caller must supply the index of the temporary seat it claimed.
+    pub(crate) fn release_seat_by_index(&mut self, trader_seat_index: DataIndex) -> ProgramResult {
         let DynamicAccount { fixed, dynamic } = self.borrow_mut();
 
         let mut claimed_seats_tree: ClaimedSeatTree =
@@ -1546,6 +1562,7 @@ impl<
                             free_address,
                             &new_reverse_resting_order,
                         );
+                        #[cfg(feature = "certora")]
                         set_payload_order(dynamic, free_address);
                     }
 
@@ -1742,6 +1759,7 @@ impl<
         }
         insert_order_into_tree(is_bid, fixed, dynamic, free_address, &resting_order);
 
+        #[cfg(feature = "certora")]
         set_payload_order(dynamic, free_address);
 
         Ok(AddOrderToMarketResult {
@@ -1884,6 +1902,7 @@ impl<
     }
 }
 
+#[cfg(feature = "certora")]
 fn set_payload_order(dynamic: &mut [u8], free_address: DataIndex) {
     get_mut_helper_order(dynamic, free_address)
         .set_payload_type(MarketDataTreeNodeType::RestingOrder as u8);
@@ -2079,6 +2098,12 @@ fn insert_order_into_tree(
     } else {
         Bookside::new(dynamic, fixed.asks_root_index, fixed.asks_best_index)
     };
+    #[cfg(not(feature = "certora"))]
+    tree.insert_with_payload_type::<{ MarketDataTreeNodeType::RestingOrder as u8 }>(
+        free_address,
+        *resting_order,
+    );
+    #[cfg(feature = "certora")]
     tree.insert(free_address, *resting_order);
 
     if is_bid {

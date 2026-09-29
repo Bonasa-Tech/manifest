@@ -9,6 +9,7 @@ use manifest::{
         instruction_builders::batch_update_instruction as manifest_batch_update_instruction,
         ManifestInstruction,
     },
+    quantities::WrapperU64,
     state::{
         constants::NO_EXPIRATION_LAST_VALID_SLOT, MarketFixed, OrderType, RestingOrder,
         MARKET_BLOCK_SIZE,
@@ -841,7 +842,7 @@ async fn wrapper_cancel_all_scans_past_unrelated_trader_orders() -> anyhow::Resu
 }
 
 #[tokio::test]
-async fn wrapper_filters_crossing_post_only() -> anyhow::Result<()> {
+async fn wrapper_requotes_through_cancelled_opposing_order() -> anyhow::Result<()> {
     let mut test_fixture: TestFixture = TestFixture::new().await;
     test_fixture.claim_seat().await?;
     test_fixture.deposit(Token::SOL, 2 * SOL_UNIT_SIZE).await?;
@@ -876,9 +877,8 @@ async fn wrapper_filters_crossing_post_only() -> anyhow::Result<()> {
     )
     .await?;
 
-    // The replacement crosses the order being cancelled. Preserve deployed
-    // behavior by filtering the replacement while still committing the
-    // cancellation.
+    // The opposing order is cancelled before placement, so the replacement
+    // must be allowed to rest even though it crosses the old snapshot.
     let batch_update_ix: Instruction = batch_update_instruction(
         &test_fixture.market.key,
         &payer,
@@ -904,8 +904,7 @@ async fn wrapper_filters_crossing_post_only() -> anyhow::Result<()> {
     .await?;
 
     test_fixture.market.reload().await;
-    // The wrapper drops the crossing PostOnly order without rolling back the
-    // cancellation that shared its batch.
+    // The old ask was cancelled and the PostOnly bid replaced it.
     assert_eq!(
         test_fixture
             .market
@@ -916,6 +915,474 @@ async fn wrapper_filters_crossing_post_only() -> anyhow::Result<()> {
         0
     );
 
+    assert_eq!(
+        test_fixture
+            .market
+            .market
+            .get_bids()
+            .iter::<RestingOrder>()
+            .count(),
+        1,
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn wrapper_filters_equal_price_post_only_and_preserves_cancels() -> anyhow::Result<()> {
+    for is_bid in [true, false] {
+        let mut fixture = TestFixture::new().await;
+        fixture.claim_seat().await?;
+        fixture.deposit(Token::SOL, 10 * SOL_UNIT_SIZE).await?;
+        fixture.deposit(Token::USDC, 10 * USDC_UNIT_SIZE).await?;
+        let payer = fixture.payer();
+        let signer = fixture.payer_keypair().insecure_clone();
+        let order = |id, price, side, order_type| {
+            WrapperPlaceOrderParams::new(
+                id,
+                SOL_UNIT_SIZE,
+                price,
+                -3,
+                side,
+                NO_EXPIRATION_LAST_VALID_SLOT,
+                order_type,
+            )
+        };
+        let place = batch_update_instruction(
+            &fixture.market.key,
+            &payer,
+            &fixture.wrapper.key,
+            vec![],
+            false,
+            vec![
+                order(10, if is_bid { 1 } else { 3 }, is_bid, OrderType::Limit),
+                order(20, 2, !is_bid, OrderType::Limit),
+            ],
+        );
+        send_tx_with_retry(
+            Rc::clone(&fixture.context),
+            &[place],
+            Some(&payer),
+            &[&signer],
+        )
+        .await?;
+
+        // Keep the opposing order. Both equal-price replacements must be
+        // filtered while the cancellation of the old quote still commits.
+        let replace = batch_update_instruction(
+            &fixture.market.key,
+            &payer,
+            &fixture.wrapper.key,
+            vec![WrapperCancelOrderParams::new(10)],
+            false,
+            vec![
+                order(30, 2, is_bid, OrderType::PostOnly),
+                order(31, 2, is_bid, OrderType::PostOnly),
+            ],
+        );
+        send_tx_with_retry(
+            Rc::clone(&fixture.context),
+            &[replace],
+            Some(&payer),
+            &[&signer],
+        )
+        .await?;
+        fixture.market.reload().await;
+        let market = &fixture.market.market;
+        assert_eq!(
+            market.get_bids().iter::<RestingOrder>().count(),
+            usize::from(!is_bid)
+        );
+        assert_eq!(
+            market.get_asks().iter::<RestingOrder>().count(),
+            usize::from(is_bid)
+        );
+        assert_eq!(
+            market.fixed.get_order_sequence_number(),
+            2,
+            "filtered orders never reach core"
+        );
+    }
+    Ok(())
+}
+
+fn priced_order(
+    id: u64,
+    base_units: u64,
+    price: u32,
+    is_bid: bool,
+    order_type: OrderType,
+) -> WrapperPlaceOrderParams {
+    WrapperPlaceOrderParams::new(
+        id,
+        base_units * SOL_UNIT_SIZE,
+        price,
+        -3,
+        is_bid,
+        NO_EXPIRATION_LAST_VALID_SLOT,
+        order_type,
+    )
+}
+
+async fn funded_post_only_fixture() -> anyhow::Result<TestFixture> {
+    let mut fixture = TestFixture::new().await;
+    fixture.claim_seat().await?;
+    fixture.deposit(Token::SOL, 10 * SOL_UNIT_SIZE).await?;
+    fixture.deposit(Token::USDC, 10 * USDC_UNIT_SIZE).await?;
+    Ok(fixture)
+}
+
+async fn send_post_only_batch(
+    fixture: &TestFixture,
+    cancels: Vec<WrapperCancelOrderParams>,
+    cancel_all: bool,
+    orders: Vec<WrapperPlaceOrderParams>,
+) -> anyhow::Result<u64> {
+    let cancel_count = cancels.len();
+    let order_count = orders.len();
+    let payer = fixture.payer();
+    let signer = fixture.payer_keypair().insecure_clone();
+    let instruction = batch_update_instruction(
+        &fixture.market.key,
+        &payer,
+        &fixture.wrapper.key,
+        cancels,
+        cancel_all,
+        orders,
+    );
+    let units = super::sync::units_consumed(fixture, &[instruction], &payer, &[&signer]).await;
+    println!("CU wrapper_batch[cancels={cancel_count},cancel_all={cancel_all},orders={order_count}]: {units}");
+    Ok(units)
+}
+
+#[tokio::test]
+async fn wrapper_post_only_requotes_cancelled_prices() -> anyhow::Result<()> {
+    for is_bid in [true, false] {
+        for cancel_all in [false, true] {
+            let mut fixture = funded_post_only_fixture().await?;
+            send_post_only_batch(
+                &fixture,
+                vec![],
+                false,
+                vec![
+                    priced_order(10, 1, 2, true, OrderType::Limit),
+                    priced_order(11, 1, 3, false, OrderType::Limit),
+                ],
+            )
+            .await?;
+            let cancels = if cancel_all {
+                vec![]
+            } else {
+                vec![
+                    WrapperCancelOrderParams::new(10),
+                    WrapperCancelOrderParams::new(11),
+                ]
+            };
+            send_post_only_batch(
+                &fixture,
+                cancels,
+                cancel_all,
+                vec![
+                    priced_order(
+                        30,
+                        1,
+                        if is_bid { 3 } else { 2 },
+                        is_bid,
+                        OrderType::PostOnly,
+                    ),
+                    priced_order(
+                        31,
+                        1,
+                        if is_bid { 4 } else { 1 },
+                        !is_bid,
+                        OrderType::PostOnly,
+                    ),
+                ],
+            )
+            .await?;
+            fixture.market.reload().await;
+            assert_eq!(
+                fixture
+                    .market
+                    .market
+                    .get_bids()
+                    .iter::<RestingOrder>()
+                    .count(),
+                1
+            );
+            assert_eq!(
+                fixture
+                    .market
+                    .market
+                    .get_asks()
+                    .iter::<RestingOrder>()
+                    .count(),
+                1
+            );
+            let (info, orders) = super::sync::wrapper_view(&fixture).await;
+            assert_eq!(orders, vec![(30, 2), (31, 3)]);
+            let balances = fixture.market.market.get_trader_balance(&fixture.payer());
+            assert_eq!((info.base_balance, info.quote_balance), balances);
+        }
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn wrapper_post_only_still_sees_uncancelled_equal_price_orders() -> anyhow::Result<()> {
+    for is_bid in [true, false] {
+        let mut fixture = funded_post_only_fixture().await?;
+        send_post_only_batch(
+            &fixture,
+            vec![],
+            false,
+            vec![
+                priced_order(10, 1, 2, !is_bid, OrderType::Limit),
+                priced_order(11, 1, 2, !is_bid, OrderType::Limit),
+            ],
+        )
+        .await?;
+        send_post_only_batch(
+            &fixture,
+            vec![WrapperCancelOrderParams::new(10)],
+            false,
+            vec![priced_order(20, 1, 2, is_bid, OrderType::PostOnly)],
+        )
+        .await?;
+        fixture.market.reload().await;
+        assert_eq!(super::sync::wrapper_view(&fixture).await.1, vec![(11, 1)]);
+        assert_eq!(fixture.market.market.fixed.get_order_sequence_number(), 2);
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn wrapper_post_only_uses_book_after_earlier_fills() -> anyhow::Result<()> {
+    for is_bid in [true, false] {
+        for maker_units in [1, 2] {
+            println!("post_only_after_fill is_bid={is_bid} maker_units={maker_units}");
+            let mut fixture = funded_post_only_fixture().await?;
+            send_post_only_batch(
+                &fixture,
+                vec![],
+                false,
+                vec![priced_order(10, maker_units, 2, !is_bid, OrderType::Limit)],
+            )
+            .await?;
+            let wrapper_lamports_before = fixture
+                .context
+                .borrow_mut()
+                .banks_client
+                .get_balance(fixture.wrapper.key)
+                .await?;
+            send_post_only_batch(
+                &fixture,
+                vec![],
+                false,
+                vec![
+                    priced_order(20, 1, 2, is_bid, OrderType::Limit),
+                    priced_order(21, 1, 2, is_bid, OrderType::PostOnly),
+                ],
+            )
+            .await?;
+            fixture.market.reload().await;
+            let (info, orders) = super::sync::wrapper_view(&fixture).await;
+            if maker_units == 1 {
+                assert_eq!(orders, vec![(21, 2)], "the cleared level can be requoted");
+                assert_eq!(fixture.market.market.fixed.get_order_sequence_number(), 3);
+            } else {
+                assert_eq!(
+                    orders,
+                    vec![(10, 0)],
+                    "the remaining maker still blocks PostOnly"
+                );
+                assert_eq!(fixture.market.market.fixed.get_order_sequence_number(), 2);
+                let remaining_atoms = if is_bid {
+                    fixture
+                        .market
+                        .market
+                        .get_asks()
+                        .iter::<RestingOrder>()
+                        .next()
+                        .unwrap()
+                        .1
+                        .get_num_base_atoms()
+                        .as_u64()
+                } else {
+                    fixture
+                        .market
+                        .market
+                        .get_bids()
+                        .iter::<RestingOrder>()
+                        .next()
+                        .unwrap()
+                        .1
+                        .get_num_base_atoms()
+                        .as_u64()
+                };
+                assert_eq!(remaining_atoms, SOL_UNIT_SIZE);
+            }
+            let balances = fixture.market.market.get_trader_balance(&fixture.payer());
+            assert_eq!((info.base_balance, info.quote_balance), balances);
+            let wrapper_lamports_after = fixture
+                .context
+                .borrow_mut()
+                .banks_client
+                .get_balance(fixture.wrapper.key)
+                .await?;
+            assert_eq!(
+                wrapper_lamports_after - wrapper_lamports_before,
+                wrapper::WRAPPER_FEE_LAMPORTS
+            );
+            if maker_units == 1 {
+                // The second core call must keep the original client-id mapping.
+                send_post_only_batch(
+                    &fixture,
+                    vec![WrapperCancelOrderParams::new(21)],
+                    false,
+                    vec![],
+                )
+                .await?;
+                assert!(super::sync::wrapper_view(&fixture).await.1.is_empty());
+            }
+        }
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn wrapper_post_only_sees_earlier_opposite_side_placement() -> anyhow::Result<()> {
+    for is_bid in [true, false] {
+        let mut fixture = funded_post_only_fixture().await?;
+        send_post_only_batch(
+            &fixture,
+            vec![],
+            false,
+            vec![
+                priced_order(20, 1, 2, is_bid, OrderType::PostOnly),
+                priced_order(21, 1, 2, !is_bid, OrderType::PostOnly),
+            ],
+        )
+        .await?;
+        fixture.market.reload().await;
+        assert_eq!(super::sync::wrapper_view(&fixture).await.1, vec![(20, 0)]);
+        assert_eq!(fixture.market.market.fixed.get_order_sequence_number(), 1);
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn wrapper_post_only_sees_best_of_earlier_quotes() -> anyhow::Result<()> {
+    for is_bid in [true, false] {
+        let mut fixture = funded_post_only_fixture().await?;
+        send_post_only_batch(
+            &fixture,
+            vec![],
+            false,
+            vec![
+                priced_order(20, 1, 2, is_bid, OrderType::PostOnly),
+                priced_order(
+                    21,
+                    1,
+                    if is_bid { 1 } else { 3 },
+                    is_bid,
+                    OrderType::PostOnly,
+                ),
+                // The best earlier quote blocks this order even though the most
+                // recent quote is worse. Dropping it must not affect the next one.
+                priced_order(22, 1, 2, !is_bid, OrderType::PostOnly),
+                priced_order(
+                    23,
+                    1,
+                    if is_bid { 3 } else { 1 },
+                    !is_bid,
+                    OrderType::PostOnly,
+                ),
+            ],
+        )
+        .await?;
+        fixture.market.reload().await;
+        assert_eq!(
+            super::sync::wrapper_view(&fixture).await.1,
+            vec![(20, 0), (21, 1), (23, 2)]
+        );
+        assert_eq!(fixture.market.market.fixed.get_order_sequence_number(), 3);
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn wrapper_post_only_does_not_assume_an_unfunded_order_filled() -> anyhow::Result<()> {
+    for is_bid in [true, false] {
+        let mut fixture = funded_post_only_fixture().await?;
+        send_post_only_batch(
+            &fixture,
+            vec![],
+            false,
+            vec![priced_order(10, 1, 2, !is_bid, OrderType::Limit)],
+        )
+        .await?;
+        send_post_only_batch(
+            &fixture,
+            vec![],
+            false,
+            vec![
+                priced_order(20, 100, 2, is_bid, OrderType::Limit),
+                priced_order(21, 1, 2, is_bid, OrderType::PostOnly),
+            ],
+        )
+        .await?;
+        fixture.market.reload().await;
+        assert_eq!(super::sync::wrapper_view(&fixture).await.1, vec![(10, 0)]);
+        assert_eq!(fixture.market.market.fixed.get_order_sequence_number(), 1);
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn wrapper_post_only_minimum_ask_rests_on_empty_book() -> anyhow::Result<()> {
+    let mut fixture = TestFixture::new().await;
+    fixture.claim_seat().await?;
+    fixture.deposit(Token::SOL, 2 * SOL_UNIT_SIZE).await?;
+    let payer = fixture.payer();
+    let signer = fixture.payer_keypair().insecure_clone();
+    let orders = (0..2)
+        .map(|id| {
+            WrapperPlaceOrderParams::new(
+                id,
+                SOL_UNIT_SIZE,
+                1,
+                -18,
+                false,
+                NO_EXPIRATION_LAST_VALID_SLOT,
+                OrderType::PostOnly,
+            )
+        })
+        .collect();
+    let place = batch_update_instruction(
+        &fixture.market.key,
+        &payer,
+        &fixture.wrapper.key,
+        vec![],
+        false,
+        orders,
+    );
+    send_tx_with_retry(
+        Rc::clone(&fixture.context),
+        &[place],
+        Some(&payer),
+        &[&signer],
+    )
+    .await?;
+    fixture.market.reload().await;
+    assert_eq!(
+        fixture
+            .market
+            .market
+            .get_asks()
+            .iter::<RestingOrder>()
+            .count(),
+        2
+    );
     Ok(())
 }
 
@@ -1019,15 +1486,26 @@ async fn wrapper_filters_crossing_post_only_after_expired_prefix() -> anyhow::Re
         &test_fixture.wrapper.key,
         vec![],
         false,
-        vec![WrapperPlaceOrderParams::new(
-            1,
-            SOL_UNIT_SIZE,
-            100,
-            0,
-            true,
-            NO_EXPIRATION_LAST_VALID_SLOT,
-            OrderType::PostOnly,
-        )],
+        vec![
+            WrapperPlaceOrderParams::new(
+                1,
+                SOL_UNIT_SIZE,
+                100,
+                0,
+                true,
+                NO_EXPIRATION_LAST_VALID_SLOT,
+                OrderType::PostOnly,
+            ),
+            WrapperPlaceOrderParams::new(
+                2,
+                SOL_UNIT_SIZE,
+                60,
+                0,
+                true,
+                NO_EXPIRATION_LAST_VALID_SLOT,
+                OrderType::PostOnly,
+            ),
+        ],
     );
     send_tx_with_retry(
         Rc::clone(&test_fixture.context),
