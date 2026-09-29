@@ -156,6 +156,31 @@ fn prepare_cancel_all(
     }
 }
 
+/// Find the first unexpired opposing price without changing the book.
+/// An empty book has no crossing price, including at MIN and MAX prices.
+fn best_opposing_price(
+    market: &ManifestAccountInfo<MarketFixed>,
+    is_bid: bool,
+    now_slot: u32,
+) -> Option<QuoteAtomsPerBaseAtom> {
+    let market_data: Ref<[u8]> = market.try_borrow().unwrap();
+    let market_ref = get_dynamic_account::<MarketFixed>(&market_data);
+    let book = if is_bid {
+        market_ref.get_asks()
+    } else {
+        market_ref.get_bids()
+    };
+    let mut index = book.get_max_index();
+    while index != NIL {
+        let order = get_helper::<RBNode<RestingOrder>>(market_ref.dynamic, index).get_value();
+        if !order.is_expired(now_slot) {
+            return Some(order.get_price());
+        }
+        index = book.get_next_lower_index::<RestingOrder>(index);
+    }
+    None
+}
+
 /// Possibly update orders due to insufficient funds. Reduce the quantity of the
 /// last orders in the vector so that they will not fail.
 fn prepare_orders(
@@ -165,47 +190,10 @@ fn prepare_orders(
     market: &ManifestAccountInfo<MarketFixed>,
     now_slot: u32,
 ) -> (Vec<PlaceOrderParams>, Vec<usize>) {
-    // Preserve the deployed wrapper behavior: crossing PostOnly orders are
-    // silently removed before the core CPI, so a stale replacement quote does
-    // not roll back the rest of an otherwise valid batch.
-    let market_data: Ref<[u8]> = market.try_borrow().unwrap();
-    let market_ref = get_dynamic_account::<MarketFixed>(&market_data);
-    let mut best_ask_index: DataIndex = market_ref.get_asks().get_max_index();
-    let mut best_bid_index: DataIndex = market_ref.get_bids().get_max_index();
-
-    while best_ask_index != NIL
-        && get_helper::<RBNode<RestingOrder>>(market_ref.dynamic, best_ask_index)
-            .get_value()
-            .is_expired(now_slot)
-    {
-        best_ask_index = market_ref
-            .get_asks()
-            .get_next_lower_index::<RestingOrder>(best_ask_index);
-    }
-    while best_bid_index != NIL
-        && get_helper::<RBNode<RestingOrder>>(market_ref.dynamic, best_bid_index)
-            .get_value()
-            .is_expired(now_slot)
-    {
-        best_bid_index = market_ref
-            .get_bids()
-            .get_next_lower_index::<RestingOrder>(best_bid_index);
-    }
-
-    let best_ask_price: QuoteAtomsPerBaseAtom = if best_ask_index == NIL {
-        QuoteAtomsPerBaseAtom::MAX
-    } else {
-        get_helper::<RBNode<RestingOrder>>(market_ref.dynamic, best_ask_index)
-            .get_value()
-            .get_price()
-    };
-    let best_bid_price: QuoteAtomsPerBaseAtom = if best_bid_index == NIL {
-        QuoteAtomsPerBaseAtom::MIN
-    } else {
-        get_helper::<RBNode<RestingOrder>>(market_ref.dynamic, best_bid_index)
-            .get_value()
-            .get_price()
-    };
+    // Only PostOnly orders need a book price. Cache each side on first use;
+    // Some(None) records an empty book so it is not scanned again.
+    let mut best_ask_price: Option<Option<QuoteAtomsPerBaseAtom>> = None;
+    let mut best_bid_price: Option<Option<QuoteAtomsPerBaseAtom>> = None;
 
     let mut result: Vec<PlaceOrderParams> = Vec::with_capacity(orders.len());
     let mut original_indices: Vec<usize> = Vec::with_capacity(orders.len());
@@ -225,9 +213,10 @@ fn prepare_orders(
         .unwrap();
         if order.order_type != OrderType::Global {
             if order.is_bid {
-                if price >= best_ask_price
-                    && best_ask_index != NIL
-                    && order.order_type == OrderType::PostOnly
+                if order.order_type == OrderType::PostOnly
+                    && best_ask_price
+                        .get_or_insert_with(|| best_opposing_price(market, true, now_slot))
+                        .is_some_and(|best| price >= best)
                 {
                     num_base_atoms = 0;
                 } else {
@@ -245,9 +234,10 @@ fn prepare_orders(
                 }
             } else {
                 let desired: BaseAtoms = BaseAtoms::new(order.base_atoms);
-                if price <= best_bid_price
-                    && best_bid_index != NIL
-                    && order.order_type == OrderType::PostOnly
+                if order.order_type == OrderType::PostOnly
+                    && best_bid_price
+                        .get_or_insert_with(|| best_opposing_price(market, false, now_slot))
+                        .is_some_and(|best| price <= best)
                 {
                     num_base_atoms = 0;
                 } else if desired > remaining_base_atoms {

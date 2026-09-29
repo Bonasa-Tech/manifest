@@ -344,8 +344,9 @@ pub(crate) fn process_batch_update_core(
     // the placement results while preserving BatchUpdateReturn's wire format.
     #[cfg(not(feature = "certora"))]
     let mut result: Vec<u8> = Vec::with_capacity(4 + orders.len() * 12);
+    // The input vector has a Borsh u32 length and is never extended here.
     #[cfg(not(feature = "certora"))]
-    result.extend_from_slice(&u32::try_from(orders.len()).unwrap().to_le_bytes());
+    result.extend_from_slice(&(orders.len() as u32).to_le_bytes());
     #[cfg(feature = "certora")]
     let mut result = NoResizableVec::<(u64, DataIndex)>::new(10);
     // One borrow of the market for the whole loop. Placing an order does not
