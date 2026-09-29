@@ -54,6 +54,9 @@ Validation: existing SDK decoders independently matched **all 3,721 market count
 
 Artifacts: [expanded-summary.json](expanded-summary.json), [expanded-markets.json](expanded-markets.json), [globals.json](globals.json), [vaults.json](vaults.json), and [gas-prepayments.json](gas-prepayments.json). Each global has an individual order count, gas reserve, surplus, and seat-reclamation estimate. Gas rows include the owning market, mint, trader, and snapshot cleanup eligibility. Snapshot indices are evidence, not durable transaction inputs.
 
+The commands below require the locally retained assessment scripts; those scripts
+are not included in this branch.
+
 ```bash
 # New live read-only census; uses RPC_URL from environment/.env.
 node scripts/assess-global-vault-rent.mjs

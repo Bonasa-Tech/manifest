@@ -96,7 +96,7 @@ async fn defrag_preserves_orders_and_balances_then_batch_restores_five_nodes() -
             .get_trader_index(&f.second_keypair.pubkey()),
         NIL
     );
-    assert_eq!(f.market_fixture.market.fixed.cached_free_blocks(), Some(2));
+    assert_eq!(f.market_fixture.market.free_blocks_short_of_n(2), Some(0));
     let after: Vec<_> = f
         .market_fixture
         .market
@@ -119,7 +119,7 @@ async fn defrag_preserves_orders_and_balances_then_batch_restores_five_nodes() -
     )
     .await?;
     f.market_fixture.reload().await;
-    assert_eq!(f.market_fixture.market.fixed.cached_free_blocks(), Some(5));
+    assert_eq!(f.market_fixture.market.free_blocks_short_of_n(5), Some(0));
     Ok(())
 }
 
@@ -338,15 +338,14 @@ async fn defrag_leaves_wrapped_sol_principal_reserve_and_unsynced_lamports() -> 
 }
 
 #[tokio::test]
-async fn defrag_initializes_large_legacy_free_list_without_heap_growth() -> anyhow::Result<()> {
+async fn defrag_large_free_list_fits_one_instruction() -> anyhow::Result<()> {
     use solana_compute_budget_interface::ComputeBudgetInstruction;
     let f = TestFixture::new().await;
     let key = collector(&f);
     let mut value = f.market_fixture.market.clone();
     value.dynamic.resize(80 * 13_002, 0);
     value.market_expand_n(13_001)?;
-    let mut data = [bytemuck::bytes_of(&value.fixed), &value.dynamic].concat();
-    data[180..184].fill(0); // Legacy account: cached count not initialized.
+    let data = [bytemuck::bytes_of(&value.fixed), &value.dynamic].concat();
     f.context.borrow_mut().set_account(
         &f.market_fixture.key,
         &AccountSharedData::from(Account {

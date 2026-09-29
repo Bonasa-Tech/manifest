@@ -53,7 +53,10 @@ Full compaction must preserve tree links, roots, best-order indices, and order-t
 
 The analyzer validated owner, discriminator, layout version, allocation boundaries, tree parent links, cycles/overlap, order-to-seat references, and full node accounting. Every allocated block belonged to exactly one of the three trees or the free list; there were no unallocated trailing bytes and no excluded markets. An independent pass through the existing TypeScript SDK matched bids, asks, seats, and eligible-seat counts for **all 3,717 markets**. Four synthetic tests cover eligibility, dust balances, expired/global orders, and invalid structures.
 
-Files: [summary.json](summary.json) contains exact aggregate values and rent RPC checks; [markets.json](markets.json) contains per-market figures, mints, and snapshot-only eligible seat indices, sorted by resize savings. These indices are evidence, not durable transaction inputs. [The read-only analyzer](../../../scripts/assess-market-rent.mjs) loads `RPC_URL` from the existing environment or `.env` and never loads a wallet or submits transactions.
+Files: [summary.json](summary.json) contains exact aggregate values and rent RPC checks; [markets.json](markets.json) contains per-market figures, mints, and snapshot-only eligible seat indices, sorted by resize savings. These indices are evidence, not durable transaction inputs. The local read-only analyzer (`scripts/assess-market-rent.mjs`) loads `RPC_URL` from the existing environment or `.env` and never loads a wallet or submits transactions.
+
+The assessment scripts are retained locally and are not included in this branch.
+The following commands require those local copies.
 
 ```bash
 # Fetch a new finalized mainnet snapshot and regenerate the assessment data.

@@ -53,8 +53,7 @@ pub struct MarketFixed {
     /// LinkedList representing all free blocks
     pub free_list_head_index: DataIndex,
 
-    /// Free nodes plus one; zero means a legacy account with no cached count.
-    pub free_blocks_plus_one: u32,
+    pub _padding2: [u32; 1],
 
     /// Quote volume traded over lifetime, can overflow.
     pub quote_volume: u64,
@@ -67,10 +66,6 @@ pub struct MarketFixed {
 }
 
 impl MarketFixed {
-    pub fn cached_free_blocks(&self) -> Option<u32> {
-        self.free_blocks_plus_one.checked_sub(1)
-    }
-
     /// Parse a MarketFixed from bytes.
     pub fn try_from_bytes(data: &[u8]) -> Option<Self> {
         if data.len() < std::mem::size_of::<MarketFixed>() {

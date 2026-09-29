@@ -95,8 +95,6 @@ export interface MarketData {
   orderSequenceNumber: bigint;
   /** Number of bytes used in the dynamic portion of the market account. */
   numBytesAllocated: number;
-  /** Cached spare-node count, or null until a legacy market initializes it. */
-  freeListLength: number | null;
   /** Sorted array of resting orders for bids currently on the orderbook. */
   bids: RestingOrder[];
   /** Sorted array of resting orders for asks currently on the orderbook. */
@@ -753,9 +751,7 @@ export class Market {
     const _freeListHeadIndex = data.readUInt32LE(offset);
     offset += 4;
 
-    const freeBlocksPlusOne = data.readUInt32LE(offset);
-    const freeListLength =
-      freeBlocksPlusOne === 0 ? null : freeBlocksPlusOne - 1;
+    const _padding2 = data.readUInt32LE(offset);
     offset += 4;
 
     const quoteVolumeAtoms: bigint = data.readBigUInt64LE(offset);
@@ -899,7 +895,6 @@ export class Market {
       quoteMint,
       orderSequenceNumber,
       numBytesAllocated,
-      freeListLength,
       bids,
       asks,
       claimedSeats,

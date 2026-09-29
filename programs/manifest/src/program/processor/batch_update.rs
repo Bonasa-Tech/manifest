@@ -1,4 +1,3 @@
-use crate::state::MarketFixed;
 use crate::validation::{io_to_program_error, AccountViewExt};
 use pinocchio::{
     account::{AccountView, RefMut},
@@ -269,10 +268,6 @@ pub(crate) fn process_batch_update_core(
 
     trace!("batch_update trader_index_hint:{trader_index_hint:?} cancels:{cancels:?} orders:{orders:?}");
 
-    {
-        let mut data = market.try_borrow_mut()?;
-        get_mut_dynamic_account::<MarketFixed>(&mut data).initialize_free_block_count()?;
-    }
     let trader_index: DataIndex = {
         let market_data: &mut RefMut<[u8]> = &mut market.try_borrow_mut()?;
 

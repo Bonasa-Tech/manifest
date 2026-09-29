@@ -11,9 +11,6 @@ mod free_addr_helpers {
             FreeList::new(dynamic, fixed.free_list_head_index);
         let free_address: DataIndex = free_list.remove();
         fixed.free_list_head_index = free_list.get_head();
-        if free_address != hypertree::NIL {
-            fixed.took_free_block();
-        }
         free_address
     }
 
@@ -47,7 +44,6 @@ mod free_addr_helpers {
             FreeList::new(dynamic, fixed.free_list_head_index);
         free_list.add(index);
         fixed.free_list_head_index = index;
-        fixed.added_free_block();
     }
 
     pub fn release_address_on_market_fixed_for_seat(

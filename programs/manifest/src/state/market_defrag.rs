@@ -115,7 +115,6 @@ impl<
             .copy_from_slice(&NIL.to_le_bytes());
         fixed.free_list_head_index = used as u32;
         fixed.num_bytes_allocated = (used + 2 * MARKET_BLOCK_SIZE) as u32;
-        fixed.free_blocks_plus_one = 3;
         // Invalidate wrappers' quiet-sync shortcut even when no order traded.
         fixed.order_sequence_number = fixed
             .order_sequence_number
@@ -221,23 +220,7 @@ mod tests {
             );
         }
         assert_eq!(free_count(&m), 2);
-        assert_eq!(m.fixed.cached_free_blocks(), Some(2));
         let again = m.defragment().unwrap();
         assert_eq!(size, again);
-    }
-    #[test]
-    fn free_count_migrates_legacy_and_tracks_allocation_release_and_growth() {
-        let mut m = market();
-        m.market_expand_n(12).unwrap();
-        m.fixed.free_blocks_plus_one = 0;
-        m.initialize_free_block_count().unwrap();
-        assert_eq!(m.fixed.cached_free_blocks(), Some(12));
-        let trader = Pubkey::new_unique();
-        m.claim_seat(&trader).unwrap();
-        assert_eq!(m.fixed.cached_free_blocks(), Some(11));
-        m.release_seat(&trader).unwrap();
-        m.market_expand().unwrap();
-        assert_eq!(m.fixed.cached_free_blocks(), Some(free_count(&m)));
-        assert_eq!(m.fixed.cached_free_blocks(), Some(13));
     }
 }

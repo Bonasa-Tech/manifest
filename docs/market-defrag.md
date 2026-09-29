@@ -43,11 +43,9 @@ nodes, growing only the deficit; they do not shrink larger free lists. The batch
 payer supplies this rent, including on cancel-only batches. Defrag reduces the
 reserve back to two, or closes the account.
 
-The former four padding bytes at fixed-header offset 180 store `free_count + 1`.
-Zero means legacy/unknown. New accounts initialize the cache; legacy accounts
-initialize it once on batch update or defrag. Every allocation, release and market
-expansion maintains an initialized count. The fixed header stays 256 bytes.
-The SDK exposes `MarketData.freeListLength` (`null` for legacy/unknown).
+The fixed header and its padding stay unchanged at 256 bytes. No free-node count
+is stored or maintained. Reserve checks use the existing free list, stopping once
+they have found the required number of nodes (five for a core batch update).
 
 Classic Token and Token-2022 use excess-lamport opcode 38 with the same account
 layout. The pinned Token-2022 SDK helper only accepts its own program ID, so the
@@ -68,10 +66,13 @@ plus owner. Offsets are checked for bounds, alignment and node type. On the firs
 stale order hint in a sync, one scan builds a temporary index for that trader;
 subsequent stale hints use binary search. Updated hints are stored in the wrapper.
 
-The regular wrapper recreates missing seats before batch updates and deposits.
-Deposit appends a System Program account; old encodings still work for live seats,
-but callers must update their SDK to recreate harvested seats through deposit.
-ClaimSeat repairs an existing MarketInfo instead of inserting a duplicate.
+The regular wrapper recreates missing seats before batch updates. Deposit keeps
+its original instruction and account list. Callers must claim a seat before an
+initial deposit and claim it again after harvesting; ClaimSeat and Deposit can
+be composed in the same transaction. ClaimSeat also refreshes moved seat/order
+hints and repairs an existing MarketInfo instead of inserting a duplicate.
+After defrag, callers can prepend ClaimSeat before depositing to refresh those
+hints even when their seat survived.
 Zero withdrawals after harvesting are harmless. The UI wrapper refreshes before
 cancellation, recreates seats through its existing placement path, and prepays
 placement capacity from its designated payer (one order plus five spare nodes).
@@ -136,11 +137,11 @@ separate global analysis.
 - Seven new core integration cases: collector authorization/empty closure,
   balance and FIFO preservation/five-node replenishment, classic-token and
   Token-2022 excess collection, WSOL preservation, 13,000 seats with 1,000 funded
-  survivors, and a legacy account containing 13,002 free nodes.
+  survivors, and an account containing 13,002 free nodes.
 - The large seat-population case uses approximately 954,000 CU under a 1.4M limit.
 - Core integration run: 141 passed, with the one old one-spare-node assertion
   subsequently updated to five and passing on rerun. Two unrelated cases were
-  excluded. All 87 core library tests passed.
+  excluded. All 86 core library tests passed.
 - All 32 regular-wrapper and 11 UI-wrapper integration tests passed, including
   moved-order cancellation, harvested-seat recovery and a sponsored owner with
   no SOL. Existing tests cover ordinary matching, reverse orders and gas refunds.

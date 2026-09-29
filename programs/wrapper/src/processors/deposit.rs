@@ -62,22 +62,6 @@ pub(crate) fn process_deposit(
     let WrapperDepositParams { amount_atoms } = WrapperDepositParams::try_from_slice(data)
         .map_err(manifest::validation::io_to_program_error)?;
 
-    let missing = {
-        let data = market.try_borrow()?;
-        manifest::program::get_dynamic_account::<MarketFixed>(&data)
-            .get_trader_index(owner.pubkey())
-            == hypertree::NIL
-    };
-    if missing {
-        // Appended account preserves existing deposit encoding. Legacy callers
-        // with a live seat do not need to supply the System Program.
-        let system = Program::new(
-            next_account_info(account_iter)?,
-            &solana_sdk_ids::system_program::id(),
-        )?;
-        super::shared::ensure_market_seat(&market, &owner, &manifest_program, &system)?;
-    }
-    sync(&wrapper_state, &market)?;
     let trader_index_hint: Option<DataIndex> =
         get_trader_index_hint_for_market(&wrapper_state, &market.info.pubkey())?;
 

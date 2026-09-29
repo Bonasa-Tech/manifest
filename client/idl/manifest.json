@@ -2052,8 +2052,13 @@
             "type": "u32"
           },
           {
-            "name": "freeBlocksPlusOne",
-            "type": "u32"
+            "name": "padding2",
+            "type": {
+              "array": [
+                "u32",
+                1
+              ]
+            }
           },
           {
             "name": "quoteVolume",

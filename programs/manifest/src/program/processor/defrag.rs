@@ -1,6 +1,6 @@
 use crate::{
     market_vault_seeds_with_bump,
-    program::{batch_expand_market, get_mut_dynamic_account, invoke_signed},
+    program::{batch_expand_market, get_dynamic_account, get_mut_dynamic_account, invoke_signed},
     require,
     state::MarketFixed,
     validation::{
@@ -121,9 +121,8 @@ pub(crate) fn process_defrag(
         }
     }
     let missing = {
-        let mut data = market.try_borrow_mut()?;
-        let mut state = get_mut_dynamic_account::<MarketFixed>(&mut data);
-        state.initialize_free_block_count()?;
+        let data = market.try_borrow()?;
+        let state = get_dynamic_account::<MarketFixed>(&data);
         state.free_blocks_short_of_n(2).unwrap_or(0)
     };
     if missing != 0 {
