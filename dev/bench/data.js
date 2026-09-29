@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1790682622124,
+  "lastUpdate": 1790706013308,
   "repoUrl": "https://github.com/Bonasa-Tech/manifest",
   "entries": {
     "CU Benchmark": [
@@ -14549,6 +14549,72 @@ window.BENCHMARK_DATA = {
           {
             "name": "MFX_99",
             "value": 1970,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "cyrbritt@gmail.com",
+            "name": "Britt Cyr",
+            "username": "brittcyr"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "7ab6d24daa6c84dbeb46812d9fb975063d41b629",
+          "message": "CU improvements (#742)\n\n* Reduce batch encoding, order insertion, and global lookup CU\n\nEncode batch return records directly into their final Borsh buffer and skip\nClock reads when there are no placements. Initialize resting-order payload\ntags during tree insertion. Compare global trader key prefixes before the\nfull key comparison while preserving the existing ordering.\n\nAdd return-data, cancel-refund, tagged-insertion, and key-order regressions.\n\nThe local Benchmark action replay saves 1,563,219 CU (1.39%) against 212b453c,\nwith all 4,158 transactions improving. Dedicated global fixtures save up to\n48 CU on deposits/withdrawals and 207 CU on eviction.\n\nValidation: 175 native tests, 117 selected SBF tests, format, Clippy, and fuzz\nfeature build passed. All five Certora configurations compile as SBFv3;\nfull proof jobs remain unrun because no local CERTORAKEY is available.\n\n* Remove wrapper order rejection logging\n\n* Filter equal-price PostOnly orders before wrapper CPI\n\nUse inclusive crossing comparisons on both sides, matching the core, so an\notherwise valid cancellation is not rolled back by an equal-price PostOnly\nreplacement. Guard empty books explicitly instead of comparing their\nMIN/MAX sentinel prices as though they were live orders.\n\nCover bid and ask cancellations with repeated equal-price replacements,\nequality behind expired orders, and minimum-price asks on an empty book.\nAll four focused SBF wrapper regressions pass against this built change.\n\n* Skip unused wrapper book scans and speed market seat lookups\n\nRead and cache an opposing book price only when a PostOnly order needs it,\nincluding an explicit empty-book result. Ordinary Limit orders skip both\nbook walks and crossing comparisons. Use the existing order-preserving\nkey-prefix comparator for ClaimedSeat and cast the unchanged Borsh vector\nlength directly to u32 when encoding batch results.\n\nAdd fixed-key direct-swap CU fixtures at 32, 128 and 999 market seats.\nThey save 72, 120 and 192 CU respectively; the hinted wrapper replay does\nnot exercise these seat lookups. Lazy book prices save 1,530,309 replay CU\nand the count cast saves 12,526 CU plus 416 bytes in the standalone core.\n\nThe local Benchmark action uses 106,717,007 CU, down 1,542,835 (1.43%) from\n58686ac1. All 4,158 transactions improve; CU/order p50/p95/p99 are\n1065/1318/1859. Cancellation early-return variants were measured but not\nretained because they increased total replay CU.\n\nValidation: 180 native tests, 134 selected SBF integration tests, format\nand Clippy. All five Certora configurations compile and validate as SBFv3;\nfull proof jobs remain unrun because CERTORAKEY is unavailable locally.\n\n* Evaluate wrapper PostOnly orders against updated batch state\n\n* Reuse the trader seat index throughout direct swaps",
+          "timestamp": "2026-09-29T14:16:00-04:00",
+          "tree_id": "22c326585c4d7af90edb02aecac8ccb80794104e",
+          "url": "https://github.com/Bonasa-Tech/manifest/commit/7ab6d24daa6c84dbeb46812d9fb975063d41b629"
+        },
+        "date": 1790706010132,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "PHX_50",
+            "value": 6748,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "PHX_95",
+            "value": 8819,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "PHX_99",
+            "value": 10866,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_50",
+            "value": 1067,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_95",
+            "value": 1325,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_99",
+            "value": 1868,
             "range": "",
             "unit": "CU",
             "extra": ""
