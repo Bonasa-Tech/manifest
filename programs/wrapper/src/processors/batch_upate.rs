@@ -225,7 +225,10 @@ fn prepare_orders(
         .unwrap();
         if order.order_type != OrderType::Global {
             if order.is_bid {
-                if price > best_ask_price && order.order_type == OrderType::PostOnly {
+                if price >= best_ask_price
+                    && best_ask_index != NIL
+                    && order.order_type == OrderType::PostOnly
+                {
                     num_base_atoms = 0;
                 } else {
                     // Exact, like the core: a bid sized to the whole balance
@@ -242,7 +245,10 @@ fn prepare_orders(
                 }
             } else {
                 let desired: BaseAtoms = BaseAtoms::new(order.base_atoms);
-                if price < best_bid_price && order.order_type == OrderType::PostOnly {
+                if price <= best_bid_price
+                    && best_bid_index != NIL
+                    && order.order_type == OrderType::PostOnly
+                {
                     num_base_atoms = 0;
                 } else if desired > remaining_base_atoms {
                     num_base_atoms = 0;

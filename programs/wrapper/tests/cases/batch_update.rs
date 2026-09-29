@@ -920,6 +920,132 @@ async fn wrapper_filters_crossing_post_only() -> anyhow::Result<()> {
 }
 
 #[tokio::test]
+async fn wrapper_filters_equal_price_post_only_and_preserves_cancels() -> anyhow::Result<()> {
+    for is_bid in [true, false] {
+        let mut fixture = TestFixture::new().await;
+        fixture.claim_seat().await?;
+        fixture.deposit(Token::SOL, 10 * SOL_UNIT_SIZE).await?;
+        fixture.deposit(Token::USDC, 10 * USDC_UNIT_SIZE).await?;
+        let payer = fixture.payer();
+        let signer = fixture.payer_keypair().insecure_clone();
+        let order = |id, price, side, order_type| {
+            WrapperPlaceOrderParams::new(
+                id,
+                SOL_UNIT_SIZE,
+                price,
+                -3,
+                side,
+                NO_EXPIRATION_LAST_VALID_SLOT,
+                order_type,
+            )
+        };
+        let place = batch_update_instruction(
+            &fixture.market.key,
+            &payer,
+            &fixture.wrapper.key,
+            vec![],
+            false,
+            vec![
+                order(10, if is_bid { 1 } else { 3 }, is_bid, OrderType::Limit),
+                order(20, 2, !is_bid, OrderType::Limit),
+            ],
+        );
+        send_tx_with_retry(
+            Rc::clone(&fixture.context),
+            &[place],
+            Some(&payer),
+            &[&signer],
+        )
+        .await?;
+
+        // Keep the opposing order. Both equal-price replacements must be
+        // filtered while the cancellation of the old quote still commits.
+        let replace = batch_update_instruction(
+            &fixture.market.key,
+            &payer,
+            &fixture.wrapper.key,
+            vec![WrapperCancelOrderParams::new(10)],
+            false,
+            vec![
+                order(30, 2, is_bid, OrderType::PostOnly),
+                order(31, 2, is_bid, OrderType::PostOnly),
+            ],
+        );
+        send_tx_with_retry(
+            Rc::clone(&fixture.context),
+            &[replace],
+            Some(&payer),
+            &[&signer],
+        )
+        .await?;
+        fixture.market.reload().await;
+        let market = &fixture.market.market;
+        assert_eq!(
+            market.get_bids().iter::<RestingOrder>().count(),
+            usize::from(!is_bid)
+        );
+        assert_eq!(
+            market.get_asks().iter::<RestingOrder>().count(),
+            usize::from(is_bid)
+        );
+        assert_eq!(
+            market.fixed.get_order_sequence_number(),
+            2,
+            "filtered orders never reach core"
+        );
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn wrapper_post_only_minimum_ask_rests_on_empty_book() -> anyhow::Result<()> {
+    let mut fixture = TestFixture::new().await;
+    fixture.claim_seat().await?;
+    fixture.deposit(Token::SOL, 2 * SOL_UNIT_SIZE).await?;
+    let payer = fixture.payer();
+    let signer = fixture.payer_keypair().insecure_clone();
+    let orders = (0..2)
+        .map(|id| {
+            WrapperPlaceOrderParams::new(
+                id,
+                SOL_UNIT_SIZE,
+                1,
+                -18,
+                false,
+                NO_EXPIRATION_LAST_VALID_SLOT,
+                OrderType::PostOnly,
+            )
+        })
+        .collect();
+    let place = batch_update_instruction(
+        &fixture.market.key,
+        &payer,
+        &fixture.wrapper.key,
+        vec![],
+        false,
+        orders,
+    );
+    send_tx_with_retry(
+        Rc::clone(&fixture.context),
+        &[place],
+        Some(&payer),
+        &[&signer],
+    )
+    .await?;
+    fixture.market.reload().await;
+    assert_eq!(
+        fixture
+            .market
+            .market
+            .get_asks()
+            .iter::<RestingOrder>()
+            .count(),
+        2
+    );
+    Ok(())
+}
+
+#[tokio::test]
 async fn wrapper_filters_crossing_post_only_after_expired_prefix() -> anyhow::Result<()> {
     let mut test_fixture: TestFixture = TestFixture::new().await;
     test_fixture.claim_seat().await?;
@@ -1019,15 +1145,26 @@ async fn wrapper_filters_crossing_post_only_after_expired_prefix() -> anyhow::Re
         &test_fixture.wrapper.key,
         vec![],
         false,
-        vec![WrapperPlaceOrderParams::new(
-            1,
-            SOL_UNIT_SIZE,
-            100,
-            0,
-            true,
-            NO_EXPIRATION_LAST_VALID_SLOT,
-            OrderType::PostOnly,
-        )],
+        vec![
+            WrapperPlaceOrderParams::new(
+                1,
+                SOL_UNIT_SIZE,
+                100,
+                0,
+                true,
+                NO_EXPIRATION_LAST_VALID_SLOT,
+                OrderType::PostOnly,
+            ),
+            WrapperPlaceOrderParams::new(
+                2,
+                SOL_UNIT_SIZE,
+                60,
+                0,
+                true,
+                NO_EXPIRATION_LAST_VALID_SLOT,
+                OrderType::PostOnly,
+            ),
+        ],
     );
     send_tx_with_retry(
         Rc::clone(&test_fixture.context),
