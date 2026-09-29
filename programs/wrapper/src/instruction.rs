@@ -31,6 +31,7 @@ pub enum ManifestWrapperInstruction {
     #[account(5, name = "token_program", desc = "Token program")]
     #[account(6, writable, name = "wrapper_state", desc = "Wrapper state")]
     #[account(7, name = "mint", desc = "Mint, needed for token 22")]
+    #[account(8, optional, name = "system_program", desc = "System program for restoring a harvested seat")]
     Deposit = 2,
 
     /// Withdraw

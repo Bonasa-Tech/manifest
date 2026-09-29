@@ -15,7 +15,7 @@ export type MarketFixed = {
   quoteMintDecimals: number;
   baseVaultBump: number;
   quoteVaultBump: number;
-  padding1: number[] /* size: 3 */;
+  padding1: number[]; /* size: 3 */
   baseMint: web3.PublicKey;
   quoteMint: web3.PublicKey;
   baseVault: web3.PublicKey;
@@ -28,7 +28,7 @@ export type MarketFixed = {
   asksBestIndex: number;
   claimedSeatsRootIndex: number;
   freeListHeadIndex: number;
-  padding2: number[] /* size: 1 */;
+  freeBlocksPlusOne: number;
   quoteVolume: beet.bignum;
   baseGlobal: web3.PublicKey;
   quoteGlobal: web3.PublicKey;
@@ -59,7 +59,7 @@ export const marketFixedBeet = new beet.BeetArgsStruct<MarketFixed>(
     ['asksBestIndex', beet.u32],
     ['claimedSeatsRootIndex', beet.u32],
     ['freeListHeadIndex', beet.u32],
-    ['padding2', beet.uniformFixedSizeArray(beet.u32, 1)],
+    ['freeBlocksPlusOne', beet.u32],
     ['quoteVolume', beet.u64],
     ['baseGlobal', beetSolana.publicKey],
     ['quoteGlobal', beetSolana.publicKey],

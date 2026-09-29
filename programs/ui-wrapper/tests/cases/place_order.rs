@@ -40,10 +40,32 @@ use crate::{
 
 #[tokio::test]
 async fn wrapper_place_order_test() -> anyhow::Result<()> {
+    place_cancel_settle(false).await
+}
+
+#[tokio::test]
+async fn defrag_ui_wrapper_recovers_moved_order_and_seat() -> anyhow::Result<()> {
+    place_cancel_settle(true).await
+}
+
+async fn place_cancel_settle(defrag: bool) -> anyhow::Result<()> {
     let mut test_fixture: TestFixture = TestFixture::new().await;
 
     let payer: Pubkey = test_fixture.payer();
     let payer_keypair: Keypair = test_fixture.payer_keypair().insecure_clone();
+    if defrag {
+        send_tx_with_retry(
+            Rc::clone(&test_fixture.context),
+            &[manifest::program::claim_seat_instruction(
+                &test_fixture.market.key,
+                &test_fixture.second_keypair.pubkey(),
+            )],
+            Some(&payer),
+            &[&payer_keypair, &test_fixture.second_keypair],
+        )
+        .await?;
+    }
+
     let (base_mint, trader_token_account_base) = test_fixture
         .fund_trader_wallet(&payer_keypair, Token::SOL, 1)
         .await;
@@ -104,7 +126,7 @@ async fn wrapper_place_order_test() -> anyhow::Result<()> {
     };
     send_tx_with_retry(
         Rc::clone(&test_fixture.context),
-        &[place_order_ix],
+        &[place_order_ix.clone()],
         Some(&payer),
         &[&payer_keypair],
     )
@@ -158,6 +180,29 @@ async fn wrapper_place_order_test() -> anyhow::Result<()> {
         QuoteAtomsPerBaseAtom::try_from_mantissa_and_exponent(1, 0).unwrap()
     );
     assert_eq!(open_order.get_market_data_index(), core_index);
+
+    if defrag {
+        let collector = fee_authority_keypair();
+        send_tx_with_retry(
+            Rc::clone(&test_fixture.context),
+            &[manifest::program::defrag_instruction(
+                &test_fixture.market.key,
+                &collector.pubkey(),
+                &base_mint,
+                &quote_mint,
+                spl_token::id(),
+                spl_token::id(),
+            )],
+            Some(&payer),
+            &[&payer_keypair, &collector],
+        )
+        .await?;
+        test_fixture.market.reload().await;
+        assert_ne!(
+            test_fixture.market.market.get_trader_index(&payer),
+            trader_index
+        );
+    }
 
     // cancel the same order
 
@@ -278,6 +323,50 @@ async fn wrapper_place_order_test() -> anyhow::Result<()> {
     let trader_token_account_quote =
         spl_token::state::Account::unpack(&trader_token_account_quote.data)?;
     assert_eq!(trader_token_account_quote.amount, 1);
+
+    if defrag {
+        // The settled trader is now harvestable. Leave unsolicited vault dust
+        // so retirement does not remove the market used for seat recreation.
+        test_fixture.sol_mint.mint_to(&base_vault, 1).await;
+        let collector = fee_authority_keypair();
+        send_tx_with_retry(
+            Rc::clone(&test_fixture.context),
+            &[manifest::program::defrag_instruction(
+                &test_fixture.market.key,
+                &collector.pubkey(),
+                &base_mint,
+                &quote_mint,
+                spl_token::id(),
+                spl_token::id(),
+            )],
+            Some(&payer),
+            &[&payer_keypair, &collector],
+        )
+        .await?;
+        test_fixture.market.reload().await;
+        assert_eq!(test_fixture.market.market.get_trader_index(&payer), NIL);
+        send_tx_with_retry(
+            Rc::clone(&test_fixture.context),
+            &[place_order_ix],
+            Some(&payer),
+            &[&payer_keypair],
+        )
+        .await?;
+        test_fixture.market.reload().await;
+        test_fixture.wrapper.reload().await;
+        let tree = MarketInfosTreeReadOnly::new(
+            &test_fixture.wrapper.wrapper.dynamic,
+            test_fixture.wrapper.wrapper.fixed.market_infos_root_index,
+            NIL,
+        );
+        let infos: Vec<_> = tree.iter::<MarketInfo>().collect();
+        assert_eq!(infos.len(), 1);
+        assert_ne!(infos[0].1.trader_index, NIL);
+        assert_eq!(
+            infos[0].1.trader_index,
+            test_fixture.market.market.get_trader_index(&payer)
+        );
+    }
 
     Ok(())
 }

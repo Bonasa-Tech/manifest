@@ -124,10 +124,11 @@ async fn place_order_not_expand_if_not_needed_test() -> anyhow::Result<()> {
         .try_load(&test_fixture.market_fixture.key)
         .await?
         .unwrap();
-    // Always 1 more than needed.
+    // One seat, one order and five spare nodes. Cancel/replacement reuses
+    // existing capacity instead of expanding beyond the batch reserve.
     assert_eq!(
         loaded_account.data.len(),
-        MARKET_FIXED_SIZE + (3 * MARKET_BLOCK_SIZE)
+        MARKET_FIXED_SIZE + (7 * MARKET_BLOCK_SIZE)
     );
 
     Ok(())

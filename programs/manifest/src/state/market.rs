@@ -180,7 +180,8 @@ pub struct MarketFixed {
     /// LinkedList representing all free blocks that could be used for ClaimedSeats or RestingOrders
     free_list_head_index: DataIndex,
 
-    _padding2: [u32; 1],
+    /// Free nodes plus one; zero means a legacy account whose count is not cached.
+    free_blocks_plus_one: u32,
 
     /// Quote volume traded over lifetime, can overflow. This is for
     /// informational and monitoring purposes only. This is not guaranteed to
@@ -334,7 +335,7 @@ impl MarketFixed {
             #[cfg(feature = "certora")]
             // non NIL
             free_list_head_index: 0,
-            _padding2: [0; 1],
+            free_blocks_plus_one: if cfg!(feature = "certora") { 0 } else { 1 },
             quote_volume: QuoteAtoms::ZERO,
             // The global cache does not exist under certora, see the field
             // definitions; that build fills the same bytes with the totals
@@ -381,7 +382,7 @@ impl MarketFixed {
             asks_best_index: NIL,
             claimed_seats_root_index,
             free_list_head_index: 0,
-            _padding2: [0; 1],
+            free_blocks_plus_one: 0,
             quote_volume: QuoteAtoms::ZERO,
             withdrawable_base_atoms: BaseAtoms::new(nondet()),
             withdrawable_quote_atoms: QuoteAtoms::new(nondet()),
@@ -478,7 +479,23 @@ impl MarketFixed {
         self.orderbook_quote_atoms
     }
 
-    // Used in benchmark
+    /// None until a legacy account initializes its free-list cache.
+    pub fn cached_free_blocks(&self) -> Option<u32> {
+        self.free_blocks_plus_one.checked_sub(1)
+    }
+
+    pub(super) fn added_free_block(&mut self) {
+        if self.free_blocks_plus_one != 0 {
+            self.free_blocks_plus_one += 1;
+        }
+    }
+
+    pub(super) fn took_free_block(&mut self) {
+        if self.free_blocks_plus_one != 0 {
+            self.free_blocks_plus_one -= 1;
+        }
+    }
+
     pub fn has_free_block(&self) -> bool {
         self.free_list_head_index != NIL
     }
@@ -578,6 +595,9 @@ impl<Fixed: DerefOrBorrow<MarketFixed>, Dynamic: DerefOrBorrow<[u8]>>
 
     pub fn has_two_free_blocks(&self) -> bool {
         let DynamicAccount { fixed, dynamic } = self.borrow_market();
+        if let Some(count) = fixed.cached_free_blocks() {
+            return count >= 2;
+        }
         let free_list_head_index: DataIndex = fixed.free_list_head_index;
         if free_list_head_index == NIL {
             return false;
@@ -593,6 +613,9 @@ impl<Fixed: DerefOrBorrow<MarketFixed>, Dynamic: DerefOrBorrow<[u8]>>
     */
     pub fn free_blocks_short_of_n(&self, mut n: u32) -> Option<u32> {
         let DynamicAccount { fixed, dynamic } = self.borrow_market();
+        if let Some(count) = fixed.cached_free_blocks() {
+            return (count <= n).then_some(n.saturating_sub(count));
+        }
         let mut current_index: DataIndex = fixed.free_list_head_index;
 
         while n > 0 {
@@ -947,6 +970,82 @@ impl<Fixed: DerefOrBorrow<MarketFixed>, Dynamic: DerefOrBorrow<[u8]>>
         return false;
     }
 
+    /// Cached offsets are hints: compaction can move nodes or harvest a seat.
+    pub fn resolve_trader_index(&self, hint: DataIndex, trader: &Pubkey) -> DataIndex {
+        let DynamicAccount { dynamic, .. } = self.borrow_market();
+        if hint != NIL
+            && hint as usize % MARKET_BLOCK_SIZE == 0
+            && (hint as usize)
+                .checked_add(MARKET_BLOCK_SIZE)
+                .is_some_and(|end| end <= dynamic.len())
+        {
+            let node = get_helper::<RBNode<ClaimedSeat>>(dynamic, hint);
+            if node.get_payload_type() == MarketDataTreeNodeType::ClaimedSeat as u8
+                && node.get_value().trader == *trader
+            {
+                return hint;
+            }
+        }
+        self.get_trader_index(trader)
+    }
+
+    /// Resolve stable order identity, including when the old offset was truncated
+    /// or reused. Never substitute another trader's order at the same address.
+    pub fn resolve_order_index(
+        &self,
+        hint: DataIndex,
+        sequence: u64,
+        trader: DataIndex,
+    ) -> DataIndex {
+        self.resolve_order_index_cached(hint, sequence, trader, &mut None)
+    }
+
+    /// Share this temporary cache across one sync for one trader. Hints remain
+    /// O(1); the first miss scans both books once, then searches stable IDs.
+    pub fn resolve_order_index_cached(
+        &self,
+        hint: DataIndex,
+        sequence: u64,
+        trader: DataIndex,
+        cache: &mut Option<Vec<(u64, DataIndex)>>,
+    ) -> DataIndex {
+        if trader == NIL {
+            return NIL;
+        }
+        let DynamicAccount { fixed, dynamic } = self.borrow_market();
+        if hint != NIL
+            && hint as usize % MARKET_BLOCK_SIZE == 0
+            && (hint as usize)
+                .checked_add(MARKET_BLOCK_SIZE)
+                .is_some_and(|end| end <= dynamic.len())
+        {
+            let node = get_helper::<RBNode<RestingOrder>>(dynamic, hint);
+            if node.get_payload_type() == MarketDataTreeNodeType::RestingOrder as u8
+                && node.get_value().get_sequence_number() == sequence
+                && node.get_value().get_trader_index() == trader
+            {
+                return hint;
+            }
+        }
+        let indices = cache.get_or_insert_with(|| {
+            let mut indices = Vec::new();
+            for root in [fixed.bids_root_index, fixed.asks_root_index] {
+                let tree = RedBlackTreeReadOnly::<RestingOrder>::new(dynamic, root, NIL);
+                for (index, order) in tree.iter::<RestingOrder>() {
+                    if order.get_trader_index() == trader {
+                        indices.push((order.get_sequence_number(), index));
+                    }
+                }
+            }
+            indices.sort_unstable_by_key(|(sequence, _)| *sequence);
+            indices
+        });
+        indices
+            .binary_search_by_key(&sequence, |(sequence, _)| *sequence)
+            .map(|position| indices[position].1)
+            .unwrap_or(NIL)
+    }
+
     pub fn get_trader_index(&self, trader: &Pubkey) -> DataIndex {
         let DynamicAccount { fixed, dynamic } = self.borrow_market();
 
@@ -972,6 +1071,32 @@ impl<
         }
     }
 
+    pub fn initialize_free_block_count(&mut self) -> ProgramResult {
+        let DynamicAccount { fixed, dynamic } = self.borrow_mut();
+        if fixed.free_blocks_plus_one == 0 {
+            // Bounded traversal validates offsets/cycles without a HashSet or
+            // heap allocation, even for legacy accounts with huge free lists.
+            let allocated = fixed.num_bytes_allocated as usize;
+            let mut count = 0usize;
+            let mut index = fixed.free_list_head_index;
+            while index != NIL {
+                let offset = index as usize;
+                require!(
+                    allocated <= dynamic.len()
+                        && offset % MARKET_BLOCK_SIZE == 0
+                        && offset + MARKET_BLOCK_SIZE <= allocated
+                        && count < allocated / MARKET_BLOCK_SIZE,
+                    ProgramError::InvalidAccountData,
+                    "Invalid market free list"
+                )?;
+                count += 1;
+                index = u32::from_le_bytes(dynamic[offset..offset + 4].try_into().unwrap());
+            }
+            fixed.free_blocks_plus_one = count as u32 + 1;
+        }
+        Ok(())
+    }
+
     pub fn market_expand(&mut self) -> ProgramResult {
         let DynamicAccount { fixed, dynamic } = self.borrow_mut();
         let mut free_list: FreeList<MarketUnusedFreeListPadding> =
@@ -980,6 +1105,7 @@ impl<
         free_list.add(fixed.num_bytes_allocated);
         fixed.num_bytes_allocated += MARKET_BLOCK_SIZE as u32;
         fixed.free_list_head_index = free_list.get_head();
+        fixed.added_free_block();
         Ok(())
     }
 
@@ -991,6 +1117,7 @@ impl<
             free_list.add(fixed.num_bytes_allocated);
             fixed.num_bytes_allocated += MARKET_BLOCK_SIZE as u32;
             fixed.free_list_head_index = free_list.get_head();
+            fixed.added_free_block();
             n -= 1;
         }
         Ok(())
@@ -2208,3 +2335,7 @@ pub fn create_empty_market(
         quote_vault_bump,
     )
 }
+
+#[cfg(not(feature = "certora"))]
+#[path = "market_defrag.rs"]
+mod defrag;

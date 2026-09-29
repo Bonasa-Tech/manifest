@@ -159,6 +159,12 @@ pub fn process_instruction(
         ManifestInstruction::GlobalEvict => {
             process_global_evict(program_id, accounts, data)?;
         }
+        ManifestInstruction::Defrag => {
+            #[cfg(not(feature = "certora"))]
+            program::defrag::process_defrag(program_id, accounts, data)?;
+            #[cfg(feature = "certora")]
+            return Err(ProgramError::InvalidInstructionData);
+        }
         ManifestInstruction::GlobalClean => {
             process_global_clean(program_id, accounts, data)?;
         }

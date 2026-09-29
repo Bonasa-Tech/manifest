@@ -152,6 +152,14 @@
           "docs": [
             "Mint, needed for token 22"
           ]
+        },
+        {
+          "name": "systemProgram",
+          "isMut": false,
+          "isSigner": false,
+          "docs": [
+            "System program for restoring a harvested seat"
+          ]
         }
       ],
       "args": [

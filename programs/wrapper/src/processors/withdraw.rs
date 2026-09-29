@@ -63,6 +63,10 @@ pub(crate) fn process_withdraw(
     let WrapperWithdrawParams { amount_atoms } = WrapperWithdrawParams::try_from_slice(data)
         .map_err(manifest::validation::io_to_program_error)?;
 
+    sync(&wrapper_state, &market)?;
+    if amount_atoms == 0 {
+        return Ok(());
+    }
     let trader_index_hint: Option<DataIndex> =
         get_trader_index_hint_for_market(&wrapper_state, &market.info.pubkey())?;
 

@@ -1,3 +1,4 @@
+use crate::state::MarketFixed;
 use crate::validation::{io_to_program_error, AccountViewExt};
 use pinocchio::{
     account::{AccountView, RefMut},
@@ -21,7 +22,7 @@ use borsh::{BorshDeserialize, BorshSerialize};
 use hypertree::{get_helper, trace, DataIndex, RBNode};
 use solana_program::pubkey::Pubkey;
 
-use super::{expand_market_if_needed, shared::get_mut_dynamic_account};
+use super::{batch_expand_market, shared::get_mut_dynamic_account};
 
 use crate::validation::loaders::GlobalTradeAccounts;
 #[cfg(feature = "certora")]
@@ -268,6 +269,10 @@ pub(crate) fn process_batch_update_core(
 
     trace!("batch_update trader_index_hint:{trader_index_hint:?} cancels:{cancels:?} orders:{orders:?}");
 
+    {
+        let mut data = market.try_borrow_mut()?;
+        get_mut_dynamic_account::<MarketFixed>(&mut data).initialize_free_block_count()?;
+    }
     let trader_index: DataIndex = {
         let market_data: &mut RefMut<[u8]> = &mut market.try_borrow_mut()?;
 
@@ -386,12 +391,16 @@ pub(crate) fn process_batch_update_core(
         };
         if need_expand {
             drop(market_data);
-            expand_market_if_needed(&payer, &market)?;
+            batch_expand_market(&payer, &market, 5)?;
             market_data = market.try_borrow_mut()?;
             dynamic_account = get_mut_dynamic_account(&mut market_data);
         }
     }
+    let missing = dynamic_account.free_blocks_short_of_n(5).unwrap_or(0);
     drop(market_data);
+    if missing > 0 {
+        batch_expand_market(&payer, &market, missing)?;
+    }
 
     // Pay out gas prepayment refunds for cancelled global orders. This must
     // happen after the last CPI of this instruction (gas prepayments and

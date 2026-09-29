@@ -11,3 +11,4 @@ export * from './GlobalEvict';
 export * from './GlobalWithdraw';
 export * from './Swap';
 export * from './Withdraw';
+export * from './Defrag';

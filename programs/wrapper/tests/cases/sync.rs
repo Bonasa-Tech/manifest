@@ -855,3 +855,74 @@ async fn stale_entry_cleared_by_the_next_placement_test() -> anyhow::Result<()> 
     );
     Ok(())
 }
+
+async fn defrag_fixture(f: &TestFixture) -> anyhow::Result<()> {
+    use solana_signer::Signer;
+    let collector = Keypair::new_from_array([42; 32]);
+    let ix = manifest::program::defrag_instruction(
+        &f.market.key,
+        &collector.pubkey(),
+        &f.sol_mint.key,
+        &f.usdc_mint.key,
+        spl_token::id(),
+        spl_token::id(),
+    );
+    send_tx_with_retry(
+        Rc::clone(&f.context),
+        &[ix],
+        Some(&f.payer()),
+        &[&f.payer_keypair(), &collector],
+    )
+    .await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn defrag_wrapper_recovers_moved_orders_and_seat_hints() -> anyhow::Result<()> {
+    use solana_signer::Signer;
+    let mut f = TestFixture::new().await;
+    // An empty seat before the wrapper orders creates a hole on compaction.
+    send_tx_with_retry(
+        Rc::clone(&f.context),
+        &[manifest::program::claim_seat_instruction(
+            &f.market.key,
+            &f.second_keypair.pubkey(),
+        )],
+        Some(&f.payer()),
+        &[&f.payer_keypair(), &f.second_keypair],
+    )
+    .await?;
+    f.claim_seat().await?;
+    f.deposit(Token::SOL, 5 * SOL_UNIT_SIZE).await?;
+    wrapper_batch(&f, vec![], vec![ask(201, 2), ask(202, 3)]).await?;
+    let (before, orders) = wrapper_view(&f).await;
+    defrag_fixture(&f).await?;
+    wrapper_batch(&f, vec![WrapperCancelOrderParams::new(201)], vec![]).await?;
+    let (after, remaining) = wrapper_view(&f).await;
+    assert_ne!(before.trader_index, after.trader_index);
+    assert_eq!(remaining, vec![orders[1]]);
+    wrapper_batch(&f, vec![WrapperCancelOrderParams::new(202)], vec![]).await?;
+    assert!(wrapper_view(&f).await.1.is_empty());
+    Ok(())
+}
+
+#[tokio::test]
+async fn defrag_wrapper_restores_harvested_seat_on_deposit_without_duplicate_market_info(
+) -> anyhow::Result<()> {
+    let mut f = TestFixture::new().await;
+    f.claim_seat().await?;
+    // Unsolicited tokens keep the otherwise empty market open.
+    let vault = manifest::validation::get_vault_address(&f.market.key, &f.sol_mint.key).0;
+    f.sol_mint.mint_to(&vault, 1).await;
+    defrag_fixture(&f).await?;
+    f.deposit(Token::SOL, SOL_UNIT_SIZE).await?;
+    let (info, orders) = wrapper_view(&f).await;
+    assert_ne!(info.trader_index, NIL);
+    assert_eq!(info.base_balance, BaseAtoms::new(SOL_UNIT_SIZE));
+    assert!(orders.is_empty());
+    // Idempotent wrapper claim repairs the existing MarketInfo instead of
+    // inserting a second tree key after reclamation.
+    f.claim_seat().await?;
+    assert_eq!(wrapper_view(&f).await.0.trader_index, info.trader_index);
+    Ok(())
+}

@@ -1,3 +1,4 @@
+import { createDefragInstruction } from './manifest/instructions/Defrag';
 import { bignum } from '@metaplex-foundation/beet';
 import {
   PublicKey,
@@ -852,6 +853,22 @@ export class ManifestClient {
       baseMint,
       quoteMint,
       tokenProgram22: TOKEN_2022_PROGRAM_ID,
+    });
+  }
+
+  /** Collector-only atomic market compaction and rent recovery. May close an empty market. */
+  public defragIx(collector: PublicKey): TransactionInstruction {
+    return createDefragInstruction({
+      collector,
+      market: this.market.address,
+      baseVault: getVaultAddress(this.market.address, this.baseMint.address),
+      quoteVault: getVaultAddress(this.market.address, this.quoteMint.address),
+      baseTokenProgram: this.isBase22
+        ? TOKEN_2022_PROGRAM_ID
+        : TOKEN_PROGRAM_ID,
+      quoteTokenProgram: this.isQuote22
+        ? TOKEN_2022_PROGRAM_ID
+        : TOKEN_PROGRAM_ID,
     });
   }
 

@@ -1,0 +1,147 @@
+{
+  "fetchedAt": "2026-09-29T15:11:29.600Z",
+  "blockTime": 1790694671,
+  "coreSlot": 451678322,
+  "coreComponentSlots": [
+    451678319,
+    451678322
+  ],
+  "vaultSlots": {
+    "min": 451678334,
+    "max": 451678356
+  },
+  "rent": {
+    "rate": 5080,
+    "threshold": 1,
+    "slot": 451678356,
+    "checks": [
+      {
+        "size": 96,
+        "lamports": 1137920
+      },
+      {
+        "size": 165,
+        "lamports": 1488440
+      },
+      {
+        "size": 182,
+        "lamports": 1574800
+      },
+      {
+        "size": 256,
+        "lamports": 1950720
+      },
+      {
+        "size": 128000,
+        "lamports": 650890240
+      }
+    ]
+  },
+  "snapshotSha256": "9d7fc56c3ed7367767bd8219334723c896886f04076496fc2f45af9ff571bcac",
+  "markets": 3721,
+  "globals": {
+    "accounts": 431,
+    "seats": 733,
+    "freeNodes": 0,
+    "reclaimableSeats": 339,
+    "globalOrders": 8246,
+    "gasReserveLamports": 41230000,
+    "resizeReleasedLamports": 220431360,
+    "excessAfterGasReserveLamports": 9561253412,
+    "retainedSeatFeeBufferLamports": 1172890720,
+    "recoverableWithSeatFeeBufferLamports": 8629304332
+  },
+  "vaults": {
+    "accounts": 7873,
+    "classic": 5772,
+    "token2022": 2101,
+    "native": 1204,
+    "excessNonNativeLamports": 9811794408,
+    "nativeReserveReductionLamports": 613635174,
+    "nativeUnaccountedLamports": "41337177",
+    "dataSizes": [
+      165,
+      170,
+      171,
+      175,
+      178,
+      183,
+      187
+    ],
+    "retiringEmptyVaults": 2799,
+    "additionalClosureLamports": 4579365976
+  },
+  "combined": {
+    "tailOnly": {
+      "marketLamports": 13552618257,
+      "globalLamports": 8629304332,
+      "vaultLamports": 9811794408,
+      "totalLamports": 31993716997
+    },
+    "compactFree": {
+      "marketLamports": 17250858257,
+      "globalLamports": 8629304332,
+      "vaultLamports": 9811794408,
+      "totalLamports": 35691956997
+    },
+    "compactFreeAndSeats": {
+      "marketLamports": 28806029457,
+      "globalLamports": 8629304332,
+      "vaultLamports": 9811794408,
+      "totalLamports": 47247128197
+    },
+    "keep1": {
+      "marketLamports": 27293815057,
+      "globalLamports": 8629304332,
+      "vaultLamports": 9811794408,
+      "totalLamports": 45734913797
+    },
+    "keep2": {
+      "marketLamports": 26479389457,
+      "globalLamports": 8629304332,
+      "vaultLamports": 9811794408,
+      "totalLamports": 44920488197
+    },
+    "keep8": {
+      "marketLamports": 24080410257,
+      "globalLamports": 8629304332,
+      "vaultLamports": 9811794408,
+      "totalLamports": 42521508997
+    },
+    "keep32": {
+      "marketLamports": 21095402257,
+      "globalLamports": 8629304332,
+      "vaultLamports": 9811794408,
+      "totalLamports": 39536500997
+    }
+  },
+  "gasPrepayments": {
+    "orders": 8246,
+    "reserveLamports": 41230000,
+    "marketsWithGlobalOrders": 1895,
+    "globalsWithOrders": 267,
+    "expired": 0,
+    "underfunded": 13,
+    "cleanEligible": 13,
+    "cleanupRefundLamports": 65000,
+    "globalsWithoutOrders": 164,
+    "surplusAfterRentAndGasLamports": 9561253412,
+    "exactAbandonedGasLamports": null
+  },
+  "optionalRetirement": {
+    "markets": 1324,
+    "globals": 151,
+    "marketHeadersLamports": 2582753280,
+    "globalHeadersLamports": 171825920,
+    "vaultClosureLamports": 4579365976,
+    "totalsWithRetirement": {
+      "tailOnly": 43509924573,
+      "compactFree": 46722516573,
+      "compactFreeAndSeats": 54581073373,
+      "keep1": 53606932573,
+      "keep2": 53114375773,
+      "keep8": 51500561373,
+      "keep32": 48907729373
+    }
+  }
+}
