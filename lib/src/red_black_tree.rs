@@ -1177,72 +1177,8 @@ impl<V: Payload> RBNode<V> {
 }
 
 impl<'a, V: Payload> HyperTreeWriteOperations<'a, V> for RedBlackTree<'a, V> {
-    /// Insert and rebalance. The data at index should be already zeroed.
     fn insert(&mut self, index: DataIndex, value: V) {
-        trace!("TREE insert {index}");
-
-        // Case where this is now the root
-        if self.root_index == NIL {
-            self.root_index = index;
-            self.max_index = index;
-            let root_node: &mut RBNode<V> = get_mut_helper::<RBNode<V>>(self.data, index);
-            let new_node: RBNode<V> = RBNode {
-                left: NIL,
-                right: NIL,
-                parent: NIL,
-                color: Color::Black,
-                value,
-                payload_type: 0,
-                _unused_padding: 0,
-            };
-            *root_node = new_node;
-            return;
-        }
-
-        let old_max_index = self.max_index;
-        let append_to_max = old_max_index != NIL && {
-            let max_node: &RBNode<V> = get_helper::<RBNode<V>>(self.data, old_max_index);
-            if max_node.value.cmp(&value) == Ordering::Less {
-                // Preserve the cache update even when insertion must descend
-                // from the root because the cached maximum is stale.
-                self.max_index = index;
-                max_node.right == NIL
-            } else {
-                false
-            }
-        };
-        let parent_index = if append_to_max {
-            // Legacy trees can have a stale cached maximum with a right
-            // subtree. Only append when its right link is empty. Equal keys
-            // still take the ordinary insertion path to preserve FIFO.
-            self.set_right_index::<V>(old_max_index, index);
-            old_max_index
-        } else {
-            self.link_new_leaf(&value, index)
-        };
-        // Initialize the leaf once its parent is known. Only the payload is
-        // needed during descent; no temporary node or later parent write is needed.
-        *get_mut_helper::<RBNode<V>>(self.data, index) = RBNode {
-            left: NIL,
-            right: NIL,
-            parent: parent_index,
-            color: Color::Red,
-            value,
-            payload_type: 0,
-            _unused_padding: 0,
-        };
-
-        // Avoid recursion by doing a loop here.
-        let mut node_to_fix: DataIndex = index;
-        loop {
-            node_to_fix = self.insert_fix(node_to_fix);
-            if node_to_fix == NIL {
-                break;
-            }
-        }
-
-        #[cfg(test)]
-        self.verify_rb_tree::<V>()
+        self.insert_with_payload_type::<0>(index, value);
     }
 
     /// Remove a node by index and rebalance.
@@ -1290,6 +1226,75 @@ impl<'a, V: Payload> HyperTreeWriteOperations<'a, V> for RedBlackTree<'a, V> {
 }
 
 impl<'a, V: Payload> RedBlackTree<'a, V> {
+    /// Insert and rebalance, initializing the payload tag with the node to
+    /// avoid a separate tag write. The data at index should be already zeroed.
+    pub fn insert_with_payload_type<const PAYLOAD_TYPE: u8>(&mut self, index: DataIndex, value: V) {
+        trace!("TREE insert {index}");
+
+        // Case where this is now the root
+        if self.root_index == NIL {
+            self.root_index = index;
+            self.max_index = index;
+            let root_node: &mut RBNode<V> = get_mut_helper::<RBNode<V>>(self.data, index);
+            let new_node: RBNode<V> = RBNode {
+                left: NIL,
+                right: NIL,
+                parent: NIL,
+                color: Color::Black,
+                value,
+                payload_type: PAYLOAD_TYPE,
+                _unused_padding: 0,
+            };
+            *root_node = new_node;
+            return;
+        }
+
+        let old_max_index = self.max_index;
+        let append_to_max = old_max_index != NIL && {
+            let max_node: &RBNode<V> = get_helper::<RBNode<V>>(self.data, old_max_index);
+            if max_node.value.cmp(&value) == Ordering::Less {
+                // Preserve the cache update even when insertion must descend
+                // from the root because the cached maximum is stale.
+                self.max_index = index;
+                max_node.right == NIL
+            } else {
+                false
+            }
+        };
+        let parent_index = if append_to_max {
+            // Legacy trees can have a stale cached maximum with a right
+            // subtree. Only append when its right link is empty. Equal keys
+            // still take the ordinary insertion path to preserve FIFO.
+            self.set_right_index::<V>(old_max_index, index);
+            old_max_index
+        } else {
+            self.link_new_leaf(&value, index)
+        };
+        // Initialize the leaf once its parent is known. Only the payload is
+        // needed during descent; no temporary node or later parent write is needed.
+        *get_mut_helper::<RBNode<V>>(self.data, index) = RBNode {
+            left: NIL,
+            right: NIL,
+            parent: parent_index,
+            color: Color::Red,
+            value,
+            payload_type: PAYLOAD_TYPE,
+            _unused_padding: 0,
+        };
+
+        // Avoid recursion by doing a loop here.
+        let mut node_to_fix: DataIndex = index;
+        loop {
+            node_to_fix = self.insert_fix(node_to_fix);
+            if node_to_fix == NIL {
+                break;
+            }
+        }
+
+        #[cfg(test)]
+        self.verify_rb_tree::<V>()
+    }
+
     /// Creates a new RedBlackTree. Does not mutate data yet. Assumes the actual
     /// data in data is already well formed as a red black tree.
     pub fn new(data: &'a mut [u8], root_index: DataIndex, max_index: DataIndex) -> Self {
@@ -3348,5 +3353,56 @@ pub(crate) mod test {
         tree.lookup_index(&TestOrder2::new(1_000, 1234));
         tree.lookup_index(&TestOrder2::new(1_000, 4567));
         tree.lookup_index(&TestOrder2::new(1_000, 7890));
+    }
+}
+
+#[cfg(test)]
+mod tagged_insert_tests {
+    use super::{test::TestOrderBid, *};
+
+    #[test]
+    fn tagged_insert_matches_insert_then_tag() {
+        let values = [5, 3, 8, 1, 4, 7, 9, 3, 5, 8, 0, 12, 11, 10, 6];
+        let stride = std::mem::size_of::<RBNode<TestOrderBid>>();
+        let mut actual_data = vec![0u8; stride * values.len()];
+        let mut reference_data = actual_data.clone();
+        let mut actual = RedBlackTree::new(&mut actual_data, NIL, NIL);
+        let mut reference = RedBlackTree::new(&mut reference_data, NIL, NIL);
+        for (i, value) in values.into_iter().enumerate() {
+            let index = (i * stride) as DataIndex;
+            let tag = match i % 3 {
+                0 => {
+                    actual.insert_with_payload_type::<2>(index, TestOrderBid::new(value));
+                    2
+                }
+                1 => {
+                    actual.insert_with_payload_type::<255>(index, TestOrderBid::new(value));
+                    255
+                }
+                _ => {
+                    actual.insert(index, TestOrderBid::new(value));
+                    0
+                }
+            };
+            reference.insert(index, TestOrderBid::new(value));
+            get_mut_helper::<RBNode<TestOrderBid>>(reference.data, index).set_payload_type(tag);
+            assert_eq!(actual.get_root_index(), reference.get_root_index());
+            assert_eq!(actual.get_max_index(), reference.get_max_index());
+            assert_eq!(actual.data, reference.data);
+        }
+        for i in [3, 0, 8, 4, 13, 1] {
+            let index = (i * stride) as DataIndex;
+            actual.remove_by_index(index);
+            reference.remove_by_index(index);
+            assert_eq!(actual.get_root_index(), reference.get_root_index());
+            assert_eq!(actual.get_max_index(), reference.get_max_index());
+            assert_eq!(actual.data, reference.data);
+            actual.insert_with_payload_type::<2>(index, TestOrderBid::new(i as u64 + 20));
+            reference.insert(index, TestOrderBid::new(i as u64 + 20));
+            get_mut_helper::<RBNode<TestOrderBid>>(reference.data, index).set_payload_type(2);
+            assert_eq!(actual.get_root_index(), reference.get_root_index());
+            assert_eq!(actual.get_max_index(), reference.get_max_index());
+            assert_eq!(actual.data, reference.data);
+        }
     }
 }

@@ -12,11 +12,12 @@
 #![cfg_attr(not(feature = "test-sbf"), allow(dead_code, unused_imports))]
 
 use base64::Engine;
+use borsh::BorshDeserialize;
 use hypertree::NIL;
 use manifest::{
     logs::{CancelOrderLog, Discriminant, FillLog, GlobalCleanupLog, PlaceOrderLog},
     program::{
-        batch_update::{CancelOrderParams, PlaceOrderParams},
+        batch_update::{BatchUpdateReturn, CancelOrderParams, PlaceOrderParams},
         batch_update_instruction,
     },
     state::{constants::NO_EXPIRATION_LAST_VALID_SLOT, OrderType},
@@ -207,12 +208,75 @@ async fn batch_update_logs_nothing_for_placing_and_cancelling_test() -> anyhow::
         None,
         None,
     );
-    let (payloads, _) = simulate_program_data(&test_fixture, vec![cancel]).await;
+    let (payloads, logs) = simulate_program_data(&test_fixture, vec![cancel]).await;
     assert!(
         payloads.is_empty(),
         "cancelling an order logs nothing, got {} payloads",
         payloads.len(),
     );
+    let returned = program_return(&logs).expect("cancel-only return data");
+    assert_eq!(returned, 0u32.to_le_bytes());
+    assert!(BatchUpdateReturn::try_from_slice(&returned)?
+        .orders
+        .is_empty());
+    Ok(())
+}
+
+#[cfg(feature = "test-sbf")]
+#[tokio::test]
+async fn batch_return_encodes_empty_and_mixed_placement_results() -> anyhow::Result<()> {
+    let mut test_fixture = TestFixture::new().await;
+    test_fixture.claim_seat().await?;
+    test_fixture.deposit(Token::SOL, 10 * SOL_UNIT_SIZE).await?;
+
+    for order_types in [
+        vec![],
+        vec![
+            OrderType::Limit,
+            OrderType::ImmediateOrCancel,
+            OrderType::Limit,
+        ],
+    ] {
+        let orders = order_types
+            .iter()
+            .map(|order_type| {
+                PlaceOrderParams::new(
+                    SOL_UNIT_SIZE,
+                    5,
+                    -3,
+                    false,
+                    *order_type,
+                    NO_EXPIRATION_LAST_VALID_SLOT,
+                )
+            })
+            .collect();
+        let instruction = batch_update_instruction(
+            &test_fixture.market_fixture.key,
+            &test_fixture.payer(),
+            None,
+            vec![],
+            orders,
+            None,
+            None,
+            None,
+            None,
+        );
+        let (_, logs) = simulate_program_data(&test_fixture, vec![instruction]).await;
+        let bytes = program_return(&logs).expect("batch return data");
+        let result = BatchUpdateReturn::try_from_slice(&bytes)?;
+        assert_eq!(bytes.len(), 4 + 12 * order_types.len());
+        assert_eq!(result.orders.len(), order_types.len());
+        for (i, (sequence, index)) in result.orders.iter().enumerate() {
+            assert_eq!(*sequence, i as u64);
+            assert_eq!(
+                *index == NIL,
+                order_types[i] == OrderType::ImmediateOrCancel
+            );
+        }
+        if !result.orders.is_empty() {
+            assert_ne!(result.orders[0].1, result.orders[2].1);
+        }
+    }
     Ok(())
 }
 

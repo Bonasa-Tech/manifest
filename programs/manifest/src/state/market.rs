@@ -1546,6 +1546,7 @@ impl<
                             free_address,
                             &new_reverse_resting_order,
                         );
+                        #[cfg(feature = "certora")]
                         set_payload_order(dynamic, free_address);
                     }
 
@@ -1742,6 +1743,7 @@ impl<
         }
         insert_order_into_tree(is_bid, fixed, dynamic, free_address, &resting_order);
 
+        #[cfg(feature = "certora")]
         set_payload_order(dynamic, free_address);
 
         Ok(AddOrderToMarketResult {
@@ -1884,6 +1886,7 @@ impl<
     }
 }
 
+#[cfg(feature = "certora")]
 fn set_payload_order(dynamic: &mut [u8], free_address: DataIndex) {
     get_mut_helper_order(dynamic, free_address)
         .set_payload_type(MarketDataTreeNodeType::RestingOrder as u8);
@@ -2079,6 +2082,12 @@ fn insert_order_into_tree(
     } else {
         Bookside::new(dynamic, fixed.asks_root_index, fixed.asks_best_index)
     };
+    #[cfg(not(feature = "certora"))]
+    tree.insert_with_payload_type::<{ MarketDataTreeNodeType::RestingOrder as u8 }>(
+        free_address,
+        *resting_order,
+    );
+    #[cfg(feature = "certora")]
     tree.insert(free_address, *resting_order);
 
     if is_bid {
