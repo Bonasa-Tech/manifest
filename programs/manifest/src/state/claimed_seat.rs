@@ -60,7 +60,7 @@ impl nondet::Nondet for ClaimedSeat {
 
 impl Ord for ClaimedSeat {
     fn cmp(&self, other: &Self) -> Ordering {
-        (self.trader).cmp(&(other.trader))
+        super::utils::compare_trader_keys(&self.trader, &other.trader)
     }
 }
 

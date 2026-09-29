@@ -82,7 +82,7 @@ fn market_info_index(wrapper_dynamic_data: &mut [u8], market: &Pubkey) -> DataIn
 /// The wrapper's market info for the fixture market and its open orders as
 /// (client order id, order sequence number), sorted by client order id.
 /// Checks that the orders are a well formed list.
-async fn wrapper_view(test_fixture: &TestFixture) -> (MarketInfo, Vec<(u64, u64)>) {
+pub(super) async fn wrapper_view(test_fixture: &TestFixture) -> (MarketInfo, Vec<(u64, u64)>) {
     let mut account: Account = wrapper_account(test_fixture).await;
     let market_info_index: DataIndex =
         market_info_index(&mut account.data, &test_fixture.market.key);
@@ -198,7 +198,7 @@ async fn wrapper_batch(
 
 /// Runs `instructions` and returns the compute units consumed, requiring that
 /// the transaction succeeded.
-async fn units_consumed(
+pub(super) async fn units_consumed(
     test_fixture: &TestFixture,
     instructions: &[Instruction],
     payer: &Pubkey,

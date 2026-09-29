@@ -38,6 +38,19 @@ use super::{
     NO_EXPIRATION_LAST_VALID_SLOT,
 };
 
+// Most distinct trader addresses differ in their first eight bytes. A
+// big-endian word comparison preserves Pubkey's lexicographic byte order;
+// matching prefixes still use the full comparison, including equality.
+#[inline(always)]
+pub(super) fn compare_trader_keys(left: &Pubkey, right: &Pubkey) -> std::cmp::Ordering {
+    let lhs = u64::from_be_bytes(left.to_bytes()[..8].try_into().unwrap());
+    let rhs = u64::from_be_bytes(right.to_bytes()[..8].try_into().unwrap());
+    match lhs.cmp(&rhs) {
+        std::cmp::Ordering::Equal => left.cmp(right),
+        order => order,
+    }
+}
+
 pub fn get_now_slot() -> u32 {
     // If we cannot get the clock (happens in tests, then only match with
     // orders without expiration). We assume that the clock cannot be
@@ -625,6 +638,44 @@ mod tests {
                 "has_seat={has_seat}, desired_atoms={desired_atoms}",
             );
             assert_eq!(&*global_view.try_borrow().unwrap(), before.as_slice());
+        }
+    }
+}
+
+#[cfg(test)]
+mod trader_key_comparison_tests {
+    use super::compare_trader_keys;
+    use solana_program::pubkey::Pubkey;
+
+    #[test]
+    fn trader_key_order_matches_pubkey_order() {
+        // Exercise every possible first-differing byte, including word edges.
+        for first in 0..32 {
+            for common in [0u8, 0x7f, 0x80, 0xff] {
+                let mut left = [common; 32];
+                let mut right = left;
+                left[first] = 0x7f;
+                right[first] = 0x80;
+                left[first + 1..].fill(0xff);
+                right[first + 1..].fill(0);
+                let left = Pubkey::new_from_array(left);
+                let right = Pubkey::new_from_array(right);
+                assert_eq!(compare_trader_keys(&left, &right), left.cmp(&right));
+                assert_eq!(compare_trader_keys(&right, &left), right.cmp(&left));
+                assert_eq!(compare_trader_keys(&left, &left), left.cmp(&left));
+            }
+        }
+        let mut random = 42u64;
+        for _ in 0..4096 {
+            let mut left = [0u8; 32];
+            let mut right = left;
+            for byte in left.iter_mut().chain(right.iter_mut()) {
+                random = random.wrapping_mul(6364136223846793005).wrapping_add(1);
+                *byte = (random >> 32) as u8;
+            }
+            let left = Pubkey::new_from_array(left);
+            let right = Pubkey::new_from_array(right);
+            assert_eq!(compare_trader_keys(&left, &right), left.cmp(&right));
         }
     }
 }
