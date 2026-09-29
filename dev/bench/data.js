@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1790606313270,
+  "lastUpdate": 1790682622124,
   "repoUrl": "https://github.com/Bonasa-Tech/manifest",
   "entries": {
     "CU Benchmark": [
@@ -14483,6 +14483,72 @@ window.BENCHMARK_DATA = {
           {
             "name": "MFX_99",
             "value": 2020,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "cyrbritt@gmail.com",
+            "name": "Britt Cyr",
+            "username": "brittcyr"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "212b453ca327f72a9ef930551d2d1e5ee09fcc77",
+          "message": "Reduce tree, market, and global compute usage (#741)\n\n* Reduce tree, market, and global compute usage\n\nReduce red-black insertion and rotation overhead, specialize matching and cancellation paths, and reuse global trader and deposit lookups. Count gas prepayments in one pass, reuse parsed Token-2022 mint state, and avoid repeated maker order reads.\n\nExtend CU fixtures and regression coverage for global accounting and eviction. Preserve the occupied-right-link guard for cached-maximum insertion.\n\nValidation: 172 native tests and 105 selected SBF tests passed against the measured final code. All five Certora configurations compiled and validated; full proofs remain unverified because CERTORAKEY was unavailable. Rust sources are identical to the validated version, with current main's unrelated wrapper changes preserved.\n\n* Handle absent global deposits and prepayment accounts\n\nTreat a maker without a global deposit as unbacked even when the required\ntransfer rounds to zero. Keep the existing cleanup path and allow valid\nzero-balance seats to cover zero-token fills.\n\nReturn MissingGlobal when a global order lacks its side's prepayment\naccounts instead of unwrapping None. Cover both sides, opposite-side-only\naccount bundles, and zero/nonzero reductions with and without a seat.\n\nValidation: 173 native tests and 112 selected SBF tests passed against the\nmeasured program. Formatting and CI-policy Clippy passed. All five Certora\nconfigurations compiled and validated; full proofs remain unavailable\nwithout CERTORAKEY.\n\nThe local Benchmark action totals 112,538,071 CU, down 1,730 from the parent.\n2,918 transactions improve; 1,240 increase by exactly 1 CU. Dedicated global\nfill fixtures save 2 CU; deposit, withdrawal, and eviction are unchanged.",
+          "timestamp": "2026-09-29T07:46:08-04:00",
+          "tree_id": "018f04594545965d2c45cda949cb25c4ca74ad9c",
+          "url": "https://github.com/Bonasa-Tech/manifest/commit/212b453ca327f72a9ef930551d2d1e5ee09fcc77"
+        },
+        "date": 1790682619598,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "PHX_50",
+            "value": 6748,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "PHX_95",
+            "value": 8819,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "PHX_99",
+            "value": 10866,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_50",
+            "value": 1109,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_95",
+            "value": 1414,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_99",
+            "value": 1970,
             "range": "",
             "unit": "CU",
             "extra": ""
