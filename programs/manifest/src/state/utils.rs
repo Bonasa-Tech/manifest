@@ -214,7 +214,9 @@ pub(crate) fn try_to_pay_all_global_gas_prepayment(
         let global_order_count = global_order_counts[account_idx];
         if global_order_count > 0 {
             pay_global_gas_prepayment(
-                global_trade_accounts_opts[account_idx].as_ref().unwrap(),
+                global_trade_accounts_opts[account_idx]
+                    .as_ref()
+                    .ok_or(crate::program::ManifestError::MissingGlobal)?,
                 global_order_count as u64,
             )?;
         }
@@ -333,7 +335,8 @@ pub(crate) fn can_back_order<'a>(
 /// and call transfer_global_tokens after matching is complete.
 ///
 /// Returns Ok(true) if balance was reduced successfully, Ok(false) if
-/// insufficient balance or transfer would fail (fee/hook), Err on other errors.
+/// missing deposit, insufficient balance, or transfer would fail (fee/hook),
+/// Err on other errors.
 pub(crate) fn try_to_reduce_global_tokens<'a>(
     global_trade_accounts_opt: &'a Option<GlobalTradeAccounts<'a>>,
     resting_order_trader: &Pubkey,
@@ -373,7 +376,9 @@ pub(crate) fn try_to_reduce_global_tokens<'a>(
     // no technical blocker for supporting partial fills against a global. It is
     // just because of the mechanism design where we want global to only be used
     // when needed, not just for all orders.
-    if desired_global_atoms > num_deposited_atoms {
+    // An evicted maker has no deposit, even when rounding makes the required
+    // amount zero. Treat the order as unbacked instead of trying to reduce NIL.
+    if deposit_index == NIL || desired_global_atoms > num_deposited_atoms {
         emit_stack(GlobalCleanupLog {
             cleaner,
             maker: *resting_order_trader,
@@ -566,4 +571,60 @@ pub(crate) fn transfer_global_tokens<'a>(
     }
 
     Ok(())
+}
+
+#[cfg(all(test, not(feature = "certora")))]
+mod tests {
+    use super::*;
+    use crate::{
+        state::{GlobalFixed, GLOBAL_BLOCK_SIZE, GLOBAL_FIXED_SIZE},
+        validation::{ManifestAccountInfo, OwnedAccount},
+    };
+    use std::cell::Cell;
+
+    #[test]
+    fn global_reduction_requires_a_seat_even_for_zero_atoms() {
+        for (has_seat, desired_atoms, expected_backed) in [
+            (false, 0, false),
+            (false, 1, false),
+            (true, 0, true),
+            (true, 1, false),
+        ] {
+            let maker = Pubkey::new_unique();
+            let fixed = GlobalFixed::new_empty(&Pubkey::new_unique());
+            let mut data = bytemuck::bytes_of(&fixed).to_vec();
+            data.resize(GLOBAL_FIXED_SIZE + 2 * GLOBAL_BLOCK_SIZE, 0);
+            let account = OwnedAccount::new(&Pubkey::new_unique(), &crate::ID, 0, &data);
+            let token_account = OwnedAccount::new(&spl_token::id(), &Pubkey::default(), 0, &[]);
+            // SAFETY: both owned accounts outlive all views and borrows below.
+            let global_view = unsafe { account.view() };
+            let token_view = unsafe { token_account.view() };
+            if has_seat {
+                let mut bytes = global_view.try_borrow_mut().unwrap();
+                let mut global: GlobalRefMut = get_mut_dynamic_account(&mut bytes);
+                global.global_expand().unwrap();
+                global.add_trader(&maker).unwrap();
+            }
+            let before = global_view.try_borrow().unwrap().to_vec();
+            let accounts = Some(GlobalTradeAccounts {
+                global: ManifestAccountInfo::<GlobalFixed>::new(&global_view).unwrap(),
+                token_program_opt: Some(TokenProgram::new(&token_view).unwrap()),
+                mint_opt: None,
+                global_vault_opt: None,
+                market_vault_opt: None,
+                system_program: None,
+                gas_payer_opt: None,
+                gas_receiver_opt: None,
+                market: Pubkey::new_unique(),
+                num_deferred_gas_refunds: Cell::new(0),
+            });
+
+            assert_eq!(
+                try_to_reduce_global_tokens(&accounts, &maker, GlobalAtoms::new(desired_atoms)),
+                Ok(expected_backed),
+                "has_seat={has_seat}, desired_atoms={desired_atoms}",
+            );
+            assert_eq!(&*global_view.try_borrow().unwrap(), before.as_slice());
+        }
+    }
 }

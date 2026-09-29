@@ -15,6 +15,59 @@ use solana_transaction::{InstructionError, TransactionError};
 use crate::{send_tx_with_retry, TestFixture, Token, SOL_UNIT_SIZE, USDC_UNIT_SIZE};
 
 #[tokio::test]
+async fn global_orders_require_accounts_for_their_side() -> anyhow::Result<()> {
+    let test_fixture: TestFixture = TestFixture::new().await;
+    test_fixture.claim_seat().await?;
+    let payer = test_fixture.payer_keypair().insecure_clone();
+    let market = test_fixture.market_fixture.key;
+    let market_before = test_fixture.try_load(&market).await?.unwrap().data;
+    for is_bid in [false, true] {
+        for include_other_side in [false, true] {
+            let instruction = batch_update_instruction(
+                &market,
+                &payer.pubkey(),
+                None,
+                vec![],
+                vec![PlaceOrderParams::new(
+                    1,
+                    1,
+                    0,
+                    is_bid,
+                    OrderType::Global,
+                    NO_EXPIRATION_LAST_VALID_SLOT,
+                )],
+                (include_other_side && is_bid).then_some(test_fixture.sol_global_fixture.mint_key),
+                None,
+                (include_other_side && !is_bid).then_some(test_fixture.global_fixture.mint_key),
+                None,
+            );
+            let error = send_tx_with_retry(
+                std::rc::Rc::clone(&test_fixture.context),
+                &[instruction],
+                Some(&payer.pubkey()),
+                &[&payer],
+            )
+            .await
+            .unwrap_err()
+            .unwrap();
+            assert_eq!(
+                error,
+                TransactionError::InstructionError(
+                    0,
+                    InstructionError::Custom(ManifestError::MissingGlobal as u32),
+                ),
+                "is_bid={is_bid}, include_other_side={include_other_side}",
+            );
+            assert_eq!(
+                test_fixture.try_load(&market).await?.unwrap().data,
+                market_before
+            );
+        }
+    }
+    Ok(())
+}
+
+#[tokio::test]
 async fn undefined_order_types_are_rejected_before_market_mutation() -> anyhow::Result<()> {
     for invalid_order_type in [6_u8, u8::MAX] {
         let mut test_fixture: TestFixture = TestFixture::new().await;
