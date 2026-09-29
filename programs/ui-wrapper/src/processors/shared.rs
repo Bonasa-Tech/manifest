@@ -146,7 +146,6 @@ pub(crate) fn sync_fast(
     let trader = get_helper::<ManifestWrapperUserFixed>(fixed_data, 0).trader;
     market_info.trader_index = market_ref.resolve_trader_index(market_info.trader_index, &trader);
     let trader_index = market_info.trader_index;
-    let mut relocated_orders = None;
     let mut orders_root_index: DataIndex = market_info.orders_root_index;
 
     if orders_root_index != NIL {
@@ -160,11 +159,12 @@ pub(crate) fn sync_fast(
             Vec::with_capacity(EXPECTED_ORDER_BATCH_SIZE);
         for (order_index, order) in orders_tree.iter::<WrapperOpenOrder>() {
             let expected_sequence_number: u64 = order.get_order_sequence_number();
-            let core_data_index = market_ref.resolve_order_index_cached(
+            let core_data_index = market_ref.resolve_order_index(
                 order.get_market_data_index(),
                 expected_sequence_number,
                 trader_index,
-                &mut relocated_orders,
+                order.get_price(),
+                order.get_is_bid(),
             );
             if core_data_index == NIL {
                 to_remove_indices.push(order_index);

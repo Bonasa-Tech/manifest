@@ -149,6 +149,67 @@ mod tests {
         n
     }
     #[test]
+    fn order_resolution_searches_both_sides_by_price_and_stable_identity() {
+        let mut m = market();
+        m.market_expand_n(100).unwrap();
+        let maker = Pubkey::new_unique();
+        m.claim_seat(&maker).unwrap();
+        let trader = m.get_trader_index(&maker);
+        let mut expected = Vec::new();
+        for sequence in 0..32 {
+            let is_bid = sequence % 2 == 0;
+            let price = ((sequence / 8 + 1) as f64).try_into().unwrap();
+            let index =
+                get_free_address_on_market_fixed_for_bid_order(&mut m.fixed, &mut m.dynamic);
+            let order = RestingOrder::new(
+                trader,
+                BaseAtoms::ONE,
+                price,
+                sequence,
+                0,
+                is_bid,
+                OrderType::Reverse,
+            )
+            .unwrap();
+            let root = if is_bid {
+                &mut m.fixed.bids_root_index
+            } else {
+                &mut m.fixed.asks_root_index
+            };
+            let mut tree = RedBlackTree::<RestingOrder>::new(&mut m.dynamic, *root, NIL);
+            tree.insert(index, order);
+            *root = tree.get_root_index();
+            get_mut_helper::<RBNode<RestingOrder>>(&mut m.dynamic, index)
+                .set_payload_type(MarketDataTreeNodeType::RestingOrder as u8);
+            expected.push((index, sequence, price, is_bid));
+        }
+        for (index, sequence, price, is_bid) in expected {
+            for hint in [index, NIL, trader, u32::MAX - 15] {
+                assert_eq!(
+                    m.resolve_order_index(hint, sequence, trader, price, is_bid),
+                    index
+                );
+            }
+            assert_eq!(
+                m.resolve_order_index(NIL, sequence, trader, price, !is_bid),
+                NIL
+            );
+            assert_eq!(
+                m.resolve_order_index(NIL, sequence + 32, trader, price, is_bid),
+                NIL
+            );
+            assert_eq!(
+                m.resolve_order_index(index, sequence, NIL, price, is_bid),
+                NIL
+            );
+            assert_eq!(
+                m.resolve_order_index(index, sequence, trader + 80, price, is_bid),
+                NIL
+            );
+        }
+    }
+
+    #[test]
     fn defrag_harvests_only_empty_seats_and_preserves_order_identity_and_fifo() {
         let mut m = market();
         m.market_expand_n(100).unwrap();
@@ -210,7 +271,7 @@ mod tests {
             before
         );
         for (old, seq) in order_indices {
-            let new = m.resolve_order_index(old, seq, new_maker);
+            let new = m.resolve_order_index(old, seq, new_maker, 1.0.try_into().unwrap(), true);
             assert_ne!(new, NIL);
             assert_eq!(
                 get_helper_order(&m.dynamic, new)

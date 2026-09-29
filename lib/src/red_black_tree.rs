@@ -108,6 +108,37 @@ pub struct RedBlackTreeReadOnly<'a, V: Payload> {
 }
 
 impl<'a, V: Payload> RedBlackTreeReadOnly<'a, V> {
+    /// Find an entry using a tree-order comparison and an identity predicate.
+    /// `compare` compares the stored value to the search key in the tree's
+    /// ordering. Only entries that compare equal are passed to `matches`.
+    /// Equal keys can occur in either subtree after rotations.
+    pub fn lookup_index_by(
+        &self,
+        compare: &impl Fn(&V) -> Ordering,
+        matches: &impl Fn(&V) -> bool,
+    ) -> DataIndex {
+        let mut index = self.root_index;
+        while index != NIL {
+            let node = get_helper::<RBNode<V>>(self.data, index);
+            match compare(&node.value) {
+                Ordering::Greater => index = node.left,
+                Ordering::Less => index = node.right,
+                Ordering::Equal => {
+                    if matches(&node.value) {
+                        return index;
+                    }
+                    let left =
+                        Self::new(self.data, node.left, NIL).lookup_index_by(compare, matches);
+                    if left != NIL {
+                        return left;
+                    }
+                    index = node.right;
+                }
+            }
+        }
+        NIL
+    }
+
     /// Creates a new RedBlackTree. Does not mutate data yet. Assumes the actual
     /// data in data is already well formed as a red black tree.
     /// It is necessary to persist the root_index to re-initialize a tree, storing
@@ -3335,6 +3366,43 @@ pub(crate) mod test {
                 padding: [0; 15],
             }
         }
+    }
+
+    // Equal lookup keys but not equal nodes.
+    #[test]
+    fn lookup_by_identity_prunes_other_keys_and_finds_rotated_duplicates() {
+        use std::cell::Cell;
+
+        let stride = size_of::<RBNode<TestOrder2>>() as DataIndex;
+        let mut data = vec![0; stride as usize * 1024];
+        let mut tree = RedBlackTree::<TestOrder2>::new(&mut data, NIL, NIL);
+        for slot in 0..1024 {
+            // Identity order deliberately differs from insertion order.
+            tree.insert(
+                slot * stride,
+                TestOrder2::new((slot / 4).into(), (1023 - slot).into()),
+            );
+        }
+        let tree = RedBlackTreeReadOnly::<TestOrder2>::new(tree.data, tree.root_index, NIL);
+        for slot in 0..1024 {
+            let visits = Cell::new(0);
+            let compare = |order: &TestOrder2| {
+                visits.set(visits.get() + 1);
+                order.order_id.cmp(&u64::from(slot / 4))
+            };
+            assert_eq!(
+                tree.lookup_index_by(&compare, &|order| order.nonce == u64::from(1023 - slot)),
+                slot * stride
+            );
+            assert!(visits.get() < 64, "lookup must not scan the whole tree");
+            visits.set(0);
+            assert_eq!(
+                tree.lookup_index_by(&compare, &|order| order.nonce == 1024),
+                NIL
+            );
+            assert!(visits.get() < 64);
+        }
+        assert_eq!(tree.lookup_index_by(&|_| Ordering::Less, &|_| true), NIL);
     }
 
     // Equal lookup keys but not equal nodes.

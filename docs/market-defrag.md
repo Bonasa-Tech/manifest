@@ -62,9 +62,10 @@ run before direct market-lamport changes; any failure rolls back the instruction
 ## Wrapper compatibility and rollout
 
 Both wrappers resolve cached seats by trader public key and orders by sequence ID
-plus owner. Offsets are checked for bounds, alignment and node type. On the first
-stale order hint in a sync, one scan builds a temporary index for that trader;
-subsequent stale hints use binary search. Updated hints are stored in the wrapper.
+plus owner. Offsets are checked for bounds, alignment and node type. A stale order
+hint searches its side and price level, including all equal-price entries after
+tree rotations. Ordinary fills and cancels do not scan both books. Updated hints
+are stored in the wrapper.
 
 The regular wrapper recreates missing seats before batch updates. Deposit keeps
 its original instruction and account list. Callers must claim a seat before an

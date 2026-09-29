@@ -951,6 +951,7 @@ impl<Fixed: DerefOrBorrow<MarketFixed>, Dynamic: DerefOrBorrow<[u8]>>
     }
 
     /// Cached offsets are hints: compaction can move nodes or harvest a seat.
+    #[cfg(not(feature = "certora"))]
     pub fn resolve_trader_index(&self, hint: DataIndex, trader: &Pubkey) -> DataIndex {
         let DynamicAccount { dynamic, .. } = self.borrow_market();
         if hint != NIL
@@ -971,23 +972,16 @@ impl<Fixed: DerefOrBorrow<MarketFixed>, Dynamic: DerefOrBorrow<[u8]>>
 
     /// Resolve stable order identity, including when the old offset was truncated
     /// or reused. Never substitute another trader's order at the same address.
+    /// A missing hint searches only its side and price level, so normal fills
+    /// and cancels do not require a scan of both books.
+    #[cfg(not(feature = "certora"))]
     pub fn resolve_order_index(
         &self,
         hint: DataIndex,
         sequence: u64,
         trader: DataIndex,
-    ) -> DataIndex {
-        self.resolve_order_index_cached(hint, sequence, trader, &mut None)
-    }
-
-    /// Share this temporary cache across one sync for one trader. Hints remain
-    /// O(1); the first miss scans both books once, then searches stable IDs.
-    pub fn resolve_order_index_cached(
-        &self,
-        hint: DataIndex,
-        sequence: u64,
-        trader: DataIndex,
-        cache: &mut Option<Vec<(u64, DataIndex)>>,
+        price: QuoteAtomsPerBaseAtom,
+        is_bid: bool,
     ) -> DataIndex {
         if trader == NIL {
             return NIL;
@@ -1007,23 +1001,21 @@ impl<Fixed: DerefOrBorrow<MarketFixed>, Dynamic: DerefOrBorrow<[u8]>>
                 return hint;
             }
         }
-        let indices = cache.get_or_insert_with(|| {
-            let mut indices = Vec::new();
-            for root in [fixed.bids_root_index, fixed.asks_root_index] {
-                let tree = RedBlackTreeReadOnly::<RestingOrder>::new(dynamic, root, NIL);
-                for (index, order) in tree.iter::<RestingOrder>() {
-                    if order.get_trader_index() == trader {
-                        indices.push((order.get_sequence_number(), index));
-                    }
+        let root = if is_bid {
+            fixed.bids_root_index
+        } else {
+            fixed.asks_root_index
+        };
+        RedBlackTreeReadOnly::<RestingOrder>::new(dynamic, root, NIL).lookup_index_by(
+            &|order| {
+                if is_bid {
+                    order.get_price().cmp(&price)
+                } else {
+                    price.cmp(&order.get_price())
                 }
-            }
-            indices.sort_unstable_by_key(|(sequence, _)| *sequence);
-            indices
-        });
-        indices
-            .binary_search_by_key(&sequence, |(sequence, _)| *sequence)
-            .map(|position| indices[position].1)
-            .unwrap_or(NIL)
+            },
+            &|order| order.get_sequence_number() == sequence && order.get_trader_index() == trader,
+        )
     }
 
     pub fn get_trader_index(&self, trader: &Pubkey) -> DataIndex {

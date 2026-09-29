@@ -413,7 +413,6 @@ pub(crate) fn sync_fast(
     let trader = get_helper::<ManifestWrapperStateFixed>(fixed_data, 0).trader;
     market_info.trader_index = market_ref.resolve_trader_index(market_info.trader_index, &trader);
     let trader_index = market_info.trader_index;
-    let mut relocated_orders = None;
     let claimed_seat = if trader_index == NIL {
         ClaimedSeat::new_empty(trader)
     } else {
@@ -451,11 +450,12 @@ pub(crate) fn sync_fast(
                 .is_some_and(|m| m.matches(orders.get_mut_value(order_index)));
             let gone: bool = (read_core || is_cancel_candidate) && {
                 let order: &mut WrapperOpenOrder = orders.get_mut_value(order_index);
-                let core_index = market_ref.resolve_order_index_cached(
+                let core_index = market_ref.resolve_order_index(
                     order.get_market_data_index(),
                     order.get_order_sequence_number(),
                     trader_index,
-                    &mut relocated_orders,
+                    order.get_price(),
+                    order.get_is_bid(),
                 );
                 order.set_market_data_index(core_index);
                 let core_resting_order = if core_index == NIL {
