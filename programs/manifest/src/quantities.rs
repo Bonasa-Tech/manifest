@@ -639,7 +639,17 @@ mod div_d18_test {
                 let price = QuoteAtomsPerBaseAtom {
                     inner: u128_to_u64_slice(inner),
                 };
-                for size in [0, 1, limit - 1, limit, limit.saturating_add(1), u64::MAX] {
+                for size in [
+                    0,
+                    1,
+                    factor - 1,
+                    factor,
+                    factor + 1,
+                    limit - 1,
+                    limit,
+                    limit.saturating_add(1),
+                    u64::MAX,
+                ] {
                     for round_up in [false, true] {
                         let expected = reference(inner * size as u128, round_up);
                         let expected = if expected <= ATOM_LIMIT {
@@ -934,15 +944,28 @@ impl QuoteAtomsPerBaseAtom {
             // fits u128: u64::MAX * 10^12 < u128::MAX. Otherwise use the full
             // checked path, preserving precision, overflow and rounding.
             if self.inner[1] == 0 {
-                let (reduced_price, divisor) = if self.inner[0] % 1_000_000_000_000 == 0 {
-                    (self.inner[0] / 1_000_000_000_000, 1_000_000)
-                } else if self.inner[0] % 1_000_000_000 == 0 {
-                    (self.inner[0] / 1_000_000_000, 1_000_000_000)
-                } else {
-                    (0, 0)
-                };
+                let (reduced_price, divisor, safe_base_limit) =
+                    if self.inner[0] % 1_000_000_000_000 == 0 {
+                        (
+                            self.inner[0] / 1_000_000_000_000,
+                            1_000_000,
+                            1_000_000_000_000,
+                        )
+                    } else if self.inner[0] % 1_000_000_000 == 0 {
+                        (self.inner[0] / 1_000_000_000, 1_000_000_000, 1_000_000_000)
+                    } else {
+                        (0, 0, 0)
+                    };
                 if divisor != 0 {
-                    if let Some(product) = reduced_price.checked_mul(base_atoms.inner) {
+                    // reduced_price <= u64::MAX / safe_base_limit. If the
+                    // amount is at most that cancelled decimal factor, its
+                    // reduced product fits u64 without a wide overflow check.
+                    let product = if base_atoms.inner <= safe_base_limit {
+                        Some(reduced_price.wrapping_mul(base_atoms.inner))
+                    } else {
+                        reduced_price.checked_mul(base_atoms.inner)
+                    };
+                    if let Some(product) = product {
                         return Ok(
                             product / divisor + u64::from(round_up && product % divisor != 0)
                         );

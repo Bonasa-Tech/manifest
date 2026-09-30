@@ -1601,8 +1601,10 @@ impl<
             transfer_global_tokens(global_trade_accounts_opt, global_atoms_to_transfer)?;
         }
 
-        // Record volume on market
-        fixed.quote_volume = fixed.quote_volume.wrapping_add(total_quote_atoms_traded);
+        // Orders that make no trade leave market volume unchanged.
+        if total_quote_atoms_traded != QuoteAtoms::ZERO {
+            fixed.quote_volume = fixed.quote_volume.wrapping_add(total_quote_atoms_traded);
+        }
 
         // If there is nothing left to rest, then return before resting.
         if !order_type_can_rest(order_type)
