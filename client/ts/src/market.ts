@@ -69,6 +69,8 @@ export type RestingOrder = {
 export type ClaimedSeat = {
   /** Public key of the trader. */
   publicKey: PublicKey;
+  /** Current byte offset in the market's dynamic data; changes after defrag. */
+  dataIndex?: number;
   /** Balance of base atoms that are withdrawable (excluding in open orders). */
   baseBalance: bignum;
   /** Balance of quote atoms that are withdrawable (excluding in open orders). */
@@ -876,10 +878,12 @@ export class Market {
 
     const claimedSeats: ClaimedSeat[] = indexedClaimedSeats.map(
       ({
+        index,
         value: claimedSeatInternal,
       }: IndexedRedBlackTreeValue<ClaimedSeatRaw>) => {
         return {
           publicKey: claimedSeatInternal.trader,
+          dataIndex: index,
           baseBalance: claimedSeatInternal.baseWithdrawableBalance,
           quoteBalance: claimedSeatInternal.quoteWithdrawableBalance,
           quoteVolume: claimedSeatInternal.quoteVolume,

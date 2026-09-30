@@ -375,6 +375,15 @@ async fn place_cancel_settle(defrag: bool) -> anyhow::Result<()> {
 
 #[tokio::test]
 async fn wrapper_place_order_with_broke_owner_test() -> anyhow::Result<()> {
+    place_cancel_settle_with_broke_owner(false).await
+}
+
+#[tokio::test]
+async fn defrag_ui_wrapper_cancel_with_broke_owner_test() -> anyhow::Result<()> {
+    place_cancel_settle_with_broke_owner(true).await
+}
+
+async fn place_cancel_settle_with_broke_owner(defrag: bool) -> anyhow::Result<()> {
     let mut test_fixture: TestFixture = TestFixture::new().await;
 
     let payer: Pubkey = test_fixture.payer();
@@ -532,8 +541,32 @@ async fn wrapper_place_order_with_broke_owner_test() -> anyhow::Result<()> {
     );
     assert_eq!(open_order.get_market_data_index(), core_index);
 
-    // cancel the same order
+    // Cancellation after defrag must not charge reserve rent to the SOL-less owner.
+    if defrag {
+        let collector = fee_authority_keypair();
+        send_tx_with_retry(
+            Rc::clone(&test_fixture.context),
+            &[manifest::program::defrag_instruction(
+                &test_fixture.market.key,
+                &collector.pubkey(),
+                &base_mint,
+                &quote_mint,
+                spl_token::id(),
+                spl_token::id(),
+                None,
+            )],
+            Some(&payer),
+            &[&payer_keypair, &collector],
+        )
+        .await?;
+        test_fixture.market.reload().await;
+        assert_eq!(
+            test_fixture.market.market.free_blocks_short_of_n(2),
+            Some(0)
+        );
+    }
 
+    // cancel the same order
     let cancel_order_ix = Instruction {
         program_id: ui_wrapper::id(),
         accounts: vec![

@@ -57,6 +57,9 @@ pub(crate) fn process_settle_funds(
     let owner: Signer = Signer::new(next_account_info(account_iter)?)?;
     let trader_token_account_base: &AccountView = next_account_info(account_iter)?;
     let trader_token_account_quote: &AccountView = next_account_info(account_iter)?;
+    // Normal UI settlement collects payable fees atomically with emptying the
+    // seat. If core activity bypasses settlement, defrag could close the market
+    // before those fees are collected; this path requires a live market.
     let market: ManifestAccountInfo<MarketFixed> =
         ManifestAccountInfo::<MarketFixed>::new(next_account_info(account_iter)?)?;
     let vault_base: &AccountView = next_account_info(account_iter)?;

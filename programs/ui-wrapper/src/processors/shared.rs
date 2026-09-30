@@ -235,6 +235,10 @@ pub(crate) fn sync_fast(
     market_info.quote_balance = claimed_seat.quote_withdrawable_balance;
     // A harvested/reclaimed seat starts its informational volume at zero.
     // Keep already accrued unpaid fees; do not wrap a reset into a huge fee.
+    // Normal UI settlement collects payable fees while emptying the seat,
+    // before defrag can harvest it. Activity bypassing settlement is not covered:
+    // harvesting loses unsynced volume, and a reclaimed seat whose new volume
+    // exceeds the cached baseline can hide the reset from this comparison.
     let quote_volume_difference = if claimed_seat.quote_volume < market_info.quote_volume {
         claimed_seat.quote_volume
     } else {

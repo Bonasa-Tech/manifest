@@ -1,7 +1,10 @@
 use crate::{send_tx_with_retry, Side, TestFixture, Token};
 use hypertree::{HyperTreeValueIteratorTrait, NIL};
 use manifest::{
-    program::{batch_update::PlaceOrderParams, defrag_instruction, get_dynamic_value_or},
+    program::{
+        batch_update::{CancelOrderParams, PlaceOrderParams},
+        defrag_instruction, get_dynamic_value_or,
+    },
     state::{OrderType, RestingOrder, MARKET_BLOCK_SIZE, MARKET_FIXED_SIZE},
 };
 use solana_account::{Account, AccountSharedData};
@@ -73,7 +76,7 @@ async fn defrag_rejects_non_collector_and_closes_empty_market_and_vaults() -> an
     Ok(())
 }
 #[tokio::test]
-async fn defrag_preserves_orders_and_balances_then_batch_restores_five_nodes() -> anyhow::Result<()>
+async fn defrag_preserves_orders_and_balances_then_batch_replenishes_one_node() -> anyhow::Result<()>
 {
     let mut f = TestFixture::new().await;
     f.claim_seat().await?;
@@ -123,7 +126,64 @@ async fn defrag_preserves_orders_and_balances_then_batch_restores_five_nodes() -
     )
     .await?;
     f.market_fixture.reload().await;
-    assert_eq!(f.market_fixture.market.free_blocks_short_of_n(5), Some(0));
+    assert_eq!(f.market_fixture.market.free_blocks_short_of_n(2), Some(0));
+    let mut previous_size = account.data.len() + MARKET_BLOCK_SIZE;
+    assert_eq!(
+        f.try_load(&f.market_fixture.key).await?.unwrap().data.len(),
+        previous_size
+    );
+
+    // Cancel/replace batches grow the spare reserve one node at a time and
+    // stop at five. Each replacement consumes the block its cancel releases.
+    for expected_free in [3, 4, 5, 5] {
+        let sequence = f
+            .market_fixture
+            .market
+            .get_asks()
+            .iter::<RestingOrder>()
+            .next()
+            .unwrap()
+            .1
+            .get_sequence_number();
+        f.batch_update_for_keypair(
+            None,
+            vec![CancelOrderParams::new(sequence)],
+            vec![PlaceOrderParams::new(100, 2, 0, false, OrderType::Limit, 0)],
+            &f.payer_keypair(),
+        )
+        .await?;
+        f.market_fixture.reload().await;
+        assert_eq!(
+            f.market_fixture
+                .market
+                .free_blocks_short_of_n(expected_free),
+            Some(0)
+        );
+        let size = f.try_load(&f.market_fixture.key).await?.unwrap().data.len();
+        assert!(size == previous_size || size == previous_size + MARKET_BLOCK_SIZE);
+        previous_size = size;
+    }
+
+    // Defrag again so cancel-only and empty batches would previously have
+    // charged the trader to restore five free nodes.
+    run(&f, &key).await?;
+    f.market_fixture.reload().await;
+    let compacted = f.try_load(&f.market_fixture.key).await?.unwrap();
+    let sequence = f
+        .market_fixture
+        .market
+        .get_asks()
+        .iter::<RestingOrder>()
+        .next()
+        .unwrap()
+        .1
+        .get_sequence_number();
+    f.cancel_order(sequence).await?;
+    f.batch_update_for_keypair(None, vec![], vec![], &f.payer_keypair())
+        .await?;
+    let after_cancel = f.try_load(&f.market_fixture.key).await?.unwrap();
+    assert_eq!(after_cancel.data.len(), compacted.data.len());
+    assert_eq!(after_cancel.lamports, compacted.lamports);
     Ok(())
 }
 

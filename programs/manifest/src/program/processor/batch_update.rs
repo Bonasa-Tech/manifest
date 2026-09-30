@@ -264,8 +264,9 @@ pub(crate) fn process_batch_update_core(
         orders,
     } = params;
 
+    let has_placements: bool = !orders.is_empty();
     // Only placements need the clock for expiration checks.
-    let current_slot: Option<u32> = if orders.is_empty() {
+    let current_slot: Option<u32> = if !has_placements {
         None
     } else {
         Some(get_now_slot())
@@ -358,58 +359,60 @@ pub(crate) fn process_batch_update_core(
     // per borrow rather than once per order. Only an expansion invalidates it.
     let mut dynamic_account: MarketRefMut = get_mut_dynamic_account(&mut market_data);
     for place_order_params in orders {
-        let need_expand: bool = {
-            let base_atoms: BaseAtoms = BaseAtoms::new(place_order_params.base_atoms());
-            let price: QuoteAtomsPerBaseAtom = place_order_params.try_price()?;
-            let order_type: OrderType = place_order_params.order_type();
-            require!(
-                order_type.is_valid(),
-                ProgramError::InvalidInstructionData,
-                "Invalid order type {}",
-                order_type.as_u8(),
-            )?;
-            let last_valid_slot: u32 = place_order_params.last_valid_slot();
-
-            let add_order_to_market_result: AddOrderToMarketResult = batch_place_order(
-                &mut dynamic_account,
-                AddOrderToMarketArgs {
-                    market: &market_pubkey,
-                    trader_index,
-                    num_base_atoms: base_atoms,
-                    price,
-                    is_bid: place_order_params.is_bid(),
-                    last_valid_slot,
-                    order_type,
-                    global_trade_accounts_opts: &global_trade_accounts_opts,
-                    current_slot,
-                },
-            )?;
-
-            let AddOrderToMarketResult {
-                order_index,
-                order_sequence_number,
-                ..
-            } = add_order_to_market_result;
-
-            #[cfg(not(feature = "certora"))]
-            (order_sequence_number, order_index)
-                .serialize(&mut result)
-                .unwrap();
-            #[cfg(feature = "certora")]
-            result.push((order_sequence_number, order_index));
-            !dynamic_account.fixed.has_free_block()
-        };
-        if need_expand {
+        // Allocate only what this placement needs if prior orders exhausted
+        // the free list. The spare reserve is replenished once after the loop.
+        if !dynamic_account.fixed.has_free_block() {
             drop(market_data);
-            batch_expand_market(&payer, &market, 5)?;
+            batch_expand_market(&payer, &market, 1)?;
             market_data = market.try_borrow_mut()?;
             dynamic_account = get_mut_dynamic_account(&mut market_data);
         }
+        let base_atoms: BaseAtoms = BaseAtoms::new(place_order_params.base_atoms());
+        let price: QuoteAtomsPerBaseAtom = place_order_params.try_price()?;
+        let order_type: OrderType = place_order_params.order_type();
+        require!(
+            order_type.is_valid(),
+            ProgramError::InvalidInstructionData,
+            "Invalid order type {}",
+            order_type.as_u8(),
+        )?;
+        let last_valid_slot: u32 = place_order_params.last_valid_slot();
+
+        let add_order_to_market_result: AddOrderToMarketResult = batch_place_order(
+            &mut dynamic_account,
+            AddOrderToMarketArgs {
+                market: &market_pubkey,
+                trader_index,
+                num_base_atoms: base_atoms,
+                price,
+                is_bid: place_order_params.is_bid(),
+                last_valid_slot,
+                order_type,
+                global_trade_accounts_opts: &global_trade_accounts_opts,
+                current_slot,
+            },
+        )?;
+
+        let AddOrderToMarketResult {
+            order_index,
+            order_sequence_number,
+            ..
+        } = add_order_to_market_result;
+
+        #[cfg(not(feature = "certora"))]
+        (order_sequence_number, order_index)
+            .serialize(&mut result)
+            .unwrap();
+        #[cfg(feature = "certora")]
+        result.push((order_sequence_number, order_index));
     }
-    let missing = dynamic_account.free_blocks_short_of_n(5).unwrap_or(0);
+    // Replenish the reserve gradually, adding at most one extra block per
+    // placement batch toward five free blocks. Cancels never pay to expand.
+    let replenish_reserve =
+        has_placements && dynamic_account.free_blocks_short_of_n(5).unwrap_or(0) > 0;
     drop(market_data);
-    if missing > 0 {
-        batch_expand_market(&payer, &market, missing)?;
+    if replenish_reserve {
+        batch_expand_market(&payer, &market, 1)?;
     }
 
     // Pay out gas prepayment refunds for cancelled global orders. This must

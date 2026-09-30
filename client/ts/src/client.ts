@@ -360,6 +360,7 @@ export class ManifestClient {
         connection,
         address: wrapperKeypair.publicKey,
       });
+      await marketObject.reload(connection);
 
       return new ManifestClient(
         connection,
@@ -386,7 +387,14 @@ export class ManifestClient {
       wrapperData.marketInfos.filter((marketInfo: WrapperMarketInfo) => {
         return marketInfo.market.toBase58() == marketPk.toBase58();
       });
-    if (existingMarketInfos.length > 0) {
+    if (
+      existingMarketInfos.length > 0 &&
+      ManifestClient.hasCurrentSeat(
+        marketObject,
+        payerKeypair.publicKey,
+        existingMarketInfos[0],
+      )
+    ) {
       const wrapper = await Wrapper.loadFromAddress({
         connection,
         address: userWrapper.pubkey,
@@ -405,7 +413,7 @@ export class ManifestClient {
       );
     }
 
-    // There is a wrapper, but need to claim a seat.
+    // ClaimSeat also refreshes cached indices after a seat is moved or harvested.
     const claimSeatIx: TransactionInstruction = createClaimSeatInstruction({
       manifestProgram: MANIFEST_PROGRAM_ID,
       owner: payerKeypair.publicKey,
@@ -418,6 +426,7 @@ export class ManifestClient {
       connection,
       address: userWrapper.pubkey,
     });
+    await marketObject.reload(connection);
 
     return new ManifestClient(
       connection,
@@ -500,11 +509,19 @@ export class ManifestClient {
         return marketInfo.market.toBase58() == marketPk.toBase58();
       });
     if (existingMarketInfos.length > 0) {
-      setupData.setupNeeded = false;
-      return setupData;
+      const market = await Market.loadFromAddress({
+        connection,
+        address: marketPk,
+      });
+      if (
+        ManifestClient.hasCurrentSeat(market, trader, existingMarketInfos[0])
+      ) {
+        setupData.setupNeeded = false;
+        return setupData;
+      }
     }
 
-    // There is a wrapper, but need to claim a seat.
+    // ClaimSeat also refreshes cached indices after a seat is moved or harvested.
     const claimSeatIx: TransactionInstruction = createClaimSeatInstruction({
       manifestProgram: MANIFEST_PROGRAM_ID,
       owner: trader,
@@ -514,6 +531,19 @@ export class ManifestClient {
     setupData.instructions.push(claimSeatIx);
 
     return setupData;
+  }
+
+  private static hasCurrentSeat(
+    market: Market,
+    trader: PublicKey,
+    marketInfo: WrapperMarketInfo,
+  ): boolean {
+    const seat = market
+      .claimedSeats()
+      .find((seat) => seat.publicKey.equals(trader));
+    return (
+      seat?.dataIndex !== undefined && seat.dataIndex === marketInfo.traderIndex
+    );
   }
 
   /**

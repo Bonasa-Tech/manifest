@@ -47,9 +47,10 @@ caps it at 8 KiB of the 32 KiB heap.
 
 The live account target is `256 + 80 * (surviving seats + orders + 2)` bytes.
 Two spare nodes preserve capacity for paths that need two allocations, including
-reverse-order handling. Core batch updates finish with **at least five** spare
-nodes, growing only the deficit; they do not shrink larger free lists. The batch
-payer supplies this rent, including on cancel-only batches. Defrag reduces the
+reverse-order handling. Core batches containing placements add **at most one**
+extra spare node toward a target of five, in addition to individual allocations
+needed to place the orders. They do not shrink larger free lists. The batch payer
+supplies this rent; cancel-only and empty batches never expand. Defrag reduces the
 reserve back to two, or closes the account.
 
 The fixed header and its padding stay unchanged at 256 bytes. No free-node count
@@ -107,15 +108,20 @@ its original instruction and account list. Callers must claim a seat before an
 initial deposit and claim it again after harvesting; ClaimSeat and Deposit can
 be composed in the same transaction. ClaimSeat also refreshes moved seat/order
 hints and repairs an existing MarketInfo instead of inserting a duplicate.
-After defrag, callers can prepend ClaimSeat before depositing to refresh those
-hints even when their seat survived.
+The SDK's `getSetupIxs` and `getClientForMarket` check the live core seat and its
+index, returning or sending ClaimSeat when the seat was harvested or moved.
+Callers can compose those setup instructions with Deposit in the same transaction.
 Zero withdrawals after harvesting are harmless. The UI wrapper refreshes before
 cancellation, recreates seats through its existing placement path, and prepays
 placement capacity from its designated payer (one order plus five spare nodes).
-It can settle
-already accrued fees with no core seat. Reset seat volume cannot wrap into a huge
-fee, and already accrued unpaid volume is retained. Unobserved historical volume
-on a harvested seat cannot be reconstructed by a wrapper.
+Normal UI settlement withdraws balances and collects payable fees atomically,
+before the empty seat becomes eligible for harvesting. Defrag assumes that
+settlement flow. Core activity that bypasses UI settlement is not covered:
+harvesting can lose unsynced fee volume, and a recreated seat whose new volume
+exceeds the previous baseline can hide the reset. While the market remains open,
+the wrapper can settle already accrued fees with no core seat; closing the market
+prevents any remaining settlement. These assumptions are documented in the UI
+wrapper.
 
 Upgrade **both wrappers before invoking Defrag**. Direct core clients must reload
 market state and refresh index hints after maintenance; old strict hints can fail.
@@ -170,8 +176,9 @@ separate global analysis.
 ## Validation
 
 - SBF builds for core, regular wrapper and UI wrapper using the pinned v1.57 tools.
-- Eight new core integration cases: collector authorization/empty closure,
-  balance and FIFO preservation/five-node replenishment, classic-token and
+- All 153 core, 40 regular-wrapper and 12 UI-wrapper SBF integration tests passed.
+- Core integration coverage includes collector authorization/empty closure,
+  balance and FIFO preservation/gradual reserve replenishment, classic-token and
   Token-2022 excess collection, WSOL preservation, 13,000 seats with 1,000 funded
   survivors, and an account containing 13,002 free nodes.
 - The large seat-population case (13,000 seats, 1,000 funded survivors) uses
@@ -179,16 +186,16 @@ separate global analysis.
   budgeting: a bounded run relocates node by node and patches links as it goes
   rather than computing one bulk mapping. The test asserts the figure stays
   under 1,250,000 so the remaining headroom cannot erode unnoticed.
-- Core integration run: 141 passed, with the one old one-spare-node assertion
-  subsequently updated to five and passing on rerun. Two unrelated cases were
-  excluded. All 86 core library tests passed.
-- All 32 regular-wrapper and 11 UI-wrapper integration tests passed, including
-  moved-order cancellation, harvested-seat recovery and a sponsored owner with
-  no SOL. Existing tests cover ordinary matching, reverse orders and gas refunds.
+- Reserve regressions check one-node replenishment toward five, no expansion for
+  cancel-only or empty batches, and cancellation after defrag by an owner with
+  no SOL. Wrapper coverage includes moved-order cancellation and harvested-seat
+  recovery. Existing tests cover ordinary matching, reverse orders and gas refunds.
+- All 93 core library tests passed.
 - Core library tests cover the bounded path directly: that budget-one runs
   converge byte for byte on the unbounded layout, that no bounded run grows the
   account or invalidates intermediate state, that the hardcoded node offsets
   match the typed accessors, and that an oversized market is rejected.
-- TypeScript typecheck and formatting passed; 20 SDK cancellation/account-selection,
-  token-program and metrics tests passed. Eight census-script tests passed.
+- TypeScript typecheck, lint and formatting passed; 22 focused SDK tests passed,
+  including nine setup regressions for harvested/moved seats, reused old indices,
+  unchanged seats and clients without a private key.
 - All 12 slim Rust-client parsing, instruction and SBF integration tests passed.
