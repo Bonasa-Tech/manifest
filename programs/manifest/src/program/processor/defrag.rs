@@ -30,11 +30,22 @@ pub(crate) fn process_defrag(
     accounts: &[AccountView],
     data: &[u8],
 ) -> ProgramResult {
-    require!(
-        data.is_empty(),
-        ProgramError::InvalidInstructionData,
-        "Defrag takes no parameters"
-    )?;
+    // Optional little endian u32 budget: how many nodes this run relocates,
+    // zero or absent meaning unbounded. Reclaiming empty seats is never capped
+    // because the seat tree is rebuilt from the survivors either way. A market
+    // too large to compact in one transaction is compacted by repeating a
+    // bounded run; each leaves a valid market no larger than it started.
+    let limit: u32 = match data.first_chunk::<4>() {
+        Some(bytes) => u32::from_le_bytes(*bytes),
+        None => {
+            require!(
+                data.is_empty(),
+                ProgramError::InvalidInstructionData,
+                "Defrag takes an optional u32 budget"
+            )?;
+            0
+        }
+    };
     let iter = &mut accounts.iter();
     let collector = Signer::new_payer(next_account_info(iter)?)?;
     require!(
@@ -130,7 +141,7 @@ pub(crate) fn process_defrag(
     }
     let size = {
         let mut data = market.try_borrow_mut()?;
-        get_mut_dynamic_account::<MarketFixed>(&mut data).defragment()?
+        get_mut_dynamic_account::<MarketFixed>(&mut data).defragment(limit)?
     };
     // Empty vaults may be closed only when no token/extension claims remain.
     let empty = size == crate::state::MARKET_FIXED_SIZE + 2 * crate::state::MARKET_BLOCK_SIZE;

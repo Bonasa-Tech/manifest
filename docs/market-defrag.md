@@ -12,7 +12,9 @@ test collector. Never deploy a build with `test` enabled.
 
 ## Instruction and invariants
 
-The instruction has no parameters. Accounts, in order:
+The instruction takes an optional little endian `u32` after the discriminator:
+the number of nodes this run may relocate, with zero or an absent value meaning
+unbounded. See [Bounded runs](#bounded-runs). Accounts, in order:
 
 | Account | Access |
 | --- | --- |
@@ -31,10 +33,17 @@ volume disappears. Market lifetime volume is preserved.
 
 Compaction relocates the existing order nodes and rewrites their links and owner
 indices without changing tree shape. Ordinary remove/reinsert at equal prices
-would change FIFO priority. Surviving seats are inserted into a rebuilt seat tree.
+would change FIFO priority. Surviving seats are inserted into a rebuilt seat tree;
+reclaimed seats are simply left out of it, so reclaiming costs no tree work and a
+run that drops thousands of seats costs no more than one that drops none.
 Order sequence IDs, prices, quantities, expiry, type, reverse spread and global gas
 prepayments are unchanged. The next-order sequence counter advances once to
 invalidate wrapper quiet-sync caches; gaps in sequence numbers are valid.
+
+A market larger than `MAX_DEFRAG_BLOCKS` (65,536 nodes, a 5.2 MB account) is
+rejected with `InvalidAccountData` rather than exhausting the heap or the compute
+budget partway through. The live bitmap is one bit per block, so that bound also
+caps it at 8 KiB of the 32 KiB heap.
 
 The live account target is `256 + 80 * (surviving seats + orders + 2)` bytes.
 Two spare nodes preserve capacity for paths that need two allocations, including
@@ -58,6 +67,32 @@ zero token amounts and zero withheld transfer fees. Unknown/confidential token
 extensions prevent automatic closure. Supported vault extensions are transfer-fee
 amount, transfer-hook account, pausable account and immutable owner. Token CPIs
 run before direct market-lamport changes; any failure rolls back the instruction.
+
+## Bounded runs
+
+Passing a relocation budget makes a single market compactable across several
+transactions. Each run:
+
+- reclaims every eligible seat, which is free, and relocates at most `limit`
+  surviving nodes into the holes beneath them, working from the top of the
+  account down because only vacating a high block lets it shrink;
+- leaves the market fully consistent — trees valid, balances intact, FIFO
+  preserved, at least two spare nodes — and never larger than it started;
+- converges: repeating until the size stops changing reaches the same layout a
+  single unbounded run would produce.
+
+So an operator who cannot fit a market in one transaction picks a budget,
+simulates it against current state, and repeats until the size settles. There is
+no resume cursor and no partial state to carry between runs; each one recomputes
+everything from the account.
+
+What a budget cannot bound is the single pass over allocated blocks and the seat
+tree rebuild over the survivors, which is why `MAX_DEFRAG_BLOCKS` exists. Model
+both terms when choosing a budget rather than assuming a small `limit` makes any
+market affordable.
+
+`ManifestClient.defragIx(collector, limit?)` and the Rust `defrag_instruction`
+builder both take the budget as an optional argument.
 
 ## Wrapper compatibility and rollout
 
@@ -84,12 +119,12 @@ on a harvested seat cannot be reconstructed by a wrapper.
 
 Upgrade **both wrappers before invoking Defrag**. Direct core clients must reload
 market state and refresh index hints after maintenance; old strict hints can fail.
-Use `ManifestClient.defragIx(collector)` or the Rust `defrag_instruction` builder.
-Large accounts need an explicit compute budget, up to 1.4 million units; simulate
-each transaction against current state before sending. The implementation is one
-atomic instruction per market, not a guarantee that every future account up to
-Solana's maximum account size will fit in one transaction. Closure is irreversible;
-closed market addresses are no longer valid trading accounts.
+Use `ManifestClient.defragIx(collector, limit?)` or the Rust `defrag_instruction`
+builder. Large accounts need an explicit compute budget, up to 1.4 million units;
+simulate each transaction against current state before sending. A market that
+does not fit in one transaction is compacted with a relocation budget over
+several, subject to `MAX_DEFRAG_BLOCKS`. Closure is irreversible; closed market
+addresses are no longer valid trading accounts.
 
 No deployment or mainnet maintenance transaction is part of this change.
 
@@ -135,17 +170,23 @@ separate global analysis.
 ## Validation
 
 - SBF builds for core, regular wrapper and UI wrapper using the pinned v1.57 tools.
-- Seven new core integration cases: collector authorization/empty closure,
+- Eight new core integration cases: collector authorization/empty closure,
   balance and FIFO preservation/five-node replenishment, classic-token and
   Token-2022 excess collection, WSOL preservation, 13,000 seats with 1,000 funded
   survivors, and an account containing 13,002 free nodes.
-- The large seat-population case uses approximately 954,000 CU under a 1.4M limit.
+- The large seat-population case used approximately 954,000 CU under a 1.4M limit
+  **before** relocation budgeting was added. That figure has not been re-measured
+  since; re-run the SBF integration suite and pin it before deploying.
 - Core integration run: 141 passed, with the one old one-spare-node assertion
   subsequently updated to five and passing on rerun. Two unrelated cases were
   excluded. All 86 core library tests passed.
 - All 32 regular-wrapper and 11 UI-wrapper integration tests passed, including
   moved-order cancellation, harvested-seat recovery and a sponsored owner with
   no SOL. Existing tests cover ordinary matching, reverse orders and gas refunds.
+- Core library tests cover the bounded path directly: that budget-one runs
+  converge byte for byte on the unbounded layout, that no bounded run grows the
+  account or invalidates intermediate state, that the hardcoded node offsets
+  match the typed accessors, and that an oversized market is rejected.
 - TypeScript typecheck and formatting passed; 20 SDK cancellation/account-selection,
   token-program and metrics tests passed. Eight census-script tests passed.
 - All 12 slim Rust-client parsing, instruction and SBF integration tests passed.

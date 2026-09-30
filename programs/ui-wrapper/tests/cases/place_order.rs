@@ -192,7 +192,8 @@ async fn place_cancel_settle(defrag: bool) -> anyhow::Result<()> {
                 &quote_mint,
                 spl_token::id(),
                 spl_token::id(),
-            )],
+        None,
+    )],
             Some(&payer),
             &[&payer_keypair, &collector],
         )
@@ -338,7 +339,8 @@ async fn place_cancel_settle(defrag: bool) -> anyhow::Result<()> {
                 &quote_mint,
                 spl_token::id(),
                 spl_token::id(),
-            )],
+        None,
+    )],
             Some(&payer),
             &[&payer_keypair, &collector],
         )

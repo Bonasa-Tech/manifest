@@ -1,23 +1,107 @@
-//! Atomic compaction. Relink nodes without changing tree shape: removing and
-//! reinserting equal-price orders through the normal insertion path would change
-//! their FIFO priority. Order identities, balances and global gas deposits stay put.
+//! Bounded, resumable compaction. Relink nodes without changing tree shape:
+//! removing and reinserting equal-price orders through the normal insertion
+//! path would change their FIFO priority. Order identities, balances and global
+//! gas deposits stay put.
+//!
+//! A run relocates at most a caller supplied number of nodes and leaves the
+//! market fully consistent and no larger than it started, so a market too big
+//! to compact in one transaction is compacted by repeating the call. Repeated
+//! bounded runs converge on the layout one unbounded run would produce.
 use super::*;
 
-fn bit(words: &[u64], index: DataIndex) -> bool {
-    let n = index as usize / MARKET_BLOCK_SIZE;
-    words[n / 64] & (1u64 << (n % 64)) != 0
+/// Byte offsets inside an `RBNode<V>` header. Identical for every payload.
+const NODE_LEFT: usize = 0;
+const NODE_RIGHT: usize = 4;
+const NODE_PARENT: usize = 8;
+const NODE_TYPE: usize = 13;
+const NODE_VALUE: usize = 16;
+/// `RestingOrder::trader_index` sits 32 bytes into the payload, after the
+/// 16 byte price, 8 byte size and 8 byte sequence number. Pinned by
+/// `node_layout_offsets_match_accessors`.
+const ORDER_TRADER: usize = NODE_VALUE + 32;
+
+const_assert_eq!(size_of::<RBNode<ClaimedSeat>>(), MARKET_BLOCK_SIZE);
+const_assert_eq!(size_of::<RBNode<RestingOrder>>(), MARKET_BLOCK_SIZE);
+
+/// Largest market this will compact. The bitmap is one bit per block, so this
+/// caps it at 8 KiB of a 32 KiB heap, and the single pass over allocated blocks
+/// stays well inside one instruction's compute budget. Above this the
+/// instruction reports a clear error instead of aborting in the allocator or
+/// running out of compute.
+pub const MAX_DEFRAG_BLOCKS: usize = 65_536;
+
+fn bit(words: &[u64], block: usize) -> bool {
+    words[block / 64] & (1u64 << (block % 64)) != 0
 }
-fn mark(words: &mut [u64], index: DataIndex) {
-    let n = index as usize / MARKET_BLOCK_SIZE;
-    words[n / 64] |= 1u64 << (n % 64);
+fn set_bit(words: &mut [u64], block: usize) {
+    words[block / 64] |= 1u64 << (block % 64);
 }
-fn relocated(words: &[u64], prefix: &[u32], index: DataIndex) -> DataIndex {
-    if index == NIL {
-        return NIL;
+fn clear_bit(words: &mut [u64], block: usize) {
+    words[block / 64] &= !(1u64 << (block % 64));
+}
+
+fn read_index(data: &[u8], at: usize) -> DataIndex {
+    DataIndex::from_le_bytes(data[at..at + 4].try_into().unwrap())
+}
+fn write_index(data: &mut [u8], at: usize, value: DataIndex) {
+    data[at..at + 4].copy_from_slice(&value.to_le_bytes());
+}
+
+/// Slide one node to a lower block. The order trees are kept, so an order's
+/// neighbours are repointed here. The seat tree is rebuilt from the survivors
+/// instead, and a seat's stale links must not be followed on the way: the block
+/// a link names may already have been handed out as a destination.
+/// `old` and `new` are block aligned and cannot overlap because `new < old`.
+fn relocate(
+    fixed: &mut MarketFixed,
+    dynamic: &mut [u8],
+    old: usize,
+    new: usize,
+    moved_seats: &mut Vec<(DataIndex, DataIndex)>,
+) {
+    dynamic.copy_within(old..old + MARKET_BLOCK_SIZE, new);
+    dynamic[old..old + MARKET_BLOCK_SIZE].fill(0);
+
+    let old_index: DataIndex = old as DataIndex;
+    let new_index: DataIndex = new as DataIndex;
+    if dynamic[new + NODE_TYPE] == MarketDataTreeNodeType::ClaimedSeat as u8 {
+        // Orders name their owner by index and the rebuilt tree cannot fix
+        // that. Patched in one pass afterwards, so the book is walked once per
+        // run rather than once per moved seat.
+        moved_seats.push((old_index, new_index));
+        return;
     }
-    let n = index as usize / MARKET_BLOCK_SIZE;
-    let below = words[n / 64] & ((1u64 << (n % 64)) - 1);
-    (prefix[n / 64] + below.count_ones()) * MARKET_BLOCK_SIZE as u32
+    let left: DataIndex = read_index(dynamic, new + NODE_LEFT);
+    let right: DataIndex = read_index(dynamic, new + NODE_RIGHT);
+    let parent: DataIndex = read_index(dynamic, new + NODE_PARENT);
+    if left != NIL {
+        write_index(dynamic, left as usize + NODE_PARENT, new_index);
+    }
+    if right != NIL {
+        write_index(dynamic, right as usize + NODE_PARENT, new_index);
+    }
+    if parent != NIL {
+        // Exactly one of the parent's two children named this node.
+        let side: usize = if read_index(dynamic, parent as usize + NODE_LEFT) == old_index {
+            NODE_LEFT
+        } else {
+            NODE_RIGHT
+        };
+        write_index(dynamic, parent as usize + side, new_index);
+    } else if get_helper::<RBNode<RestingOrder>>(dynamic, new_index)
+        .get_value()
+        .get_is_bid()
+    {
+        fixed.bids_root_index = new_index;
+    } else {
+        fixed.asks_root_index = new_index;
+    }
+    if fixed.bids_best_index == old_index {
+        fixed.bids_best_index = new_index;
+    }
+    if fixed.asks_best_index == old_index {
+        fixed.asks_best_index = new_index;
+    }
 }
 
 impl<
@@ -27,94 +111,164 @@ impl<
 {
     /// Caller ensures at least two free blocks exist and truncates to the
     /// returned size after dropping all account-data borrows.
-    pub fn defragment(&mut self) -> Result<usize, ProgramError> {
+    ///
+    /// `limit` caps how many nodes this run relocates; zero is unbounded.
+    /// Reclaiming empty seats is not capped because it costs no tree work: the
+    /// seat tree is rebuilt from the survivors whether one seat goes or all of
+    /// them do. The other cost a budget cannot bound is the single pass over
+    /// allocated blocks, which is what `MAX_DEFRAG_BLOCKS` exists to keep
+    /// affordable. Simulate a market's first run to pick a budget that fits.
+    pub fn defragment(&mut self, limit: u32) -> Result<usize, ProgramError> {
         let DynamicAccount { fixed, dynamic } = self.borrow_mut();
-        let allocated = fixed.num_bytes_allocated as usize;
+        let allocated: usize = fixed.num_bytes_allocated as usize;
         require!(
             allocated <= dynamic.len() && allocated % MARKET_BLOCK_SIZE == 0,
             ProgramError::InvalidAccountData,
             "Invalid allocation"
         )?;
-        // At most 16 KiB of bits plus 8 KiB of prefix counts for a 10 MiB account.
-        // Reuse the bitmap: first referenced seats, then all retained nodes.
-        let mut live = vec![0u64; (allocated / MARKET_BLOCK_SIZE).div_ceil(64)];
-        // FreeList::add zeroes the payload (including the node type). Scan
-        // allocated blocks once; this avoids repeated tree traversal and marks
-        // every order together with its owner, including zero-balance owners.
-        for index in (0..allocated).step_by(MARKET_BLOCK_SIZE) {
-            match dynamic[index + 13] {
+        let blocks: usize = allocated / MARKET_BLOCK_SIZE;
+        require!(
+            blocks <= MAX_DEFRAG_BLOCKS,
+            ProgramError::InvalidAccountData,
+            "Market has {} blocks, more than the {} this can compact",
+            blocks,
+            MAX_DEFRAG_BLOCKS
+        )?;
+
+        // Mark what survives. `FreeList::add` zeroes the payload including the
+        // node type, so free blocks read as `Empty`. Scanning allocated blocks
+        // once marks every order together with its owner, including owners
+        // whose balances are zero.
+        let mut keep: Vec<u64> = vec![0u64; blocks.div_ceil(64)];
+        for block in 0..blocks {
+            let index: usize = block * MARKET_BLOCK_SIZE;
+            match dynamic[index + NODE_TYPE] {
                 kind if kind == MarketDataTreeNodeType::RestingOrder as u8 => {
-                    let order =
-                        get_helper::<RBNode<RestingOrder>>(dynamic, index as u32).get_value();
-                    mark(&mut live, index as u32);
-                    mark(&mut live, order.get_trader_index());
+                    set_bit(&mut keep, block);
+                    let owner: DataIndex = read_index(dynamic, index + ORDER_TRADER);
+                    require!(
+                        owner != NIL
+                            && (owner as usize) < allocated
+                            && owner as usize % MARKET_BLOCK_SIZE == 0,
+                        ProgramError::InvalidAccountData,
+                        "Resting order at {} has invalid owner {}",
+                        index,
+                        owner
+                    )?;
+                    set_bit(&mut keep, owner as usize / MARKET_BLOCK_SIZE);
                 }
                 kind if kind == MarketDataTreeNodeType::ClaimedSeat as u8 => {
-                    let seat = get_helper::<RBNode<ClaimedSeat>>(dynamic, index as u32).get_value();
+                    let seat: &ClaimedSeat =
+                        get_helper::<RBNode<ClaimedSeat>>(dynamic, index as DataIndex).get_value();
                     if seat.base_withdrawable_balance != BaseAtoms::ZERO
                         || seat.quote_withdrawable_balance != QuoteAtoms::ZERO
                     {
-                        mark(&mut live, index as u32);
+                        set_bit(&mut keep, block);
                     }
                 }
                 _ => {}
             }
         }
-        let mut prefix = Vec::with_capacity(live.len());
-        let mut count = 0;
-        for word in &live {
-            prefix.push(count);
-            count += word.count_ones();
-        }
-        let used = count as usize * MARKET_BLOCK_SIZE;
+        let keep_count: usize = keep.iter().map(|word| word.count_ones() as usize).sum();
         require!(
-            used + 2 * MARKET_BLOCK_SIZE <= dynamic.len(),
+            keep_count + 2 <= blocks,
             ProgramError::AccountDataTooSmall,
             "Defrag needs two spare nodes"
         )?;
 
-        // Destination never exceeds source. Map every reference using the
-        // original bitmap before overwriting each source block.
-        for old in (0..allocated).step_by(MARKET_BLOCK_SIZE) {
-            if !bit(&live, old as u32) {
+        // Everything not kept is a hole: a free block, or a seat this run
+        // reclaims. Work down from the top, because only vacating a high block
+        // lets the account shrink, sliding each survivor into the lowest hole
+        // beneath it. `hole` only ever advances, so destinations are found in
+        // one pass. Stop once the cursors meet: everything below is packed.
+        let mut budget: u32 = if limit == 0 { u32::MAX } else { limit };
+        let mut moved_seats: Vec<(DataIndex, DataIndex)> = Vec::new();
+        let mut hole: usize = 0;
+        let mut block: usize = blocks;
+        while block > 0 && budget > 0 {
+            block -= 1;
+            if !bit(&keep, block) {
                 continue;
             }
-            let new = relocated(&live, &prefix, old as u32) as usize;
-            let mut node = [0u8; MARKET_BLOCK_SIZE];
-            node.copy_from_slice(&dynamic[old..old + MARKET_BLOCK_SIZE]);
-            if node[13] == MarketDataTreeNodeType::RestingOrder as u8 {
-                for offset in [0, 4, 8] {
-                    let index = u32::from_le_bytes(node[offset..offset + 4].try_into().unwrap());
-                    node[offset..offset + 4]
-                        .copy_from_slice(&relocated(&live, &prefix, index).to_le_bytes());
+            while hole < block && bit(&keep, hole) {
+                hole += 1;
+            }
+            if hole >= block {
+                break;
+            }
+            relocate(
+                fixed,
+                dynamic,
+                block * MARKET_BLOCK_SIZE,
+                hole * MARKET_BLOCK_SIZE,
+                &mut moved_seats,
+            );
+            clear_bit(&mut keep, block);
+            set_bit(&mut keep, hole);
+            budget -= 1;
+        }
+
+        // Every destination is below every source, so a rewritten index can
+        // never collide with one still to be rewritten.
+        if !moved_seats.is_empty() {
+            for block in 0..blocks {
+                let index: usize = block * MARKET_BLOCK_SIZE;
+                if dynamic[index + NODE_TYPE] != MarketDataTreeNodeType::RestingOrder as u8 {
+                    continue;
                 }
-                let trader = u32::from_le_bytes(node[48..52].try_into().unwrap());
-                node[48..52].copy_from_slice(&relocated(&live, &prefix, trader).to_le_bytes());
+                let owner: DataIndex = read_index(dynamic, index + ORDER_TRADER);
+                if let Some((_, moved)) = moved_seats.iter().find(|(from, _)| *from == owner) {
+                    write_index(dynamic, index + ORDER_TRADER, *moved);
+                }
             }
-            dynamic[new..new + MARKET_BLOCK_SIZE].copy_from_slice(&node);
         }
-        fixed.bids_root_index = relocated(&live, &prefix, fixed.bids_root_index);
-        fixed.bids_best_index = relocated(&live, &prefix, fixed.bids_best_index);
-        fixed.asks_root_index = relocated(&live, &prefix, fixed.asks_root_index);
-        fixed.asks_best_index = relocated(&live, &prefix, fixed.asks_best_index);
+
+        // Keep everything up to the last survivor, and never fewer than two
+        // spare nodes, which the paths that allocate twice depend on.
+        let frontier: usize = (0..blocks)
+            .rev()
+            .find(|block| bit(&keep, *block))
+            .map_or(0, |block| block + 1);
+        let new_blocks: usize = frontier.max(keep_count + 2);
+
+        // Rebuild the seat tree from the survivors. Reclaimed seats simply
+        // never go back into it, which is why reclaiming needs no tree work,
+        // and why a run that reclaims thousands costs no more than one that
+        // reclaims none. The bitmap decides, not the node type: a reclaimed
+        // seat that no survivor happened to displace still reads as a seat.
         fixed.claimed_seats_root_index = NIL;
-        for index in (0..used).step_by(MARKET_BLOCK_SIZE) {
-            if dynamic[index + 13] == MarketDataTreeNodeType::ClaimedSeat as u8 {
-                let seat = *get_helper::<RBNode<ClaimedSeat>>(dynamic, index as u32).get_value();
-                let mut tree =
-                    RedBlackTree::<ClaimedSeat>::new(dynamic, fixed.claimed_seats_root_index, NIL);
-                tree.insert(index as u32, seat);
-                fixed.claimed_seats_root_index = tree.get_root_index();
-                get_mut_helper::<RBNode<ClaimedSeat>>(dynamic, index as u32)
-                    .set_payload_type(MarketDataTreeNodeType::ClaimedSeat as u8);
+        for block in 0..new_blocks {
+            let index: usize = block * MARKET_BLOCK_SIZE;
+            if !bit(&keep, block)
+                || dynamic[index + NODE_TYPE] != MarketDataTreeNodeType::ClaimedSeat as u8
+            {
+                continue;
             }
+            let seat: ClaimedSeat =
+                *get_helper::<RBNode<ClaimedSeat>>(dynamic, index as DataIndex).get_value();
+            let mut tree: RedBlackTree<ClaimedSeat> =
+                RedBlackTree::<ClaimedSeat>::new(dynamic, fixed.claimed_seats_root_index, NIL);
+            tree.insert(index as DataIndex, seat);
+            fixed.claimed_seats_root_index = tree.get_root_index();
+            get_mut_helper::<RBNode<ClaimedSeat>>(dynamic, index as DataIndex)
+                .set_payload_type(MarketDataTreeNodeType::ClaimedSeat as u8);
         }
-        dynamic[used..used + 2 * MARKET_BLOCK_SIZE].fill(0);
-        dynamic[used..used + 4].copy_from_slice(&((used + MARKET_BLOCK_SIZE) as u32).to_le_bytes());
-        dynamic[used + MARKET_BLOCK_SIZE..used + MARKET_BLOCK_SIZE + 4]
-            .copy_from_slice(&NIL.to_le_bytes());
-        fixed.free_list_head_index = used as u32;
-        fixed.num_bytes_allocated = (used + 2 * MARKET_BLOCK_SIZE) as u32;
+
+        // Chain the holes below the frontier, lowest first, so later
+        // allocations prefer low blocks and leave the tail reclaimable. This
+        // also blanks the reclaimed seats that were never displaced.
+        let mut head: DataIndex = NIL;
+        for block in (0..new_blocks).rev() {
+            if bit(&keep, block) {
+                continue;
+            }
+            let index: usize = block * MARKET_BLOCK_SIZE;
+            dynamic[index..index + MARKET_BLOCK_SIZE].fill(0);
+            write_index(dynamic, index, head);
+            head = index as DataIndex;
+        }
+        fixed.free_list_head_index = head;
+        fixed.num_bytes_allocated = (new_blocks * MARKET_BLOCK_SIZE) as u32;
         // Invalidate wrappers' quiet-sync shortcut even when no order traded.
         fixed.order_sequence_number = fixed
             .order_sequence_number
@@ -148,6 +302,167 @@ mod tests {
         }
         n
     }
+
+    #[test]
+    fn node_layout_offsets_match_accessors() {
+        let mut data = vec![0u8; MARKET_BLOCK_SIZE];
+        let order = RestingOrder::new(
+            7 * MARKET_BLOCK_SIZE as DataIndex,
+            BaseAtoms::ONE,
+            1.0.try_into().unwrap(),
+            0,
+            0,
+            true,
+            OrderType::Limit,
+        )
+        .unwrap();
+        let mut tree = RedBlackTree::<RestingOrder>::new(&mut data, NIL, NIL);
+        tree.insert(0, order);
+        assert_eq!(
+            read_index(&data, ORDER_TRADER),
+            get_helper::<RBNode<RestingOrder>>(&data, 0)
+                .get_value()
+                .get_trader_index()
+        );
+        assert_eq!(data[NODE_TYPE], 0);
+        get_mut_helper::<RBNode<RestingOrder>>(&mut data, 0)
+            .set_payload_type(MarketDataTreeNodeType::RestingOrder as u8);
+        assert_eq!(data[NODE_TYPE], MarketDataTreeNodeType::RestingOrder as u8);
+    }
+
+    /// Builds one maker with `orders` bids at a single price plus a mix of
+    /// fundable and empty seats, deliberately interleaved so compaction has to
+    /// move survivors past holes.
+    fn populated(orders: u64, empty_seats: usize) -> (super::super::super::MarketValue, Pubkey) {
+        // Deterministic keys: seat tree shape follows the trader pubkey, so two
+        // fixtures must agree byte for byte to be comparable.
+        let key = |n: u8| Pubkey::new_from_array([n; 32]);
+        let mut m = market();
+        m.market_expand_n(150).unwrap();
+        let maker = key(1);
+        let funded = key(2);
+        m.claim_seat(&maker).unwrap();
+        for seat in 0..empty_seats {
+            m.claim_seat(&key(16 + seat as u8)).unwrap();
+        }
+        m.claim_seat(&funded).unwrap();
+        m.deposit(m.get_trader_index(&funded), 1, true).unwrap();
+        let trader = m.get_trader_index(&maker);
+        for sequence in 0..orders {
+            let index = get_free_address_on_market_fixed_for_bid_order(&mut m.fixed, &mut m.dynamic);
+            let order = RestingOrder::new(
+                trader,
+                BaseAtoms::new(1),
+                1.0.try_into().unwrap(),
+                sequence,
+                0,
+                true,
+                OrderType::Limit,
+            )
+            .unwrap();
+            let mut tree = RedBlackTree::<RestingOrder>::new(
+                &mut m.dynamic,
+                m.fixed.bids_root_index,
+                m.fixed.bids_best_index,
+            );
+            tree.insert(index, order);
+            m.fixed.bids_root_index = tree.get_root_index();
+            m.fixed.bids_best_index = tree.get_max_index();
+            get_mut_helper::<RBNode<RestingOrder>>(&mut m.dynamic, index)
+                .set_payload_type(MarketDataTreeNodeType::RestingOrder as u8);
+        }
+        (m, maker)
+    }
+
+    fn fifo(m: &super::super::super::MarketValue) -> Vec<u64> {
+        m.get_bids()
+            .iter::<RestingOrder>()
+            .map(|(_, o)| o.get_sequence_number())
+            .collect()
+    }
+
+    #[test]
+    fn bounded_runs_converge_on_the_unbounded_layout() {
+        let (mut all_at_once, maker) = populated(12, 9);
+        let (mut incremental, _) = populated(12, 9);
+        let before = fifo(&all_at_once);
+
+        let target = all_at_once.defragment(0).unwrap();
+        all_at_once.dynamic.truncate(target - MARKET_FIXED_SIZE);
+
+        // One op at a time, and never more than the budget allows.
+        let mut runs = 0;
+        loop {
+            let size = incremental.defragment(1).unwrap();
+            incremental.dynamic.truncate(size - MARKET_FIXED_SIZE);
+            runs += 1;
+            assert!(runs < 200, "bounded defrag failed to converge");
+            if size == target {
+                break;
+            }
+        }
+        assert!(runs > 1, "test did not exercise the bounded path");
+
+        // Same bytes, not merely the same size.
+        assert_eq!(incremental.fixed.num_bytes_allocated, {
+            all_at_once.fixed.num_bytes_allocated
+        });
+        assert_eq!(incremental.dynamic, all_at_once.dynamic);
+        assert_eq!(fifo(&incremental), before);
+        assert_eq!(free_count(&incremental), 2);
+        assert_ne!(incremental.get_trader_index(&maker), NIL);
+
+        // Converged, so further runs are inert apart from the sequence bump.
+        let again = incremental.defragment(0).unwrap();
+        assert_eq!(again, target);
+    }
+
+    #[test]
+    fn a_bounded_run_never_grows_the_account_and_keeps_state_valid() {
+        let (mut m, maker) = populated(12, 9);
+        let before = fifo(&m);
+        let mut size = MARKET_FIXED_SIZE + m.fixed.num_bytes_allocated as usize;
+        for _ in 0..40 {
+            let next = m.defragment(2).unwrap();
+            assert!(next <= size, "a bounded run grew the account");
+            size = next;
+            m.dynamic.truncate(size - MARKET_FIXED_SIZE);
+            // Every intermediate state is a usable market.
+            assert_eq!(fifo(&m), before);
+            assert_ne!(m.get_trader_index(&maker), NIL);
+            assert!(free_count(&m) >= 2);
+            for (index, order) in m.get_bids().iter::<RestingOrder>() {
+                assert_eq!(
+                    order.get_trader_index(),
+                    m.get_trader_index(&maker),
+                    "order at {index} lost its owner"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_converged_market_needs_no_further_work() {
+        // Nothing left to move: a budget of one still completes in one run.
+        let (mut m, _) = populated(4, 0);
+        let first = m.defragment(0).unwrap();
+        m.dynamic.truncate(first - MARKET_FIXED_SIZE);
+        let second = m.defragment(1).unwrap();
+        assert_eq!(second, first);
+    }
+
+    #[test]
+    fn oversized_markets_are_rejected_with_a_clear_error() {
+        let mut m = market();
+        m.fixed.num_bytes_allocated = ((MAX_DEFRAG_BLOCKS + 1) * MARKET_BLOCK_SIZE) as u32;
+        m.dynamic
+            .resize((MAX_DEFRAG_BLOCKS + 1) * MARKET_BLOCK_SIZE, 0);
+        assert_eq!(
+            m.defragment(0).unwrap_err(),
+            ProgramError::InvalidAccountData
+        );
+    }
+
     #[test]
     fn order_resolution_searches_both_sides_by_price_and_stable_identity() {
         let mut m = market();
@@ -256,13 +571,12 @@ mod tests {
             .iter::<RestingOrder>()
             .map(|(_, o)| o.get_sequence_number())
             .collect();
-        let size = m.defragment().unwrap();
+        let size = m.defragment(0).unwrap();
         m.dynamic.truncate(size - MARKET_FIXED_SIZE);
         assert_eq!(size, MARKET_FIXED_SIZE + 80 * (2 + 12 + 2));
         assert_eq!(m.get_trader_index(&empty), NIL);
         assert_eq!(m.get_trader_balance(&funded).0.as_u64(), 1);
         let new_maker = m.resolve_trader_index(old_maker, &maker);
-        assert_ne!(old_maker, new_maker);
         assert_eq!(
             m.get_bids()
                 .iter::<RestingOrder>()
@@ -281,7 +595,7 @@ mod tests {
             );
         }
         assert_eq!(free_count(&m), 2);
-        let again = m.defragment().unwrap();
+        let again = m.defragment(0).unwrap();
         assert_eq!(size, again);
     }
 }

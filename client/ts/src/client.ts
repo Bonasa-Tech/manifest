@@ -856,9 +856,21 @@ export class ManifestClient {
     });
   }
 
-  /** Collector-only atomic market compaction and rent recovery. May close an empty market. */
-  public defragIx(collector: PublicKey): TransactionInstruction {
-    return createDefragInstruction({
+  /**
+   * Collector-only atomic market compaction and rent recovery. May close an
+   * empty market.
+   *
+   * @param limit How many nodes this run relocates; omit for unbounded.
+   * Reclaiming empty seats is never capped. Every bounded run leaves a valid
+   * market no larger than the one it started from, so a market too big to
+   * compact in one transaction is compacted by repeating the call. Simulate
+   * against current state to pick a value that fits the compute budget.
+   */
+  public defragIx(
+    collector: PublicKey,
+    limit?: number,
+  ): TransactionInstruction {
+    const ix: TransactionInstruction = createDefragInstruction({
       collector,
       market: this.market.address,
       baseVault: getVaultAddress(this.market.address, this.baseMint.address),
@@ -869,6 +881,17 @@ export class ManifestClient {
       quoteTokenProgram: this.isQuote22
         ? TOKEN_2022_PROGRAM_ID
         : TOKEN_PROGRAM_ID,
+    });
+    if (limit === undefined) {
+      return ix;
+    }
+    // The core reads an optional little endian u32 after the discriminator.
+    const budget: Buffer = Buffer.alloc(4);
+    budget.writeUInt32LE(limit);
+    return new TransactionInstruction({
+      programId: ix.programId,
+      keys: ix.keys,
+      data: Buffer.concat([ix.data, budget]),
     });
   }
 

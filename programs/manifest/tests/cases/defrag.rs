@@ -1,8 +1,8 @@
 use crate::{send_tx_with_retry, Side, TestFixture, Token};
 use hypertree::{HyperTreeValueIteratorTrait, NIL};
 use manifest::{
-    program::{batch_update::PlaceOrderParams, defrag_instruction},
-    state::{OrderType, RestingOrder},
+    program::{batch_update::PlaceOrderParams, defrag_instruction, get_dynamic_value_or},
+    state::{OrderType, RestingOrder, MARKET_BLOCK_SIZE, MARKET_FIXED_SIZE},
 };
 use solana_account::{Account, AccountSharedData};
 use solana_keypair::Keypair;
@@ -24,6 +24,9 @@ fn collector(f: &TestFixture) -> Keypair {
     key
 }
 fn ix(f: &TestFixture, key: &Keypair) -> Instruction {
+    ix_with(f, key, None)
+}
+fn ix_with(f: &TestFixture, key: &Keypair, limit: Option<u32>) -> Instruction {
     defrag_instruction(
         &f.market_fixture.key,
         &key.pubkey(),
@@ -31,6 +34,7 @@ fn ix(f: &TestFixture, key: &Keypair) -> Instruction {
         &f.usdc_mint_fixture.key,
         spl_token::id(),
         spl_token::id(),
+        limit,
     )
 }
 async fn run(f: &TestFixture, key: &Keypair) -> anyhow::Result<()> {
@@ -178,6 +182,7 @@ async fn vault_excess(token2022: bool) -> anyhow::Result<()> {
         &f.usdc_mint_fixture.key,
         token_program,
         spl_token::id(),
+        None,
     );
     send_tx_with_retry(
         Rc::clone(&f.context),
@@ -325,7 +330,8 @@ async fn defrag_leaves_wrapped_sol_principal_reserve_and_unsynced_lamports() -> 
             &f.usdc_mint_fixture.key,
             spl_token::id(),
             spl_token::id(),
-        )],
+        None,
+    )],
         Some(&f.payer()),
         &[&f.payer_keypair(), &key],
     )
@@ -367,5 +373,87 @@ async fn defrag_large_free_list_fits_one_instruction() -> anyhow::Result<()> {
     )
     .await?;
     assert!(f.try_load(&f.market_fixture.key).await?.is_none());
+    Ok(())
+}
+
+/// A budget the operator can pick offline has to be safe at every step: each
+/// run leaves a market that is valid and no larger, and repeating converges on
+/// the layout one unbounded run would reach.
+#[tokio::test]
+async fn bounded_defrag_makes_monotone_progress_and_converges() -> anyhow::Result<()> {
+    use manifest::quantities::WrapperU64;
+    use solana_program::pubkey::Pubkey;
+    const SEATS: u32 = 120;
+    const FUNDED: u32 = 10;
+    let mut f = TestFixture::new().await;
+    let key = collector(&f);
+    let mut value = f.market_fixture.market.clone();
+    value.dynamic.resize(MARKET_BLOCK_SIZE * (SEATS as usize + 2), 0);
+    value.market_expand_n(SEATS + 1)?;
+    let trader = |i: u32| {
+        let mut bytes = [0u8; 32];
+        bytes[..4].copy_from_slice(&i.to_le_bytes());
+        bytes[31] = 3;
+        Pubkey::new_from_array(bytes)
+    };
+    for i in 0..SEATS {
+        value.claim_seat(&trader(i))?;
+        if i < FUNDED {
+            value.deposit(value.get_trader_index(&trader(i)), 1, true)?;
+        }
+    }
+    let data = [bytemuck::bytes_of(&value.fixed), &value.dynamic].concat();
+    f.context.borrow_mut().set_account(
+        &f.market_fixture.key,
+        &AccountSharedData::from(Account {
+            lamports: Rent::default().minimum_balance(data.len()),
+            data,
+            owner: manifest::id(),
+            executable: false,
+            rent_epoch: 0,
+        }),
+    );
+    let vault =
+        manifest::validation::get_vault_address(&f.market_fixture.key, &f.sol_mint_fixture.key).0;
+    f.sol_mint_fixture.mint_to(&vault, 1000).await;
+
+    let mut previous = f.try_load(&f.market_fixture.key).await?.unwrap().data.len();
+    let mut runs = 0;
+    loop {
+        send_tx_with_retry(
+            Rc::clone(&f.context),
+            &[ix_with(&f, &key, Some(10))],
+            Some(&f.payer()),
+            &[&f.payer_keypair(), &key],
+        )
+        .await?;
+        let account = f.try_load(&f.market_fixture.key).await?.unwrap();
+        assert!(
+            account.data.len() <= previous,
+            "a bounded run grew the market from {previous} to {}",
+            account.data.len()
+        );
+        // Every funded seat is still readable and still holds its deposit.
+        let market: manifest::state::MarketValue =
+            get_dynamic_value_or(account.data.as_slice()).unwrap();
+        for i in 0..FUNDED {
+            assert_eq!(
+                market.get_trader_balance(&trader(i)).0.as_u64(),
+                1,
+                "funded seat {i} lost its balance after {runs} runs"
+            );
+        }
+        runs += 1;
+        assert!(runs < 200, "bounded defrag did not converge");
+        if account.data.len() == previous {
+            break;
+        }
+        previous = account.data.len();
+    }
+    assert!(runs > 1, "test did not exercise the bounded path");
+    assert_eq!(
+        previous,
+        MARKET_FIXED_SIZE + MARKET_BLOCK_SIZE * (FUNDED as usize + 2)
+    );
     Ok(())
 }

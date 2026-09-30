@@ -866,6 +866,7 @@ async fn defrag_fixture(f: &TestFixture) -> anyhow::Result<()> {
         &f.usdc_mint.key,
         spl_token::id(),
         spl_token::id(),
+        None,
     );
     send_tx_with_retry(
         Rc::clone(&f.context),
