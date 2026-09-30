@@ -174,9 +174,11 @@ separate global analysis.
   balance and FIFO preservation/five-node replenishment, classic-token and
   Token-2022 excess collection, WSOL preservation, 13,000 seats with 1,000 funded
   survivors, and an account containing 13,002 free nodes.
-- The large seat-population case used approximately 954,000 CU under a 1.4M limit
-  **before** relocation budgeting was added. That figure has not been re-measured
-  since; re-run the SBF integration suite and pin it before deploying.
+- The large seat-population case (13,000 seats, 1,000 funded survivors) uses
+  1,121,156 CU against the 1.4M ceiling, up from 954,000 before relocation
+  budgeting: a bounded run relocates node by node and patches links as it goes
+  rather than computing one bulk mapping. The test asserts the figure stays
+  under 1,250,000 so the remaining headroom cannot erode unnoticed.
 - Core integration run: 141 passed, with the one old one-spare-node assertion
   subsequently updated to five and passing on rerun. Two unrelated cases were
   excluded. All 86 core library tests passed.

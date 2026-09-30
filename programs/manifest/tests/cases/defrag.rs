@@ -266,6 +266,14 @@ async fn defrag_large_empty_seat_population_fits_one_instruction() -> anyhow::Re
         result.simulation_details.as_ref().unwrap().units_consumed
     );
     assert!(result.result.as_ref().unwrap().is_ok(), "{result:?}");
+    // Pin the headroom. This is the largest shape any live market is near, and
+    // without an assertion a change that takes it from comfortable to marginal
+    // lands silently; the 1.4M ceiling only catches it once it is too late.
+    let units: u64 = result.simulation_details.as_ref().unwrap().units_consumed;
+    assert!(
+        units < 1_250_000,
+        "large defrag regressed to {units} CU against a 1.4M ceiling"
+    );
     assert_eq!(
         value
             .get_trader_balance(&Pubkey::new_from_array({
@@ -330,8 +338,8 @@ async fn defrag_leaves_wrapped_sol_principal_reserve_and_unsynced_lamports() -> 
             &f.usdc_mint_fixture.key,
             spl_token::id(),
             spl_token::id(),
-        None,
-    )],
+            None,
+        )],
         Some(&f.payer()),
         &[&f.payer_keypair(), &key],
     )
@@ -388,7 +396,9 @@ async fn bounded_defrag_makes_monotone_progress_and_converges() -> anyhow::Resul
     let mut f = TestFixture::new().await;
     let key = collector(&f);
     let mut value = f.market_fixture.market.clone();
-    value.dynamic.resize(MARKET_BLOCK_SIZE * (SEATS as usize + 2), 0);
+    value
+        .dynamic
+        .resize(MARKET_BLOCK_SIZE * (SEATS as usize + 2), 0);
     value.market_expand_n(SEATS + 1)?;
     let trader = |i: u32| {
         let mut bytes = [0u8; 32];

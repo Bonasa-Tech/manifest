@@ -878,21 +878,44 @@ async fn defrag_fixture(f: &TestFixture) -> anyhow::Result<()> {
     Ok(())
 }
 
-#[tokio::test]
-async fn defrag_wrapper_recovers_moved_orders_and_seat_hints() -> anyhow::Result<()> {
+/// Claim a seat for a throwaway trader, funded on the spot, purely to leave a
+/// reclaimable hole at a known position in the market.
+async fn claim_empty_seat(f: &TestFixture, seed: u8) -> anyhow::Result<()> {
     use solana_signer::Signer;
-    let mut f = TestFixture::new().await;
-    // An empty seat before the wrapper orders creates a hole on compaction.
+    let trader: Keypair = Keypair::new_from_array([seed; 32]);
+    f.context.borrow_mut().set_account(
+        &trader.pubkey(),
+        &AccountSharedData::from(Account::new(
+            u32::MAX as u64,
+            0,
+            &solana_sdk_ids::system_program::id(),
+        )),
+    );
     send_tx_with_retry(
         Rc::clone(&f.context),
         &[manifest::program::claim_seat_instruction(
             &f.market.key,
-            &f.second_keypair.pubkey(),
+            &trader.pubkey(),
         )],
         Some(&f.payer()),
-        &[&f.payer_keypair(), &f.second_keypair],
+        &[&f.payer_keypair(), &trader],
     )
     .await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn defrag_wrapper_recovers_moved_orders_and_seat_hints() -> anyhow::Result<()> {
+    use solana_signer::Signer;
+    let mut f = TestFixture::new().await;
+    // Compaction pulls the highest surviving node into the lowest hole, so the
+    // wrapper's seat only moves when the reclaimable seats beneath it
+    // outnumber the orders above it. Three against two, and the assertion
+    // below is actually testing seat hint recovery rather than passing by
+    // accident on a seat that never moved.
+    for seed in [0xa1u8, 0xa2, 0xa3] {
+        claim_empty_seat(&f, seed).await?;
+    }
     f.claim_seat().await?;
     f.deposit(Token::SOL, 5 * SOL_UNIT_SIZE).await?;
     wrapper_batch(&f, vec![], vec![ask(201, 2), ask(202, 3)]).await?;

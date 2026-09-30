@@ -40,6 +40,38 @@ fn clear_bit(words: &mut [u64], block: usize) {
     words[block / 64] &= !(1u64 << (block % 64));
 }
 
+/// Ascending block indices whose bit is set, stepping over runs of zeroes a
+/// word at a time. A market is mostly reclaimable seats and free space, so
+/// walking every block to find the survivors costs far more than the work.
+struct SetBlocks<'a> {
+    words: &'a [u64],
+    word: u64,
+    at: usize,
+}
+impl<'a> SetBlocks<'a> {
+    fn new(words: &'a [u64]) -> Self {
+        SetBlocks {
+            words,
+            word: words.first().copied().unwrap_or(0),
+            at: 0,
+        }
+    }
+}
+impl Iterator for SetBlocks<'_> {
+    type Item = usize;
+    fn next(&mut self) -> Option<usize> {
+        loop {
+            if self.word != 0 {
+                let block: usize = self.at * 64 + self.word.trailing_zeros() as usize;
+                self.word &= self.word - 1;
+                return Some(block);
+            }
+            self.at += 1;
+            self.word = *self.words.get(self.at)?;
+        }
+    }
+}
+
 fn read_index(data: &[u8], at: usize) -> DataIndex {
     DataIndex::from_le_bytes(data[at..at + 4].try_into().unwrap())
 }
@@ -59,8 +91,9 @@ fn relocate(
     new: usize,
     moved_seats: &mut Vec<(DataIndex, DataIndex)>,
 ) {
+    // The vacated block needs no blanking: it is below the frontier, where the
+    // free list rebuild zeroes it, or above it, where it is truncated away.
     dynamic.copy_within(old..old + MARKET_BLOCK_SIZE, new);
-    dynamic[old..old + MARKET_BLOCK_SIZE].fill(0);
 
     let old_index: DataIndex = old as DataIndex;
     let new_index: DataIndex = new as DataIndex;
@@ -209,26 +242,28 @@ impl<
         }
 
         // Every destination is below every source, so a rewritten index can
-        // never collide with one still to be rewritten.
+        // never collide with one still to be rewritten. The walk went down the
+        // account, so `moved_seats` is already sorted descending on the old
+        // index and can be searched rather than scanned per order.
         if !moved_seats.is_empty() {
-            for block in 0..blocks {
+            for block in SetBlocks::new(&keep) {
                 let index: usize = block * MARKET_BLOCK_SIZE;
                 if dynamic[index + NODE_TYPE] != MarketDataTreeNodeType::RestingOrder as u8 {
                     continue;
                 }
                 let owner: DataIndex = read_index(dynamic, index + ORDER_TRADER);
-                if let Some((_, moved)) = moved_seats.iter().find(|(from, _)| *from == owner) {
-                    write_index(dynamic, index + ORDER_TRADER, *moved);
+                if let Ok(found) = moved_seats.binary_search_by(|probe| owner.cmp(&probe.0)) {
+                    write_index(dynamic, index + ORDER_TRADER, moved_seats[found].1);
                 }
             }
         }
 
         // Keep everything up to the last survivor, and never fewer than two
         // spare nodes, which the paths that allocate twice depend on.
-        let frontier: usize = (0..blocks)
-            .rev()
-            .find(|block| bit(&keep, *block))
-            .map_or(0, |block| block + 1);
+        let frontier: usize = keep
+            .iter()
+            .rposition(|word| *word != 0)
+            .map_or(0, |at| at * 64 + (64 - keep[at].leading_zeros() as usize));
         let new_blocks: usize = frontier.max(keep_count + 2);
 
         // Rebuild the seat tree from the survivors. Reclaimed seats simply
@@ -237,11 +272,9 @@ impl<
         // reclaims none. The bitmap decides, not the node type: a reclaimed
         // seat that no survivor happened to displace still reads as a seat.
         fixed.claimed_seats_root_index = NIL;
-        for block in 0..new_blocks {
+        for block in SetBlocks::new(&keep) {
             let index: usize = block * MARKET_BLOCK_SIZE;
-            if !bit(&keep, block)
-                || dynamic[index + NODE_TYPE] != MarketDataTreeNodeType::ClaimedSeat as u8
-            {
+            if dynamic[index + NODE_TYPE] != MarketDataTreeNodeType::ClaimedSeat as u8 {
                 continue;
             }
             let seat: ClaimedSeat =
@@ -349,7 +382,8 @@ mod tests {
         m.deposit(m.get_trader_index(&funded), 1, true).unwrap();
         let trader = m.get_trader_index(&maker);
         for sequence in 0..orders {
-            let index = get_free_address_on_market_fixed_for_bid_order(&mut m.fixed, &mut m.dynamic);
+            let index =
+                get_free_address_on_market_fixed_for_bid_order(&mut m.fixed, &mut m.dynamic);
             let order = RestingOrder::new(
                 trader,
                 BaseAtoms::new(1),
