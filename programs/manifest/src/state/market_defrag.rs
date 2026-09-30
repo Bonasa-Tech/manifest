@@ -24,10 +24,8 @@ const_assert_eq!(size_of::<RBNode<ClaimedSeat>>(), MARKET_BLOCK_SIZE);
 const_assert_eq!(size_of::<RBNode<RestingOrder>>(), MARKET_BLOCK_SIZE);
 
 /// Largest market this will compact. The bitmap is one bit per block, so this
-/// caps it at 8 KiB of a 32 KiB heap, and the single pass over allocated blocks
-/// stays well inside one instruction's compute budget. Above this the
-/// instruction reports a clear error instead of aborting in the allocator or
-/// running out of compute.
+/// caps that allocation at 8 KiB of a 32 KiB heap. This does not bound the
+/// moved-seat buffer or the cost of rebuilding the surviving seat tree.
 pub const MAX_DEFRAG_BLOCKS: usize = 65_536;
 
 fn bit(words: &[u64], block: usize) -> bool {
@@ -90,7 +88,7 @@ fn relocate(
     old: usize,
     new: usize,
     moved_seats: &mut Vec<(DataIndex, DataIndex)>,
-) {
+) -> Result<(), ProgramError> {
     // The vacated block needs no blanking: it is below the frontier, where the
     // free list rebuild zeroes it, or above it, where it is truncated away.
     dynamic.copy_within(old..old + MARKET_BLOCK_SIZE, new);
@@ -102,7 +100,7 @@ fn relocate(
         // that. Patched in one pass afterwards, so the book is walked once per
         // run rather than once per moved seat.
         moved_seats.push((old_index, new_index));
-        return;
+        return Ok(());
     }
     let left: DataIndex = read_index(dynamic, new + NODE_LEFT);
     let right: DataIndex = read_index(dynamic, new + NODE_RIGHT);
@@ -117,8 +115,10 @@ fn relocate(
         // Exactly one of the parent's two children named this node.
         let side: usize = if read_index(dynamic, parent as usize + NODE_LEFT) == old_index {
             NODE_LEFT
-        } else {
+        } else if read_index(dynamic, parent as usize + NODE_RIGHT) == old_index {
             NODE_RIGHT
+        } else {
+            return Err(ProgramError::InvalidAccountData);
         };
         write_index(dynamic, parent as usize + side, new_index);
     } else if get_helper::<RBNode<RestingOrder>>(dynamic, new_index)
@@ -135,6 +135,7 @@ fn relocate(
     if fixed.asks_best_index == old_index {
         fixed.asks_best_index = new_index;
     }
+    Ok(())
 }
 
 impl<
@@ -215,6 +216,10 @@ impl<
         // beneath it. `hole` only ever advances, so destinations are found in
         // one pass. Stop once the cursors meet: everything below is packed.
         let mut budget: u32 = if limit == 0 { u32::MAX } else { limit };
+        // Intentionally unbounded when limit == 0: one pair per relocated seat,
+        // plus Vec growth allocations the SBF bump allocator cannot reclaim.
+        // MAX_DEFRAG_BLOCKS caps only the bitmap, not this allocation. Operators
+        // must supply a smaller relocation budget if the default exceeds heap.
         let mut moved_seats: Vec<(DataIndex, DataIndex)> = Vec::new();
         let mut hole: usize = 0;
         let mut block: usize = blocks;
@@ -235,7 +240,7 @@ impl<
                 block * MARKET_BLOCK_SIZE,
                 hole * MARKET_BLOCK_SIZE,
                 &mut moved_seats,
-            );
+            )?;
             clear_bit(&mut keep, block);
             set_bit(&mut keep, hole);
             budget -= 1;
@@ -413,6 +418,25 @@ mod tests {
             .iter::<RestingOrder>()
             .map(|(_, o)| o.get_sequence_number())
             .collect()
+    }
+
+    #[test]
+    fn defrag_rejects_an_order_missing_from_its_parent() {
+        let (mut m, _) = populated(3, 1);
+        let index = m
+            .get_bids()
+            .iter::<RestingOrder>()
+            .map(|(index, _)| index)
+            .find(|index| read_index(&m.dynamic, *index as usize + NODE_PARENT) != NIL)
+            .unwrap();
+        let parent = read_index(&m.dynamic, index as usize + NODE_PARENT) as usize;
+        // A non-root order must appear in one of its parent's child links.
+        if read_index(&m.dynamic, parent + NODE_LEFT) == index {
+            write_index(&mut m.dynamic, parent + NODE_LEFT, NIL);
+        } else {
+            write_index(&mut m.dynamic, parent + NODE_RIGHT, NIL);
+        }
+        assert_eq!(m.defragment(0), Err(ProgramError::InvalidAccountData));
     }
 
     #[test]

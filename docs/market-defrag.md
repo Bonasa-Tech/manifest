@@ -2,8 +2,9 @@
 
 `Defrag` (core opcode 14) atomically harvests empty seats, compacts market nodes,
 retains two spare nodes, resizes the account, and returns released/excess lamports
-to the collector. It also withdraws excess lamports from both non-native token
-vaults. When no funded seats or orders remain **and both vaults are empty and
+to the collector. It also withdraws excess lamports from non-native Token-2022
+vaults. Classic-token vault excess is retained until closure. When no funded
+seats or orders remain **and both vaults are empty and
 closable**, it closes the vaults and market instead.
 
 Production authority is `B6dmr2UAn2wgjdm3T4N1Vjd8oPYRRTguByW7AEngkeL6`, the same
@@ -41,9 +42,9 @@ prepayments are unchanged. The next-order sequence counter advances once to
 invalidate wrapper quiet-sync caches; gaps in sequence numbers are valid.
 
 A market larger than `MAX_DEFRAG_BLOCKS` (65,536 nodes, a 5.2 MB account) is
-rejected with `InvalidAccountData` rather than exhausting the heap or the compute
-budget partway through. The live bitmap is one bit per block, so that bound also
-caps it at 8 KiB of the 32 KiB heap.
+rejected with `InvalidAccountData`. The live bitmap is one bit per block, so that
+bound caps it at 8 KiB of the 32 KiB heap. It does not bound the moved-seat buffer
+or the compute cost of rebuilding the surviving seat tree.
 
 The live account target is `256 + 80 * (surviving seats + orders + 2)` bytes.
 Two spare nodes preserve capacity for paths that need two allocations, including
@@ -57,10 +58,11 @@ The fixed header and its padding stay unchanged at 256 bytes. No free-node count
 is stored or maintained. Reserve checks use the existing free list, stopping once
 they have found the required number of nodes (five for a core batch update).
 
-Classic Token and Token-2022 use excess-lamport opcode 38 with the same account
-layout. The pinned Token-2022 SDK helper only accepts its own program ID, so the
-instruction is constructed with that helper and addressed to the validated vault
-program. See the [classic token interface](https://github.com/solana-program/token/blob/main/interface/src/instruction.rs).
+Excess-lamport withdrawal is restricted to Token-2022. The deployed classic
+Tokenkeg program does not support this instruction, even though ProgramTest's
+bundled p-token replacement does. Classic vault excess is left untouched while
+the market stays open and is recovered through normal account closure when
+eligible. See the [classic-token processor](https://github.com/solana-program/token/blob/main/program/src/processor.rs).
 
 Native/WSOL vaults are skipped while the market stays open: principal, recorded
 native rent reserve and unsynchronized deposits remain untouched. Closure requires
@@ -91,6 +93,11 @@ What a budget cannot bound is the single pass over allocated blocks and the seat
 tree rebuild over the survivors, which is why `MAX_DEFRAG_BLOCKS` exists. Model
 both terms when choosing a budget rather than assuming a small `limit` makes any
 market affordable.
+
+The moved-seat mapping intentionally remains unbounded when `limit` is zero:
+each relocated seat adds an eight-byte pair, and growing the vector leaves old
+allocations consumed in the SBF bump allocator. An unbounded run can exhaust the
+heap; select a smaller explicit relocation budget when needed.
 
 `ManifestClient.defragIx(collector, limit?)` and the Rust `defrag_instruction`
 builder both take the budget as an optional argument.
@@ -143,18 +150,24 @@ not a simulation of every market, and excludes transaction fees and all globals.
 | Included component | SOL |
 | --- | ---: |
 | Market compaction, seat harvesting, excess rent and empty-market closure, net of growth | 29.440501137 |
-| Non-native **market** vault excess | 9.613163461 |
-| Remaining vault lamports when retiring 1,324 empty markets | 4.349333416 |
-| **Total** | **43.402998014** |
+| Non-native Token-2022 **market** vault excess | 7.504808471 |
+| Remaining vault lamports when retiring 1,324 empty markets, including classic excess | 5.236767012 |
+| **Total** | **42.182076620** |
 
 This corrects an important difference from the earlier scenario tables: retaining
 exactly two spare nodes sometimes requires growth. The net market figure includes
 0.481584 SOL of additional retained rent on markets previously too small for two
 spares. Temporary expansion before compaction is returned when no longer needed.
 Vault excess and closure amounts are not double-counted. Global vaults are excluded.
+The prior 43.402998014 SOL estimate included 1.220921394 SOL of excess in open
+classic-token market vaults that this implementation cannot withdraw. Classic
+excess recovered on retirement is included in the closure row instead.
 
 ## Non-global savings left out
 
+- **1.220921394 SOL** of excess lamports in classic-token market vaults that stay
+  open. Deployed Tokenkeg cannot withdraw that excess; eligible closure remains
+  supported and is already counted above.
 - **0.208584356 SOL** of recorded native rent reserve above current rent in market
   vaults that remain open. Recovering it needs a separate, validated WSOL vault
   migration/reinitialization design preserving backing.
@@ -177,20 +190,22 @@ separate global analysis.
 
 - SBF builds for core, regular wrapper and UI wrapper using the pinned v1.57 tools.
 - All 153 core, 40 regular-wrapper and 12 UI-wrapper SBF integration tests passed.
+- The classic-token compatibility correction also passes all eight defrag SBF
+  integration cases, including excess preservation and collection on closure.
 - Core integration coverage includes collector authorization/empty closure,
-  balance and FIFO preservation/gradual reserve replenishment, classic-token and
-  Token-2022 excess collection, WSOL preservation, 13,000 seats with 1,000 funded
+  balance and FIFO preservation/gradual reserve replenishment, classic-token
+  excess preservation and collection on closure, Token-2022 excess collection,
+  WSOL preservation, 13,000 seats with 1,000 funded
   survivors, and an account containing 13,002 free nodes.
-- The large seat-population case (13,000 seats, 1,000 funded survivors) uses
-  1,121,156 CU against the 1.4M ceiling, up from 954,000 before relocation
-  budgeting: a bounded run relocates node by node and patches links as it goes
-  rather than computing one bulk mapping. The test asserts the figure stays
-  under 1,250,000 so the remaining headroom cannot erode unnoticed.
+- The large seat-population case (13,000 seats, 1,000 funded survivors) asserts
+  consumption stays under 1,250,000 CU against the 1.4M ceiling, preserving
+  execution headroom as relocation and validation change.
 - Reserve regressions check one-node replenishment toward five, no expansion for
   cancel-only or empty batches, and cancellation after defrag by an owner with
   no SOL. Wrapper coverage includes moved-order cancellation and harvested-seat
   recovery. Existing tests cover ordinary matching, reverse orders and gas refunds.
-- All 93 core library tests passed.
+- All 94 core library tests passed, including rejection of an order that is
+  missing from its parent's child links during relocation.
 - Core library tests cover the bounded path directly: that budget-one runs
   converge byte for byte on the unbounded layout, that no bounded run grows the
   account or invalidates intermediate state, that the hardcoded node offsets

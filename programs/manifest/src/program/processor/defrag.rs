@@ -91,6 +91,9 @@ pub(crate) fn process_defrag(
     }
     // CPI transfers happen before direct market-lamport changes, so each CPI
     // observes balanced account lamports. WSOL principal and its reserve stay.
+    // Only Token-2022 supports withdrawing excess lamports on mainnet. Classic
+    // Token vaults retain their excess until closure; ProgramTest's bundled
+    // p-token replacement supports more instructions than the deployed program.
     for (vault, program, mint, bump) in [
         (
             base_vault,
@@ -105,6 +108,9 @@ pub(crate) fn process_defrag(
             fixed.get_quote_vault_bump(),
         ),
     ] {
+        if *program.pubkey() != spl_token_2022::id() {
+            continue;
+        }
         let native = StateWithExtensions::<Account>::unpack(&vault.try_borrow()?)
             .map_err(to_program_error)?
             .base
@@ -112,18 +118,14 @@ pub(crate) fn process_defrag(
             .is_some();
         let minimum = Rent::get()?.try_minimum_balance(vault.data_len())?;
         if !native && vault.lamports() > minimum {
-            // Both deployed token programs use opcode 38 and the same account
-            // layout. This SDK version's builder only accepts Token-2022, so
-            // construct there and select the already validated vault program.
-            let mut ix = spl_token_2022_interface::instruction::withdraw_excess_lamports(
-                &spl_token_2022::id(),
+            let ix = spl_token_2022_interface::instruction::withdraw_excess_lamports(
+                program.pubkey(),
                 vault.pubkey(),
                 collector.pubkey(),
                 vault.pubkey(),
                 &[],
             )
             .map_err(to_program_error)?;
-            ix.program_id = *program.pubkey();
             invoke_signed(
                 &ix,
                 &[vault, collector.info, program.info],

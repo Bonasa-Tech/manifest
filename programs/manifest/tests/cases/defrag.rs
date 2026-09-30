@@ -62,6 +62,12 @@ async fn defrag_rejects_non_collector_and_closes_empty_market_and_vaults() -> an
         manifest::validation::get_vault_address(&f.market_fixture.key, &f.sol_mint_fixture.key).0;
     let quote =
         manifest::validation::get_vault_address(&f.market_fixture.key, &f.usdc_mint_fixture.key).0;
+    // Classic-token excess is still recovered when the empty vault closes.
+    let mut quote_account = f.try_load(&quote).await?.unwrap();
+    quote_account.lamports += 1_234_567;
+    f.context
+        .borrow_mut()
+        .set_account(&quote, &AccountSharedData::from(quote_account));
     let total = f.try_load(&f.market_fixture.key).await?.unwrap().lamports
         + f.try_load(&base).await?.unwrap().lamports
         + f.try_load(&quote).await?.unwrap().lamports;
@@ -192,7 +198,7 @@ async fn defrag_collects_token2022_excess_without_withdrawing_tokens() -> anyhow
     vault_excess(true).await
 }
 #[tokio::test]
-async fn defrag_collects_classic_excess_without_withdrawing_tokens() -> anyhow::Result<()> {
+async fn defrag_preserves_classic_excess_without_withdrawing_tokens() -> anyhow::Result<()> {
     vault_excess(false).await
 }
 async fn vault_excess(token2022: bool) -> anyhow::Result<()> {
@@ -254,7 +260,7 @@ async fn vault_excess(token2022: bool) -> anyhow::Result<()> {
     let account = f.try_load(&vault).await?.unwrap();
     assert_eq!(
         account.lamports,
-        Rent::default().minimum_balance(account.data.len())
+        Rent::default().minimum_balance(account.data.len()) + if token2022 { 0 } else { excess }
     );
     assert_eq!(
         u64::from_le_bytes(account.data[64..72].try_into().unwrap()),

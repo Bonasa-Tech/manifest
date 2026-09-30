@@ -1,5 +1,11 @@
 # Expanded Manifest SOL recovery assessment
 
+Implementation correction: the historical scenarios below include classic-token
+vault excess that deployed Tokenkeg cannot withdraw while a vault remains open.
+They are scenario upper bounds, not directly executable recovery estimates.
+The current market-only implementation estimate is **42.182076620 SOL**; see
+[implemented recovery and exclusions](../../market-defrag.md#snapshot-estimate-for-this-implementation).
+
 **45.734913797 SOL is the estimated gross recovery while keeping the markets and vaults open and retaining one spare node per market.** Keeping two spare nodes gives **44.920488197 SOL**. Retiring eligible empty markets and globals with their vaults increases these figures; the one-spare case becomes **53.606932573 SOL**. These totals include rent reductions and collectable surplus, including protocol fees; they are not all newly released storage rent.
 
 | Component | SOL, one spare market node |
@@ -38,7 +44,7 @@ A collector must retain `rent(new size) + 5,000 × outstanding global orders + a
 
 Token vaults do **not** have market-style free lists. The scan found sizes of 165, 170, 171, 175, 178, 183, and 187 bytes, with **no unused trailing allocation**. Larger accounts hold Token-2022 extensions (transfer fees, transfer hooks, and pausable-account state). This assessment credits **zero SOL to shrinking vault data**. Token-2022's current `Reallocate` preserves existing extensions and grows space; it does not provide arbitrary shrinkage. [Token-2022 reallocation source](https://github.com/solana-program/token-2022/blob/main/program/src/extension/reallocate.rs).
 
-There are **5,772 classic-token vaults and 2,101 Token-2022 vaults**, including **1,204 wrapped-SOL vaults**. Non-native vaults hold **9.811794408 SOL above their present rent requirements**, split into **2.146128869 SOL** for classic token and **7.665665539 SOL** for Token-2022. This can potentially be collected through the token program's excess-lamport instruction using the Manifest vault PDA authority, without reducing token amounts or closing vaults. The scan verified token owners, mints, initialized states, self-owned vault authorities, and absence of separate close authorities. No CPI Guard extension was present. [Classic-token excess-lamport documentation](https://solana.com/docs/tokens/advanced/withdraw-excess-lamports) and [Token-2022 processor](https://github.com/solana-program/token-2022/blob/main/program/src/processor.rs).
+There are **5,772 classic-token vaults and 2,101 Token-2022 vaults**, including **1,204 wrapped-SOL vaults**. Non-native vaults hold **9.811794408 SOL above their present rent requirements**, split into **2.146128869 SOL** for classic token and **7.665665539 SOL** for Token-2022. Only the Token-2022 portion can be collected through an excess-lamport instruction using the Manifest vault PDA authority while keeping vaults open. Deployed classic Tokenkeg does not implement that instruction; its excess remains until eligible account closure. The scan verified token owners, mints, initialized states, self-owned vault authorities, and absence of separate close authorities. No CPI Guard extension was present. See the [classic-token processor](https://github.com/solana-program/token/blob/main/program/src/processor.rs) and [Token-2022 processor](https://github.com/solana-program/token-2022/blob/main/program/src/processor.rs).
 
 **6.902499793 SOL** of vault excess is concentrated in CASH vault `2foKAwvuvKfHjuVK6NjFG94cCTPCYWxbKRDjva9CtiJj`, mint `CASHx9KJUStyftLFWGvEVf59SGeG9sh5FfcnZMVPCASH`. It holds 6,904,018,713 lamports against a 1,518,920-lamport rent minimum. Its token amount is a separate 255,603,461,158 atoms. The excess is directly measured SOL, not a valuation of those tokens; the historical source of that SOL was not investigated.
 
