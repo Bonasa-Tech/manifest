@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1790706013308,
+  "lastUpdate": 1790785921536,
   "repoUrl": "https://github.com/Bonasa-Tech/manifest",
   "entries": {
     "CU Benchmark": [
@@ -14615,6 +14615,72 @@ window.BENCHMARK_DATA = {
           {
             "name": "MFX_99",
             "value": 1868,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "cyrbritt@gmail.com",
+            "name": "Britt Cyr",
+            "username": "brittcyr"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "ec9cd449857c837a993e348df8b734dfc3717a49",
+          "message": "perf: reduce batch processing and price arithmetic CU (#744)\n\n* perf: reduce batch processing and price arithmetic CU\n\nAvoid wide multiplication checks when decimal-factor bounds prove the reduced product fits u64. Decode batch records from borrowed instruction bytes, fuse global-order counting, and write placement results into fixed slots.\n\nReuse the market borrow across local cancellation and placement, finish batches without placements after settling refunds, and skip unchanged quote-volume writes.\n\nLocal Benchmark action: 107,074,858 -> 99,508,959 CU across 4,158 transactions (-7.066%). All 407 workspace tests, CI Clippy, and formatting passed. Five Certora configurations compiled locally; no proof jobs submitted.\n\n* perf: defer custom batch decoding to a separate change\n\nRestore the derived Borsh decoder and existing global-prepayment helper\nAPI so the combined PR touches only three existing files. Remove the\nborrowed-decoder module and iterator adapter, and leave a comment with\nthe measured benefit and original prototype commit for follow-up work.\n\nThe smaller version uses 102,280,364 CU over the pinned 4,158-transaction\nbenchmark, saving 4,794,494 CU (4.48%) versus the original baseline. The\ndeferred decoder plus integration saves another 2,771,405 CU (2.71%).\n\nValidation: local Benchmark action reproduced the measured CSV exactly;\n404 workspace/unit/SBF tests, CI Clippy, and formatting passed. All five\nCertora configurations compile with all 144 rule entry points present.\nCertora compilation only; no proofs submitted.",
+          "timestamp": "2026-09-30T12:25:20-04:00",
+          "tree_id": "bb96075388a7bfa1b921f4e11ef8eeeb5c787446",
+          "url": "https://github.com/Bonasa-Tech/manifest/commit/ec9cd449857c837a993e348df8b734dfc3717a49"
+        },
+        "date": 1790785919526,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "PHX_50",
+            "value": 6748,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "PHX_95",
+            "value": 8819,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "PHX_99",
+            "value": 10866,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_50",
+            "value": 1011,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_95",
+            "value": 1284,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_99",
+            "value": 1819,
             "range": "",
             "unit": "CU",
             "extra": ""
