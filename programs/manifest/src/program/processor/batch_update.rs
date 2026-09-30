@@ -1,10 +1,4 @@
-#[cfg(not(feature = "certora"))]
-#[path = "batch_update_view.rs"]
-mod batch_update_view;
-
-#[cfg(feature = "certora")]
-use crate::validation::io_to_program_error;
-use crate::validation::AccountViewExt;
+use crate::validation::{io_to_program_error, AccountViewExt};
 use pinocchio::{
     account::{AccountView, RefMut},
     error::ProgramError,
@@ -163,21 +157,19 @@ pub enum MarketDataTreeNodeType {
 }
 
 pub(crate) fn process_batch_update(
-    _program_id: &Pubkey,
+    program_id: &Pubkey,
     accounts: &[AccountView],
     data: &[u8],
 ) -> ProgramResult {
-    #[cfg(not(feature = "certora"))]
-    {
-        let (seat, cancels, orders, counts) =
-            batch_update_view::BatchUpdateView::read(data)?.into_parts();
-        process_batch_update_iter(accounts, seat, cancels, orders, counts)
-    }
-    #[cfg(feature = "certora")]
-    {
-        let params = BatchUpdateParams::try_from_slice(data).map_err(io_to_program_error)?;
-        process_batch_update_core(_program_id, accounts, params)
-    }
+    // Follow-up: a validated borrowed decoder can avoid the input Vecs and
+    // count global orders during validation. Deferred to keep this change small.
+    // On the pinned 4,158-transaction sBPF v3 benchmark (platform tools v1.57),
+    // the decoder plus its integration reduced total CU from 102,280,364 to
+    // 99,508,959: 2,771,405 CU (2.71%). Prototype and compatibility tests are
+    // in commit e8b6e022, batch_update_view.rs.
+    let params: BatchUpdateParams =
+        BatchUpdateParams::try_from_slice(data).map_err(io_to_program_error)?;
+    process_batch_update_core(program_id, accounts, params)
 }
 
 #[cfg(not(feature = "certora"))]
@@ -258,40 +250,11 @@ fn batch_place_order(
 ///
 /// `PlaceOrderLog` and `CancelOrderLog` still exist in `logs.rs` for clients
 /// decoding historical transactions; nothing emits them.
-#[cfg(feature = "certora")]
 pub(crate) fn process_batch_update_core(
     _program_id: &Pubkey,
     accounts: &[AccountView],
     params: BatchUpdateParams,
 ) -> ProgramResult {
-    let counts = params.orders.iter().fold([0usize; 2], |mut counts, order| {
-        if order.order_type() == OrderType::Global {
-            counts[usize::from(order.is_bid())] += 1;
-        }
-        counts
-    });
-    process_batch_update_iter(
-        accounts,
-        params.trader_index_hint,
-        params.cancels.iter().cloned(),
-        params.orders.iter().cloned(),
-        counts,
-    )
-}
-
-#[cfg_attr(all(feature = "certora", not(feature = "certora-test")), early_panic)]
-#[inline(always)]
-fn process_batch_update_iter<C, O>(
-    accounts: &[AccountView],
-    trader_index_hint: Option<DataIndex>,
-    cancels: C,
-    orders: O,
-    global_order_counts: [usize; 2],
-) -> ProgramResult
-where
-    C: IntoIterator<Item = CancelOrderParams>,
-    O: ExactSizeIterator<Item = PlaceOrderParams>,
-{
     let batch_update_context: BatchUpdateContext = BatchUpdateContext::load(accounts)?;
 
     let BatchUpdateContext {
@@ -301,8 +264,14 @@ where
         ..
     } = batch_update_context;
 
+    let BatchUpdateParams {
+        trader_index_hint,
+        cancels,
+        orders,
+    } = params;
+
     // Only placements need the clock for expiration checks.
-    let current_slot: Option<u32> = if orders.len() == 0 {
+    let current_slot: Option<u32> = if orders.is_empty() {
         None
     } else {
         Some(get_now_slot())
@@ -373,7 +342,7 @@ where
         };
     }
 
-    if orders.len() == 0 {
+    if orders.is_empty() {
         drop(market_data);
         // Cancellations have already run and there can be no later CPI.
         // Settle global refunds and return the Borsh encoding of an empty vec.
@@ -383,11 +352,14 @@ where
         return Ok(());
     }
 
-    if global_order_counts != [0; 2] {
+    if orders
+        .iter()
+        .any(|order| order.order_type() == OrderType::Global)
+    {
         // A global prepayment can invoke another program. Local batches keep
         // the market borrow and the fixed/dynamic split across both loops.
         drop(market_data);
-        try_to_pay_all_global_gas_prepayment(global_order_counts, &global_trade_accounts_opts)?;
+        try_to_pay_all_global_gas_prepayment(&orders, &global_trade_accounts_opts)?;
         market_data = market.try_borrow_mut()?;
         dynamic_account = get_mut_dynamic_account(&mut market_data);
     }

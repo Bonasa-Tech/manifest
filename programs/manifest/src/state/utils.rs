@@ -15,7 +15,7 @@ use crate::{
 };
 use crate::{
     logs::{emit_stack, GlobalCleanupLog},
-    program::get_mut_dynamic_account,
+    program::{batch_update::PlaceOrderParams, get_mut_dynamic_account},
     quantities::{GlobalAtoms, WrapperU64},
     require,
     validation::{loaders::GlobalTradeAccounts, TokenAccountInfo},
@@ -207,11 +207,21 @@ pub(crate) fn try_to_add_to_global(
     global_dynamic_account.add_order(resting_order, gas_payer_opt.as_ref().unwrap().pubkey())
 }
 
-// Counts are collected while validating the batch input.
+// Takes a slice so both `Vec` (production) and `NoResizableVec` (certora, via
+// Deref) can be passed.
 pub(crate) fn try_to_pay_all_global_gas_prepayment(
-    global_order_counts: [usize; 2],
+    orders: &[PlaceOrderParams],
     global_trade_accounts_opts: &[Option<GlobalTradeAccounts>; 2],
 ) -> ProgramResult {
+    if orders.is_empty() {
+        return Ok(());
+    }
+    let mut global_order_counts = [0usize; 2];
+    for order in orders {
+        if order.order_type() == OrderType::Global {
+            global_order_counts[usize::from(order.is_bid())] += 1;
+        }
+    }
     // Keep the existing quote-global, then base-global payment order.
     for account_idx in [1, 0] {
         let global_order_count = global_order_counts[account_idx];
