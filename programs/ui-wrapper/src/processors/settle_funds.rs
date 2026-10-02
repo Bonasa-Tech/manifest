@@ -57,6 +57,9 @@ pub(crate) fn process_settle_funds(
     let owner: Signer = Signer::new(next_account_info(account_iter)?)?;
     let trader_token_account_base: &AccountView = next_account_info(account_iter)?;
     let trader_token_account_quote: &AccountView = next_account_info(account_iter)?;
+    // Normal UI settlement collects payable fees atomically with emptying the
+    // seat. If core activity bypasses settlement, defrag could close the market
+    // before those fees are collected; this path requires a live market.
     let market: ManifestAccountInfo<MarketFixed> =
         ManifestAccountInfo::<MarketFixed>::new(next_account_info(account_iter)?)?;
     let vault_base: &AccountView = next_account_info(account_iter)?;
@@ -130,49 +133,51 @@ pub(crate) fn process_settle_funds(
 
     trace!("base_balance:{base_balance:?} quote_balance:{quote_balance:?} fee_atoms:{fee_atoms} quote_volume_paid:{quote_volume_paid:?}");
 
-    // Settle withdrawable base tokens.
-    invoke(
-        &withdraw_instruction(
-            market.pubkey(),
-            owner.pubkey(),
-            mint_base.pubkey(),
-            base_balance.as_u64(),
-            trader_token_account_base.pubkey(),
-            *token_program_base.pubkey(),
-            Some(trader_index),
-        ),
-        &[
-            market.info,
-            owner.info,
-            mint_base,
-            trader_token_account_base,
-            vault_base,
-            token_program_base,
-            manifest_program.info,
-        ],
-    )?;
+    if trader_index != hypertree::NIL {
+        // Settle withdrawable base tokens.
+        invoke(
+            &withdraw_instruction(
+                market.pubkey(),
+                owner.pubkey(),
+                mint_base.pubkey(),
+                base_balance.as_u64(),
+                trader_token_account_base.pubkey(),
+                *token_program_base.pubkey(),
+                Some(trader_index),
+            ),
+            &[
+                market.info,
+                owner.info,
+                mint_base,
+                trader_token_account_base,
+                vault_base,
+                token_program_base,
+                manifest_program.info,
+            ],
+        )?;
 
-    // Settle withdrawable quote tokens.
-    invoke(
-        &withdraw_instruction(
-            market.pubkey(),
-            owner.pubkey(),
-            mint_quote.pubkey(),
-            quote_balance.as_u64(),
-            trader_token_account_quote.pubkey(),
-            *token_program_quote.pubkey(),
-            Some(trader_index),
-        ),
-        &[
-            market.info,
-            owner.info,
-            mint_quote,
-            trader_token_account_quote,
-            vault_quote,
-            token_program_quote,
-            manifest_program.info,
-        ],
-    )?;
+        // Settle withdrawable quote tokens.
+        invoke(
+            &withdraw_instruction(
+                market.pubkey(),
+                owner.pubkey(),
+                mint_quote.pubkey(),
+                quote_balance.as_u64(),
+                trader_token_account_quote.pubkey(),
+                *token_program_quote.pubkey(),
+                Some(trader_index),
+            ),
+            &[
+                market.info,
+                owner.info,
+                mint_quote,
+                trader_token_account_quote,
+                vault_quote,
+                token_program_quote,
+                manifest_program.info,
+            ],
+        )?;
+    }
 
     // limits:
     // fee_atoms = [0..u64::MAX]

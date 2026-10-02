@@ -162,6 +162,16 @@ pub enum ManifestInstruction {
     #[account(12, writable, optional, name = "global", desc = "Global account")]
     #[account(13, writable, optional, name = "global_vault", desc = "Global vault")]
     SwapV2 = 13,
+
+    /// Reclaim empty seats, compact to two spare nodes and collect market/vault excess.
+    #[account(0, writable, signer, name = "collector", desc = "Authorized rent collector") ]
+    #[account(1, writable, name = "market", desc = "Market") ]
+    #[account(2, writable, name = "base_vault", desc = "Base vault") ]
+    #[account(3, writable, name = "quote_vault", desc = "Quote vault") ]
+    #[account(4, name = "base_token_program", desc = "Base token program") ]
+    #[account(5, name = "quote_token_program", desc = "Quote token program") ]
+    #[account(6, name = "system_program", desc = "System program") ]
+    Defrag = 14,
 }
 
 impl ManifestInstruction {
@@ -172,7 +182,7 @@ impl ManifestInstruction {
 
 #[test]
 fn test_instruction_serialization() {
-    let num_instructions: u8 = 13;
+    let num_instructions: u8 = 14;
     for i in 0..=255 {
         let instruction: ManifestInstruction = match ManifestInstruction::try_from(i) {
             Ok(j) => {

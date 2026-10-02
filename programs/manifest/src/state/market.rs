@@ -950,6 +950,74 @@ impl<Fixed: DerefOrBorrow<MarketFixed>, Dynamic: DerefOrBorrow<[u8]>>
         return false;
     }
 
+    /// Cached offsets are hints: compaction can move nodes or harvest a seat.
+    #[cfg(not(feature = "certora"))]
+    pub fn resolve_trader_index(&self, hint: DataIndex, trader: &Pubkey) -> DataIndex {
+        let DynamicAccount { dynamic, .. } = self.borrow_market();
+        if hint != NIL
+            && hint as usize % MARKET_BLOCK_SIZE == 0
+            && (hint as usize)
+                .checked_add(MARKET_BLOCK_SIZE)
+                .is_some_and(|end| end <= dynamic.len())
+        {
+            let node = get_helper::<RBNode<ClaimedSeat>>(dynamic, hint);
+            if node.get_payload_type() == MarketDataTreeNodeType::ClaimedSeat as u8
+                && node.get_value().trader == *trader
+            {
+                return hint;
+            }
+        }
+        self.get_trader_index(trader)
+    }
+
+    /// Resolve stable order identity, including when the old offset was truncated
+    /// or reused. Never substitute another trader's order at the same address.
+    /// A missing hint searches only its side and price level, so normal fills
+    /// and cancels do not require a scan of both books.
+    #[cfg(not(feature = "certora"))]
+    pub fn resolve_order_index(
+        &self,
+        hint: DataIndex,
+        sequence: u64,
+        trader: DataIndex,
+        price: QuoteAtomsPerBaseAtom,
+        is_bid: bool,
+    ) -> DataIndex {
+        if trader == NIL {
+            return NIL;
+        }
+        let DynamicAccount { fixed, dynamic } = self.borrow_market();
+        if hint != NIL
+            && hint as usize % MARKET_BLOCK_SIZE == 0
+            && (hint as usize)
+                .checked_add(MARKET_BLOCK_SIZE)
+                .is_some_and(|end| end <= dynamic.len())
+        {
+            let node = get_helper::<RBNode<RestingOrder>>(dynamic, hint);
+            if node.get_payload_type() == MarketDataTreeNodeType::RestingOrder as u8
+                && node.get_value().get_sequence_number() == sequence
+                && node.get_value().get_trader_index() == trader
+            {
+                return hint;
+            }
+        }
+        let root = if is_bid {
+            fixed.bids_root_index
+        } else {
+            fixed.asks_root_index
+        };
+        RedBlackTreeReadOnly::<RestingOrder>::new(dynamic, root, NIL).lookup_index_by(
+            &|order| {
+                if is_bid {
+                    order.get_price().cmp(&price)
+                } else {
+                    price.cmp(&order.get_price())
+                }
+            },
+            &|order| order.get_sequence_number() == sequence && order.get_trader_index() == trader,
+        )
+    }
+
     pub fn get_trader_index(&self, trader: &Pubkey) -> DataIndex {
         let DynamicAccount { fixed, dynamic } = self.borrow_market();
 
@@ -2235,3 +2303,7 @@ pub fn create_empty_market(
         quote_vault_bump,
     )
 }
+
+#[cfg(not(feature = "certora"))]
+#[path = "market_defrag.rs"]
+mod defrag;

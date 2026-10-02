@@ -77,6 +77,10 @@ impl WrapperOpenOrder {
     }
 
     /// Get the DataIndex for the order in the core program.
+    pub fn set_market_data_index(&mut self, index: DataIndex) {
+        self.market_data_index = index;
+    }
+
     pub fn get_market_data_index(&self) -> DataIndex {
         self.market_data_index
     }

@@ -540,6 +540,8 @@ pub(crate) fn process_batch_update(
     let market_info_index: DataIndex =
         get_market_info_index_for_market(&wrapper_state, market.pubkey());
 
+    super::shared::ensure_market_seat(&market, &payer, &_manifest_program, &system_program)?;
+
     // One clock read for the whole instruction.
     let now_slot: u32 = get_now_slot();
 

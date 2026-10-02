@@ -410,8 +410,14 @@ pub(crate) fn sync_fast(
     let market_info: &mut MarketInfo =
         get_mut_helper::<RBNode<MarketInfo>>(wrapper_dynamic_data, market_info_index)
             .get_mut_value();
-    let claimed_seat: &ClaimedSeat =
-        get_helper_seat(market_ref.dynamic, market_info.trader_index).get_value();
+    let trader = get_helper::<ManifestWrapperStateFixed>(fixed_data, 0).trader;
+    market_info.trader_index = market_ref.resolve_trader_index(market_info.trader_index, &trader);
+    let trader_index = market_info.trader_index;
+    let claimed_seat = if trader_index == NIL {
+        ClaimedSeat::new_empty(trader)
+    } else {
+        *get_helper_seat(market_ref.dynamic, trader_index).get_value()
+    };
     let quiet: bool = market_info.last_synced_order_sequence_number == market_sequence_number
         && market_info.num_open_global_orders == 0
         && claimed_seat.base_withdrawable_balance == market_info.base_balance
@@ -444,11 +450,19 @@ pub(crate) fn sync_fast(
                 .is_some_and(|m| m.matches(orders.get_mut_value(order_index)));
             let gone: bool = (read_core || is_cancel_candidate) && {
                 let order: &mut WrapperOpenOrder = orders.get_mut_value(order_index);
-                let core_resting_order: &RestingOrder = get_helper::<RBNode<RestingOrder>>(
-                    market_ref.dynamic,
+                let core_index = market_ref.resolve_order_index(
                     order.get_market_data_index(),
-                )
-                .get_value();
+                    order.get_order_sequence_number(),
+                    trader_index,
+                    order.get_price(),
+                    order.get_is_bid(),
+                );
+                order.set_market_data_index(core_index);
+                let core_resting_order = if core_index == NIL {
+                    RestingOrder::default()
+                } else {
+                    *get_helper::<RBNode<RestingOrder>>(market_ref.dynamic, core_index).get_value()
+                };
                 // Verifies that it is not just zeroed and happens to match
                 // seq num, also check that there are base atoms left.
                 if core_resting_order.get_sequence_number() != order.get_order_sequence_number()
@@ -550,4 +564,38 @@ pub(crate) fn get_trader_index_hint_for_market(
         *get_helper::<RBNode<MarketInfo>>(wrapper_dynamic_data, market_info_index).get_value();
     let trader_index_hint: Option<DataIndex> = Some(market_info.trader_index);
     Ok(trader_index_hint)
+}
+
+/// Restore a harvested core seat without changing the wrapper market entry.
+pub(crate) fn ensure_market_seat<'a>(
+    market: &ManifestAccountInfo<'a, MarketFixed>,
+    owner: &Signer<'a>,
+    manifest_program: &Program<'a>,
+    system_program: &Program<'a>,
+) -> ProgramResult {
+    let missing = {
+        let data = market.try_borrow()?;
+        get_dynamic_account::<MarketFixed>(&data).get_trader_index(owner.pubkey()) == NIL
+    };
+    if missing {
+        manifest::program::invoke(
+            &manifest::program::expand_market_instruction(market.pubkey(), owner.pubkey()),
+            &[
+                owner.info,
+                market.info,
+                system_program.info,
+                manifest_program.info,
+            ],
+        )?;
+        manifest::program::invoke(
+            &manifest::program::claim_seat_instruction(market.pubkey(), owner.pubkey()),
+            &[
+                owner.info,
+                market.info,
+                system_program.info,
+                manifest_program.info,
+            ],
+        )?;
+    }
+    Ok(())
 }

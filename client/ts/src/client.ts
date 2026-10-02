@@ -1,3 +1,4 @@
+import { createDefragInstruction } from './manifest/instructions/Defrag';
 import { bignum } from '@metaplex-foundation/beet';
 import {
   PublicKey,
@@ -359,6 +360,7 @@ export class ManifestClient {
         connection,
         address: wrapperKeypair.publicKey,
       });
+      await marketObject.reload(connection);
 
       return new ManifestClient(
         connection,
@@ -385,7 +387,14 @@ export class ManifestClient {
       wrapperData.marketInfos.filter((marketInfo: WrapperMarketInfo) => {
         return marketInfo.market.toBase58() == marketPk.toBase58();
       });
-    if (existingMarketInfos.length > 0) {
+    if (
+      existingMarketInfos.length > 0 &&
+      ManifestClient.hasCurrentSeat(
+        marketObject,
+        payerKeypair.publicKey,
+        existingMarketInfos[0],
+      )
+    ) {
       const wrapper = await Wrapper.loadFromAddress({
         connection,
         address: userWrapper.pubkey,
@@ -404,7 +413,7 @@ export class ManifestClient {
       );
     }
 
-    // There is a wrapper, but need to claim a seat.
+    // ClaimSeat also refreshes cached indices after a seat is moved or harvested.
     const claimSeatIx: TransactionInstruction = createClaimSeatInstruction({
       manifestProgram: MANIFEST_PROGRAM_ID,
       owner: payerKeypair.publicKey,
@@ -417,6 +426,7 @@ export class ManifestClient {
       connection,
       address: userWrapper.pubkey,
     });
+    await marketObject.reload(connection);
 
     return new ManifestClient(
       connection,
@@ -499,11 +509,19 @@ export class ManifestClient {
         return marketInfo.market.toBase58() == marketPk.toBase58();
       });
     if (existingMarketInfos.length > 0) {
-      setupData.setupNeeded = false;
-      return setupData;
+      const market = await Market.loadFromAddress({
+        connection,
+        address: marketPk,
+      });
+      if (
+        ManifestClient.hasCurrentSeat(market, trader, existingMarketInfos[0])
+      ) {
+        setupData.setupNeeded = false;
+        return setupData;
+      }
     }
 
-    // There is a wrapper, but need to claim a seat.
+    // ClaimSeat also refreshes cached indices after a seat is moved or harvested.
     const claimSeatIx: TransactionInstruction = createClaimSeatInstruction({
       manifestProgram: MANIFEST_PROGRAM_ID,
       owner: trader,
@@ -513,6 +531,19 @@ export class ManifestClient {
     setupData.instructions.push(claimSeatIx);
 
     return setupData;
+  }
+
+  private static hasCurrentSeat(
+    market: Market,
+    trader: PublicKey,
+    marketInfo: WrapperMarketInfo,
+  ): boolean {
+    const seat = market
+      .claimedSeats()
+      .find((seat) => seat.publicKey.equals(trader));
+    return (
+      seat?.dataIndex !== undefined && seat.dataIndex === marketInfo.traderIndex
+    );
   }
 
   /**
@@ -852,6 +883,45 @@ export class ManifestClient {
       baseMint,
       quoteMint,
       tokenProgram22: TOKEN_2022_PROGRAM_ID,
+    });
+  }
+
+  /**
+   * Collector-only atomic market compaction and rent recovery. May close an
+   * empty market.
+   *
+   * @param limit How many nodes this run relocates; omit for unbounded.
+   * Reclaiming empty seats is never capped. Every bounded run leaves a valid
+   * market no larger than the one it started from, so a market too big to
+   * compact in one transaction is compacted by repeating the call. Simulate
+   * against current state to pick a value that fits the compute budget.
+   */
+  public defragIx(
+    collector: PublicKey,
+    limit?: number,
+  ): TransactionInstruction {
+    const ix: TransactionInstruction = createDefragInstruction({
+      collector,
+      market: this.market.address,
+      baseVault: getVaultAddress(this.market.address, this.baseMint.address),
+      quoteVault: getVaultAddress(this.market.address, this.quoteMint.address),
+      baseTokenProgram: this.isBase22
+        ? TOKEN_2022_PROGRAM_ID
+        : TOKEN_PROGRAM_ID,
+      quoteTokenProgram: this.isQuote22
+        ? TOKEN_2022_PROGRAM_ID
+        : TOKEN_PROGRAM_ID,
+    });
+    if (limit === undefined) {
+      return ix;
+    }
+    // The core reads an optional little endian u32 after the discriminator.
+    const budget: Buffer = Buffer.alloc(4);
+    budget.writeUInt32LE(limit);
+    return new TransactionInstruction({
+      programId: ix.programId,
+      keys: ix.keys,
+      data: Buffer.concat([ix.data, budget]),
     });
   }
 

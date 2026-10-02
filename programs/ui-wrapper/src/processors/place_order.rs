@@ -99,15 +99,22 @@ fn expand_market_if_needed<'a>(
     payer: &Signer<'a>,
     manifest_program: &Program<'a>,
     system_program: &Program<'a>,
+    required_free_blocks: u32,
 ) -> ProgramResult {
     let market_data: Ref<[u8]> = market.try_borrow()?;
     let dynamic_account: MarketRef = get_dynamic_account(&market_data);
-    // Check for two free blocks, bc. there needs to be always one free block
-    // after every operation.
-    if !dynamic_account.has_two_free_blocks() {
+    if dynamic_account
+        .free_blocks_short_of_n(required_free_blocks)
+        .unwrap_or(0)
+        > 0
+    {
         drop(market_data);
+        let mut expand = expand_market_instruction(market.pubkey(), payer.pubkey());
+        expand
+            .data
+            .extend_from_slice(&required_free_blocks.to_le_bytes());
         invoke(
-            &expand_market_instruction(market.pubkey(), payer.pubkey()),
+            &expand,
             &[
                 manifest_program.info,
                 payer.info,
@@ -137,7 +144,7 @@ fn get_or_create_trader_index<'a>(
         Ok(trader_index)
     } else {
         // Need to intialize a new seat on core.
-        expand_market_if_needed(market, payer, manifest_program, system_program)?;
+        expand_market_if_needed(market, payer, manifest_program, system_program, 2)?;
         invoke(
             &claim_seat_instruction(market.pubkey(), owner.pubkey()),
             &[
@@ -338,7 +345,9 @@ pub(crate) fn process_place_order(
         )?;
     }
 
-    expand_market_if_needed(&market, &payer, &manifest_program, &system_program)?;
+    // Sponsor the new order plus the core's five-node batch reserve, so a
+    // separate owner (including a PDA with no SOL) is not charged expansion.
+    expand_market_if_needed(&market, &payer, &manifest_program, &system_program, 6)?;
 
     // Call batch update and pass unparsed accounts without verifying them
     {

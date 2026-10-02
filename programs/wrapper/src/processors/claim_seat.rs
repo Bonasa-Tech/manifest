@@ -84,6 +84,12 @@ pub(crate) fn process_claim_seat(
         }
     };
 
+    let existing = super::shared::get_market_info_index_for_market(&wrapper_state, market.pubkey());
+    if existing != NIL {
+        // Refresh the existing wrapper entry instead of inserting a duplicate.
+        return super::shared::sync(&wrapper_state, &market);
+    }
+
     // Insert the seat into the wrapper state.
 
     // Make sure the wrapper is big enough.

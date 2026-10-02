@@ -1164,6 +1164,51 @@
         "type": "u8",
         "value": 13
       }
+    },
+    {
+      "name": "Defrag",
+      "accounts": [
+        {
+          "name": "collector",
+          "isMut": true,
+          "isSigner": true
+        },
+        {
+          "name": "market",
+          "isMut": true,
+          "isSigner": false
+        },
+        {
+          "name": "baseVault",
+          "isMut": true,
+          "isSigner": false
+        },
+        {
+          "name": "quoteVault",
+          "isMut": true,
+          "isSigner": false
+        },
+        {
+          "name": "baseTokenProgram",
+          "isMut": false,
+          "isSigner": false
+        },
+        {
+          "name": "quoteTokenProgram",
+          "isMut": false,
+          "isSigner": false
+        },
+        {
+          "name": "systemProgram",
+          "isMut": false,
+          "isSigner": false
+        }
+      ],
+      "args": [],
+      "discriminant": {
+        "type": "u8",
+        "value": 14
+      }
     }
   ],
   "accounts": [
