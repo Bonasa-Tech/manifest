@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1790785921536,
+  "lastUpdate": 1790969786047,
   "repoUrl": "https://github.com/Bonasa-Tech/manifest",
   "entries": {
     "CU Benchmark": [
@@ -14667,6 +14667,72 @@ window.BENCHMARK_DATA = {
           {
             "name": "MFX_50",
             "value": 1011,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_95",
+            "value": 1284,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_99",
+            "value": 1819,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "cyrbritt@gmail.com",
+            "name": "Britt Cyr",
+            "username": "brittcyr"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "d04b7aa90b098ba64ebcdf398e9a24d89a9114d8",
+          "message": "Fix global bid cancellation quote overflow (#746)",
+          "timestamp": "2026-10-02T15:32:42-04:00",
+          "tree_id": "4ad3be9cd4ad1a01dc50d9c66dc53995ccd6b958",
+          "url": "https://github.com/Bonasa-Tech/manifest/commit/d04b7aa90b098ba64ebcdf398e9a24d89a9114d8"
+        },
+        "date": 1790969781839,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "PHX_50",
+            "value": 6748,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "PHX_95",
+            "value": 8819,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "PHX_99",
+            "value": 10866,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_50",
+            "value": 1010,
             "range": "",
             "unit": "CU",
             "extra": ""
