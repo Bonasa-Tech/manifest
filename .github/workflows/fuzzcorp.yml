@@ -1,0 +1,298 @@
+name: FuzzCorp bundle
+
+# Builds manifest FROM SOURCE with DWARF kept, cross-builds the crucible invariant harness
+# (static musl) against it, assembles the FuzzCorp bundle with source-level coverage wired in,
+# proves the bundle with the same fail-closed guard a developer runs locally, dry-runs it, and
+# uploads it -- so every change to the program is compiled and fuzzed, with coverage. Nothing
+# prebuilt is shipped: fuzz/crucible/programs/*.so is gitignored and produced here.
+#
+# Toolchain pins are READ FROM THE REPOSITORY rather than duplicated here, so this workflow cannot
+# drift from the program it fuzzes:
+#   platform-tools  <- [workspace.metadata.solana] tools-version   (Cargo.toml)
+#   Agave CLI       <- [workspace.metadata.cli] solana             (Cargo.toml)
+#   sBPF arch       <- SVM_ARCH                                    (ci-verifiable-build.yml)
+#   Rust channel    <- fuzz/crucible/rust-toolchain.toml
+# A v0 build of this program is a different binary than the deployed v3 one, which is why the arch
+# comes from the same place the release gate takes it.
+#
+# Coverage is the part that fails SILENTLY (the campaign runs; the dashboard shows
+# lines_found: 0), so it is a chain of gates rather than a hope:
+#   1. the program is built with CARGO_PROFILE_RELEASE_DEBUG=2 / CARGO_PROFILE_RELEASE_STRIP=false,
+#      and build-bundle.sh fails on an SBF stack-frame violation in manifest's own code (such a
+#      binary faults where the real program does not, so whole instruction families read as
+#      unreachable and any crash on an affected path is an artefact);
+#   2. the unstripped twin of that SAME build is staged as programs/manifest_symbols.so, and the
+#      deploy artifact's ELF is checked to really be sBPF v3;
+#   3. build-bundle.sh requires real DWARF compile units in the symbols and derives
+#      sources_original_path from the line table (derive-sources-prefix.sh), failing if no
+#      line-table directory matches -- a wrong prefix is what renders empty coverage;
+#   4. bundle-guard.sh re-checks the finished bundle: the prefix against the DWARF (GATE E), every
+#      DWARF source path resolving inside the bundle (GATE B), the symbols' .text being
+#      byte-identical to the shipped program with line addresses inside .text (GATE H), and this
+#      workflow's own upload step being wired the way fuzz-upload-action requires (GATE I);
+#   5. the assembled harness is dry-run from the bundle (FUZZ_DRY_RUN=1): setup() must complete
+#      against the shipped program.
+# Before any of that is trusted, the harness itself is checked: idls/manifest.json must still be
+# what the program source derives (gen-idl.py --check, which also reconciles every instruction's
+# account count against the loader that reads it), the harness must be rustfmt-clean, and its
+# tests must pass against the program just built.
+# What no gate can do: a fresh lineage has no corpus and the cover task needs one. Seed it once
+# (./fuzz.sh seed_corpus) or wait for explore to produce inputs.
+#
+# Required repository configuration (Settings > Secrets and variables > Actions):
+#   secret  FUZZ_API_KEY       FuzzCorp API key for the target cluster (keys are per-cluster)
+#   var     FUZZ_ORGANIZATION  FuzzCorp organization
+#   var     FUZZ_PROJECT       FuzzCorp project
+#   var     FUZZ_API_ORIGIN    optional: non-default FuzzCorp cluster
+# asymmetric-research/crucible is public, so cargo resolves the harness's git dependencies
+# anonymously. fuzz-upload-action takes ONLY upload_type / upload_path / upload_args as inputs and
+# reads the FUZZ_* values from the environment; passed as inputs they fail its own "Validate env".
+
+on:
+  workflow_dispatch:
+    inputs:
+      validate_only:
+        description: Validate the bundle with fuzz-up (--validate-only) instead of uploading it
+        type: boolean
+        default: false
+  push:
+    branches: [main]
+    paths:
+      - 'programs/**'
+      - 'lib/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'rust-toolchain.toml'
+      - 'fuzz/crucible/**'
+      - '.github/workflows/fuzzcorp.yml'
+  pull_request:
+    paths:
+      - 'programs/**'
+      - 'lib/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'rust-toolchain.toml'
+      - 'fuzz/crucible/**'
+      - '.github/workflows/fuzzcorp.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fuzzcorp-bundle-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # The Agave release whose cargo-build-sbf has the repository's pinned platform-tools (v1.57)
+  # built in, so no network version lookup happens. Asserted below, not assumed.
+  AGAVE_VERSION: v4.3.0
+  # FuzzCorp workers are linux/amd64. A static musl harness clears the guard's linkage check
+  # outright; a glibc build uploads fine and can then die on the worker with a bare `status 1`.
+  HARNESS_TARGET: x86_64-unknown-linux-musl
+  CARGO_TERM_COLOR: always
+
+jobs:
+  bundle:
+    name: Build, guard and upload the fuzz bundle
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Read every toolchain pin out of the repository, so there is exactly one place each is
+      # declared. A missing pin is an error rather than a silent default: building with the wrong
+      # platform-tools or the wrong sBPF arch produces a binary that is not the one deployed.
+      - name: Resolve toolchain pins from the repository
+        id: pins
+        run: |
+          set -euo pipefail
+          tools="$(sed -n 's/^ *tools-version *= *"\(.*\)" *$/\1/p' Cargo.toml | head -1)"
+          arch="$(sed -n "s/^ *SVM_ARCH: *'\\(.*\\)' *$/\\1/p" .github/workflows/ci-verifiable-build.yml | head -1)"
+          channel="$(sed -n 's/^channel *= *"\(.*\)" *$/\1/p' fuzz/crucible/rust-toolchain.toml | head -1)"
+          for pair in "platform-tools:$tools" "sbf-arch:$arch" "rust:$channel"; do
+            [ -n "${pair#*:}" ] || { echo "::error::could not read ${pair%%:*} from the repository"; exit 1; }
+          done
+          {
+            echo "platform_tools=$tools"
+            echo "sbf_arch=$arch"
+            echo "rust=$channel"
+          } >> "$GITHUB_OUTPUT"
+          echo "platform-tools=$tools  agave=$AGAVE_VERSION  sbf-arch=$arch  rust=$channel"
+
+      # The Agave release is pinned HERE rather than read from [workspace.metadata.cli], because
+      # what matters is not the CLI version but which platform-tools its cargo-build-sbf has built
+      # in. cargo-build-sbf returns early only when the REQUESTED version equals its built-in one;
+      # otherwise it consults platform-tools/releases/latest, which reports the most recently
+      # published release rather than the highest, and silently DOWNGRADES with a warning. The
+      # repository documents this itself and asserts against it
+      # (ci-verifiable-build.yml:50-72), noting that the 4.2.2 image defaults to v1.56 while
+      # 4.3.0 bundles v1.57 -- so deriving this from metadata.cli ("4.2.2") would take exactly
+      # that fragile path. The assertion below is what keeps the pin honest: if the repository
+      # bumps tools-version, this fails loudly instead of shipping a differently-compiled binary.
+      - name: Install the Agave toolchain
+        run: |
+          set -euo pipefail
+          sh -c "$(curl -sSfL "https://release.anza.xyz/${AGAVE_VERSION}/install")"
+          echo "$HOME/.local/share/solana/install/active_release/bin" >> "$GITHUB_PATH"
+
+      - name: cargo-build-sbf's built-in platform-tools matches the repository's pin
+        env:
+          PLATFORM_TOOLS: ${{ steps.pins.outputs.platform_tools }}
+        run: |
+          set -euo pipefail
+          builtin="$(cargo-build-sbf --version 2>/dev/null | grep -oE 'platform-tools v[0-9.]+' | head -1 || true)"
+          echo "built-in: ${builtin:-<unknown>}   repository pins: platform-tools $PLATFORM_TOOLS"
+          if [ "$builtin" != "platform-tools $PLATFORM_TOOLS" ]; then
+            echo "::error::$AGAVE_VERSION ships ${builtin:-an unknown toolchain} but the repository pins platform-tools $PLATFORM_TOOLS. cargo-build-sbf would consult platform-tools/releases/latest and may silently downgrade, producing a binary that is not the one deployed. Bump AGAVE_VERSION in this workflow to a release whose built-in platform-tools is $PLATFORM_TOOLS."
+            exit 1
+          fi
+
+      # One channel serves both the program workspace (rust-toolchain.toml at the root, which
+      # cargo-build-sbf dispatches through) and the harness (fuzz/crucible/rust-toolchain.toml,
+      # which adds the musl target).
+      - name: Install the Rust toolchain with the musl target
+        env:
+          RUST_CHANNEL: ${{ steps.pins.outputs.rust }}
+        run: |
+          set -euo pipefail
+          rustup toolchain install "$RUST_CHANNEL" --profile minimal \
+            --component rustfmt --target "$HARNESS_TARGET"
+          (cd fuzz/crucible && rustc --version && rustup target list --installed)
+
+      # musl-tools: musl-gcc for the C in the harness's dependency graph; cc-rs picks it up for the
+      # musl target on its own. llvm: llvm-dwarfdump, which build-bundle.sh,
+      # derive-sources-prefix.sh and bundle-guard.sh need to read the symbols' DWARF. Without it
+      # the coverage gates could only warn, so it is not optional.
+      - name: Install musl linker and llvm-dwarfdump
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends musl-tools llvm
+          command -v llvm-dwarfdump || ls /usr/lib/llvm-*/bin/llvm-dwarfdump /usr/bin/llvm-dwarfdump-*
+
+      # Only the harness build and the platform-tools download are cached. The program is rebuilt
+      # from source on every run: it is what is under test, and its coverage symbols must come from
+      # that same fresh invocation.
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ~/.cache/solana
+            fuzz/crucible/target
+          key: fuzzcorp-harness-${{ runner.os }}-${{ steps.pins.outputs.platform_tools }}-${{ hashFiles('fuzz/crucible/Cargo.lock', 'fuzz/crucible/rust-toolchain.toml') }}
+          restore-keys: fuzzcorp-harness-${{ runner.os }}-${{ steps.pins.outputs.platform_tools }}-
+
+      - name: Harness formatting
+        working-directory: fuzz/crucible
+        run: cargo fmt --check
+
+      # The harness compiles idls/manifest.json in (declare_fuzz_program!), so that file must
+      # describe the program being built. gen-idl.py derives it from the instruction enum, the
+      # dispatch match and the processors' borsh params, and reconciles every instruction's account
+      # count against the loader that actually reads it -- so this fails both on a stale IDL and on
+      # an account the shank attributes forgot.
+      # gen-idl.py parses the program's Rust with tree-sitter, which is not on the runner image.
+      # Without this the IDL check -- and build-bundle.sh, which calls the same script -- fail on
+      # every run, so the workflow never reaches the bundle, the guard or the upload. Versions
+      # pinned to the ones the script is known to parse correctly: tree-sitter-rust 0.24.0
+      # mis-parses `&raw` as the Rust 2024 raw-borrow operator and refuses any crate with an
+      # ordinary local named `raw`.
+      - name: Install the Rust parser gen-idl.py needs
+        run: python3 -m pip install --break-system-packages 'tree-sitter==0.25.2' 'tree-sitter-rust==0.24.2'
+
+      - name: Harness IDL matches the program source
+        working-directory: fuzz/crucible
+        run: ./gen-idl.py --check
+
+      # BUILD=1: regenerate the harness IDL, cross-build the harness (static musl, --locked), build
+      # manifest from source with the pinned platform-tools and arch and DWARF kept (failing on an
+      # SBF stack-frame violation in manifest's own code, or on an ELF that is not the pinned sBPF
+      # arch), stage the program + its unstripped twin + the program and hypertree sources, derive
+      # sources_original_path from the line table, and write the manifest with this commit as the
+      # revision under test.
+      - name: Build program and harness, assemble the FuzzCorp bundle
+        working-directory: fuzz/crucible
+        env:
+          BUILD: '1'
+          PLATFORM_TOOLS_VERSION: ${{ steps.pins.outputs.platform_tools }}
+          SBF_ARCH: ${{ steps.pins.outputs.sbf_arch }}
+          FUZZ_REVISION: ${{ github.sha }}
+          CARGO_NET_GIT_FETCH_WITH_CLI: 'true'
+        run: |
+          ./build-bundle.sh
+          cat bundle/manifest.fc.json
+
+      # The manifest names this commit as the revision under test, which holds only if the build
+      # left every input as checked out (e.g. the harness's IDL was not stale and rewritten).
+      - name: Bundle inputs are the checked-out commit
+        working-directory: fuzz/crucible
+        run: |
+          dirty="$(./build-bundle.sh --dirty-inputs)"
+          if [ -n "$dirty" ]; then
+            printf '%s\n' "$dirty"
+            echo "::error::the build changed the bundle's inputs; the manifest would misname the revision"
+            exit 1
+          fi
+
+      # Against the program just built (staged in fuzz/crucible/programs/): the fixture stands up,
+      # every action reaches a successful execution, and every property both fires on a targeted
+      # mutation and stays quiet on valid sequences. A harness that still compiles but no longer
+      # exercises the program, or a property that can no longer fire, fails here instead of
+      # shipping as a green campaign.
+      - name: Harness tests
+        working-directory: fuzz/crucible
+        env:
+          CARGO_NET_GIT_FETCH_WITH_CLI: 'true'
+        run: cargo test --locked --features invariant_test
+
+      # Independent re-check of the finished artifact with the same gates a developer runs locally.
+      # The repo-root argument is what lets it resolve DWARF source paths against this checkout and
+      # check this workflow's upload wiring (GATE I).
+      - name: Bundle guard (pre-upload)
+        run: ./fuzz/crucible/bundle-guard.sh fuzz/crucible/bundle .
+
+      # Prove the bundle RUNS before uploading: setup() must complete against the program in the
+      # bundle, launched from the directory the worker uses (harness_run_dir_in_bundle). A program
+      # built with other platform-tools or a harness built against a stale IDL otherwise surfaces
+      # only in the FuzzCorp error log after the upload, as every task on the fleet dying in setup.
+      - name: Dry-run the assembled harness
+        working-directory: fuzz/crucible/bundle/harness
+        env:
+          FUZZ_DRY_RUN: '1'
+        run: ./invariant_test
+
+      # Only pushes to main and manual runs publish; a pull request proves the whole thing builds
+      # without spending campaign budget on a branch. Name missing configuration here rather than
+      # dying inside the upload action with a bare auth error (`secrets` is not available in a
+      # step-level `if`, so the test happens in the shell).
+      - name: Require FuzzCorp configuration
+        if: github.event_name != 'pull_request'
+        env:
+          FUZZ_API_KEY: ${{ secrets.FUZZ_API_KEY }}
+          FUZZ_ORGANIZATION: ${{ vars.FUZZ_ORGANIZATION }}
+          FUZZ_PROJECT: ${{ vars.FUZZ_PROJECT }}
+        run: |
+          missing=""
+          [ -n "$FUZZ_API_KEY" ] || missing="$missing secret:FUZZ_API_KEY"
+          [ -n "$FUZZ_ORGANIZATION" ] || missing="$missing variable:FUZZ_ORGANIZATION"
+          [ -n "$FUZZ_PROJECT" ] || missing="$missing variable:FUZZ_PROJECT"
+          if [ -n "$missing" ]; then
+            echo "::error::missing repository configuration (Settings > Secrets and variables > Actions):$missing"
+            exit 1
+          fi
+
+      - name: Upload bundle to FuzzCorp
+        if: github.event_name != 'pull_request'
+        uses: asymmetric-research/fuzz-upload-action@d81375ddc1887ddf574713845dcfada9d3968edc # v2.1.0
+        with:
+          upload_type: bundle
+          upload_path: fuzz/crucible/bundle
+          # --validate-only validates the manifest and returns before uploading.
+          upload_args: ${{ inputs.validate_only && '--validate-only' || '' }}
+        env:
+          FUZZ_API_ORIGIN: ${{ vars.FUZZ_API_ORIGIN }}
+          FUZZ_ORGANIZATION: ${{ vars.FUZZ_ORGANIZATION }}
+          FUZZ_PROJECT: ${{ vars.FUZZ_PROJECT }}
+          FUZZ_API_KEY: ${{ secrets.FUZZ_API_KEY }}

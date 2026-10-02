@@ -1,0 +1,4 @@
+# The harness is long, table-like code (account lists, instruction arguments, property
+# arithmetic); a wider line keeps one statement per line where the default would split it.
+max_width = 120
+use_small_heuristics = "Max"
