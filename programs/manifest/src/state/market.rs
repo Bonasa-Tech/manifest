@@ -1869,7 +1869,7 @@ impl<
 
         // Important to round up because there was an extra atom taken for full
         // taker rounding when the order was placed.
-        let amount_atoms: u64 = if is_bid {
+        let amount_atoms: u64 = if is_bid && !resting_order.is_global() {
             (resting_order
                 .get_price()
                 .checked_quote_for_base(resting_order.get_num_base_atoms(), true)
