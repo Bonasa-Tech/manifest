@@ -676,7 +676,7 @@ impl<Fixed: DerefOrBorrow<MarketFixed>, Dynamic: DerefOrBorrow<[u8]>>
                 global_trade_accounts_opts,
                 matched_base_atoms,
                 matched_quote_atoms,
-            ) {
+            )? {
                 continue;
             }
 
@@ -799,7 +799,7 @@ impl<Fixed: DerefOrBorrow<MarketFixed>, Dynamic: DerefOrBorrow<[u8]>>
                 global_trade_accounts_opts,
                 matched_base_atoms,
                 matched_quote_atoms,
-            ) {
+            )? {
                 continue;
             }
 
@@ -930,7 +930,7 @@ impl<Fixed: DerefOrBorrow<MarketFixed>, Dynamic: DerefOrBorrow<[u8]>>
         global_trade_accounts_opts: &[Option<GlobalTradeAccounts>; 2],
         matched_base_atoms: BaseAtoms,
         matched_quote_atoms: QuoteAtoms,
-    ) -> bool {
+    ) -> Result<bool, ProgramError> {
         if resting_order.get_order_type() == OrderType::Global {
             // If global accounts are needed but not present, then this will
             // crash. This is an intentional product decision. Would be
@@ -950,12 +950,12 @@ impl<Fixed: DerefOrBorrow<MarketFixed>, Dynamic: DerefOrBorrow<[u8]>>
                 } else {
                     matched_quote_atoms.as_u64()
                 }),
-            );
+            )?;
             if !has_enough_tokens {
-                return true;
+                return Ok(true);
             }
         }
-        return false;
+        Ok(false)
     }
 
     pub fn get_trader_index(&self, trader: &Pubkey) -> DataIndex {
