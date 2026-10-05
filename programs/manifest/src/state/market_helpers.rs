@@ -1460,6 +1460,35 @@ mod place_order_equivalence_tests {
         assert_eq!(taker_quote.as_u64(), 1_000_000_000_000 - 39);
     }
 
+    /// A dust-priced resting ask must not fail the quoting walk that sizes
+    /// quote-denominated swaps: the per-order base limit overflowing u64 is
+    /// capped, and the fill stays bounded by the resting order's actual size.
+    #[test]
+    fn test_impact_base_atoms_dust_priced_ask_does_not_error() {
+        let (mut market, maker_index, _, _, _) = new_market_with_seats();
+        // Ask of 1_000 base atoms at 1e-18, the minimum representable price,
+        // backed by dust.
+        place_exact_checked(
+            &mut market,
+            maker_index,
+            1_000,
+            1,
+            -18,
+            false,
+            OrderType::Limit,
+            NO_EXPIRATION_LAST_VALID_SLOT,
+        )
+        .unwrap();
+
+        // Quoting 1_000 quote atoms in: the exact base limit at the top ask,
+        // floor(1_000e18 / 1), exceeds u64::MAX. The walk caps it and fills
+        // the resting order's actual size.
+        let matched: BaseAtoms = market
+            .impact_base_atoms_with_slot(true, QuoteAtoms::new(1_000), &[None, None], NOW_SLOT)
+            .unwrap();
+        assert_eq!(matched.as_u64(), 1_000);
+    }
+
     /// A come-back bid coalescing into an existing order whose combined size
     /// overflows u64 must cap the growth at what the fill proceeds can back
     /// instead of failing the taker's fill.
