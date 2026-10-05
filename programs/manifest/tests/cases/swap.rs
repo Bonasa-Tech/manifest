@@ -4545,3 +4545,29 @@ async fn swap_across_many_reverse_orders_cu_test() -> anyhow::Result<()> {
 
     Ok(())
 }
+
+#[tokio::test]
+async fn swap_quote_in_succeeds_past_dust_priced_ask_test() -> anyhow::Result<()> {
+    let mut test_fixture: TestFixture = TestFixture::new().await;
+    test_fixture.claim_seat().await?;
+    test_fixture.deposit(Token::SOL, 1_000).await?;
+
+    // A dust ask at 1e-18, the minimum representable price, sits at the top
+    // of the ask book. Before the quoting fix, sizing any quote-in swap of
+    // more than ~18 quote atoms against it overflowed u64 base atoms and
+    // failed the whole swap.
+    test_fixture
+        .place_order(Side::Ask, 1_000, 1, -18, 0, OrderType::Limit)
+        .await?;
+
+    test_fixture
+        .usdc_mint_fixture
+        .mint_to(&test_fixture.payer_usdc_fixture.key, 1_000)
+        .await;
+
+    // Quote-in exact-in swap. The walk caps the per-order base limit and
+    // sweeps the dust ask instead of erroring.
+    test_fixture.swap(1_000, 0, false, true).await?;
+
+    Ok(())
+}
