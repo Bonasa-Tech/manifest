@@ -287,6 +287,9 @@ const WALLET_ATOMS: u64 = 1_000_000_000_000_000;
 /// `>=` rather than the equality the program's own comment states, and the reason P-0002 excludes
 /// resting bids. Without a fee-bearing mint every one of those paths is entered and none of them
 /// diverges, so the design rationale for those properties would be untestable.
+///
+/// In force from the end of setup, not from the mint's creation: GlobalCreate refuses a mint whose
+/// fee is live, so setup creates the leg's global first and raises the fee afterwards.
 const T22_FEE_BPS: u16 = 1_000;
 
 /// Actors. Index 2 is the adversary: the value-conservation property is stated about it, so it
@@ -750,7 +753,8 @@ impl ManifestFixture {
         key
     }
 
-    /// A Token-2022 mint carrying a `TransferFeeConfig`.
+    /// A Token-2022 mint carrying a `TransferFeeConfig` at `bps`, with `authority` as the
+    /// transfer-fee-config authority so the fee can be raised later (`set_t22_transfer_fee`).
     ///
     /// Built by packing real account bytes rather than by CPI, for the same reason the plain mints
     /// are: setup runs once per fuzz input. The TLV layout comes from the extension crate rather
@@ -767,6 +771,9 @@ impl ManifestFixture {
             let mut state = StateWithExtensionsMut::<T22Mint>::unpack_uninitialized(&mut data)
                 .expect("setup: unpack an uninitialized transfer-fee mint");
             let cfg = state.init_extension::<TransferFeeConfig>(true).expect("setup: init TransferFeeConfig");
+            // A mutable fee. The authority is what makes "the fee went up after the global was
+            // created" a history the chain can actually have, rather than a fixture fabrication.
+            cfg.transfer_fee_config_authority.0 = authority.to_bytes().into();
             for fee in [&mut cfg.older_transfer_fee, &mut cfg.newer_transfer_fee] {
                 fee.epoch = 0u64.into();
                 fee.maximum_fee = u64::MAX.into();
@@ -791,6 +798,26 @@ impl ManifestFixture {
             .create()
             .expect("setup: create the transfer-fee mint");
         key
+    }
+
+    /// Put a new transfer fee in force on a mint built by `mint_t22_with_fee`, in place.
+    ///
+    /// The account-level equivalent of the fee authority sending `SetTransferFee`: the fee in
+    /// force moves to `older_transfer_fee` and the new one becomes `newer_transfer_fee`. The real
+    /// instruction schedules the new fee two epochs out; this writes it as already reached
+    /// (`epoch: 0`), which is the state the chain is in once those epochs pass. The program
+    /// (`is_global_mint_matchable`) and Token-2022's `transfer_checked` both read only the fee
+    /// for the current epoch, so neither can tell the two apart.
+    fn set_t22_transfer_fee(ctx: &mut TestContext, mint: &Pubkey, bps: u16) {
+        ctx.update_account(mint, |data| {
+            let mut state =
+                StateWithExtensionsMut::<T22Mint>::unpack(data).expect("setup: unpack the transfer-fee mint");
+            let cfg = state.get_extension_mut::<TransferFeeConfig>().expect("setup: find TransferFeeConfig");
+            cfg.older_transfer_fee = cfg.newer_transfer_fee;
+            cfg.newer_transfer_fee.epoch = 0u64.into();
+            cfg.newer_transfer_fee.transfer_fee_basis_points = bps.into();
+        })
+        .expect("setup: raise the transfer fee");
     }
 
     /// A Token-2022 token account carrying `TransferFeeAmount`, which `transfer_checked` requires
@@ -1093,8 +1120,9 @@ impl ManifestFixture {
         let t22_base_mint = Self::mint(&mut ctx, BASE_DECIMALS, &payer.pubkey(), &SPL_TOKEN_2022_ID);
         // The quote leg carries a transfer fee; the base leg stays a plain 2022 mint, so one
         // market exercises both the fee-bearing and the fee-free Token-2022 paths. Created before
-        // create_market, which sizes each vault from its own mint's extension list.
-        let t22_quote_mint = Self::mint_t22_with_fee(&mut ctx, QUOTE_DECIMALS, &payer.pubkey(), T22_FEE_BPS);
+        // create_market, which sizes each vault from its own mint's extension list. Created at
+        // 0 bps: the fee is raised to T22_FEE_BPS below, once the leg's global exists.
+        let t22_quote_mint = Self::mint_t22_with_fee(&mut ctx, QUOTE_DECIMALS, &payer.pubkey(), 0);
         let t22_market = Self::create_market(&mut ctx, &payer, &t22_base_mint, &t22_quote_mint)
             .expect("setup: create the Token-2022 market");
         let t22_base = Self::leg(&t22_market, t22_base_mint, SPL_TOKEN_2022_ID);
@@ -1106,6 +1134,13 @@ impl ManifestFixture {
         for leg in [&base, &quote, &t22_base, &t22_quote] {
             Self::create_global(&mut ctx, &payer, leg).expect("setup: create global account");
         }
+
+        // Only now put the quote leg's fee in force. GlobalCreate refuses a mint whose transfer
+        // fee is live (`is_global_mint_matchable`), so a global on a fee-bearing mint is reachable
+        // one way only: the fee authority raises the fee after the global exists. That is also the
+        // state worth fuzzing, because placement, swap quoting and matching must each re-check the
+        // mint rather than trust that it was clean when the global was created.
+        Self::set_t22_transfer_fee(&mut ctx, &t22_quote_mint, T22_FEE_BPS);
 
         // Mints with NO market and NO global, reserved for action_create_market and
         // action_global_create. Without them both instructions would be one-shot and already
