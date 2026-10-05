@@ -14,7 +14,8 @@ use solana_account::Account;
 use solana_instruction::Instruction;
 use solana_keypair::Keypair;
 use solana_program::{
-    account_info::AccountInfo, hash::Hash, program_pack::Pack, pubkey::Pubkey, rent::Rent,
+    account_info::AccountInfo, clock::Clock, hash::Hash, program_pack::Pack, pubkey::Pubkey,
+    rent::Rent,
 };
 use solana_program_test::{processor, BanksClientError, ProgramTest, ProgramTestContext};
 use solana_signer::Signer;
@@ -248,6 +249,15 @@ impl TestFixture {
         .await;
         let sol_global_fixture: GlobalFixture =
             GlobalFixture::new(Rc::clone(&context), &sol_mint_f.key).await;
+
+        // Global creation rejects an active transfer fee. Model a mutable mint
+        // by creating its global while the fee is zero, then activating the
+        // fee before the wrapper tests start trading.
+        if transfer_fee {
+            usdc_mint_f
+                .set_transfer_fee_and_advance_epoch(100, 100)
+                .await;
+        }
 
         TestFixture {
             context: Rc::clone(&context),
@@ -603,9 +613,9 @@ impl MintFixture {
                     initialize_transfer_fee_config(
                         &spl_token_2022::id(),
                         &mint_keypair.pubkey(),
+                        Some(&payer.pubkey()),
                         None,
-                        None,
-                        100,
+                        0,
                         100,
                     )
                     .unwrap(),
@@ -663,6 +673,43 @@ impl MintFixture {
         };
         result.reload().await;
         result
+    }
+
+    pub async fn set_transfer_fee_and_advance_epoch(
+        &self,
+        transfer_fee_basis_points: u16,
+        maximum_fee: u64,
+    ) {
+        let payer: Keypair = self.context.borrow().payer.insecure_clone();
+        let set_transfer_fee_ix =
+            spl_token_2022::extension::transfer_fee::instruction::set_transfer_fee(
+                &spl_token_2022::id(),
+                &self.key,
+                &payer.pubkey(),
+                &[],
+                transfer_fee_basis_points,
+                maximum_fee,
+            )
+            .unwrap();
+        send_tx_with_retry(
+            Rc::clone(&self.context),
+            &[set_transfer_fee_ix],
+            Some(&payer.pubkey()),
+            &[&payer],
+        )
+        .await
+        .unwrap();
+
+        let mut clock: Clock = self
+            .context
+            .borrow_mut()
+            .banks_client
+            .get_sysvar()
+            .await
+            .unwrap();
+        clock.epoch += 2;
+        clock.slot += 1_000_000;
+        self.context.borrow_mut().set_sysvar(&clock);
     }
 
     pub async fn reload(&mut self) {
