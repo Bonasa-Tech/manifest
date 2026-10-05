@@ -764,8 +764,16 @@ impl<Fixed: DerefOrBorrow<MarketFixed>, Dynamic: DerefOrBorrow<[u8]>>
             // quote remaining against price 1.001, then the answer should be
             // 100, because the rounding is in favor of the taker. It takes 100
             // base atoms to exhaust 100 quote atoms at that price.
-            let base_atoms_limit: BaseAtoms =
-                matched_price.checked_base_for_quote(remaining_quote_atoms, !is_bid)?;
+            //
+            // A limit beyond u64::MAX base atoms (a dust-priced resting order
+            // against a large remaining quote) is capped rather than
+            // propagated: the min() below bounds the fill by the resting
+            // order's actual size either way, and failing instead would let
+            // one dust-priced resting order error every quote-denominated
+            // swap on the market.
+            let base_atoms_limit: BaseAtoms = matched_price
+                .checked_base_for_quote(remaining_quote_atoms, !is_bid)
+                .unwrap_or(BaseAtoms::new(u64::MAX));
             // Either fill the entire resting order, or only the
             // base_atoms_limit, in which case, this is the last iteration.
             let matched_base_atoms: BaseAtoms =
@@ -1431,8 +1439,14 @@ impl<
                     let num_base_atoms_reverse: BaseAtoms = if is_bid {
                         // Maker is now buying with the exact number of quote atoms.
                         // Do not round_up because there might not be enough atoms
-                        // for that.
-                        price_reverse.checked_base_for_quote(quote_atoms_traded, false)?
+                        // for that. An exact size beyond u64::MAX base atoms is
+                        // capped rather than propagated so a resting reverse
+                        // order can never fail the taker's fill; the capped
+                        // order still rounds up to at most the received quote
+                        // when it is debited below.
+                        price_reverse
+                            .checked_base_for_quote(quote_atoms_traded, false)
+                            .unwrap_or(BaseAtoms::new(u64::MAX))
                     } else {
                         base_atoms_traded
                     };
@@ -1475,6 +1489,10 @@ impl<
                     //   order that can only ever give back 8_999_999_999: one
                     //   atom stranded in the vault, owned by nobody.
                     let mut reverse_quote_atoms_debited: QuoteAtoms = QuoteAtoms::ZERO;
+                    // Base atoms the maker pays for the reverse ask.
+                    // Coalescing may cap this below num_base_atoms_reverse
+                    // when the combined order would overflow.
+                    let mut reverse_base_atoms_debited: BaseAtoms = num_base_atoms_reverse;
                     {
                         let other_tree: Bookside = if is_bid {
                             Bookside::new(dynamic, fixed.bids_root_index, fixed.bids_best_index)
@@ -1510,7 +1528,17 @@ impl<
                                 order_to_coalesce_into.increase(base_atoms_to_add)?;
                                 reverse_quote_atoms_debited = quote_atoms_to_debit;
                             } else {
-                                order_to_coalesce_into.increase(num_base_atoms_reverse)?;
+                                // Cap the growth so an oversized combined
+                                // reverse ask cannot fail the taker's fill.
+                                // The uncoalesced remainder is not debited and
+                                // stays in the maker's withdrawable balance.
+                                let base_atoms_to_add: BaseAtoms =
+                                    num_base_atoms_reverse.min(BaseAtoms::new(
+                                        u64::MAX
+                                            - order_to_coalesce_into.get_num_base_atoms().as_u64(),
+                                    ));
+                                order_to_coalesce_into.increase(base_atoms_to_add)?;
+                                reverse_base_atoms_debited = base_atoms_to_add;
                             }
                             #[cfg(feature = "certora")]
                             add_to_orderbook_balance(fixed, dynamic, lookup_index);
@@ -1575,7 +1603,7 @@ impl<
                         if is_bid {
                             reverse_quote_atoms_debited.into()
                         } else {
-                            num_base_atoms_reverse.into()
+                            reverse_base_atoms_debited.into()
                         },
                     )?;
                 }
