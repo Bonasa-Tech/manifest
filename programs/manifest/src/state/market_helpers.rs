@@ -149,6 +149,11 @@ use crate::state::utils::{transfer_global_tokens, try_to_reduce_global_tokens};
 /// Size a reverse bid being coalesced into an existing order so that the
 /// existing order's allocation does not grow by more quote atoms than the
 /// maker received from the fill.
+///
+/// Overflow of the requested growth is not an error: the growth is capped at
+/// what the received quote and the u64 size and allocation limits allow, so a
+/// maker's oversized resting reverse order can never fail a taker's fill. Any
+/// amount that does not fit stays in the maker's withdrawable balance.
 pub(super) fn get_reverse_bid_coalesce_amounts(
     price: QuoteAtomsPerBaseAtom,
     old_base_atoms: BaseAtoms,
@@ -157,24 +162,32 @@ pub(super) fn get_reverse_bid_coalesce_amounts(
 ) -> Result<(BaseAtoms, QuoteAtoms), ProgramError> {
     let previous_quote_allocated: QuoteAtoms =
         price.checked_quote_for_base(old_base_atoms, true)?;
-    let requested_new_base_atoms: BaseAtoms = old_base_atoms.checked_add(requested_base_atoms)?;
-    let requested_new_quote_allocated: QuoteAtoms =
-        price.checked_quote_for_base(requested_new_base_atoms, true)?;
-    let requested_quote_debit: QuoteAtoms =
-        requested_new_quote_allocated.checked_sub(previous_quote_allocated)?;
 
-    if requested_quote_debit <= quote_atoms_received {
-        return Ok((requested_base_atoms, requested_quote_debit));
+    // Fast path: the requested growth is representable and affordable.
+    if let Ok(requested_new_base_atoms) = old_base_atoms.checked_add(requested_base_atoms) {
+        if let Ok(requested_new_quote_allocated) =
+            price.checked_quote_for_base(requested_new_base_atoms, true)
+        {
+            let requested_quote_debit: QuoteAtoms =
+                requested_new_quote_allocated.checked_sub(previous_quote_allocated)?;
+            if requested_quote_debit <= quote_atoms_received {
+                return Ok((requested_base_atoms, requested_quote_debit));
+            }
+        }
     }
 
-    // This addition cannot overflow in this branch: requested allocation is a
-    // u64 and is greater than previous allocation + received quote.
+    // Cap the growth at what the received quote can pay for. Saturation only
+    // loses amounts beyond u64::MAX quote atoms; the division and min below
+    // bring the growth back within what was actually received.
     let affordable_total_quote: QuoteAtoms =
-        previous_quote_allocated.checked_add(quote_atoms_received)?;
-    let affordable_total_base: BaseAtoms =
-        price.checked_base_for_quote(affordable_total_quote, false)?;
+        previous_quote_allocated.saturating_add(quote_atoms_received);
+    // A failure here means the affordable size exceeds u64::MAX base atoms,
+    // so the size cap binds before the quote cap.
+    let affordable_total_base: BaseAtoms = price
+        .checked_base_for_quote(affordable_total_quote, false)
+        .unwrap_or(BaseAtoms::new(u64::MAX));
     let base_atoms_to_add: BaseAtoms = affordable_total_base
-        .checked_sub(old_base_atoms)?
+        .saturating_sub(old_base_atoms)
         .min(requested_base_atoms);
     let new_quote_allocated: QuoteAtoms =
         price.checked_quote_for_base(old_base_atoms.checked_add(base_atoms_to_add)?, true)?;
@@ -578,8 +591,14 @@ fn place_reverse_order(
 ) -> ProgramResult {
     let num_base_atoms_reverse: BaseAtoms = if is_bid {
         // Maker is now buying with the exact number of quote atoms. Do not
-        // round_up because there might not be enough atoms for that.
-        price_reverse.checked_base_for_quote(quote_atoms_traded, false)?
+        // round_up because there might not be enough atoms for that. An
+        // exact size beyond u64::MAX base atoms is capped rather than
+        // propagated so a resting reverse order can never fail the taker's
+        // fill; the capped order still rounds up to at most the received
+        // quote when it is debited below.
+        price_reverse
+            .checked_base_for_quote(quote_atoms_traded, false)
+            .unwrap_or(BaseAtoms::new(u64::MAX))
     } else {
         base_atoms_traded
     };
@@ -590,6 +609,9 @@ fn place_reverse_order(
     // coalesced order's backing at that order's own price, not
     // num_base_atoms_reverse * price_reverse.
     let mut reverse_quote_atoms_debited: QuoteAtoms = QuoteAtoms::ZERO;
+    // Base atoms the maker pays for the reverse ask. Coalescing may cap this
+    // below num_base_atoms_reverse when the combined order would overflow.
+    let mut reverse_base_atoms_debited: BaseAtoms = num_base_atoms_reverse;
     {
         let other_tree: Bookside = if is_bid {
             Bookside::new(dynamic, fixed.bids_root_index, fixed.bids_best_index)
@@ -622,7 +644,14 @@ fn place_reverse_order(
                 order_to_coalesce_into.increase(base_atoms_to_add)?;
                 reverse_quote_atoms_debited = quote_atoms_to_debit;
             } else {
-                order_to_coalesce_into.increase(num_base_atoms_reverse)?;
+                // Cap the growth so an oversized combined reverse ask cannot
+                // fail the taker's fill. The uncoalesced remainder is not
+                // debited and stays in the maker's withdrawable balance.
+                let base_atoms_to_add: BaseAtoms = num_base_atoms_reverse.min(BaseAtoms::new(
+                    u64::MAX - order_to_coalesce_into.get_num_base_atoms().as_u64(),
+                ));
+                order_to_coalesce_into.increase(base_atoms_to_add)?;
+                reverse_base_atoms_debited = base_atoms_to_add;
             }
             #[cfg(feature = "certora")]
             add_to_orderbook_balance(fixed, dynamic, lookup_index);
@@ -676,7 +705,7 @@ fn place_reverse_order(
         if is_bid {
             reverse_quote_atoms_debited.into()
         } else {
-            num_base_atoms_reverse.into()
+            reverse_base_atoms_debited.into()
         },
     )?;
 
@@ -1287,5 +1316,305 @@ mod place_order_equivalence_tests {
             orders_before,
             "rejected global bid must not persist and grief cleanup"
         );
+    }
+
+    /// Run the same order through `place_order` on the live market and
+    /// `place_order_` (the model) on a copy with an exact mantissa/exponent
+    /// price, assert they agree on the result and every byte of market state,
+    /// and return the production result.
+    #[allow(clippy::too_many_arguments)]
+    fn place_exact_checked(
+        market: &mut MarketValue,
+        trader_index: DataIndex,
+        num_base_atoms: u64,
+        mantissa: u32,
+        exponent: i8,
+        is_bid: bool,
+        order_type: OrderType,
+        last_valid_slot: u32,
+    ) -> Result<AddOrderToMarketResult, ProgramError> {
+        let market_key: Pubkey = Pubkey::new_unique();
+        let mut model: MarketValue = MarketValue {
+            fixed: market.fixed,
+            dynamic: market.dynamic.clone(),
+        };
+        let args = || AddOrderToMarketArgs {
+            market: &market_key,
+            trader_index,
+            num_base_atoms: BaseAtoms::new(num_base_atoms),
+            price: QuoteAtomsPerBaseAtom::try_from_mantissa_and_exponent(mantissa, exponent)
+                .unwrap(),
+            is_bid,
+            last_valid_slot,
+            order_type,
+            global_trade_accounts_opts: &[None, None],
+            current_slot: Some(NOW_SLOT),
+        };
+        let production_result: Result<AddOrderToMarketResult, ProgramError> =
+            market.place_order(args());
+        let model_result: Result<AddOrderToMarketResult, ProgramError> =
+            model.place_order_(args());
+        match (&production_result, &model_result) {
+            (Ok(production), Ok(model)) => {
+                assert_eq!(
+                    production.base_atoms_traded, model.base_atoms_traded,
+                    "base_atoms_traded diverged"
+                );
+                assert_eq!(
+                    production.quote_atoms_traded, model.quote_atoms_traded,
+                    "quote_atoms_traded diverged"
+                );
+            }
+            (Err(production_err), Err(model_err)) => {
+                assert_eq!(production_err, model_err, "errors diverged");
+            }
+            (production_result, model_result) => {
+                panic!(
+                    "one implementation failed and the other did not: production ok={} model ok={}",
+                    production_result.is_ok(),
+                    model_result.is_ok()
+                );
+            }
+        }
+        assert_eq!(
+            bytemuck::bytes_of(&market.fixed),
+            bytemuck::bytes_of(&model.fixed),
+            "market fixed state diverged"
+        );
+        assert_eq!(
+            market.dynamic, model.dynamic,
+            "market dynamic state diverged"
+        );
+        production_result
+    }
+
+    /// A reverse maker whose come-back bid sizes beyond u64::MAX base atoms
+    /// (large fill at a tiny reverse price) must not fail the taker's fill.
+    /// Before the capping fix the taker's order errored with a price
+    /// conversion overflow, leaving a maker-controlled order at the top of
+    /// the book that blocked every crossing taker and never expires.
+    #[test]
+    fn test_reverse_come_back_size_overflow_does_not_block_taker() {
+        let (mut market, maker_index, taker_index, maker_pk, taker_pk) = new_market_with_seats();
+        market
+            .deposit(maker_index, 13_000_000_000_000_000_000, true)
+            .unwrap();
+
+        // Reverse ask at 3e-18 with the maximum spread comes back as a bid at
+        // 2e-18 after a fill.
+        place_exact_checked(
+            &mut market,
+            maker_index,
+            13_000_000_000_000_000_000,
+            3,
+            -18,
+            false,
+            OrderType::Reverse,
+            u16::MAX as u32,
+        )
+        .unwrap();
+
+        // Full fill: the maker receives 39 quote atoms, and the exact
+        // come-back size floor(39e18 / 2) exceeds u64::MAX base atoms.
+        let result: AddOrderToMarketResult = place_exact_checked(
+            &mut market,
+            taker_index,
+            13_000_000_000_000_000_000,
+            3,
+            -18,
+            true,
+            OrderType::ImmediateOrCancel,
+            NO_EXPIRATION_LAST_VALID_SLOT,
+        )
+        .unwrap();
+        assert_eq!(result.base_atoms_traded.as_u64(), 13_000_000_000_000_000_000);
+        assert_eq!(result.quote_atoms_traded.as_u64(), 39);
+
+        // The come-back bid rests with the capped size and is backed by
+        // ceil(u64::MAX * 2e-18) = 37 of the 39 received quote atoms.
+        assert_eq!(market.get_asks().iter::<RestingOrder>().count(), 0);
+        let bids: Vec<RestingOrder> = market
+            .get_bids()
+            .iter::<RestingOrder>()
+            .map(|(_, order)| *order)
+            .collect();
+        assert_eq!(bids.len(), 1);
+        assert_eq!(bids[0].get_num_base_atoms().as_u64(), u64::MAX);
+        assert_eq!(
+            bids[0].get_price(),
+            QuoteAtomsPerBaseAtom::try_from_mantissa_and_exponent(2, -18).unwrap()
+        );
+
+        // Maker: all base sold, 39 received minus 37 locked behind the
+        // come-back bid. Taker: paid 39 quote for the full base size.
+        let (maker_base, maker_quote) = market.get_trader_balance(&maker_pk);
+        assert_eq!(maker_base.as_u64(), 1_000_000_000_000);
+        assert_eq!(maker_quote.as_u64(), 1_000_000_000_000 + 2);
+        let (taker_base, taker_quote) = market.get_trader_balance(&taker_pk);
+        assert_eq!(
+            taker_base.as_u64(),
+            1_000_000_000_000 + 13_000_000_000_000_000_000
+        );
+        assert_eq!(taker_quote.as_u64(), 1_000_000_000_000 - 39);
+    }
+
+    /// A come-back bid coalescing into an existing order whose combined size
+    /// overflows u64 must cap the growth at what the fill proceeds can back
+    /// instead of failing the taker's fill.
+    #[test]
+    fn test_reverse_coalesce_size_overflow_does_not_block_taker() {
+        let (mut market, maker_index, taker_index, maker_pk, _) = new_market_with_seats();
+        market
+            .deposit(maker_index, 16_750_000_000_000_000_000, true)
+            .unwrap();
+
+        // First cycle rests a come-back bid of 15e18 base atoms at 3e-18,
+        // backed by the 45 quote atoms the fill pays.
+        place_exact_checked(
+            &mut market,
+            maker_index,
+            15_000_000_000_000_000_000,
+            3,
+            -18,
+            false,
+            OrderType::Reverse,
+            0,
+        )
+        .unwrap();
+        place_exact_checked(
+            &mut market,
+            taker_index,
+            15_000_000_000_000_000_000,
+            3,
+            -18,
+            true,
+            OrderType::ImmediateOrCancel,
+            NO_EXPIRATION_LAST_VALID_SLOT,
+        )
+        .unwrap();
+
+        // Second cycle: the ask at 4e-18 with the maximum spread comes back at
+        // 2e-18 and coalesces into the resting bid one increment higher. The
+        // exact growth floor(7e18 / 2) = 3.5e18 overflows the combined size.
+        place_exact_checked(
+            &mut market,
+            maker_index,
+            1_750_000_000_000_000_000,
+            4,
+            -18,
+            false,
+            OrderType::Reverse,
+            u16::MAX as u32,
+        )
+        .unwrap();
+        let result: AddOrderToMarketResult = place_exact_checked(
+            &mut market,
+            taker_index,
+            1_750_000_000_000_000_000,
+            4,
+            -18,
+            true,
+            OrderType::ImmediateOrCancel,
+            NO_EXPIRATION_LAST_VALID_SLOT,
+        )
+        .unwrap();
+        assert_eq!(result.quote_atoms_traded.as_u64(), 7);
+
+        // The growth is capped at what the 7 received quote atoms back at the
+        // coalesced order's own 3e-18 price: the bid grows from 15e18 to
+        // floor(52e18 / 3) base atoms for exactly those 7 atoms.
+        let bids: Vec<RestingOrder> = market
+            .get_bids()
+            .iter::<RestingOrder>()
+            .map(|(_, order)| *order)
+            .collect();
+        assert_eq!(bids.len(), 1);
+        assert_eq!(
+            bids[0].get_num_base_atoms().as_u64(),
+            17_333_333_333_333_333_333
+        );
+
+        // The maker paid out exactly the received proceeds across both
+        // cycles: nothing stranded, nothing overdrawn.
+        let (_, maker_quote) = market.get_trader_balance(&maker_pk);
+        assert_eq!(maker_quote.as_u64(), 1_000_000_000_000);
+    }
+}
+
+/// Overflow behavior of the reverse-bid coalesce sizing: growth beyond the
+/// u64 size or allocation limits is capped, never an error, so a resting
+/// reverse order cannot fail the taker filling it.
+#[cfg(all(test, not(feature = "certora")))]
+mod reverse_coalesce_amount_tests {
+    use super::*;
+
+    fn price(mantissa: u32, exponent: i8) -> QuoteAtomsPerBaseAtom {
+        QuoteAtomsPerBaseAtom::try_from_mantissa_and_exponent(mantissa, exponent).unwrap()
+    }
+
+    /// An affordable requested growth passes through unchanged.
+    #[test]
+    fn test_affordable_growth_unchanged() {
+        let (base, quote) = get_reverse_bid_coalesce_amounts(
+            price(3, -18),
+            BaseAtoms::new(1_000_000_000_000_000_000),
+            BaseAtoms::new(2_000_000_000_000_000_000),
+            QuoteAtoms::new(100),
+        )
+        .unwrap();
+        assert_eq!(base.as_u64(), 2_000_000_000_000_000_000);
+        assert_eq!(quote.as_u64(), 6);
+    }
+
+    /// A combined size overflowing u64 base atoms caps at the affordable
+    /// growth instead of failing.
+    #[test]
+    fn test_base_add_overflow_is_capped() {
+        let (base, quote) = get_reverse_bid_coalesce_amounts(
+            price(3, -18),
+            BaseAtoms::new(15_000_000_000_000_000_000),
+            BaseAtoms::new(u64::MAX),
+            QuoteAtoms::new(7),
+        )
+        .unwrap();
+        // ceil(15e18 * 3e-18) = 45 allocated; 45 + 7 affordable; the bid can
+        // grow to floor(52e18 / 3) for exactly the 7 received atoms.
+        assert_eq!(base.as_u64(), 2_333_333_333_333_333_333);
+        assert_eq!(quote.as_u64(), 7);
+    }
+
+    /// A combined allocation overflowing u64 quote atoms caps at the
+    /// affordable growth even though the combined size fits.
+    #[test]
+    fn test_quote_allocation_overflow_is_capped() {
+        let (base, quote) = get_reverse_bid_coalesce_amounts(
+            price(2, 0),
+            BaseAtoms::new(8_000_000_000_000_000_000),
+            BaseAtoms::new(2_000_000_000_000_000_000),
+            QuoteAtoms::new(1_000_000_000_000_000_000),
+        )
+        .unwrap();
+        // 16e18 allocated plus 1e18 received affords floor(17e18 / 2), a
+        // growth of 5e17 base atoms costing exactly the received 1e18.
+        assert_eq!(base.as_u64(), 500_000_000_000_000_000);
+        assert_eq!(quote.as_u64(), 1_000_000_000_000_000_000);
+    }
+
+    /// An affordable size beyond u64::MAX base atoms caps at the u64 size
+    /// limit, with the growth still costing no more than was received.
+    #[test]
+    fn test_affordable_base_overflow_caps_at_size_limit() {
+        let (base, quote) = get_reverse_bid_coalesce_amounts(
+            price(3, -18),
+            BaseAtoms::new(15_000_000_000_000_000_000),
+            BaseAtoms::new(u64::MAX),
+            QuoteAtoms::new(20),
+        )
+        .unwrap();
+        // floor(65e18 / 3) exceeds u64::MAX, so the size cap binds: the bid
+        // grows to u64::MAX base atoms, costing ceil(u64::MAX * 3e-18) - 45
+        // = 11 of the 20 received atoms.
+        assert_eq!(base.as_u64(), u64::MAX - 15_000_000_000_000_000_000);
+        assert_eq!(quote.as_u64(), 11);
     }
 }
