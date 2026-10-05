@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1790969786047,
+  "lastUpdate": 1791213856447,
   "repoUrl": "https://github.com/Bonasa-Tech/manifest",
   "entries": {
     "CU Benchmark": [
@@ -14707,6 +14707,72 @@ window.BENCHMARK_DATA = {
           "url": "https://github.com/Bonasa-Tech/manifest/commit/d04b7aa90b098ba64ebcdf398e9a24d89a9114d8"
         },
         "date": 1790969781839,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "PHX_50",
+            "value": 6748,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "PHX_95",
+            "value": 8819,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "PHX_99",
+            "value": 10866,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_50",
+            "value": 1010,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_95",
+            "value": 1284,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_99",
+            "value": 1819,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "cyrbritt@gmail.com",
+            "name": "Britt Cyr",
+            "username": "brittcyr"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "9d59830627df0efb74ef9d7ed27f274af7a1b8ba",
+          "message": "Fix/reverse coalesce lockup (#747)\n\n* fix: cap reverse come-back growth instead of failing the taker's fill\n\nA resting reverse order could block every taker crossing it: when the\ncome-back placement overflowed u64 -- the come-back size\nfloor(quote / reverse_price) at tiny prices, the combined coalesced\nsize, or the coalesced allocation ceil((old + X) * q) computed before\nthe affordability cap -- the error propagated out of place_order and\nfailed the taker's transaction. Reverse orders never expire and only\nthe owner can cancel them, so a maker-controlled state at the top of\nthe book locked that side of the market for every crossing taker.\n\nCap the growth at the u64 size and allocation limits instead. The\ncapped come-back order stays exactly backed by the fill proceeds, and\nanything that does not fit stays in the maker's withdrawable balance,\npreserving vault == withdrawable + orderbook. Applied to both mirrored\nimplementations (Market::place_order and place_reverse_order), which\nthe equivalence tests keep byte-identical.\n\n* fix: cap quoting walk base limit so a dust-priced ask cannot fail swaps\n\nimpact_base_atoms sizes quote-denominated swaps by walking resting\norders and computing floor(remaining_quote / price) at each maker's\nprice. A resting ask at the minimum representable price (1e-18, backed\nonly by dust base atoms, automatically at the top of the ask book) made\nthat limit exceed u64::MAX for any quote-in swap of more than ~18 quote\natoms, and the error propagated out and failed the swap. One dust order\ncould therefore error every quote-denominated swap on the market.\n\nCap the per-order limit at u64::MAX instead: the min() with the resting\norder's actual size bounds the fill identically either way, so the cap\nnever changes a representable result.\n\n* chore: format reverse coalesce fix",
+          "timestamp": "2026-10-05T11:19:58-04:00",
+          "tree_id": "85d1e5694f47b37abc249b51c5a9e85475856600",
+          "url": "https://github.com/Bonasa-Tech/manifest/commit/9d59830627df0efb74ef9d7ed27f274af7a1b8ba"
+        },
+        "date": 1791213854491,
         "tool": "customSmallerIsBetter",
         "benches": [
           {
