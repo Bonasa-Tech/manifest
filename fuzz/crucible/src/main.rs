@@ -3038,7 +3038,6 @@ mod harness_tests {
         assert_eq!(check(&mut f), None, "a property fired while cleaning an unbacked global order");
     }
 
-
     /// SECURITY PROBE (throwaway): Withdraw by a trader with NO seat.
     ///
     /// `MarketRefMut::deposit` guards its trader index with `require!(is_not_nil!(trader_index))`
@@ -3046,7 +3045,8 @@ mod harness_tests {
     /// straight to `update_balance`. With no seat, `get_trader_index` yields NIL = 0xFFFF_FFFF.
     #[test]
     fn zz_probe_seatless_withdraw() {
-        let mut f = ManifestFixture::setup(); // no seats claimed
+        // No seats claimed.
+        let mut f = ManifestFixture::setup();
         // Fund the vault from a DIFFERENT, seated actor, so the token transfer out of the vault
         // succeeds and execution reaches the balance bookkeeping rather than failing before it.
         assert!(f.action_claim_seat(0, false), "actor 0 claim_seat");
