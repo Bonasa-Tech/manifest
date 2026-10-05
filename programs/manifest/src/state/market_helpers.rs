@@ -1352,8 +1352,7 @@ mod place_order_equivalence_tests {
         };
         let production_result: Result<AddOrderToMarketResult, ProgramError> =
             market.place_order(args());
-        let model_result: Result<AddOrderToMarketResult, ProgramError> =
-            model.place_order_(args());
+        let model_result: Result<AddOrderToMarketResult, ProgramError> = model.place_order_(args());
         match (&production_result, &model_result) {
             (Ok(production), Ok(model)) => {
                 assert_eq!(
@@ -1427,7 +1426,10 @@ mod place_order_equivalence_tests {
             NO_EXPIRATION_LAST_VALID_SLOT,
         )
         .unwrap();
-        assert_eq!(result.base_atoms_traded.as_u64(), 13_000_000_000_000_000_000);
+        assert_eq!(
+            result.base_atoms_traded.as_u64(),
+            13_000_000_000_000_000_000
+        );
         assert_eq!(result.quote_atoms_traded.as_u64(), 39);
 
         // The come-back bid rests with the capped size and is backed by
@@ -1482,12 +1484,7 @@ mod place_order_equivalence_tests {
         // floor(1_000e18 / 1), exceeds u64::MAX. The walk caps it and fills
         // the resting order's actual size.
         let matched: BaseAtoms = market
-            .impact_base_atoms_with_slot(
-                true,
-                QuoteAtoms::new(1_000),
-                &[None, None],
-                NOW_SLOT,
-            )
+            .impact_base_atoms_with_slot(true, QuoteAtoms::new(1_000), &[None, None], NOW_SLOT)
             .unwrap();
         assert_eq!(matched.as_u64(), 1_000);
     }

@@ -1535,9 +1535,7 @@ impl<
                                 let base_atoms_to_add: BaseAtoms =
                                     num_base_atoms_reverse.min(BaseAtoms::new(
                                         u64::MAX
-                                            - order_to_coalesce_into
-                                                .get_num_base_atoms()
-                                                .as_u64(),
+                                            - order_to_coalesce_into.get_num_base_atoms().as_u64(),
                                     ));
                                 order_to_coalesce_into.increase(base_atoms_to_add)?;
                                 reverse_base_atoms_debited = base_atoms_to_add;
