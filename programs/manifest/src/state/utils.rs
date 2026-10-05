@@ -8,10 +8,12 @@ use pinocchio::account::AccountView;
 #[cfg(not(feature = "certora"))]
 use crate::program::invoke_signed;
 #[cfg(not(feature = "certora"))]
+use crate::validation::MintAccountInfo;
+#[cfg(not(feature = "certora"))]
 use crate::{
     global_vault_seeds_with_bump,
     program::invoke,
-    validation::{to_program_error, MintAccountInfo, TokenProgram},
+    validation::{to_program_error, TokenProgram},
 };
 use crate::{
     logs::{emit_stack, GlobalCleanupLog},
@@ -86,6 +88,56 @@ pub(crate) fn get_now_epoch() -> u64 {
         })
         .epoch;
     now_epoch
+}
+
+/// Returns whether a mint can back a global order at the current epoch.
+///
+/// Global fills move the backing token from the shared global vault to a
+/// market vault. A transfer fee would make the market receive less than its
+/// accounting credits, while a transfer hook needs accounts that the global
+/// settlement interface cannot provide. Keep this check shared by creation,
+/// placement, and matching so mutable Token-2022 configurations cannot leave
+/// an unsafe path open.
+#[cfg(not(feature = "certora"))]
+pub(crate) fn is_global_mint_matchable(
+    mint_account_info: &MintAccountInfo,
+) -> Result<bool, ProgramError> {
+    if mint_account_info.info.owner_pubkey() != spl_token_2022::id() {
+        return Ok(true);
+    }
+
+    let mint_data = mint_account_info.info.try_borrow()?;
+    let mint = StateWithExtensions::<Mint>::unpack(&mint_data).map_err(to_program_error)?;
+    let has_transfer_fee = mint
+        .get_extension::<TransferFeeConfig>()
+        .is_ok_and(|fee_config| {
+            fee_config
+                .get_epoch_fee(get_now_epoch())
+                .transfer_fee_basis_points
+                != 0.into()
+        });
+    let has_transfer_hook = mint
+        .get_extension::<TransferHook>()
+        .is_ok_and(|transfer_hook| transfer_hook.program_id.get().is_some());
+
+    Ok(!has_transfer_fee && !has_transfer_hook)
+}
+
+/// Applies the mint check to a loaded global account bundle. Legacy SPL Token
+/// swaps omit the mint account, while Token-2022 swaps are required to include
+/// it so extensions can be inspected.
+#[cfg(not(feature = "certora"))]
+fn are_global_trade_accounts_matchable(
+    global_trade_accounts: &GlobalTradeAccounts,
+) -> Result<bool, ProgramError> {
+    if let Some(mint_account_info) = global_trade_accounts.mint_opt.as_ref() {
+        return is_global_mint_matchable(mint_account_info);
+    }
+
+    Ok(global_trade_accounts
+        .token_program_opt
+        .as_ref()
+        .is_some_and(|token_program| *token_program.pubkey() == spl_token::id()))
 }
 
 #[inline(always)]
@@ -201,6 +253,13 @@ pub(crate) fn try_to_add_to_global(
         gas_payer_opt,
         ..
     } = global_trade_accounts;
+
+    #[cfg(not(feature = "certora"))]
+    require!(
+        are_global_trade_accounts_matchable(global_trade_accounts)?,
+        crate::program::ManifestError::InvalidMint,
+        "Mint cannot back a global order",
+    )?;
 
     let global_data: &mut RefMut<[u8]> = &mut global.try_borrow_mut()?;
     let mut global_dynamic_account: GlobalRefMut = get_mut_dynamic_account(global_data);
@@ -328,19 +387,28 @@ pub(crate) fn can_back_order<'a>(
     global_trade_accounts_opt: &'a Option<GlobalTradeAccounts<'a>>,
     resting_order_trader: &Pubkey,
     desired_global_atoms: GlobalAtoms,
-) -> bool {
+) -> Result<bool, ProgramError> {
     if global_trade_accounts_opt.is_none() {
-        return false;
+        return Ok(false);
     }
     let global_trade_accounts: &GlobalTradeAccounts = global_trade_accounts_opt.as_ref().unwrap();
+
+    // Swap impact calculations must apply the same mint compatibility rules
+    // as execution. Otherwise a mutable fee or hook can make the quote count
+    // global liquidity that try_to_reduce_global_tokens will later reject.
+    #[cfg(not(feature = "certora"))]
+    if !are_global_trade_accounts_matchable(global_trade_accounts)? {
+        return Ok(false);
+    }
+
     let GlobalTradeAccounts { global, .. } = global_trade_accounts;
 
-    let global_data: &mut RefMut<[u8]> = &mut global.try_borrow_mut().unwrap();
+    let global_data: &mut RefMut<[u8]> = &mut global.try_borrow_mut()?;
     let global_dynamic_account: GlobalRefMut = get_mut_dynamic_account(global_data);
 
     let num_deposited_atoms: GlobalAtoms =
         global_dynamic_account.get_balance_atoms(resting_order_trader);
-    return desired_global_atoms <= num_deposited_atoms;
+    Ok(desired_global_atoms <= num_deposited_atoms)
 }
 
 /// Checks if a global order has sufficient balance and reduces the balance.
@@ -366,13 +434,6 @@ pub(crate) fn try_to_reduce_global_tokens<'a>(
         gas_receiver_opt,
         ..
     } = global_trade_accounts;
-    #[cfg(not(feature = "certora"))]
-    let GlobalTradeAccounts {
-        mint_opt,
-        token_program_opt,
-        ..
-    } = global_trade_accounts;
-
     let global_data: &mut RefMut<[u8]> = &mut global.try_borrow_mut()?;
     let mut global_dynamic_account: GlobalRefMut = get_mut_dynamic_account(global_data);
 
@@ -412,51 +473,18 @@ pub(crate) fn try_to_reduce_global_tokens<'a>(
         return Ok(false);
     }
 
-    #[cfg(not(feature = "certora"))]
-    let token_program: &TokenProgram<'a> = token_program_opt.as_ref().unwrap();
-
     // Check transfer fee/hook BEFORE reducing balance to avoid permanent
     // balance loss when the transfer is rejected.
     #[cfg(not(feature = "certora"))]
-    if *token_program.pubkey() == spl_token_2022::id() {
-        require!(
-            mint_opt.is_some(),
-            crate::program::ManifestError::MissingGlobal,
-            "Missing global mint",
-        )?;
-
-        // Prevent transfer from global to market vault if a token has a non-zero fee.
-        let mint_account_info: &MintAccountInfo = mint_opt.as_ref().unwrap();
-        let mint_data = mint_account_info.info.try_borrow()?;
-        let mint = StateWithExtensions::<Mint>::unpack(&mint_data).map_err(to_program_error)?;
-        if mint
-            .get_extension::<TransferFeeConfig>()
-            .is_ok_and(|f| f.get_epoch_fee(get_now_epoch()).transfer_fee_basis_points != 0.into())
-        {
-            solana_program::msg!("Treating global order as unbacked because it has a transfer fee");
-            emit_stack(GlobalCleanupLog {
-                cleaner,
-                maker: *resting_order_trader,
-                amount_desired: desired_global_atoms,
-                amount_deposited: num_deposited_atoms,
-            })?;
-            return Ok(false);
-        }
-        if mint
-            .get_extension::<TransferHook>()
-            .is_ok_and(|f| f.program_id.get().is_some())
-        {
-            solana_program::msg!(
-                "Treating global order as unbacked because it has a transfer hook"
-            );
-            emit_stack(GlobalCleanupLog {
-                cleaner,
-                maker: *resting_order_trader,
-                amount_desired: desired_global_atoms,
-                amount_deposited: num_deposited_atoms,
-            })?;
-            return Ok(false);
-        }
+    if !are_global_trade_accounts_matchable(global_trade_accounts)? {
+        solana_program::msg!("Treating global order as unbacked because its mint cannot match");
+        emit_stack(GlobalCleanupLog {
+            cleaner,
+            maker: *resting_order_trader,
+            amount_desired: desired_global_atoms,
+            amount_deposited: num_deposited_atoms,
+        })?;
+        return Ok(false);
     }
 
     // Reduce balance only after confirming the transfer can proceed.

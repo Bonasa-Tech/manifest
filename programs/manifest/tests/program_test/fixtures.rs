@@ -1174,10 +1174,29 @@ impl MintFixture {
         mint_decimals: u8,
         transfer_fee_bps: u16,
     ) -> MintFixture {
+        Self::new_with_transfer_fee_config(context, mint_decimals, transfer_fee_bps, false).await
+    }
+
+    /// Create a Token-2022 transfer-fee mint whose fee authority is the test payer.
+    pub async fn new_with_mutable_transfer_fee(
+        context: Rc<RefCell<ProgramTestContext>>,
+        mint_decimals: u8,
+        transfer_fee_bps: u16,
+    ) -> MintFixture {
+        Self::new_with_transfer_fee_config(context, mint_decimals, transfer_fee_bps, true).await
+    }
+
+    async fn new_with_transfer_fee_config(
+        context: Rc<RefCell<ProgramTestContext>>,
+        mint_decimals: u8,
+        transfer_fee_bps: u16,
+        mutable: bool,
+    ) -> MintFixture {
         let context_ref: Rc<RefCell<ProgramTestContext>> = Rc::clone(&context);
         let mint_keypair: Keypair = Keypair::new();
 
         let payer: Keypair = context.borrow().payer.insecure_clone();
+        let transfer_fee_config_authority = mutable.then(|| payer.pubkey());
 
         // Calculate space needed for mint with TransferFeeConfig extension
         let extension_types: Vec<spl_token_2022::extension::ExtensionType> =
@@ -1202,7 +1221,7 @@ impl MintFixture {
             spl_token_2022::extension::transfer_fee::instruction::initialize_transfer_fee_config(
                 &spl_token_2022::id(),
                 &mint_keypair.pubkey(),
-                None,
+                transfer_fee_config_authority.as_ref(),
                 None,
                 transfer_fee_bps,
                 u64::MAX,
@@ -1244,6 +1263,40 @@ impl MintFixture {
             mint,
             is_2022_with_extensions: true,
         }
+    }
+
+    /// Schedule a new transfer fee and advance the test clock until it is active.
+    pub async fn set_transfer_fee_and_advance_epoch(&self, transfer_fee_bps: u16) {
+        let payer: Keypair = self.context.borrow().payer.insecure_clone();
+        let set_fee_ix: Instruction =
+            spl_token_2022::extension::transfer_fee::instruction::set_transfer_fee(
+                &spl_token_2022::id(),
+                &self.key,
+                &payer.pubkey(),
+                &[],
+                transfer_fee_bps,
+                u64::MAX,
+            )
+            .unwrap();
+        send_tx_with_retry(
+            Rc::clone(&self.context),
+            &[set_fee_ix],
+            Some(&payer.pubkey()),
+            &[&payer],
+        )
+        .await
+        .unwrap();
+
+        let mut clock: solana_clock::Clock = self
+            .context
+            .borrow_mut()
+            .banks_client
+            .get_sysvar()
+            .await
+            .unwrap();
+        clock.epoch += 2;
+        clock.slot += 1_000_000;
+        self.context.borrow_mut().set_sysvar(&clock);
     }
 
     pub async fn reload(&mut self) {

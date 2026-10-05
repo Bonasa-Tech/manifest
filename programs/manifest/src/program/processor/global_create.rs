@@ -14,6 +14,8 @@ use crate::{
     utils::create_account,
     validation::{get_global_vault_address, loaders::GlobalCreateContext},
 };
+#[cfg(not(feature = "certora"))]
+use crate::{program::ManifestError, require, state::utils::is_global_mint_matchable};
 use hypertree::{get_mut_helper, trace};
 use solana_program::{program_pack::Pack, pubkey::Pubkey};
 use solana_system_interface::instruction as system_instruction;
@@ -39,6 +41,14 @@ pub(crate) fn process_global_create(
             token_program: _,
             global_bump,
         } = global_create_context;
+
+        #[cfg(not(feature = "certora"))]
+        require!(
+            is_global_mint_matchable(&global_mint)?,
+            ManifestError::InvalidMint,
+            "Mint cannot back a global order",
+        )?;
+
         let (expected_global_vault_key, global_vault_bump) =
             get_global_vault_address(global_mint.info.pubkey());
 
