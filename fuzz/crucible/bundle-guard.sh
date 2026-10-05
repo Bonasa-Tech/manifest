@@ -37,7 +37,8 @@
 #   GATE G  no COMMITTED harness source names the authoring toolchain -- its scripts,
 #           its private docs, its commands. Same reason as GATE F: the generated
 #           header re-appears on every regeneration, and none of those references
-#           resolves to anything the client can open.
+#           resolves to anything the client can open. A script that is itself a
+#           committed file of this harness (gen-idl.py) is exempt: the client owns it.
 #   GATE H  the symbols file is the unstripped twin of a SHIPPED program (.text byte-identical)
 #           and its DWARF line table maps to addresses inside .text. Coverage is computed
 #           from the symbols and attributed to the executed program: symbols from another
@@ -155,7 +156,15 @@ for rel in tracked_src.stdout.split():
 # to the authoring toolchain's own private docs and commands. None of it resolves to
 # anything the client can open, so it reads as a dangling reference in a file they now own.
 # The header comes back on every regeneration, so it has to be a gate, not a cleanup.
-TOOLING = re.compile(r'crucible-scout|references/[a-z-]+\.md|(?<![\w.])[a-z_]+\.py\b|`scout [a-z]+`')
+# A `.py` name is only the toolchain's when it resolves to nothing the client can open. One
+# that is itself a COMMITTED file of this harness (gen-idl.py, which derives the IDL the
+# harness compiles against and is invoked by build-bundle.sh) is the opposite of a dangling
+# reference, so the match is checked against `git ls-files` before it counts. The name is
+# matched whole, hyphens included, so `./gen-idl.py` cannot be mistaken for an `idl.py`.
+TOOLING = re.compile(r'crucible-scout|references/[a-z-]+\.md|(?<![\w.-])[a-z_][a-z0-9_-]*\.py\b|`scout [a-z]+`')
+harness_files = set(os.path.basename(f) for f in
+                    subprocess.run(["git", "ls-files"], capture_output=True, text=True,
+                                   cwd=harness_dir).stdout.split())
 for rel in tracked_src.stdout.split():
     # This file has to spell out what it forbids, so it cannot be subject to its own gate.
     if os.path.basename(rel) == "bundle-guard.sh":
@@ -165,12 +174,14 @@ for rel in tracked_src.stdout.split():
         text = open(full, encoding="utf-8", errors="replace").read()
     except OSError:
         continue
-    m = TOOLING.search(text)
-    if m:
+    for m in TOOLING.finditer(text):
+        if m.group(0).endswith(".py") and m.group(0) in harness_files:
+            continue
         line = text.count("\n", 0, m.start()) + 1
         errors.append(f"GATE G: committed harness source names the authoring toolchain:\n"
                       f"        {rel}:{line}: {text[m.start():m.start() + 90].splitlines()[0]}\n"
                       f"        The client cannot resolve it. Describe the thing, not the tool.")
+        break
 
 # Manifest v3 keys are snake_case. A manifest in the old PascalCase schema (or with no lineages)
 # would skip every per-lineage gate below and pass vacuously, so it is a failure here.
