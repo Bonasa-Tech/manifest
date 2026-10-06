@@ -1,0 +1,7 @@
+# Same Rust release as the program workspace (../../rust-toolchain.toml), plus the static musl
+# target the FuzzCorp workers (linux/amd64) execute and rustfmt for the CI formatting gate.
+[toolchain]
+channel = "1.93.0"
+profile = "minimal"
+components = ["rustfmt"]
+targets = ["x86_64-unknown-linux-musl"]
