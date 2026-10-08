@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1791213856447,
+  "lastUpdate": 1791480628477,
   "repoUrl": "https://github.com/Bonasa-Tech/manifest",
   "entries": {
     "CU Benchmark": [
@@ -14773,6 +14773,72 @@ window.BENCHMARK_DATA = {
           "url": "https://github.com/Bonasa-Tech/manifest/commit/9d59830627df0efb74ef9d7ed27f274af7a1b8ba"
         },
         "date": 1791213854491,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "PHX_50",
+            "value": 6748,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "PHX_95",
+            "value": 8819,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "PHX_99",
+            "value": 10866,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_50",
+            "value": 1010,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_95",
+            "value": 1284,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_99",
+            "value": 1819,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "cyrbritt@gmail.com",
+            "name": "Britt Cyr",
+            "username": "brittcyr"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "e8d152b69b07dc96f9b4bf9bb99a61153c880a70",
+          "message": "fix: stop quote-output quotation once a rounded fill reaches the target (#751)\n\nimpact_base_atoms_with_slot only stopped its walk on a partial fill, so a\ncomplete fill whose rounded quote proceeds exceed the remaining target\n(one base atom at price 1.5 charges two quote atoms against a remaining\ntarget of one) continued into\nremaining_quote_atoms.checked_sub(matched_quote_atoms) and returned\narithmetic error 14 after the target had already been satisfied. Break\nwhen a complete fill meets or exceeds the remaining target and return\nthe accumulated base amount, as recommended by Manifest FV Report V2\nfinding 2.1. Only the exact-out-quote swap path (is_bid false against\nresting bids) could hit the underflow; the exact-in-quote path rounds\nboth the base limit and the quote charge down and stays within the\ntarget.",
+          "timestamp": "2026-10-08T13:20:15-04:00",
+          "tree_id": "d82cf704013bfec2a39745f068bf1bc6d0976425",
+          "url": "https://github.com/Bonasa-Tech/manifest/commit/e8d152b69b07dc96f9b4bf9bb99a61153c880a70"
+        },
+        "date": 1791480625233,
         "tool": "customSmallerIsBetter",
         "benches": [
           {
