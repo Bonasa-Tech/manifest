@@ -44,24 +44,18 @@ async function sendDiscordMessageBestEffort(
   }
 }
 
-// A Token-2022 mint with the permanent delegate extension lets the delegate
-// burn or transfer out of any token account of that mint, including market
-// vaults, without going through the program. A vault shortfall there is
-// outside the program's control, so it should not fail the checker.
-function mintHasPermanentDelegate(
-  mintAccount: AccountInfo<Buffer | ParsedAccountData> | null,
-): boolean {
-  const parsed: ParsedAccountData | undefined =
-    mintAccount?.data instanceof Buffer
-      ? undefined
-      : (mintAccount?.data as ParsedAccountData | undefined);
-  const extensions: { extension: string }[] =
-    parsed?.parsed?.info?.extensions ?? [];
-  return extensions.some(
-    (ext: { extension: string }): boolean =>
-      ext.extension === 'permanentDelegate',
-  );
-}
+// Markets with a known, already-investigated vault shortfall caused by a
+// token issuer acting outside the program (e.g. a Token-2022 permanent
+// delegate burning from the vault). These are expected to stay mismatched
+// forever, so they are excluded from failing the checker. Any new shortfall
+// on a market not in this list still fails and must be investigated before
+// being added here.
+const KNOWN_RUGGED_MARKETS: Set<string> = new Set([
+  // SILV/USDC. The SILV permanent delegate (the issuer's Squads multisig)
+  // burned the base vault balance on 2026-10-07 in tx
+  // BuEFcSSqhQU8ZemQK9jVzLKKZMusH1VVZqEN4qJbvJ7unwdHmuQjRaAH95aZnL1rVHxVPqArpUFGQB96ZZHsFbE.
+  '72bGMGVVDbmEPRc16K5wT22sN4Wwg6YJN2GThAPCFFfT',
+]);
 
 const run = async (): Promise<void> => {
   const connection: Connection = new Connection(RPC_URL);
@@ -83,8 +77,6 @@ const run = async (): Promise<void> => {
       marketPk,
       getVaultAddress(marketPk, baseMint),
       getVaultAddress(marketPk, quoteMint),
-      baseMint,
-      quoteMint,
     ]);
     const market: Market = Market.loadFromBuffer({
       address: marketPk,
@@ -143,29 +135,18 @@ const run = async (): Promise<void> => {
       );
       // Only crash on a loss of funds. There have been unsolicited deposits into
       // vaults which makes them have more tokens than the program expects.
-      // A shortfall on a side whose mint has a permanent delegate is also
-      // excluded: the delegate can burn or transfer from the vault directly
-      // (e.g. SILV market 72bGMGVVDbmEPRc16K5wT22sN4Wwg6YJN2GThAPCFFfT, drained
-      // by the issuer's delegate burn), which the program cannot prevent.
-      const baseShortfallCounts: boolean =
-        baseExpectedAtoms > baseVaultBalanceAtoms &&
-        !mintHasPermanentDelegate(parsedAccounts.value[3]);
-      const quoteShortfallCounts: boolean =
-        quoteExpectedAtoms > quoteVaultBalanceAtoms &&
-        !mintHasPermanentDelegate(parsedAccounts.value[4]);
       if (
-        (baseExpectedAtoms > baseVaultBalanceAtoms ||
-          quoteExpectedAtoms > quoteVaultBalanceAtoms) &&
-        !baseShortfallCounts &&
-        !quoteShortfallCounts
+        baseExpectedAtoms > baseVaultBalanceAtoms ||
+        quoteExpectedAtoms > quoteVaultBalanceAtoms
       ) {
-        console.log(
-          'Ignoring shortfall on market with permanent delegate mint',
-          marketPk.toBase58(),
-        );
-      }
-      if (baseShortfallCounts || quoteShortfallCounts) {
-        mismatchedMarkets.push(marketPk.toBase58());
+        if (KNOWN_RUGGED_MARKETS.has(marketPk.toBase58())) {
+          console.log(
+            'Ignoring shortfall on known rugged market',
+            marketPk.toBase58(),
+          );
+        } else {
+          mismatchedMarkets.push(marketPk.toBase58());
+        }
       }
     }
   }
