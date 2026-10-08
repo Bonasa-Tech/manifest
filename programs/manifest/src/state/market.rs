@@ -805,7 +805,11 @@ impl<Fixed: DerefOrBorrow<MarketFixed>, Dynamic: DerefOrBorrow<[u8]>>
 
             total_matched_base_atoms = total_matched_base_atoms.checked_add(matched_base_atoms)?;
 
-            if !did_fully_match_resting_order {
+            // A complete fill can round its quote proceeds above the remaining
+            // target (one base atom at price 1.5 charges two quote atoms
+            // against a remaining target of one). The target is reached, so
+            // stop before the subtraction below underflows.
+            if !did_fully_match_resting_order || matched_quote_atoms >= remaining_quote_atoms {
                 break;
             }
 
