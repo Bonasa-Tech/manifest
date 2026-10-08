@@ -1489,6 +1489,34 @@ mod place_order_equivalence_tests {
         assert_eq!(matched.as_u64(), 1_000);
     }
 
+    /// Manifest FV Report V2 finding 2.1: quoting an ask against a resting
+    /// one-base-atom bid at 1.5, the fill is complete (ceil(1 / 1.5) = 1 base
+    /// atom) and its proceeds round up to ceil(1 * 1.5) = 2 quote atoms,
+    /// exceeding the one-quote-atom target. The walk previously continued to
+    /// remaining_quote_atoms.checked_sub(matched_quote_atoms) and underflowed
+    /// into arithmetic error 14; it must instead stop at the reached target
+    /// and return the accumulated base amount.
+    #[test]
+    fn test_impact_base_atoms_stops_after_rounded_fill_reaches_target() {
+        let (mut market, maker_index, _, _, _) = new_market_with_seats();
+        place_exact_checked(
+            &mut market,
+            maker_index,
+            1,
+            15,
+            -1,
+            true,
+            OrderType::Limit,
+            NO_EXPIRATION_LAST_VALID_SLOT,
+        )
+        .unwrap();
+
+        let matched: BaseAtoms = market
+            .impact_base_atoms_with_slot(false, QuoteAtoms::new(1), &[None, None], NOW_SLOT)
+            .unwrap();
+        assert_eq!(matched.as_u64(), 1);
+    }
+
     /// A come-back bid coalescing into an existing order whose combined size
     /// overflows u64 must cap the growth at what the fill proceeds can back
     /// instead of failing the taker's fill.
