@@ -75,6 +75,23 @@ const depth: promClient.Gauge<'depth_bps' | 'market' | 'trader'> =
     labelNames: ['depth_bps', 'market', 'trader'] as const,
   });
 
+// Cumulative since process start, SOL- and USDC-quote markets only (the
+// `quote` label is the denomination). Fills with no detected source land in
+// the 'none' bucket so per-source series sum to total volume.
+const aggregatorQuoteVolume: promClient.Counter<'aggregator' | 'quote'> =
+  new promClient.Counter({
+    name: 'aggregator_quote_volume',
+    help: 'Cumulative quote volume in atoms by aggregator',
+    labelNames: ['aggregator', 'quote'] as const,
+  });
+
+const originatingProtocolQuoteVolume: promClient.Counter<'protocol' | 'quote'> =
+  new promClient.Counter({
+    name: 'originating_protocol_quote_volume',
+    help: 'Cumulative quote volume in atoms by originating protocol',
+    labelNames: ['protocol', 'quote'] as const,
+  });
+
 const dbQueryCount: promClient.Counter<'query_type' | 'status'> =
   new promClient.Counter({
     name: 'db_query_count',
@@ -171,6 +188,8 @@ const run = async () => {
       volume,
       lastPrice,
       depth,
+      aggregatorQuoteVolume,
+      originatingProtocolQuoteVolume,
       dbQueryCount,
       dbQueryDuration,
     },
