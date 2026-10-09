@@ -1080,6 +1080,75 @@
         "swap and have intermediate hops go through PDAs, rather than all token",
         "accounts owned by the user."
       ]
+    },
+    {
+      "name": "Defrag",
+      "accounts": [
+        {
+          "name": "collector",
+          "isMut": true,
+          "isSigner": true,
+          "docs": [
+            "Authorized rent collector"
+          ]
+        },
+        {
+          "name": "market",
+          "isMut": true,
+          "isSigner": false,
+          "docs": [
+            "Market"
+          ]
+        },
+        {
+          "name": "baseVault",
+          "isMut": true,
+          "isSigner": false,
+          "docs": [
+            "Base vault"
+          ]
+        },
+        {
+          "name": "quoteVault",
+          "isMut": true,
+          "isSigner": false,
+          "docs": [
+            "Quote vault"
+          ]
+        },
+        {
+          "name": "baseTokenProgram",
+          "isMut": false,
+          "isSigner": false,
+          "docs": [
+            "Base token program"
+          ]
+        },
+        {
+          "name": "quoteTokenProgram",
+          "isMut": false,
+          "isSigner": false,
+          "docs": [
+            "Quote token program"
+          ]
+        },
+        {
+          "name": "systemProgram",
+          "isMut": false,
+          "isSigner": false,
+          "docs": [
+            "System program"
+          ]
+        }
+      ],
+      "args": [],
+      "discriminant": {
+        "type": "u8",
+        "value": 14
+      },
+      "docs": [
+        "Reclaim empty seats, compact to two spare nodes and collect market/vault excess."
+      ]
     }
   ],
   "accounts": [],
