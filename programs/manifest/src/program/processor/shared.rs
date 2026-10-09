@@ -244,6 +244,16 @@ fn verify_trader_index_hint(
         "Invalid trader hint index {} did not align",
         hinted_index,
     )?;
+    // Defrag can shrink the market, so a hint from before it can point past
+    // the end of the account. Reject it rather than panic on the slice.
+    require!(
+        (hinted_index as usize)
+            .checked_add(MARKET_BLOCK_SIZE)
+            .is_some_and(|end| end <= dynamic_account.dynamic.len()),
+        crate::program::ManifestError::WrongIndexHintParams,
+        "Invalid trader hint index {} is out of bounds",
+        hinted_index,
+    )?;
     require!(
         get_helper::<RBNode<ClaimedSeat>>(&dynamic_account.dynamic, hinted_index)
             .get_payload_type()

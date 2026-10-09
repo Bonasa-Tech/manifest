@@ -855,3 +855,153 @@ async fn stale_entry_cleared_by_the_next_placement_test() -> anyhow::Result<()> 
     );
     Ok(())
 }
+
+async fn defrag_fixture(f: &TestFixture) -> anyhow::Result<()> {
+    use solana_signer::Signer;
+    let collector = Keypair::new_from_array([42; 32]);
+    let ix = manifest::program::defrag_instruction(
+        &f.market.key,
+        &collector.pubkey(),
+        &f.sol_mint.key,
+        &f.usdc_mint.key,
+        spl_token::id(),
+        spl_token::id(),
+        None,
+    );
+    send_tx_with_retry(
+        Rc::clone(&f.context),
+        &[ix],
+        Some(&f.payer()),
+        &[&f.payer_keypair(), &collector],
+    )
+    .await?;
+    Ok(())
+}
+
+/// Claim a seat for a throwaway trader, funded on the spot, purely to leave a
+/// reclaimable hole at a known position in the market.
+async fn claim_empty_seat(f: &TestFixture, seed: u8) -> anyhow::Result<()> {
+    use solana_signer::Signer;
+    let trader: Keypair = Keypair::new_from_array([seed; 32]);
+    f.context.borrow_mut().set_account(
+        &trader.pubkey(),
+        &AccountSharedData::from(Account::new(
+            u32::MAX as u64,
+            0,
+            &solana_sdk_ids::system_program::id(),
+        )),
+    );
+    send_tx_with_retry(
+        Rc::clone(&f.context),
+        &[manifest::program::claim_seat_instruction(
+            &f.market.key,
+            &trader.pubkey(),
+        )],
+        Some(&f.payer()),
+        &[&f.payer_keypair(), &trader],
+    )
+    .await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn defrag_wrapper_recovers_moved_orders_and_seat_hints() -> anyhow::Result<()> {
+    use solana_signer::Signer;
+    let mut f = TestFixture::new().await;
+    // Compaction pulls the highest surviving node into the lowest hole, so the
+    // wrapper's seat only moves when the reclaimable seats beneath it
+    // outnumber the orders above it. Three against two, and the assertion
+    // below is actually testing seat hint recovery rather than passing by
+    // accident on a seat that never moved.
+    for seed in [0xa1u8, 0xa2, 0xa3] {
+        claim_empty_seat(&f, seed).await?;
+    }
+    f.claim_seat().await?;
+    f.deposit(Token::SOL, 5 * SOL_UNIT_SIZE).await?;
+    wrapper_batch(&f, vec![], vec![ask(201, 2), ask(202, 3)]).await?;
+    let (before, orders) = wrapper_view(&f).await;
+    defrag_fixture(&f).await?;
+    wrapper_batch(&f, vec![WrapperCancelOrderParams::new(201)], vec![]).await?;
+    let (after, remaining) = wrapper_view(&f).await;
+    assert_ne!(before.trader_index, after.trader_index);
+    assert_eq!(remaining, vec![orders[1]]);
+    wrapper_batch(&f, vec![WrapperCancelOrderParams::new(202)], vec![]).await?;
+    assert!(wrapper_view(&f).await.1.is_empty());
+    Ok(())
+}
+
+#[tokio::test]
+async fn defrag_wrapper_claim_and_deposit_share_one_transaction_without_duplicate_market_info(
+) -> anyhow::Result<()> {
+    let mut f = TestFixture::new().await;
+    // Unsolicited tokens keep the otherwise empty market open.
+    let vault = manifest::validation::get_vault_address(&f.market.key, &f.sol_mint.key).0;
+    f.sol_mint.mint_to(&vault, 1).await;
+    f.sol_mint.mint_to(&f.payer_sol.key, SOL_UNIT_SIZE).await;
+    let claim = wrapper::instruction_builders::claim_seat_instruction(
+        &f.market.key,
+        &f.payer(),
+        &f.wrapper.key,
+    );
+    let deposit = wrapper::instruction_builders::deposit_instruction(
+        &f.market.key,
+        &f.payer(),
+        &f.sol_mint.key,
+        SOL_UNIT_SIZE,
+        &f.payer_sol.key,
+        &f.wrapper.key,
+        spl_token::id(),
+    );
+    assert_eq!(
+        deposit.accounts.len(),
+        8,
+        "deposit retains its original account list"
+    );
+
+    // The same composition works for both an initial seat and a harvested one.
+    for harvested in [false, true] {
+        if harvested {
+            f.withdraw(Token::SOL, SOL_UNIT_SIZE).await?;
+            defrag_fixture(&f).await?;
+            assert!(
+                send_tx_with_retry(
+                    Rc::clone(&f.context),
+                    &[deposit.clone()],
+                    Some(&f.payer()),
+                    &[&f.payer_keypair()],
+                )
+                .await
+                .is_err(),
+                "deposit alone must not recreate a harvested seat"
+            );
+        }
+        send_tx_with_retry(
+            Rc::clone(&f.context),
+            &[claim.clone(), deposit.clone()],
+            Some(&f.payer()),
+            &[&f.payer_keypair()],
+        )
+        .await?;
+        let (info, orders) = wrapper_view(&f).await;
+        assert_ne!(info.trader_index, NIL);
+        assert_eq!(info.base_balance, BaseAtoms::new(SOL_UNIT_SIZE));
+        assert!(orders.is_empty());
+
+        // ClaimSeat is idempotent and repairs the existing wrapper entry.
+        f.claim_seat().await?;
+        assert_eq!(wrapper_view(&f).await.0.trader_index, info.trader_index);
+        let mut account = wrapper_account(&f).await;
+        let root =
+            get_helper::<ManifestWrapperStateFixed>(&account.data, 0).market_infos_root_index;
+        let (_, dynamic) = account
+            .data
+            .split_at_mut(size_of::<ManifestWrapperStateFixed>());
+        assert_eq!(
+            MarketInfosTree::new(dynamic, root, NIL)
+                .iter::<MarketInfo>()
+                .count(),
+            1
+        );
+    }
+    Ok(())
+}

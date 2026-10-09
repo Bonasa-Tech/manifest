@@ -69,6 +69,8 @@ pub(crate) fn process_cancel_order(
     let cancel = WrapperCancelOrderParams::try_from_slice(data)
         .map_err(manifest::validation::io_to_program_error)?;
 
+    super::shared::sync_fast(&wrapper_state, &market, market_info_index)?;
+
     // prepare cancel
     let wrapper_data: Ref<[u8]> = wrapper_state.info.try_borrow()?;
     let wrapper: DynamicAccount<&ManifestWrapperUserFixed, &[u8]> =

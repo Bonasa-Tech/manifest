@@ -18,6 +18,8 @@ pub mod certora;
 
 use hypertree::trace;
 use pinocchio::{account::AccountView, address::Address, error::ProgramError, ProgramResult};
+#[cfg(not(feature = "certora"))]
+use program::defrag::process_defrag;
 use program::{
     batch_update::process_batch_update, claim_seat::process_claim_seat,
     create_market::process_create_market, deposit::process_deposit,
@@ -158,6 +160,12 @@ pub fn process_instruction(
         }
         ManifestInstruction::GlobalEvict => {
             process_global_evict(program_id, accounts, data)?;
+        }
+        ManifestInstruction::Defrag => {
+            #[cfg(not(feature = "certora"))]
+            process_defrag(program_id, accounts, data)?;
+            #[cfg(feature = "certora")]
+            return Err(ProgramError::InvalidInstructionData);
         }
         ManifestInstruction::GlobalClean => {
             process_global_clean(program_id, accounts, data)?;

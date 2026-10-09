@@ -143,6 +143,9 @@ pub(crate) fn sync_fast(
     let market_info: &mut MarketInfo =
         get_mut_helper::<RBNode<MarketInfo>>(wrapper_dynamic_data, market_info_index)
             .get_mut_value();
+    let trader = get_helper::<ManifestWrapperUserFixed>(fixed_data, 0).trader;
+    market_info.trader_index = market_ref.resolve_trader_index(market_info.trader_index, &trader);
+    let trader_index = market_info.trader_index;
     let mut orders_root_index: DataIndex = market_info.orders_root_index;
 
     if orders_root_index != NIL {
@@ -156,7 +159,17 @@ pub(crate) fn sync_fast(
             Vec::with_capacity(EXPECTED_ORDER_BATCH_SIZE);
         for (order_index, order) in orders_tree.iter::<WrapperOpenOrder>() {
             let expected_sequence_number: u64 = order.get_order_sequence_number();
-            let core_data_index: DataIndex = order.get_market_data_index();
+            let core_data_index = market_ref.resolve_order_index(
+                order.get_market_data_index(),
+                expected_sequence_number,
+                trader_index,
+                order.get_price(),
+                order.get_is_bid(),
+            );
+            if core_data_index == NIL {
+                to_remove_indices.push(order_index);
+                continue;
+            }
             // Verifies that it is not just zeroed and happens to match seq num,
             // also check that there are base atoms left.
             let core_resting_order: &RestingOrder =
@@ -176,6 +189,7 @@ pub(crate) fn sync_fast(
             let core_resting_order: &RestingOrder =
                 get_helper::<RBNode<RestingOrder>>(market_ref.dynamic, *core_data_index)
                     .get_value();
+            node.get_mut_value().set_market_data_index(*core_data_index);
             node.get_mut_value()
                 .update_remaining(core_resting_order.get_num_base_atoms());
 
@@ -212,13 +226,26 @@ pub(crate) fn sync_fast(
     let market_info: &mut MarketInfo =
         get_mut_helper::<RBNode<MarketInfo>>(wrapper_dynamic_data, market_info_index)
             .get_mut_value();
-    let claimed_seat: &ClaimedSeat =
-        get_helper::<RBNode<ClaimedSeat>>(market_ref.dynamic, market_info.trader_index).get_value();
+    let claimed_seat = if trader_index == NIL {
+        ClaimedSeat::new_empty(trader)
+    } else {
+        *get_helper::<RBNode<ClaimedSeat>>(market_ref.dynamic, trader_index).get_value()
+    };
     market_info.base_balance = claimed_seat.base_withdrawable_balance;
     market_info.quote_balance = claimed_seat.quote_withdrawable_balance;
-    let quote_volume_difference = claimed_seat
-        .quote_volume
-        .wrapping_sub(market_info.quote_volume);
+    // A harvested/reclaimed seat starts its informational volume at zero.
+    // Keep already accrued unpaid fees; do not wrap a reset into a huge fee.
+    // Normal UI settlement collects payable fees while emptying the seat,
+    // before defrag can harvest it. Activity bypassing settlement is not covered:
+    // harvesting loses unsynced volume, and a reclaimed seat whose new volume
+    // exceeds the cached baseline can hide the reset from this comparison.
+    let quote_volume_difference = if claimed_seat.quote_volume < market_info.quote_volume {
+        claimed_seat.quote_volume
+    } else {
+        claimed_seat
+            .quote_volume
+            .wrapping_sub(market_info.quote_volume)
+    };
     market_info.quote_volume_unpaid = market_info
         .quote_volume_unpaid
         .saturating_add(quote_volume_difference);

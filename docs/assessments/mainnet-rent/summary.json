@@ -1,0 +1,90 @@
+{
+  "program": "MNFSTqtC93rEfYHB6hF82sKdZpUDFWkViLByLd1k1Ms",
+  "genesis": "5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d",
+  "slot": 451669723,
+  "commitment": "finalized",
+  "fetchedAt": "2026-09-29T14:33:01.113Z",
+  "blockTime": 1790692368,
+  "snapshotSha256": "957cd687acc6aeecbfcd0cf5e4d23889be311325bab0a771afedd7a66985bc10",
+  "rent": {
+    "rate": 5080,
+    "threshold": 1,
+    "context": {
+      "apiVersion": "4.2.2",
+      "slot": 451669734
+    },
+    "checks": [
+      {
+        "size": 0,
+        "lamports": 650240
+      },
+      {
+        "size": 256,
+        "lamports": 1950720
+      },
+      {
+        "size": 336,
+        "lamports": 2357120
+      },
+      {
+        "size": 958736,
+        "lamports": 4871029120
+      }
+    ]
+  },
+  "markets": 3717,
+  "totals": {
+    "bytes": 6702352,
+    "allocatedNodes": 71885,
+    "unallocatedBytes": 0,
+    "bids": 11384,
+    "asks": 10122,
+    "seats": 34570,
+    "freeNodes": 15809,
+    "tailFreeNodes": 6720,
+    "reclaimableSeats": 28422,
+    "zeroBalanceSeatsWithOrders": 3592,
+    "lamports": 47285960337,
+    "currentRentLamports": 36464890240,
+    "excessLamports": 10821070097
+  },
+  "scenarios": {
+    "tailOnly": {
+      "bytesRemoved": 537600,
+      "rentReleasedLamports": 2731008000,
+      "marketsShrunk": 3503
+    },
+    "compactFree": {
+      "bytesRemoved": 1264720,
+      "rentReleasedLamports": 6424777600,
+      "marketsShrunk": 3717
+    },
+    "compactFreeAndSeats": {
+      "bytesRemoved": 3538480,
+      "rentReleasedLamports": 17975478400,
+      "marketsShrunk": 3717
+    },
+    "keep1": {
+      "bytesRemoved": 3241120,
+      "rentReleasedLamports": 16464889600,
+      "marketsShrunk": 2005
+    },
+    "keep2": {
+      "bytesRemoved": 3080720,
+      "rentReleasedLamports": 15650057600,
+      "marketsShrunk": 1718
+    },
+    "keep8": {
+      "bytesRemoved": 2608480,
+      "rentReleasedLamports": 13251078400,
+      "marketsShrunk": 546
+    },
+    "keep32": {
+      "bytesRemoved": 2019120,
+      "rentReleasedLamports": 10257129600,
+      "marketsShrunk": 179
+    }
+  },
+  "emptyAfterReclamation": 1327,
+  "top10Share": 0.4803192331170446
+}

@@ -93,7 +93,7 @@ async fn place_order_fail_insufficient_funds_test() -> anyhow::Result<()> {
 }
 
 #[tokio::test]
-async fn place_order_not_expand_if_not_needed_test() -> anyhow::Result<()> {
+async fn place_order_reserve_grows_one_node_per_batch_test() -> anyhow::Result<()> {
     let mut test_fixture: TestFixture = TestFixture::new().await;
     test_fixture.claim_seat().await?;
     test_fixture.deposit(Token::SOL, 1 * SOL_UNIT_SIZE).await?;
@@ -124,10 +124,11 @@ async fn place_order_not_expand_if_not_needed_test() -> anyhow::Result<()> {
         .try_load(&test_fixture.market_fixture.key)
         .await?
         .unwrap();
-    // Always 1 more than needed.
+    // One seat, one order and two spare nodes: each placement batch adds
+    // just one block, and cancel-only batches never expand the account.
     assert_eq!(
         loaded_account.data.len(),
-        MARKET_FIXED_SIZE + (3 * MARKET_BLOCK_SIZE)
+        MARKET_FIXED_SIZE + (4 * MARKET_BLOCK_SIZE)
     );
 
     Ok(())

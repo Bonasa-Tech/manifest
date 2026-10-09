@@ -27,3 +27,6 @@ pub use global_withdraw_instruction::*;
 pub use swap_instruction::*;
 pub use swap_v2_instruction::*;
 pub use withdraw_instruction::*;
+
+pub mod defrag_instruction;
+pub use defrag_instruction::*;

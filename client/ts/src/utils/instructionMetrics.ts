@@ -27,6 +27,7 @@ export const MANIFEST_INSTRUCTION_NAMES: readonly string[] = [
   'GlobalEvict',
   'GlobalClean',
   'SwapV2',
+  'Defrag',
 ];
 const UNKNOWN_INSTRUCTION: string = 'Unknown';
 
@@ -70,7 +71,7 @@ const manifestInstructionComputeUnits = new promClient.Histogram({
   // bucket sits above any realistic single-instruction budget.
   buckets: [
     100, 200, 500, 1_000, 2_000, 5_000, 10_000, 20_000, 50_000, 100_000,
-    200_000, 500_000,
+    200_000, 500_000, 1_000_000, 1_400_000,
   ],
 });
 const manifestBatchUpdateOrders = new promClient.Counter({
