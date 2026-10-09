@@ -5,8 +5,9 @@ use manifest::{
     program::{
         batch_update::{CancelOrderParams, PlaceOrderParams},
         batch_update_instruction, global_add_trader_instruction, global_clean_instruction,
+        global_create_instruction::create_global_instruction,
         global_deposit_instruction, global_evict_instruction, global_withdraw_instruction,
-        swap_instruction,
+        swap_instruction, ManifestError,
     },
     quantities::{GlobalAtoms, QuoteAtomsPerBaseAtom, WrapperU64},
     state::{
@@ -16,10 +17,11 @@ use manifest::{
 };
 use solana_instruction::Instruction;
 use solana_keypair::Keypair;
-use solana_program::pubkey::Pubkey;
+use solana_program::{pubkey::Pubkey, rent::Rent};
 use solana_program_test::tokio;
 use solana_signer::Signer;
-use solana_system_interface::instruction::transfer;
+use solana_system_interface::instruction::{create_account, transfer};
+use solana_transaction::{InstructionError, TransactionError};
 
 use crate::{
     send_tx_with_retry, GlobalFixture, MarketFixture, MintFixture, TestFixture, Token,
@@ -29,6 +31,102 @@ use crate::{
 #[tokio::test]
 async fn create_global() -> anyhow::Result<()> {
     let _test_fixture: TestFixture = TestFixture::new().await;
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn create_global_rejects_transfer_fee_mint() -> anyhow::Result<()> {
+    let test_fixture: TestFixture = TestFixture::new().await;
+    let payer_keypair: Keypair = test_fixture.payer_keypair().insecure_clone();
+    let mint_fixture: MintFixture =
+        MintFixture::new_with_transfer_fee(Rc::clone(&test_fixture.context), 9, 100).await;
+
+    let error = send_tx_with_retry(
+        Rc::clone(&test_fixture.context),
+        &[create_global_instruction(
+            &mint_fixture.key,
+            &payer_keypair.pubkey(),
+            &spl_token_2022::id(),
+        )],
+        Some(&payer_keypair.pubkey()),
+        &[&payer_keypair],
+    )
+    .await
+    .unwrap_err()
+    .unwrap();
+    assert_eq!(
+        error,
+        TransactionError::InstructionError(
+            0,
+            InstructionError::Custom(ManifestError::InvalidMint as u32),
+        ),
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn create_global_rejects_transfer_hook_mint() -> anyhow::Result<()> {
+    let test_fixture: TestFixture = TestFixture::new().await;
+    let payer_keypair: Keypair = test_fixture.payer_keypair().insecure_clone();
+    let mint_keypair: Keypair = Keypair::new();
+    let extension_types = vec![spl_token_2022::extension::ExtensionType::TransferHook];
+    let mint_space = spl_token_2022::extension::ExtensionType::try_calculate_account_len::<
+        spl_token_2022::state::Mint,
+    >(&extension_types)
+    .unwrap();
+    let hook_program_id = Pubkey::new_unique();
+
+    send_tx_with_retry(
+        Rc::clone(&test_fixture.context),
+        &[
+            create_account(
+                &payer_keypair.pubkey(),
+                &mint_keypair.pubkey(),
+                Rent::default().minimum_balance(mint_space),
+                mint_space as u64,
+                &spl_token_2022::id(),
+            ),
+            spl_token_2022::extension::transfer_hook::instruction::initialize(
+                &spl_token_2022::id(),
+                &mint_keypair.pubkey(),
+                Some(payer_keypair.pubkey()),
+                Some(hook_program_id),
+            )?,
+            spl_token_2022::instruction::initialize_mint2(
+                &spl_token_2022::id(),
+                &mint_keypair.pubkey(),
+                &payer_keypair.pubkey(),
+                None,
+                9,
+            )?,
+        ],
+        Some(&payer_keypair.pubkey()),
+        &[&payer_keypair, &mint_keypair],
+    )
+    .await?;
+
+    let error = send_tx_with_retry(
+        Rc::clone(&test_fixture.context),
+        &[create_global_instruction(
+            &mint_keypair.pubkey(),
+            &payer_keypair.pubkey(),
+            &spl_token_2022::id(),
+        )],
+        Some(&payer_keypair.pubkey()),
+        &[&payer_keypair],
+    )
+    .await
+    .unwrap_err()
+    .unwrap();
+    assert_eq!(
+        error,
+        TransactionError::InstructionError(
+            0,
+            InstructionError::Custom(ManifestError::InvalidMint as u32),
+        ),
+    );
 
     Ok(())
 }
@@ -1404,12 +1502,13 @@ async fn global_deposit_with_transfer_fee() -> anyhow::Result<()> {
     let payer: Pubkey = test_fixture.payer();
     let payer_keypair: Keypair = test_fixture.payer_keypair().insecure_clone();
 
-    // Create a Token-2022 mint with 10% transfer fee (1000 basis points)
+    // Create the global while the mutable transfer fee is zero, then activate
+    // a 10% fee. Existing globals still need safe deposit/withdraw behavior.
     let transfer_fee_bps: u16 = 1000; // 10%
-    let mut mint_fixture: MintFixture = MintFixture::new_with_transfer_fee(
+    let mut mint_fixture: MintFixture = MintFixture::new_with_mutable_transfer_fee(
         Rc::clone(&test_fixture.context),
         9, // decimals
-        transfer_fee_bps,
+        0,
     )
     .await;
 
@@ -1419,6 +1518,10 @@ async fn global_deposit_with_transfer_fee() -> anyhow::Result<()> {
         &spl_token_2022::id(),
     )
     .await;
+
+    mint_fixture
+        .set_transfer_fee_and_advance_epoch(transfer_fee_bps)
+        .await;
 
     send_tx_with_retry(
         Rc::clone(&test_fixture.context),
@@ -2013,13 +2116,13 @@ async fn global_evict_fails_with_transfer_fee() -> anyhow::Result<()> {
     let payer: Pubkey = test_fixture.payer();
     let payer_keypair: Keypair = test_fixture.payer_keypair().insecure_clone();
 
-    // Create a Token-2022 mint with 20% transfer fee (2000 basis points)
-    // This high fee will cause the actual deposit to be less than expected
+    // Create the global while the mutable transfer fee is zero, then activate
+    // a 20% fee. This models globals created before a mint configuration change.
     let transfer_fee_bps: u16 = 2000; // 20%
-    let mut mint_fixture: MintFixture = MintFixture::new_with_transfer_fee(
+    let mut mint_fixture: MintFixture = MintFixture::new_with_mutable_transfer_fee(
         Rc::clone(&test_fixture.context),
         9, // decimals
-        transfer_fee_bps,
+        0,
     )
     .await;
 
@@ -2029,6 +2132,10 @@ async fn global_evict_fails_with_transfer_fee() -> anyhow::Result<()> {
         &spl_token_2022::id(),
     )
     .await;
+
+    mint_fixture
+        .set_transfer_fee_and_advance_epoch(transfer_fee_bps)
+        .await;
 
     // Fill up the global to capacity - 1
     for _ in 0..MAX_GLOBAL_SEATS - 1 {

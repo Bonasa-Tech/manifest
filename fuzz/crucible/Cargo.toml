@@ -1,0 +1,68 @@
+[package]
+name = "manifest_fuzz"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.89"
+
+[workspace]
+# Standalone workspace, deliberately NOT a member of the manifest workspace. The program pins
+# solana-program =4.0.0 / pinocchio 0.10 for SBF; the harness runs on the host against LiteSVM
+# 0.15.x, whose Solana crate graph is different and incompatible. The harness never depends on
+# the manifest crate: it loads the built programs/manifest.so into the SVM and decodes account
+# bytes by offset, so nothing here can change the program or its lockfile.
+
+[dependencies]
+# Fuzzing framework. Tracks main so a delivered harness picks up crucible fixes and fuzzes
+# against the current framework; Cargo.lock pins the exact commit for reproducible builds
+# (cargo update -p crucible-fuzzer moves all three crates to current main together).
+crucible-fuzzer = { git = "https://github.com/asymmetric-research/crucible.git", branch = "main" }
+crucible-test-context = { git = "https://github.com/asymmetric-research/crucible.git", branch = "main" }
+crucible-idl-gen = { git = "https://github.com/asymmetric-research/crucible.git", branch = "main" }
+
+# crucible's generated code is written against anchor_lang::prelude. AnchorSerialize IS borsh,
+# which is what manifest's params decode with (BorshDeserialize::try_from_slice).
+anchor-lang = "1.0.1"
+
+# Used ONLY to construct correct Token-2022 account bytes for the fixture (a mint carrying a
+# TransferFeeConfig, and token accounts carrying the TransferFeeAmount that transfer_checked then
+# requires). Hand-rolling that TLV is the kind of detail that fails silently, so the layout comes
+# from the same crate family the program parses it with. Already in the dependency graph
+# transitively, so this pins nothing new.
+spl-token-2022-interface = "2"
+# COption, which spl-token-2022-interface's Mint/Account structs use for their optional fields.
+solana-program-option = "3"
+
+# Client facade crates compatible with LiteSVM 0.15.x. Do not blanket-upgrade to 4.x.
+solana-pubkey = { version = "3.0", features = ["serde"] }
+solana-keypair = "3.1.2"
+solana-signer = "3.0.1"
+solana-instruction = "3"
+solana-account = "4"
+solana-clock = "3"
+
+# Fuzzing
+libafl = { version = "0.15.1", features = ["std", "cli", "prelude"] }
+libafl_bolts = { version = "0.15.1", features = ["std"] }
+arbitrary = { version = "1", features = ["derive"] }
+
+# Utilities
+anyhow = "1.0"
+bytemuck = "1.14"
+ctor = "0.6"
+ctrlc = "3.4"
+serde = { version = "1.0", features = ["derive"] }
+bincode = "1.3"
+
+[[bin]]
+name = "invariant_test"
+path = "src/main.rs"
+
+[features]
+# The fuzz test's name. bundle-guard.sh GATE A greps the built binary for this string to prove a
+# fuzz test is actually compiled in, and the FuzzCorp lineage is manifest_fuzz__invariant_test.
+invariant_test = []
+
+# LiteSVM interprets every instruction, so an unoptimized dependency build makes `cargo test`
+# spend nearly all its time inside dependency code rather than in the program under test.
+[profile.dev.package."*"]
+opt-level = 3

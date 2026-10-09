@@ -44,6 +44,19 @@ async function sendDiscordMessageBestEffort(
   }
 }
 
+// Markets with a known, already-investigated vault shortfall caused by a
+// token issuer acting outside the program (e.g. a Token-2022 permanent
+// delegate burning from the vault). These are expected to stay mismatched
+// forever, so they are excluded from failing the checker. Any new shortfall
+// on a market not in this list still fails and must be investigated before
+// being added here.
+const KNOWN_RUGGED_MARKETS: Set<string> = new Set([
+  // SILV/USDC. The SILV permanent delegate (the issuer's Squads multisig)
+  // burned the base vault balance on 2026-10-07 in tx
+  // BuEFcSSqhQU8ZemQK9jVzLKKZMusH1VVZqEN4qJbvJ7unwdHmuQjRaAH95aZnL1rVHxVPqArpUFGQB96ZZHsFbE.
+  '72bGMGVVDbmEPRc16K5wT22sN4Wwg6YJN2GThAPCFFfT',
+]);
+
 const run = async (): Promise<void> => {
   const connection: Connection = new Connection(RPC_URL);
   const marketPks: PublicKey[] =
@@ -126,7 +139,14 @@ const run = async (): Promise<void> => {
         baseExpectedAtoms > baseVaultBalanceAtoms ||
         quoteExpectedAtoms > quoteVaultBalanceAtoms
       ) {
-        mismatchedMarkets.push(marketPk.toBase58());
+        if (KNOWN_RUGGED_MARKETS.has(marketPk.toBase58())) {
+          console.log(
+            'Ignoring shortfall on known rugged market',
+            marketPk.toBase58(),
+          );
+        } else {
+          mismatchedMarkets.push(marketPk.toBase58());
+        }
       }
     }
   }
