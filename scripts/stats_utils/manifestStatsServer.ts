@@ -186,6 +186,10 @@ export class ManifestStatsServer {
   private volume: promClient.Gauge<'market' | 'mint' | 'side'>;
   private lastPrice: promClient.Gauge<'market'>;
   private depth: promClient.Gauge<'depth_bps' | 'market' | 'trader'>;
+  private aggregatorQuoteVolume: promClient.Counter<'aggregator' | 'quote'>;
+  private originatingProtocolQuoteVolume: promClient.Counter<
+    'protocol' | 'quote'
+  >;
   private dbQueryCount: promClient.Counter<'query_type' | 'status'>;
   private dbQueryDuration: promClient.Histogram<'query_type'>;
 
@@ -279,6 +283,8 @@ export class ManifestStatsServer {
       volume: promClient.Gauge<'market' | 'mint' | 'side'>;
       lastPrice: promClient.Gauge<'market'>;
       depth: promClient.Gauge<'depth_bps' | 'market' | 'trader'>;
+      aggregatorQuoteVolume: promClient.Counter<'aggregator' | 'quote'>;
+      originatingProtocolQuoteVolume: promClient.Counter<'protocol' | 'quote'>;
       dbQueryCount: promClient.Counter<'query_type' | 'status'>;
       dbQueryDuration: promClient.Histogram<'query_type'>;
     },
@@ -291,6 +297,9 @@ export class ManifestStatsServer {
     this.volume = metrics.volume;
     this.lastPrice = metrics.lastPrice;
     this.depth = metrics.depth;
+    this.aggregatorQuoteVolume = metrics.aggregatorQuoteVolume;
+    this.originatingProtocolQuoteVolume =
+      metrics.originatingProtocolQuoteVolume;
     this.dbQueryCount = metrics.dbQueryCount;
     this.dbQueryDuration = metrics.dbQueryDuration;
     this.discordWebhookUrl = process.env.TVL_DISCORD_WEBHOOK_URL;
@@ -636,6 +645,27 @@ export class ManifestStatsServer {
           (this.quoteVolumeAtomsSinceLastCheckpoint.get(market) || 0) +
             safeAtomsToNumber(quoteAtoms),
         );
+
+        // Attribute quote volume to the routing source. Only SOL- and
+        // USDC-quote markets are counted; the quote label is the denomination.
+        const quoteMint: string = marketObject.quoteMint().toBase58();
+        const quote: string | undefined =
+          quoteMint === SOL_MINT
+            ? 'sol'
+            : quoteMint === USDC_MINT
+              ? 'usdc'
+              : undefined;
+        if (quote) {
+          const quoteVolumeAtoms: number = safeAtomsToNumber(quoteAtoms);
+          this.aggregatorQuoteVolume.inc(
+            { aggregator: fill.aggregator ?? 'none', quote },
+            quoteVolumeAtoms,
+          );
+          this.originatingProtocolQuoteVolume.inc(
+            { protocol: fill.originatingProtocol ?? 'none', quote },
+            quoteVolumeAtoms,
+          );
+        }
 
         // Process notional volumes and positions
         await this.updateTradingMetrics(fill, marketObject, actualTaker);
