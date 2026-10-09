@@ -43,8 +43,11 @@ invalidate wrapper quiet-sync caches; gaps in sequence numbers are valid.
 
 A market larger than `MAX_DEFRAG_BLOCKS` (65,536 nodes, a 5.2 MB account) is
 rejected with `InvalidAccountData`. The live bitmap is one bit per block, so that
-bound caps it at 8 KiB of the 32 KiB heap. It does not bound the moved-seat buffer
-or the compute cost of rebuilding the surviving seat tree.
+bound caps it at 8 KiB of the 32 KiB heap. The moved-seat mapping is pre-allocated
+to `MAX_MOVED_SEATS_PER_RUN` (1,024 relocated seats, 8 KiB) and never grows, so a
+run cannot exhaust the heap; a run that fills it stops relocating like an
+exhausted budget and the next run continues. Neither bound caps the compute cost
+of rebuilding the surviving seat tree.
 
 The live account target is `256 + 80 * (surviving seats + orders + 2)` bytes.
 Two spare nodes preserve capacity for paths that need two allocations, including
@@ -92,12 +95,20 @@ everything from the account.
 What a budget cannot bound is the single pass over allocated blocks and the seat
 tree rebuild over the survivors, which is why `MAX_DEFRAG_BLOCKS` exists. Model
 both terms when choosing a budget rather than assuming a small `limit` makes any
-market affordable.
+market affordable. The rebuild term is the per-run floor: measured on SBPF v3,
+a 2,202-block market with 1,100 surviving seats costs about 750,000 CU per run,
+a 6,402-block market with 1,400 survivors about 1,330,000 CU, and a run over
+2,500 survivors exceeds the 1.4M ceiling, so a market with more than roughly
+two thousand surviving seats cannot run Defrag at all. No live market is near
+that; the failure is a clean compute-meter stop, not a memory fault.
 
-The moved-seat mapping intentionally remains unbounded when `limit` is zero:
-each relocated seat adds an eight-byte pair, and growing the vector leaves old
-allocations consumed in the SBF bump allocator. An unbounded run can exhaust the
-heap; select a smaller explicit relocation budget when needed.
+The moved-seat mapping records an eight-byte pair per relocated seat. It is
+pre-allocated to `min(limit, MAX_MOVED_SEATS_PER_RUN)` entries and never grows,
+because growing a vector strands its old allocation in the SBF bump allocator.
+A run that would relocate more than 1,024 seats stops when the mapping fills,
+exactly as if the budget had run out, so even a zero-`limit` run cannot exhaust
+the heap and repeating still converges. Compute, not heap, is what an operator
+sizes a budget for.
 
 `ManifestClient.defragIx(collector, limit?)` and the Rust `defrag_instruction`
 builder both take the budget as an optional argument.

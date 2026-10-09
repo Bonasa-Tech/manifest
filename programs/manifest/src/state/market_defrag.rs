@@ -25,8 +25,17 @@ const_assert_eq!(size_of::<RBNode<RestingOrder>>(), MARKET_BLOCK_SIZE);
 
 /// Largest market this will compact. The bitmap is one bit per block, so this
 /// caps that allocation at 8 KiB of a 32 KiB heap. This does not bound the
-/// moved-seat buffer or the cost of rebuilding the surviving seat tree.
+/// cost of rebuilding the surviving seat tree.
 pub const MAX_DEFRAG_BLOCKS: usize = 65_536;
+
+/// Most seats one run will relocate. The moved-seat mapping is pre-allocated
+/// to this cap and never grows, because growing a Vec strands the old
+/// allocation in the SBF bump allocator; together with the 8 KiB bitmap this
+/// keeps a run inside the 32 KiB heap for any market `MAX_DEFRAG_BLOCKS`
+/// admits. A run that fills the mapping stops relocating there, leaves the
+/// market fully consistent and no larger, and repeating converges exactly
+/// like an explicit relocation budget.
+pub const MAX_MOVED_SEATS_PER_RUN: usize = 1_024;
 
 fn bit(words: &[u64], block: usize) -> bool {
     words[block / 64] & (1u64 << (block % 64)) != 0
@@ -216,11 +225,13 @@ impl<
         // beneath it. `hole` only ever advances, so destinations are found in
         // one pass. Stop once the cursors meet: everything below is packed.
         let mut budget: u32 = if limit == 0 { u32::MAX } else { limit };
-        // Intentionally unbounded when limit == 0: one pair per relocated seat,
-        // plus Vec growth allocations the SBF bump allocator cannot reclaim.
-        // MAX_DEFRAG_BLOCKS caps only the bitmap, not this allocation. Operators
-        // must supply a smaller relocation budget if the default exceeds heap.
-        let mut moved_seats: Vec<(DataIndex, DataIndex)> = Vec::new();
+        // One pair per relocated seat, pre-allocated to its cap and never
+        // grown: Vec growth strands the old allocation in the SBF bump
+        // allocator, and an unbounded run over a seat-heavy market could
+        // exhaust the heap that way. Full is handled below like an exhausted
+        // budget, so repeated runs still converge.
+        let mut moved_seats: Vec<(DataIndex, DataIndex)> =
+            Vec::with_capacity((budget as usize).min(MAX_MOVED_SEATS_PER_RUN));
         let mut hole: usize = 0;
         let mut block: usize = blocks;
         while block > 0 && budget > 0 {
@@ -232,6 +243,12 @@ impl<
                 hole += 1;
             }
             if hole >= block {
+                break;
+            }
+            if moved_seats.len() == moved_seats.capacity()
+                && dynamic[block * MARKET_BLOCK_SIZE + NODE_TYPE]
+                    == MarketDataTreeNodeType::ClaimedSeat as u8
+            {
                 break;
             }
             relocate(
@@ -507,6 +524,55 @@ mod tests {
         m.dynamic.truncate(first - MARKET_FIXED_SIZE);
         let second = m.defragment(1).unwrap();
         assert_eq!(second, first);
+    }
+
+    /// More relocating seats than one run's moved-seat cap: the mapping is
+    /// pre-allocated and never grows, so the run stops at the cap instead of
+    /// allocating, each stop is a valid market, and repeating converges.
+    #[test]
+    fn unbounded_runs_cap_moved_seats_and_converge() {
+        const FUNDED: u32 = MAX_MOVED_SEATS_PER_RUN as u32 + 76;
+        const EMPTY: u32 = FUNDED;
+        let key = |i: u32, tag: u8| {
+            let mut bytes = [0u8; 32];
+            bytes[..4].copy_from_slice(&i.to_le_bytes());
+            bytes[31] = tag;
+            Pubkey::new_from_array(bytes)
+        };
+        let blocks: usize = (FUNDED + EMPTY + 2) as usize;
+        let mut m = market();
+        m.dynamic.resize(MARKET_BLOCK_SIZE * blocks, 0);
+        m.market_expand_n(blocks as u32).unwrap();
+        // Allocation hands out high blocks first, so the funded survivors sit
+        // above the reclaimable seats and every one of them has to move.
+        for i in 0..FUNDED {
+            m.claim_seat(&key(i, 1)).unwrap();
+            m.deposit(m.get_trader_index(&key(i, 1)), 1, true).unwrap();
+        }
+        for i in 0..EMPTY {
+            m.claim_seat(&key(i, 2)).unwrap();
+        }
+
+        let target: usize = MARKET_FIXED_SIZE + MARKET_BLOCK_SIZE * (FUNDED as usize + 2);
+        let first: usize = m.defragment(0).unwrap();
+        m.dynamic.truncate(first - MARKET_FIXED_SIZE);
+        assert!(first > target, "the first run must stop at the cap");
+
+        let mut size: usize = first;
+        let mut runs: usize = 1;
+        while size != target {
+            let next: usize = m.defragment(0).unwrap();
+            assert!(next < size, "a capped run must keep shrinking");
+            m.dynamic.truncate(next - MARKET_FIXED_SIZE);
+            size = next;
+            runs += 1;
+            assert!(runs < 10, "capped defrag failed to converge");
+        }
+        assert!(runs > 1, "test did not exercise the cap");
+        for i in 0..FUNDED {
+            assert_eq!(m.get_trader_balance(&key(i, 1)).0.as_u64(), 1);
+        }
+        assert_eq!(free_count(&m), 2);
     }
 
     #[test]

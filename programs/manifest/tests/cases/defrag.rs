@@ -354,6 +354,155 @@ async fn defrag_large_empty_seat_population_fits_one_instruction() -> anyhow::Re
     Ok(())
 }
 
+/// Defrag shrinks the account, so index hints cached before it can point past
+/// the new end. Both hint validators must answer with the documented hint
+/// error instead of panicking on the out-of-bounds slice.
+#[tokio::test]
+async fn stale_hints_past_a_shrunk_market_fail_cleanly() -> anyhow::Result<()> {
+    use manifest::program::ManifestError;
+    use solana_transaction::{InstructionError, TransactionError};
+    let mut f = TestFixture::new().await;
+    f.claim_seat().await?;
+    f.claim_seat_for_keypair(&f.second_keypair).await?;
+    f.deposit(Token::SOL, 1000).await?;
+    f.place_order(Side::Ask, 300, 1, 0, 0, OrderType::Limit)
+        .await?;
+    let key = collector(&f);
+    run(&f, &key).await?;
+
+    // Block aligned, typed correctly before the shrink, far past the end now.
+    let stale: u32 = (MARKET_BLOCK_SIZE * 1_000) as u32;
+    let trader_hint_error = f
+        .batch_update_for_keypair(Some(stale), vec![], vec![], &f.payer_keypair())
+        .await
+        .unwrap_err()
+        .unwrap();
+    assert_eq!(
+        trader_hint_error,
+        TransactionError::InstructionError(
+            0,
+            InstructionError::Custom(ManifestError::WrongIndexHintParams as u32),
+        )
+    );
+    let cancel_hint_error = f
+        .batch_update_for_keypair(
+            None,
+            vec![CancelOrderParams::new_with_hint(0, Some(stale))],
+            vec![],
+            &f.payer_keypair(),
+        )
+        .await
+        .unwrap_err()
+        .unwrap();
+    assert_eq!(
+        cancel_hint_error,
+        TransactionError::InstructionError(
+            0,
+            InstructionError::Custom(ManifestError::WrongIndexHintParams as u32),
+        )
+    );
+    // Fresh hints still work: the order placed above cancels cleanly.
+    f.market_fixture.reload().await;
+    let (index, sequence) = {
+        let asks = f.market_fixture.market.get_asks();
+        let (index, order) = asks.iter::<RestingOrder>().next().unwrap();
+        (index, order.get_sequence_number())
+    };
+    f.batch_update_for_keypair(
+        None,
+        vec![CancelOrderParams::new_with_hint(sequence, Some(index))],
+        vec![],
+        &f.payer_keypair(),
+    )
+    .await?;
+    Ok(())
+}
+
+/// More relocating survivors than the per-run moved-seat cap: the mapping is
+/// pre-allocated, so every unbounded run stays inside the SBF heap, stops at
+/// the cap like an exhausted budget, and repeating converges.
+#[tokio::test]
+async fn defrag_caps_moved_seats_per_run_within_heap_and_converges() -> anyhow::Result<()> {
+    use manifest::quantities::WrapperU64;
+    use solana_compute_budget_interface::ComputeBudgetInstruction;
+    use solana_program::pubkey::Pubkey;
+    // Above MAX_MOVED_SEATS_PER_RUN, so one run cannot finish the job.
+    const FUNDED: u32 = 1_100;
+    const EMPTY: u32 = 1_100;
+    let mut f = TestFixture::new().await;
+    let key = collector(&f);
+    let mut value = f.market_fixture.market.clone();
+    let blocks: usize = (FUNDED + EMPTY + 2) as usize;
+    value.dynamic.resize(MARKET_BLOCK_SIZE * blocks, 0);
+    // The fixture market starts with one allocated block.
+    value.market_expand_n(blocks as u32 - 1)?;
+    let trader = |i: u32| {
+        let mut bytes = [0u8; 32];
+        bytes[..4].copy_from_slice(&i.to_le_bytes());
+        bytes[31] = 7;
+        Pubkey::new_from_array(bytes)
+    };
+    // Funded seats first: allocation hands out high blocks first, so every
+    // funded survivor sits above the reclaimable seats and has to move.
+    for i in 0..FUNDED {
+        value.claim_seat(&trader(i))?;
+        value.deposit(value.get_trader_index(&trader(i)), 1, true)?;
+    }
+    for i in 0..EMPTY {
+        value.claim_seat(&trader(FUNDED + i))?;
+    }
+    let data = [bytemuck::bytes_of(&value.fixed), &value.dynamic].concat();
+    f.context.borrow_mut().set_account(
+        &f.market_fixture.key,
+        &AccountSharedData::from(Account {
+            lamports: Rent::default().minimum_balance(data.len()),
+            data,
+            owner: manifest::id(),
+            executable: false,
+            rent_epoch: 0,
+        }),
+    );
+    let vault =
+        manifest::validation::get_vault_address(&f.market_fixture.key, &f.sol_mint_fixture.key).0;
+    f.sol_mint_fixture.mint_to(&vault, FUNDED as u64).await;
+
+    let target: usize = MARKET_FIXED_SIZE + MARKET_BLOCK_SIZE * (FUNDED as usize + 2);
+    let mut previous: usize = f.try_load(&f.market_fixture.key).await?.unwrap().data.len();
+    let mut runs: usize = 0;
+    loop {
+        send_tx_with_retry(
+            Rc::clone(&f.context),
+            &[
+                ComputeBudgetInstruction::set_compute_unit_limit(1_400_000),
+                ix(&f, &key),
+            ],
+            Some(&f.payer()),
+            &[&f.payer_keypair(), &key],
+        )
+        .await?;
+        let len: usize = f.try_load(&f.market_fixture.key).await?.unwrap().data.len();
+        runs += 1;
+        assert!(runs < 10, "capped defrag failed to converge");
+        if len == target {
+            break;
+        }
+        assert!(len < previous, "a capped run made no progress");
+        previous = len;
+    }
+    assert!(runs > 1, "test did not exercise the moved-seat cap");
+    let account = f.try_load(&f.market_fixture.key).await?.unwrap();
+    let market: manifest::state::MarketValue =
+        get_dynamic_value_or(account.data.as_slice()).unwrap();
+    for i in [0, FUNDED / 2, FUNDED - 1] {
+        assert_eq!(
+            market.get_trader_balance(&trader(i)).0.as_u64(),
+            1,
+            "funded seat {i} lost its balance"
+        );
+    }
+    Ok(())
+}
+
 #[tokio::test]
 async fn defrag_leaves_wrapped_sol_principal_reserve_and_unsynced_lamports() -> anyhow::Result<()> {
     use solana_program::program_pack::Pack;

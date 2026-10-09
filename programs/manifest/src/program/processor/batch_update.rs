@@ -313,6 +313,16 @@ pub(crate) fn process_batch_update_core(
                     "Invalid cancel hint index {}",
                     hinted_cancel_index,
                 )?;
+                // Defrag can shrink the market, so a hint from before it can
+                // point past the end. Reject it rather than panic on the slice.
+                require!(
+                    (hinted_cancel_index as usize)
+                        .checked_add(MARKET_BLOCK_SIZE)
+                        .is_some_and(|end| end <= dynamic_account.dynamic.len()),
+                    crate::program::ManifestError::WrongIndexHintParams,
+                    "Invalid cancel hint index {} is out of bounds",
+                    hinted_cancel_index,
+                )?;
                 require!(
                     get_helper::<RBNode<RestingOrder>>(
                         &dynamic_account.dynamic,
