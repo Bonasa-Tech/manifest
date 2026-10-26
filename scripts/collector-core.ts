@@ -540,6 +540,81 @@ export const MAX_SWEEPS_PER_TX = 19;
 export const MAX_CLEANS_PER_TX = 55;
 // Measured ~1,650 CU per clean on mainnet; 3,000 leaves generous margin.
 const CLEAN_CU_EACH = 3_000;
+// Default ceiling on per-pass unbacked confirmation simulations. Each is one
+// RPC round trip, so an unbounded set (15k+ global orders observed) could take
+// an hour; this keeps a pass short. Overridable via the maxUnbackedSims option.
+export const DEFAULT_MAX_UNBACKED_SIMS = 1_000;
+
+/**
+ * Carried across passes to tell an old, quiet unbacked order from a fast
+ * churning one. Maps an order's identity (`market:sequence_number`, stable
+ * because a resting order is immutable) to the number of consecutive passes it
+ * has been seen as an unbacked candidate. Only an order seen in the previous
+ * pass too — i.e. unchanged since the last run — is cleaned. The caller owns
+ * one tracker and passes it in every pass; the first pass sets the baseline.
+ */
+export type UnbackedTracker = {
+  streaks: Map<string, number>;
+};
+
+export const createUnbackedTracker = (): UnbackedTracker => ({
+  streaks: new Map(),
+});
+
+/**
+ * Choose which unbacked candidates to confirm this pass, and advance the
+ * tracker. Only orders that have rested UNCHANGED since the previous pass are
+ * chosen: a resting order is immutable, so the same `market:sequence_number`
+ * across passes is literally the same order, and one that survived a full
+ * interval is old and quiet rather than a fast-churning slot. This both targets
+ * stale orders and sidesteps the read->send race, which only bites orders that
+ * turn over quickly.
+ *
+ * The oldest (longest-resting) candidates come first so the `cap` confirms them
+ * and the rest age into a later pass rather than starving. The tracker is
+ * rebuilt from only this pass's candidates, so an order that was cancelled or
+ * replaced drops out and its successor (a new sequence number) starts over at
+ * one. With no tracker, nothing is ever chosen — there is no prior pass to
+ * compare against — which is why a single run only sets the baseline.
+ */
+export function selectStableUnbacked(
+  candidates: CleanableOrder[],
+  tracker: UnbackedTracker | undefined,
+  cap: number,
+): {
+  toConfirm: CleanableOrder[];
+  /** Candidates present in the previous pass too, so eligible this pass. */
+  stable: number;
+  /** Candidates seen for the first time (or after a change): not yet eligible. */
+  freshlySeen: number;
+  /** Eligible candidates left for a later pass because of the cap. */
+  overCap: number;
+} {
+  const identity = (order: CleanableOrder): string =>
+    `${order.market}:${order.sequenceNumber}`;
+  const prior = tracker?.streaks ?? new Map<string, number>();
+  const withStreak = candidates.map((order) => {
+    const id = identity(order);
+    return { order, id, streak: (prior.get(id) ?? 0) + 1 };
+  });
+  const stable = withStreak
+    .filter((entry) => entry.streak >= 2)
+    .sort((a, b) => b.streak - a.streak || (a.id < b.id ? -1 : 1));
+  const toConfirm = stable
+    .slice(0, Math.max(0, cap))
+    .map((entry) => entry.order);
+  if (tracker) {
+    tracker.streaks = new Map(
+      withStreak.map((entry) => [entry.id, entry.streak]),
+    );
+  }
+  return {
+    toConfirm,
+    stable: stable.length,
+    freshlySeen: withStreak.length - stable.length,
+    overCap: stable.length - toConfirm.length,
+  };
+}
 const MAX_COMPUTE_UNITS = 1_400_000;
 // Mandatory. Without it a multi-leg batch fails MaxLoadedAccountsDataSizeExceeded
 // having consumed zero compute units, which looks like a program bug.
@@ -603,6 +678,18 @@ export type CoreCollectionOptions = {
    * never submitted.
    */
   cleanUnbacked: boolean;
+  /**
+   * Most unbacked candidates to confirm by simulation in one pass. Defaults to
+   * {@link DEFAULT_MAX_UNBACKED_SIMS}. The oldest (longest-resting) candidates
+   * are confirmed first; the rest wait for a later pass.
+   */
+  maxUnbackedSims?: number;
+  /**
+   * Tracks which unbacked orders have been resting unchanged across passes, so
+   * only old, quiet ones are cleaned (see {@link UnbackedTracker}). Without it,
+   * no unbacked order is ever cleaned — there is no "last run" to compare to.
+   */
+  unbackedTracker?: UnbackedTracker;
   /** Maker pubkeys whose orders must never be cleaned. */
   skipTraders: Set<string>;
   minRecoveryLamports: bigint;
@@ -784,17 +871,30 @@ export async function runCoreCollections(
     const unbackedCandidates = kept.filter((c) => c.kind === 'unbacked');
     const unbacked: CleanableOrder[] = [];
     if (unbackedCandidates.length > 0) {
-      console.log(
-        `confirming ${unbackedCandidates.length} unbacked global-order candidates by simulation...`,
+      const cap = options.maxUnbackedSims ?? DEFAULT_MAX_UNBACKED_SIMS;
+      const selection = selectStableUnbacked(
+        unbackedCandidates,
+        options.unbackedTracker,
+        cap,
       );
-      for (const c of unbackedCandidates) {
+      console.log(
+        `${unbackedCandidates.length} unbacked candidates: ${selection.stable} unchanged since last pass` +
+          (selection.freshlySeen > 0
+            ? `, ${selection.freshlySeen} new or changed (not cleaned this pass)`
+            : '') +
+          (selection.overCap > 0
+            ? `, ${selection.overCap} over the ${cap}-sim cap (deferred)`
+            : '') +
+          `; confirming ${selection.toConfirm.length} by simulation...`,
+      );
+      for (const order of selection.toConfirm) {
         if (options.shouldStop()) break;
         const sim = await deps.simulate(
-          [createGlobalCleanInstruction(c, collector)],
+          [createGlobalCleanInstruction(order, collector)],
           40_000,
           MAX_LOADED_ACCOUNTS_DATA_SIZE,
         );
-        if (sim.err === null || sim.err === undefined) unbacked.push(c);
+        if (sim.err === null || sim.err === undefined) unbacked.push(order);
       }
     }
     kept = [...expired, ...unbacked];

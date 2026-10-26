@@ -14,10 +14,13 @@ import {
   MARKET_FIXED_SIZE,
   cleanBatchIsProfitable,
   cleanRaceErrorCode,
+  createUnbackedTracker,
   findCleanableOrders,
   planMarket,
   selectMarkets,
+  selectStableUnbacked,
   sweepComputeUnits,
+  type CleanableOrder,
   type MarketPlan,
 } from './collector-core';
 
@@ -216,6 +219,79 @@ test('unbacked candidates: only non-expired GLOBAL orders, only with --clean-unb
   assert.equal(cand[0].kind, 'unbacked');
   assert.equal(cand[0].orderIndex, 0);
   assert.equal(typeof cand[0].maker, 'string');
+});
+
+const unbackedCandidate = (
+  market: string,
+  sequenceNumber: bigint,
+): CleanableOrder => ({
+  market,
+  orderIndex: 0,
+  sequenceNumber,
+  global: 'G'.repeat(43),
+  lastValidSlot: 0,
+  maker: 'M'.repeat(43),
+  kind: 'unbacked',
+});
+
+test('unbacked cleaning waits for an order to rest unchanged across a pass', () => {
+  const tracker = createUnbackedTracker();
+  const a = unbackedCandidate('A'.repeat(43), 1n);
+  const b = unbackedCandidate('B'.repeat(43), 2n);
+
+  // First sighting: baseline only, nothing is confirmed yet.
+  const first = selectStableUnbacked([a, b], tracker, 1_000);
+  assert.deepEqual(first.toConfirm, []);
+  assert.equal(first.stable, 0);
+  assert.equal(first.freshlySeen, 2);
+
+  // Same two orders a pass later: both have rested unchanged, so both qualify.
+  const second = selectStableUnbacked([a, b], tracker, 1_000);
+  assert.equal(second.toConfirm.length, 2);
+  assert.equal(second.stable, 2);
+  assert.equal(second.freshlySeen, 0);
+});
+
+test('a replaced order (new sequence number) starts its wait over', () => {
+  const tracker = createUnbackedTracker();
+  const market = 'A'.repeat(43);
+  selectStableUnbacked([unbackedCandidate(market, 1n)], tracker, 1_000);
+  // The slot now holds a different order: same market, new sequence number.
+  const next = selectStableUnbacked(
+    [unbackedCandidate(market, 2n)],
+    tracker,
+    1_000,
+  );
+  assert.deepEqual(next.toConfirm, [], 'the new order is not yet old enough');
+  assert.equal(next.freshlySeen, 1);
+});
+
+test('the sim cap defers the newest, confirming the longest-resting first', () => {
+  const tracker = createUnbackedTracker();
+  const old = unbackedCandidate('A'.repeat(43), 1n);
+  const mid = unbackedCandidate('B'.repeat(43), 2n);
+  // `old` seen three passes, `mid` two: both stable, `old` has the longer streak.
+  selectStableUnbacked([old], tracker, 1_000);
+  selectStableUnbacked([old, mid], tracker, 1_000);
+  const capped = selectStableUnbacked([old, mid], tracker, 1);
+  assert.equal(capped.stable, 2);
+  assert.equal(capped.overCap, 1);
+  assert.equal(capped.toConfirm.length, 1);
+  assert.equal(
+    capped.toConfirm[0].market,
+    old.market,
+    'oldest confirmed first',
+  );
+});
+
+test('without a tracker there is no last run to compare, so nothing is chosen', () => {
+  const chosen = selectStableUnbacked(
+    [unbackedCandidate('A'.repeat(43), 1n)],
+    undefined,
+    1_000,
+  );
+  assert.deepEqual(chosen.toConfirm, []);
+  assert.equal(chosen.stable, 0);
 });
 
 test('a raced clean is recognised from both a sim error and a thrown send error', () => {
