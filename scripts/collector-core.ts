@@ -56,10 +56,18 @@ const NUM_BYTES_ALLOCATED_OFFSET = 152;
 // RestingOrder payload: price(16) atoms(8) seq(8) trader_index(4)
 // last_valid_slot(4) is_bid(1) order_type(1) spread(2) padding(20).
 const ORDER_SEQUENCE_OFFSET = 24;
+const ORDER_TRADER_INDEX_OFFSET = 32;
 const ORDER_LAST_VALID_SLOT_OFFSET = 36;
 const ORDER_IS_BID_OFFSET = 40;
+const ORDER_TYPE_OFFSET = 41;
+// OrderType::Global. Only global orders can be unbacked (their collateral
+// lives in a shared global account that can be withdrawn out from under them).
+const ORDER_TYPE_GLOBAL = 3;
 // NO_EXPIRATION_LAST_VALID_SLOT; an order with this value never expires.
 const NO_EXPIRATION = 0;
+// ClaimedSeat.trader is the first field of the payload, so the maker pubkey of
+// an order sits at its trader_index block + the node header.
+const NODE_TYPE_RESTING_ORDER_SEAT_TRADER = NODE_PAYLOAD_OFFSET;
 
 // Rent on mainnet. Defrag leaves `keep_count + 2` blocks, never fewer: real
 // allocation paths depend on two spare nodes.
@@ -116,6 +124,16 @@ export type CleanableOrder = {
   /** The global account whose mint matches this order's side. */
   global: string;
   lastValidSlot: number;
+  /** The order owner, resolved from the ClaimedSeat at its trader_index. */
+  maker: string;
+  /**
+   * 'expired' is eligible on its own. 'unbacked' is only a CANDIDATE here: a
+   * global order that isn't expired might or might not be unbacked, and that
+   * depends on the maker's live global balance. It is confirmed by simulating
+   * the clean (the program returns InvalidClean for a still-backed order), so
+   * the simulation, not this script, is the source of truth.
+   */
+  kind: 'expired' | 'unbacked';
 };
 
 const rentMinimum = (space: number): bigint =>
@@ -201,11 +219,33 @@ export function planMarket(account: MarketAccount): MarketPlan | null {
  * requires one whose mint matches the order's side (quote for a bid, base for
  * an ask), so an order on a market with no such global cannot be cleaned.
  */
+/** The order owner pubkey, read from the ClaimedSeat at trader_index. */
+function readMaker(data: Buffer, traderIndex: number): string | null {
+  const seat =
+    MARKET_FIXED_SIZE + traderIndex + NODE_TYPE_RESTING_ORDER_SEAT_TRADER;
+  if (traderIndex < 0 || seat + 32 > data.length) return null;
+  return new PublicKey(data.subarray(seat, seat + 32)).toBase58();
+}
+
+/**
+ * Orders GlobalClean can remove.
+ *
+ * Expired orders are eligible outright. With `includeUnbacked`, non-expired
+ * GLOBAL orders are returned too as candidates (kind 'unbacked'): whether they
+ * are actually cleanable depends on the maker's live global balance, which the
+ * caller confirms by simulating the clean. Non-global, non-expired orders are
+ * never cleanable and are skipped.
+ *
+ * `globalForMint` must contain only global accounts that exist: GlobalClean
+ * needs one whose mint matches the order's side (quote for a bid, base for an
+ * ask), so an order on a market with no such global cannot be cleaned.
+ */
 export function findCleanableOrders(
   plan: MarketPlan,
   data: Buffer,
   nowSlot: number,
   globalForMint: Map<string, string>,
+  includeUnbacked = false,
 ): CleanableOrder[] {
   const out: CleanableOrder[] = [];
   const allocated = data.readUInt32LE(NUM_BYTES_ALLOCATED_OFFSET);
@@ -219,10 +259,23 @@ export function findCleanableOrders(
     const lastValidSlot = data.readUInt32LE(
       payload + ORDER_LAST_VALID_SLOT_OFFSET,
     );
-    if (lastValidSlot === NO_EXPIRATION || lastValidSlot >= nowSlot) continue;
+    const expired = lastValidSlot !== NO_EXPIRATION && lastValidSlot < nowSlot;
+    const isGlobal = data[payload + ORDER_TYPE_OFFSET] === ORDER_TYPE_GLOBAL;
+    // Expired is eligible as-is; a non-expired global order is an unbacked
+    // candidate. Everything else cannot be cleaned.
+    let kind: CleanableOrder['kind'] | null = null;
+    if (expired) kind = 'expired';
+    else if (includeUnbacked && isGlobal) kind = 'unbacked';
+    if (kind === null) continue;
+
     const isBid = data[payload + ORDER_IS_BID_OFFSET] === 1;
     const global = globalForMint.get(isBid ? plan.quoteMint : plan.baseMint);
     if (global === undefined) continue;
+    const maker = readMaker(
+      data,
+      data.readUInt32LE(payload + ORDER_TRADER_INDEX_OFFSET),
+    );
+    if (maker === null) continue;
     out.push({
       market: plan.pubkey,
       // The instruction takes a byte offset into the dynamic area, not a
@@ -231,6 +284,8 @@ export function findCleanableOrders(
       sequenceNumber: data.readBigUInt64LE(payload + ORDER_SEQUENCE_OFFSET),
       global,
       lastValidSlot,
+      maker,
+      kind,
     });
   }
   return out;
@@ -525,6 +580,14 @@ export type CoreCollectionOptions = {
   minShrinkBlocks: number;
   /** Also clean expired orders, batched, and only when they pay for themselves. */
   globalClean: boolean;
+  /**
+   * In addition to expired orders, clean unbacked global orders. Each candidate
+   * is confirmed by simulation before it is included, so a still-backed order is
+   * never submitted.
+   */
+  cleanUnbacked: boolean;
+  /** Maker pubkeys whose orders must never be cleaned. */
+  skipTraders: Set<string>;
   minRecoveryLamports: bigint;
   maxMarkets?: number;
   delayMs: number;
@@ -626,16 +689,76 @@ export async function runCoreCollections(
     // market is worth sweeping says nothing about whether it holds expired
     // orders, and restricting the search to the selection lost 178 of 179
     // cleanable orders as soon as --min-shrink narrowed it.
+    const candidates: CleanableOrder[] = [];
     for (const plan of plans) {
       const data = dataByMarket.get(plan.pubkey);
       if (data === undefined) continue;
-      cleans.push(...findCleanableOrders(plan, data, slot, globals));
+      candidates.push(
+        ...findCleanableOrders(
+          plan,
+          data,
+          slot,
+          globals,
+          options.cleanUnbacked,
+        ),
+      );
     }
-    result.cleanableOrders = cleans.length;
+
+    // Never touch a whitelisted maker's orders.
+    const beforeSkip = candidates.length;
+    let kept = candidates.filter((c) => !options.skipTraders.has(c.maker));
+    const skipped = beforeSkip - kept.length;
+
+    // Expired orders are eligible outright. Unbacked candidates are only
+    // eligible if the maker's global balance has fallen short, which the
+    // program alone can judge: simulate each one and keep only those the
+    // program would accept. One dummy blockhash serves every sim
+    // (replaceRecentBlockhash), so this is N cheap simulateTransaction calls.
+    const expired = kept.filter((c) => c.kind === 'expired');
+    const unbackedCandidates = kept.filter((c) => c.kind === 'unbacked');
+    const unbacked: CleanableOrder[] = [];
+    if (unbackedCandidates.length > 0) {
+      console.log(
+        `confirming ${unbackedCandidates.length} unbacked global-order candidates by simulation...`,
+      );
+      for (const c of unbackedCandidates) {
+        if (options.shouldStop()) break;
+        const sim = await deps.simulate(
+          [createGlobalCleanInstruction(c, collector)],
+          40_000,
+          MAX_LOADED_ACCOUNTS_DATA_SIZE,
+        );
+        if (sim.err === null || sim.err === undefined) unbacked.push(c);
+      }
+    }
+    kept = [...expired, ...unbacked];
+
+    const byMaker = new Map<string, { expired: number; unbacked: number }>();
+    for (const c of kept) {
+      const m = byMaker.get(c.maker) ?? { expired: 0, unbacked: 0 };
+      m[c.kind] += 1;
+      byMaker.set(c.maker, m);
+    }
+    result.cleanableOrders = kept.length;
     console.log(
-      `${globals.size} global accounts; ${cleans.length} expired orders cleanable ` +
-        `(${Number(BigInt(cleans.length) * BigInt(GAS_DEPOSIT_LAMPORTS)) / 1e9} SOL of gas deposits)`,
+      `${globals.size} global accounts; ${expired.length} expired + ${unbacked.length} unbacked ` +
+        `= ${kept.length} cleanable (${Number(BigInt(kept.length) * BigInt(GAS_DEPOSIT_LAMPORTS)) / 1e9} SOL of gas deposits)` +
+        (skipped > 0 ? `; ${skipped} skipped by trader whitelist` : ''),
     );
+    // Preview: which traders have orders to clean (the unbacked ones especially).
+    const unbackedByMaker = [...byMaker.entries()]
+      .filter(([, v]) => v.unbacked > 0)
+      .sort((a, b) => b[1].unbacked - a[1].unbacked);
+    if (unbackedByMaker.length > 0) {
+      console.log('  traders with unbacked orders:');
+      for (const [maker, v] of unbackedByMaker) {
+        console.log(
+          `    ${maker}  ${v.unbacked} unbacked${v.expired ? `, ${v.expired} expired` : ''}`,
+        );
+      }
+    }
+
+    cleans = kept;
     if (!cleanBatchIsProfitable(cleans.length, options.sweepMarkets)) {
       console.log(
         '  skipping global clean: the deposits would not cover the signature it needs',

@@ -68,7 +68,7 @@ const V1_MAX_ACCOUNT_ADDRESSES = 64;
 const V1_MAX_WRAPPERS = V1_MAX_ACCOUNT_ADDRESSES - 3;
 const MAX_COMPUTE_UNITS = 1_400_000;
 const MAX_LOADED_ACCOUNTS_DATA_SIZE = 64 * 1024 * 1024;
-const DEFAULT_DELAY_MS = 10_000;
+const DEFAULT_DELAY_MS = 1_000;
 // How many fresh-blockhash attempts a batch gets when its transaction expires
 // without landing. Expiry means the transaction can never land, so resending
 // the batch is safe; a landed-check runs before each retry to catch the
@@ -603,6 +603,11 @@ Options:
   --global-clean             Clean expired orders for their gas deposits.
                              Requires --markets: one clean exactly cancels one
                              signature fee, so it must ride along.
+  --clean-unbacked           Also clean unbacked global orders (extends
+                             --global-clean). Each candidate is confirmed by
+                             simulation first; a dry run previews which traders
+                             have unbacked orders. CLEAN_SKIP_TRADERS whitelists
+                             makers to leave alone.
   --tail-tighten             Also take markets whose free tail can truncate.
   --min-shrink=N             With --tail-tighten, require N blocks of shrink.
   --max-markets=N            Cap markets per run, highest recovery first.
@@ -619,7 +624,8 @@ Environment:
   RPC_URL                    Required Solana RPC URL.
   KEYPAIR_PATH               Authorized collector keypair; required with --execute.
   MAX_WRAPPERS_PER_TX        Alternative batch-size safety cap.
-  COLLECT_DELAY_MS           Alternative delay between transactions.`);
+  COLLECT_DELAY_MS           Alternative delay between transactions (default 1000ms).
+  CLEAN_SKIP_TRADERS         Maker pubkeys (comma/space separated) never cleaned.`);
     return;
   }
 
@@ -631,6 +637,16 @@ Environment:
   // Core-program phases. Opt-in, so every existing invocation is unchanged.
   const sweepMarkets = process.argv.includes('--markets');
   const globalClean = process.argv.includes('--global-clean');
+  const cleanUnbacked = process.argv.includes('--clean-unbacked');
+  // Maker pubkeys whose orders must never be cleaned, from CLEAN_SKIP_TRADERS
+  // (comma- or whitespace-separated). A safety whitelist for traders we do not
+  // want to disturb even when their global orders are technically cleanable.
+  const skipTraders = new Set(
+    (process.env.CLEAN_SKIP_TRADERS ?? '')
+      .split(/[\s,]+/)
+      .map((s) => s.trim())
+      .filter((s) => s.length > 0),
+  );
   const tailTighten = process.argv.includes('--tail-tighten');
   const minShrinkBlocks = tailTighten
     ? (parsePositiveInteger('min-shrink', 'MIN_SHRINK_BLOCKS') ?? 1)
@@ -650,6 +666,11 @@ Environment:
   if (globalClean && !sweepMarkets) {
     throw new Error(
       '--global-clean must ride along with --markets: a clean-only run barely pays for its own signature',
+    );
+  }
+  if (cleanUnbacked && !globalClean) {
+    throw new Error(
+      '--clean-unbacked extends --global-clean; pass --global-clean as well',
     );
   }
   if (!coreOnly && allPublic === (wrapperOption !== undefined)) {
@@ -760,6 +781,8 @@ Environment:
         execute,
         sweepMarkets,
         globalClean,
+        cleanUnbacked,
+        skipTraders,
         minShrinkBlocks,
         minRecoveryLamports: 100_000n,
         maxMarkets,

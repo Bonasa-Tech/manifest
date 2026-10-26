@@ -192,6 +192,31 @@ test('only expired orders are cleanable, and only where a global account exists'
   assert.deepEqual(findCleanableOrders(plan, data, 5_000, new Map()), []);
 });
 
+test('unbacked candidates: only non-expired GLOBAL orders, only with --clean-unbacked', () => {
+  const data = market([O, O], 0n);
+  const payload = (block: number): number =>
+    MARKET_FIXED_SIZE + block * MARKET_BLOCK_SIZE + 16;
+  // Both non-expired bids; block 0 is a Global order (type 3), block 1 a Limit.
+  for (const b of [0, 1]) {
+    data.writeUInt32LE(0, payload(b) + 36); // never expires
+    data[payload(b) + 40] = 1; // bid -> quote mint global
+  }
+  data[payload(0) + 41] = 3; // OrderType::Global
+  data[payload(1) + 41] = 0; // OrderType::Limit
+  const plan = planMarket({ pubkey: MARKET, lamports: data.lamports, data })!;
+  const withGlobal = new Map([[plan.quoteMint, 'G'.repeat(43)]]);
+
+  // Without the flag, no non-expired order is returned.
+  assert.deepEqual(findCleanableOrders(plan, data, 5_000, withGlobal), []);
+
+  // With it, only the global order is an unbacked candidate (the limit is not).
+  const cand = findCleanableOrders(plan, data, 5_000, withGlobal, true);
+  assert.equal(cand.length, 1, 'only the global order is a candidate');
+  assert.equal(cand[0].kind, 'unbacked');
+  assert.equal(cand[0].orderIndex, 0);
+  assert.equal(typeof cand[0].maker, 'string');
+});
+
 test('a clean batch must out-earn the signature it needs', () => {
   assert.equal(
     GAS_DEPOSIT_LAMPORTS,
