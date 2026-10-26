@@ -666,6 +666,24 @@ Environment:
   const collectorPublicKey = collector?.publicKey ?? AUTHORIZED_COLLECTOR;
   const connection = new Connection(RPC_URL, 'confirmed');
 
+  // Declared before the core phase because that phase's shouldStop/sleep
+  // closures capture it; a `let` referenced before this point throws a
+  // temporal-dead-zone error the moment the core send loop calls shouldStop().
+  let stopRequested = false;
+  let interruptCount = 0;
+  const onInterrupt = () => {
+    interruptCount += 1;
+    if (interruptCount > 1) {
+      console.error('\nSecond interrupt received; exiting immediately.');
+      process.exit(130);
+    }
+    stopRequested = true;
+    console.error(
+      '\nStop requested. The current transaction may finish; no next transaction will be submitted.',
+    );
+  };
+  process.on('SIGINT', onInterrupt);
+
   if (sweepMarkets || globalClean) {
     console.log(`Mode: ${execute ? 'EXECUTE' : 'DRY RUN'} (core phases)`);
     const coreResult = await runCoreCollections(
@@ -943,21 +961,6 @@ Environment:
     );
     return;
   }
-
-  let stopRequested = false;
-  let interruptCount = 0;
-  const onInterrupt = () => {
-    interruptCount += 1;
-    if (interruptCount > 1) {
-      console.error('\nSecond interrupt received; exiting immediately.');
-      process.exit(130);
-    }
-    stopRequested = true;
-    console.error(
-      '\nStop requested. The current transaction may finish; no next transaction will be submitted.',
-    );
-  };
-  process.on('SIGINT', onInterrupt);
 
   let collected = 0;
   let collectedLamports = 0n;
