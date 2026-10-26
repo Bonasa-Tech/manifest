@@ -522,7 +522,17 @@ export async function resolveTokenPrograms(
 // at two addresses each (market + global).
 const V1_MAX_SIZE = 4096;
 export const MAX_SWEEPS_PER_TX = 19;
-export const MAX_CLEANS_PER_TX = 24;
+// A clean contributes two unique addresses (market + global; payer and system
+// are shared across the whole transaction), so the 64-address v1 limit allows
+// ~31 cleans on distinct markets and more when several orders share a market
+// and its global - up to the ~63-instruction ceiling. CU does not bind: one
+// GlobalClean measures ~1,650 CU on mainnet, so even 60 fit inside 1.4M many
+// times over. The packer measures the real serialized size and stops at the
+// address/size limit on its own; this cap just needs to sit above it rather
+// than throttle packing, with a little headroom under the instruction ceiling.
+export const MAX_CLEANS_PER_TX = 55;
+// Measured ~1,650 CU per clean on mainnet; 3,000 leaves generous margin.
+const CLEAN_CU_EACH = 3_000;
 const MAX_COMPUTE_UNITS = 1_400_000;
 // Mandatory. Without it a multi-leg batch fails MaxLoadedAccountsDataSizeExceeded
 // having consumed zero compute units, which looks like a program bug.
@@ -821,16 +831,19 @@ export async function runCoreCollections(
      * sweep down with it. A sweep failing is a real problem and still stops.
      */
     optional: boolean;
+    /** The orders behind a clean batch, so a failed batch can be bisected. */
+    cleanItems?: CleanableOrder[];
   };
   const work: Work[] = [
     // Cleans first: cheap, and they free blocks a later sweep can truncate.
     ...cleanBatches.map((batch) => ({
       instructions: batch.map(cleanInstruction),
-      units: Math.min(MAX_COMPUTE_UNITS, 40_000 * batch.length + 10_000),
-      label: `clean ${batch.length} expired orders`,
+      units: Math.min(MAX_COMPUTE_UNITS, CLEAN_CU_EACH * batch.length + 10_000),
+      label: `clean ${batch.length} orders`,
       recovered: 0n,
       reward: BigInt(batch.length) * BigInt(GAS_DEPOSIT_LAMPORTS),
       optional: true,
+      cleanItems: batch,
     })),
     ...sweepBatches.map((batch) => ({
       instructions: batch.map(sweepInstruction),
@@ -852,6 +865,49 @@ export async function runCoreCollections(
     return result;
   }
 
+  // Send a batch of cleans, and if it fails simulation, bisect: split in half
+  // and retry each side, down to a single order. A batch is all-or-nothing on
+  // chain, so one ineligible order (InvalidClean - already cleaned, or no
+  // longer eligible since the read) would otherwise waste every good clean
+  // packed alongside it. Bisection isolates the bad one in O(log n) extra
+  // simulations and still sends the rest. Only genuinely-ineligible single
+  // orders are dropped, with their error named.
+  const sendCleans = async (orders: CleanableOrder[]): Promise<void> => {
+    if (orders.length === 0 || options.shouldStop()) return;
+    const units = Math.min(
+      MAX_COMPUTE_UNITS,
+      CLEAN_CU_EACH * orders.length + 10_000,
+    );
+    const ixs = orders.map(cleanInstruction);
+    const sim = await deps.simulate(ixs, units, MAX_LOADED_ACCOUNTS_DATA_SIZE);
+    if (sim.err === null || sim.err === undefined) {
+      const sig = await deps.buildAndSend(
+        ixs,
+        units,
+        MAX_LOADED_ACCOUNTS_DATA_SIZE,
+      );
+      result.transactionsSent += 1;
+      result.cleanRewardLamports +=
+        BigInt(orders.length) * BigInt(GAS_DEPOSIT_LAMPORTS);
+      result.signatures.push(sig);
+      console.log(`clean ${orders.length} orders: ${sig}`);
+      await deps.sleep(options.delayMs);
+      return;
+    }
+    if (orders.length === 1) {
+      console.warn(
+        `  dropping 1 clean (${orders[0].market}@${orders[0].orderIndex}): ${JSON.stringify(sim.err)}`,
+      );
+      return;
+    }
+    const mid = Math.ceil(orders.length / 2);
+    console.warn(
+      `  clean batch of ${orders.length} failed (${JSON.stringify(sim.err)}); bisecting ${mid}+${orders.length - mid}`,
+    );
+    await sendCleans(orders.slice(0, mid));
+    await sendCleans(orders.slice(mid));
+  };
+
   for (const [index, item] of work.entries()) {
     if (options.shouldStop()) {
       console.warn('Stopping before the next transaction.');
@@ -864,11 +920,14 @@ export async function runCoreCollections(
     );
     if (simulation.err !== null && simulation.err !== undefined) {
       const detail = `${item.label}: ${JSON.stringify(simulation.err)}`;
+      // A clean batch is bisected rather than skipped, so one bad order does
+      // not waste the good ones packed with it.
+      if (item.cleanItems) {
+        console.warn(`  ${detail}; bisecting to isolate the bad order(s)`);
+        await sendCleans(item.cleanItems);
+        continue;
+      }
       if (!item.optional) throw new Error(`Simulation failed for ${detail}`);
-      // A clean batch can fail for a transient reason (an order was cancelled
-      // between the read and the send), which is fine to skip. But a batch
-      // failing EVERY time points at a malformed instruction, not a race, so
-      // name the error rather than presuming a cancel.
       console.warn(`  skipping ${detail}`);
       continue;
     }
