@@ -611,8 +611,11 @@ Options:
   --tail-tighten             Also take markets whose free tail can truncate.
   --min-shrink=N             With --tail-tighten, require N blocks of shrink.
   --max-markets=N            Cap markets per run, highest recovery first.
-  --loop=SECONDS             Run continuously, SECONDS between passes, until
-                             Ctrl-C. Each pass is an independent full collection;
+  --loop=SECONDS             Run continuously until Ctrl-C, starting a pass every
+                             SECONDS measured from the previous pass's START (so
+                             run time does not stack on top of the interval). A
+                             pass that overruns the interval is followed
+                             immediately by the next - never concurrently - and
                              a pass that errors is logged and the loop continues.
 
 Execution safety:
@@ -1142,23 +1145,52 @@ async function main(): Promise<void> {
   }
   const loopSeconds = Number(loopArg);
   if (!Number.isFinite(loopSeconds) || loopSeconds <= 0) {
-    throw new Error(`invalid --loop: ${loopArg} (seconds between passes, must be > 0)`);
+    throw new Error(
+      `invalid --loop: ${loopArg} (interval in seconds, must be > 0)`,
+    );
   }
   let stopLoop = false;
   process.on('SIGINT', () => {
     stopLoop = true;
-    console.error('\nStop requested; finishing the current pass, then exiting the loop.');
+    console.error(
+      '\nStop requested; finishing the current pass, then exiting the loop.',
+    );
   });
+  // Fixed-rate schedule: a pass starts every `loopSeconds` measured from the
+  // PREVIOUS pass's start, not from its end, so run time does not stack on top
+  // of the interval. If a pass runs longer than the interval, the next starts
+  // immediately after it (never concurrently - passes are strictly
+  // sequential, so there is no overlap), and the schedule simply stops drifting
+  // further behind rather than trying to catch up with back-to-back passes.
+  const intervalMs = loopSeconds * 1000;
   for (let pass = 1; !stopLoop; pass += 1) {
-    console.log(`\n===== collection pass ${pass} @ ${new Date().toISOString()} =====`);
+    const startedAt = Date.now();
+    console.log(
+      `\n===== collection pass ${pass} @ ${new Date().toISOString()} =====`,
+    );
     try {
       await run();
     } catch (error) {
-      console.error(`pass ${pass} failed:`, error instanceof Error ? error.message : error);
+      console.error(
+        `pass ${pass} failed:`,
+        error instanceof Error ? error.message : error,
+      );
     }
     if (stopLoop) break;
-    console.log(`sleeping ${loopSeconds}s until the next pass (Ctrl-C to stop)`);
-    await sleep(loopSeconds * 1000, () => stopLoop);
+    const elapsedMs = Date.now() - startedAt;
+    const waitMs = intervalMs - elapsedMs;
+    if (waitMs > 0) {
+      console.log(
+        `pass took ${(elapsedMs / 1000).toFixed(1)}s; sleeping ${(waitMs / 1000).toFixed(1)}s ` +
+          `to keep the ${loopSeconds}s interval (Ctrl-C to stop)`,
+      );
+      await sleep(waitMs, () => stopLoop);
+    } else {
+      console.log(
+        `pass took ${(elapsedMs / 1000).toFixed(1)}s, over the ${loopSeconds}s interval; ` +
+          `starting the next pass immediately`,
+      );
+    }
   }
   console.log('loop stopped.');
 }
