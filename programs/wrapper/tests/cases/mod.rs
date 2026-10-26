@@ -4,5 +4,6 @@ pub mod collect;
 pub mod cu;
 pub mod defrag;
 pub mod deposit;
+pub mod market_defrag;
 pub mod sync;
 pub mod withdraw;
