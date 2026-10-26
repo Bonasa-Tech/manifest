@@ -606,10 +606,14 @@ Options:
   --tail-tighten             Also take markets whose free tail can truncate.
   --min-shrink=N             With --tail-tighten, require N blocks of shrink.
   --max-markets=N            Cap markets per run, highest recovery first.
+  --loop=SECONDS             Run continuously, SECONDS between passes, until
+                             Ctrl-C. Each pass is an independent full collection;
+                             a pass that errors is logged and the loop continues.
 
 Execution safety:
   Every transaction is simulated before submission. Ctrl-C stops before the
-  next transaction; a second Ctrl-C exits immediately. Any error stops the run.
+  next transaction; a second Ctrl-C exits immediately. Any error stops the run
+  (in --loop mode, only the current pass; the loop continues to the next).
 
 Environment:
   RPC_URL                    Required Solana RPC URL.
@@ -1101,8 +1105,43 @@ Environment:
   if (failed) process.exitCode = 1;
 }
 
+// Optionally run forever on an interval instead of once, so the collector can
+// be left running without an external cron. Each pass is an independent full
+// collection (the script keeps no state between passes), so a pass that throws
+// is logged and the loop simply continues to the next one rather than dying.
+// run() installs and removes its own SIGINT handler per pass; the loop adds its
+// own flag so Ctrl-C stops it between passes and during the interval sleep too.
+async function main(): Promise<void> {
+  const loopArg = process.argv.find((a) => a.startsWith('--loop='))?.slice(7);
+  if (loopArg === undefined) {
+    await run();
+    return;
+  }
+  const loopSeconds = Number(loopArg);
+  if (!Number.isFinite(loopSeconds) || loopSeconds <= 0) {
+    throw new Error(`invalid --loop: ${loopArg} (seconds between passes, must be > 0)`);
+  }
+  let stopLoop = false;
+  process.on('SIGINT', () => {
+    stopLoop = true;
+    console.error('\nStop requested; finishing the current pass, then exiting the loop.');
+  });
+  for (let pass = 1; !stopLoop; pass += 1) {
+    console.log(`\n===== collection pass ${pass} @ ${new Date().toISOString()} =====`);
+    try {
+      await run();
+    } catch (error) {
+      console.error(`pass ${pass} failed:`, error instanceof Error ? error.message : error);
+    }
+    if (stopLoop) break;
+    console.log(`sleeping ${loopSeconds}s until the next pass (Ctrl-C to stop)`);
+    await sleep(loopSeconds * 1000, () => stopLoop);
+  }
+  console.log('loop stopped.');
+}
+
 if (require.main === module) {
-  run().catch((error) => {
+  main().catch((error) => {
     console.error('Error:', error);
     process.exit(1);
   });
