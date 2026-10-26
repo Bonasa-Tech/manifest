@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1792175441527,
+  "lastUpdate": 1793027339136,
   "repoUrl": "https://github.com/Bonasa-Tech/manifest",
   "entries": {
     "CU Benchmark": [
@@ -15275,6 +15275,72 @@ window.BENCHMARK_DATA = {
           {
             "name": "MFX_99",
             "value": 2388,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "cyrbritt@gmail.com",
+            "name": "Britt Cyr",
+            "username": "brittcyr"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "b31b1b7cbc815ee9888522ebea809a0314ef78be",
+          "message": "Add single-file core-market defrag runner (#768)\n\n* Add single-file core-market defrag runner\n\nThe core-market defrag/sweep tooling previously lived only in a local deploy\nkit with hardcoded paths, so it could not be run from a checkout elsewhere.\nThis brings it into the repo as one self-contained script.\n\nscripts/defrag/defrag.mjs consolidates the runner and its four helper modules\n(rpc, market transaction builders, v1 transaction builders, health gauge) into\na single file with no machine-specific references. All configuration is flags\nor environment: --rpc-url/RPC_URL, --keypair/KEYPAIR_PATH, and --state-dir for\nthe resumable log/plan-cache/abort state (default ./defrag-state, gitignored).\n\nIt covers the full range via flags: sweep-only (collect fees + truncate free\ntails, relocating nothing, safe on any market and safe to schedule), seats-only,\nbounded relocation, and unbounded compaction. Batching packs v1 transactions to\n19 markets each, every batch is simulated before it is sent and split on\nfailure, and --health-every samples program-wide health and aborts if\nmanifest-attributed failures rise above the pre-run baseline. Markets the\nprogram would expand before compacting are never selected; closure stays\ndouble-gated and off by default.\n\nAlso adds programs/wrapper/tests/cases/market_defrag.rs: a test that runs a core\nmarket defrag which relocates the wrapper's resting orders, then exercises the\nwrapper over the now-stale indexes (cancels and placements). It proves the\ncurrent wrapper re-derives trader and order indexes via resolve_* rather than\ndereferencing cached offsets, so market compaction does not break it.\n\n* Format market_defrag test with nightly rustfmt\n\n* Wire --keypair flag through to the execute path\n\nThe consolidated runner read process.env.KEYPAIR_PATH directly in the signing\nblock, so the documented --keypair flag was ignored for --execute: passing it\nwithout also setting the env var threw 'KEYPAIR_PATH is not set'. Use the\nKEYPAIR_PATH config const (flag ?? env) everywhere instead.\n\nVerified by a real mainnet execute with both RPC_URL and KEYPAIR_PATH unset and\nsupplied only as --rpc-url/--keypair: signed with the collector key and landed\na v1 sweep.",
+          "timestamp": "2026-10-26T11:05:02-04:00",
+          "tree_id": "d9385568f02120db0523e38c8547dee2507b5c13",
+          "url": "https://github.com/Bonasa-Tech/manifest/commit/b31b1b7cbc815ee9888522ebea809a0314ef78be"
+        },
+        "date": 1793027335932,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "PHX_50",
+            "value": 6748,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "PHX_95",
+            "value": 8819,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "PHX_99",
+            "value": 10866,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_50",
+            "value": 1115,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_95",
+            "value": 1590,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_99",
+            "value": 2393,
             "range": "",
             "unit": "CU",
             "extra": ""
