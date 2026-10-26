@@ -22,9 +22,61 @@ import { Connection, PublicKey } from '@solana/web3.js';
 import bs58 from 'bs58';
 import * as fs from 'fs';
 import { PROGRAM_ID as WRAPPER_PROGRAM_ID } from '../client/ts/src/wrapper';
-import { runCoreCollections } from './collector-core';
+import {
+  DEFAULT_MAX_UNBACKED_SIMS,
+  createUnbackedTracker,
+  runCoreCollections,
+} from './collector-core';
 
 const { RPC_URL, KEYPAIR_PATH } = process.env;
+
+// One tracker for the whole process, so --loop passes can tell an order that
+// has rested unchanged since the last pass from a fast-churning one. Only
+// orders seen across passes are cleaned (see collector-core's UnbackedTracker).
+// A single (non-loop) invocation has only one pass, so it sets the baseline and
+// cleans no unbacked orders; use --loop for unbacked cleaning. Set
+// UNBACKED_STATE_PATH to persist the baseline across restarts.
+const unbackedTracker = createUnbackedTracker();
+const UNBACKED_STATE_PATH = process.env.UNBACKED_STATE_PATH;
+
+// Best effort: a missing or unreadable state file just means a fresh baseline.
+function loadUnbackedState(): void {
+  if (UNBACKED_STATE_PATH === undefined) return;
+  try {
+    const raw = fs.readFileSync(UNBACKED_STATE_PATH, 'utf8');
+    const parsed: unknown = JSON.parse(raw);
+    if (parsed !== null && typeof parsed === 'object') {
+      unbackedTracker.streaks = new Map(
+        Object.entries(parsed as Record<string, number>).filter(
+          ([, n]) => typeof n === 'number' && Number.isFinite(n),
+        ),
+      );
+      console.log(
+        `Loaded ${unbackedTracker.streaks.size} unbacked-order streaks from ${UNBACKED_STATE_PATH}`,
+      );
+    }
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+      console.warn(
+        `Could not read ${UNBACKED_STATE_PATH}: ${error instanceof Error ? error.message : error}`,
+      );
+    }
+  }
+}
+
+function saveUnbackedState(): void {
+  if (UNBACKED_STATE_PATH === undefined) return;
+  try {
+    fs.writeFileSync(
+      UNBACKED_STATE_PATH,
+      JSON.stringify(Object.fromEntries(unbackedTracker.streaks)),
+    );
+  } catch (error) {
+    console.warn(
+      `Could not write ${UNBACKED_STATE_PATH}: ${error instanceof Error ? error.message : error}`,
+    );
+  }
+}
 
 const AUTHORIZED_COLLECTOR = new PublicKey(
   'B6dmr2UAn2wgjdm3T4N1Vjd8oPYRRTguByW7AEngkeL6',
@@ -68,7 +120,7 @@ const V1_MAX_ACCOUNT_ADDRESSES = 64;
 const V1_MAX_WRAPPERS = V1_MAX_ACCOUNT_ADDRESSES - 3;
 const MAX_COMPUTE_UNITS = 1_400_000;
 const MAX_LOADED_ACCOUNTS_DATA_SIZE = 64 * 1024 * 1024;
-const DEFAULT_DELAY_MS = 10_000;
+const DEFAULT_DELAY_MS = 1_000;
 // How many fresh-blockhash attempts a batch gets when its transaction expires
 // without landing. Expiry means the transaction can never land, so resending
 // the batch is safe; a landed-check runs before each retry to catch the
@@ -603,11 +655,25 @@ Options:
   --global-clean             Clean expired orders for their gas deposits.
                              Requires --markets: one clean exactly cancels one
                              signature fee, so it must ride along.
+  --clean-unbacked           Also clean unbacked global orders (extends
+                             --global-clean). Only orders that have rested
+                             UNCHANGED since the previous pass are cleaned, so
+                             fast-churning slots are left alone; use --loop (a
+                             single run just sets the baseline). Each is
+                             confirmed by simulation first; a dry run previews
+                             which traders have unbacked orders.
+                             CLEAN_SKIP_TRADERS whitelists makers to leave alone.
+  --max-unbacked-sims=N      Cap unbacked confirmation simulations per pass
+                             (default ${DEFAULT_MAX_UNBACKED_SIMS}); longest-resting
+                             orders first, the rest wait for a later pass.
   --tail-tighten             Also take markets whose free tail can truncate.
   --min-shrink=N             With --tail-tighten, require N blocks of shrink.
   --max-markets=N            Cap markets per run, highest recovery first.
-  --loop=SECONDS             Run continuously, SECONDS between passes, until
-                             Ctrl-C. Each pass is an independent full collection;
+  --loop=SECONDS             Run continuously until Ctrl-C, starting a pass every
+                             SECONDS measured from the previous pass's START (so
+                             run time does not stack on top of the interval). A
+                             pass that overruns the interval is followed
+                             immediately by the next - never concurrently - and
                              a pass that errors is logged and the loop continues.
 
 Execution safety:
@@ -619,7 +685,11 @@ Environment:
   RPC_URL                    Required Solana RPC URL.
   KEYPAIR_PATH               Authorized collector keypair; required with --execute.
   MAX_WRAPPERS_PER_TX        Alternative batch-size safety cap.
-  COLLECT_DELAY_MS           Alternative delay between transactions.`);
+  COLLECT_DELAY_MS           Alternative delay between transactions (default 1000ms).
+  CLEAN_SKIP_TRADERS         Maker pubkeys (comma/space separated) never cleaned.
+  MAX_UNBACKED_SIMS          Alternative unbacked-sim cap (default ${DEFAULT_MAX_UNBACKED_SIMS}).
+  UNBACKED_STATE_PATH        If set, persist the unbacked-order baseline here so
+                             a restart keeps "unchanged since last run" state.`);
     return;
   }
 
@@ -631,6 +701,19 @@ Environment:
   // Core-program phases. Opt-in, so every existing invocation is unchanged.
   const sweepMarkets = process.argv.includes('--markets');
   const globalClean = process.argv.includes('--global-clean');
+  const cleanUnbacked = process.argv.includes('--clean-unbacked');
+  const maxUnbackedSims =
+    parsePositiveInteger('max-unbacked-sims', 'MAX_UNBACKED_SIMS') ??
+    DEFAULT_MAX_UNBACKED_SIMS;
+  // Maker pubkeys whose orders must never be cleaned, from CLEAN_SKIP_TRADERS
+  // (comma- or whitespace-separated). A safety whitelist for traders we do not
+  // want to disturb even when their global orders are technically cleanable.
+  const skipTraders = new Set(
+    (process.env.CLEAN_SKIP_TRADERS ?? '')
+      .split(/[\s,]+/)
+      .map((s) => s.trim())
+      .filter((s) => s.length > 0),
+  );
   const tailTighten = process.argv.includes('--tail-tighten');
   const minShrinkBlocks = tailTighten
     ? (parsePositiveInteger('min-shrink', 'MIN_SHRINK_BLOCKS') ?? 1)
@@ -650,6 +733,11 @@ Environment:
   if (globalClean && !sweepMarkets) {
     throw new Error(
       '--global-clean must ride along with --markets: a clean-only run barely pays for its own signature',
+    );
+  }
+  if (cleanUnbacked && !globalClean) {
+    throw new Error(
+      '--clean-unbacked extends --global-clean; pass --global-clean as well',
     );
   }
   if (!coreOnly && allPublic === (wrapperOption !== undefined)) {
@@ -760,6 +848,10 @@ Environment:
         execute,
         sweepMarkets,
         globalClean,
+        cleanUnbacked,
+        maxUnbackedSims,
+        unbackedTracker,
+        skipTraders,
         minShrinkBlocks,
         minRecoveryLamports: 100_000n,
         maxMarkets,
@@ -770,7 +862,11 @@ Environment:
     console.log(
       `Core phases: ${coreResult.transactionsSent} transactions, ` +
         `${formatSOL(coreResult.recoveredLamports + coreResult.cleanRewardLamports)} recovered ` +
-        `(${coreResult.marketsSelected} markets, ${coreResult.cleanableOrders} orders cleaned)`,
+        `(${coreResult.marketsSelected} markets, ${coreResult.cleanableOrders} orders cleaned` +
+        (coreResult.cleanStoppedEarly
+          ? '; global clean stopped early after a failed tx (retries next pass)'
+          : '') +
+        `)`,
     );
     if (coreOnly) return;
   }
@@ -1112,30 +1208,64 @@ Environment:
 // run() installs and removes its own SIGINT handler per pass; the loop adds its
 // own flag so Ctrl-C stops it between passes and during the interval sleep too.
 async function main(): Promise<void> {
+  loadUnbackedState();
   const loopArg = process.argv.find((a) => a.startsWith('--loop='))?.slice(7);
   if (loopArg === undefined) {
     await run();
+    saveUnbackedState();
     return;
   }
   const loopSeconds = Number(loopArg);
   if (!Number.isFinite(loopSeconds) || loopSeconds <= 0) {
-    throw new Error(`invalid --loop: ${loopArg} (seconds between passes, must be > 0)`);
+    throw new Error(
+      `invalid --loop: ${loopArg} (interval in seconds, must be > 0)`,
+    );
   }
   let stopLoop = false;
   process.on('SIGINT', () => {
     stopLoop = true;
-    console.error('\nStop requested; finishing the current pass, then exiting the loop.');
+    console.error(
+      '\nStop requested; finishing the current pass, then exiting the loop.',
+    );
   });
+  // Fixed-rate schedule: a pass starts every `loopSeconds` measured from the
+  // PREVIOUS pass's start, not from its end, so run time does not stack on top
+  // of the interval. If a pass runs longer than the interval, the next starts
+  // immediately after it (never concurrently - passes are strictly
+  // sequential, so there is no overlap), and the schedule simply stops drifting
+  // further behind rather than trying to catch up with back-to-back passes.
+  const intervalMs = loopSeconds * 1000;
   for (let pass = 1; !stopLoop; pass += 1) {
-    console.log(`\n===== collection pass ${pass} @ ${new Date().toISOString()} =====`);
+    const startedAt = Date.now();
+    console.log(
+      `\n===== collection pass ${pass} @ ${new Date().toISOString()} =====`,
+    );
     try {
       await run();
     } catch (error) {
-      console.error(`pass ${pass} failed:`, error instanceof Error ? error.message : error);
+      console.error(
+        `pass ${pass} failed:`,
+        error instanceof Error ? error.message : error,
+      );
     }
+    // Persist after every pass (even a failed one), so a restart resumes from
+    // the latest baseline rather than re-establishing it from scratch.
+    saveUnbackedState();
     if (stopLoop) break;
-    console.log(`sleeping ${loopSeconds}s until the next pass (Ctrl-C to stop)`);
-    await sleep(loopSeconds * 1000, () => stopLoop);
+    const elapsedMs = Date.now() - startedAt;
+    const waitMs = intervalMs - elapsedMs;
+    if (waitMs > 0) {
+      console.log(
+        `pass took ${(elapsedMs / 1000).toFixed(1)}s; sleeping ${(waitMs / 1000).toFixed(1)}s ` +
+          `to keep the ${loopSeconds}s interval (Ctrl-C to stop)`,
+      );
+      await sleep(waitMs, () => stopLoop);
+    } else {
+      console.log(
+        `pass took ${(elapsedMs / 1000).toFixed(1)}s, over the ${loopSeconds}s interval; ` +
+          `starting the next pass immediately`,
+      );
+    }
   }
   console.log('loop stopped.');
 }

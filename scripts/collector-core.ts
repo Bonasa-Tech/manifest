@@ -56,10 +56,18 @@ const NUM_BYTES_ALLOCATED_OFFSET = 152;
 // RestingOrder payload: price(16) atoms(8) seq(8) trader_index(4)
 // last_valid_slot(4) is_bid(1) order_type(1) spread(2) padding(20).
 const ORDER_SEQUENCE_OFFSET = 24;
+const ORDER_TRADER_INDEX_OFFSET = 32;
 const ORDER_LAST_VALID_SLOT_OFFSET = 36;
 const ORDER_IS_BID_OFFSET = 40;
+const ORDER_TYPE_OFFSET = 41;
+// OrderType::Global. Only global orders can be unbacked (their collateral
+// lives in a shared global account that can be withdrawn out from under them).
+const ORDER_TYPE_GLOBAL = 3;
 // NO_EXPIRATION_LAST_VALID_SLOT; an order with this value never expires.
 const NO_EXPIRATION = 0;
+// ClaimedSeat.trader is the first field of the payload, so the maker pubkey of
+// an order sits at its trader_index block + the node header.
+const NODE_TYPE_RESTING_ORDER_SEAT_TRADER = NODE_PAYLOAD_OFFSET;
 
 // Rent on mainnet. Defrag leaves `keep_count + 2` blocks, never fewer: real
 // allocation paths depend on two spare nodes.
@@ -116,6 +124,16 @@ export type CleanableOrder = {
   /** The global account whose mint matches this order's side. */
   global: string;
   lastValidSlot: number;
+  /** The order owner, resolved from the ClaimedSeat at its trader_index. */
+  maker: string;
+  /**
+   * 'expired' is eligible on its own. 'unbacked' is only a CANDIDATE here: a
+   * global order that isn't expired might or might not be unbacked, and that
+   * depends on the maker's live global balance. It is confirmed by simulating
+   * the clean (the program returns InvalidClean for a still-backed order), so
+   * the simulation, not this script, is the source of truth.
+   */
+  kind: 'expired' | 'unbacked';
 };
 
 const rentMinimum = (space: number): bigint =>
@@ -201,11 +219,33 @@ export function planMarket(account: MarketAccount): MarketPlan | null {
  * requires one whose mint matches the order's side (quote for a bid, base for
  * an ask), so an order on a market with no such global cannot be cleaned.
  */
+/** The order owner pubkey, read from the ClaimedSeat at trader_index. */
+function readMaker(data: Buffer, traderIndex: number): string | null {
+  const seat =
+    MARKET_FIXED_SIZE + traderIndex + NODE_TYPE_RESTING_ORDER_SEAT_TRADER;
+  if (traderIndex < 0 || seat + 32 > data.length) return null;
+  return new PublicKey(data.subarray(seat, seat + 32)).toBase58();
+}
+
+/**
+ * Orders GlobalClean can remove.
+ *
+ * Expired orders are eligible outright. With `includeUnbacked`, non-expired
+ * GLOBAL orders are returned too as candidates (kind 'unbacked'): whether they
+ * are actually cleanable depends on the maker's live global balance, which the
+ * caller confirms by simulating the clean. Non-global, non-expired orders are
+ * never cleanable and are skipped.
+ *
+ * `globalForMint` must contain only global accounts that exist: GlobalClean
+ * needs one whose mint matches the order's side (quote for a bid, base for an
+ * ask), so an order on a market with no such global cannot be cleaned.
+ */
 export function findCleanableOrders(
   plan: MarketPlan,
   data: Buffer,
   nowSlot: number,
   globalForMint: Map<string, string>,
+  includeUnbacked = false,
 ): CleanableOrder[] {
   const out: CleanableOrder[] = [];
   const allocated = data.readUInt32LE(NUM_BYTES_ALLOCATED_OFFSET);
@@ -219,10 +259,31 @@ export function findCleanableOrders(
     const lastValidSlot = data.readUInt32LE(
       payload + ORDER_LAST_VALID_SLOT_OFFSET,
     );
-    if (lastValidSlot === NO_EXPIRATION || lastValidSlot >= nowSlot) continue;
+    const expired = lastValidSlot !== NO_EXPIRATION && lastValidSlot < nowSlot;
+    const isGlobal = data[payload + ORDER_TYPE_OFFSET] === ORDER_TYPE_GLOBAL;
+    // Expired is eligible as-is; a non-expired global order is an unbacked
+    // candidate. Everything else cannot be cleaned.
+    let kind: CleanableOrder['kind'] | null = null;
+    if (expired) kind = 'expired';
+    else if (includeUnbacked && isGlobal) kind = 'unbacked';
+    if (kind === null) continue;
+
+    // The program checks the global account against the order's side: a bid is
+    // backed in the quote mint, an ask in the base mint (global_clean.rs). This
+    // mirrors that exactly. The side is read from a live snapshot, though, and
+    // the slot can be cancelled or recycled to the other side before the clean
+    // lands — at which point this global is "wrong" for the new order. That
+    // race is caught at send time (a failed clean stops global clean for the
+    // pass), not avoidable here: the selection is correct for the state we
+    // read.
     const isBid = data[payload + ORDER_IS_BID_OFFSET] === 1;
     const global = globalForMint.get(isBid ? plan.quoteMint : plan.baseMint);
     if (global === undefined) continue;
+    const maker = readMaker(
+      data,
+      data.readUInt32LE(payload + ORDER_TRADER_INDEX_OFFSET),
+    );
+    if (maker === null) continue;
     out.push({
       market: plan.pubkey,
       // The instruction takes a byte offset into the dynamic area, not a
@@ -231,6 +292,8 @@ export function findCleanableOrders(
       sequenceNumber: data.readBigUInt64LE(payload + ORDER_SEQUENCE_OFFSET),
       global,
       lastValidSlot,
+      maker,
+      kind,
     });
   }
   return out;
@@ -273,6 +336,10 @@ export function createGlobalCleanInstruction(
   const data = new Uint8Array(5);
   data[0] = GLOBAL_CLEAN_DISCRIMINANT;
   new DataView(data.buffer).setUint32(1, order.orderIndex, true);
+  // Account order must match GlobalCleanContext::load exactly:
+  // payer, market, system_program, global. Passing global and system in the
+  // wrong order makes the loader validate the global account as the system
+  // program and reject it with IncorrectProgramId.
   return {
     accounts: [
       {
@@ -280,8 +347,8 @@ export function createGlobalCleanInstruction(
         role: AccountRole.WRITABLE_SIGNER,
       },
       { address: address(order.market), role: AccountRole.WRITABLE },
-      { address: address(order.global), role: AccountRole.WRITABLE },
       { address: address(SYSTEM_PROGRAM), role: AccountRole.READONLY },
+      { address: address(order.global), role: AccountRole.WRITABLE },
     ],
     programAddress: address(MANIFEST_PROGRAM_ID.toBase58()),
     data,
@@ -463,7 +530,92 @@ export async function resolveTokenPrograms(
 // at two addresses each (market + global).
 const V1_MAX_SIZE = 4096;
 export const MAX_SWEEPS_PER_TX = 19;
-export const MAX_CLEANS_PER_TX = 24;
+// A clean contributes two unique addresses (market + global; payer and system
+// are shared across the whole transaction), so the 64-address v1 limit allows
+// ~31 cleans on distinct markets and more when several orders share a market
+// and its global - up to the ~63-instruction ceiling. CU does not bind: one
+// GlobalClean measures ~1,650 CU on mainnet, so even 60 fit inside 1.4M many
+// times over. The packer measures the real serialized size and stops at the
+// address/size limit on its own; this cap just needs to sit above it rather
+// than throttle packing, with a little headroom under the instruction ceiling.
+export const MAX_CLEANS_PER_TX = 55;
+// Measured ~1,650 CU per clean on mainnet; 3,000 leaves generous margin.
+const CLEAN_CU_EACH = 3_000;
+// Default ceiling on per-pass unbacked confirmation simulations. Each is one
+// RPC round trip, so an unbounded set (15k+ global orders observed) could take
+// an hour; this keeps a pass short. Overridable via the maxUnbackedSims option.
+export const DEFAULT_MAX_UNBACKED_SIMS = 1_000;
+
+/**
+ * Carried across passes to tell an old, quiet unbacked order from a fast
+ * churning one. Maps an order's identity (`market:sequence_number`, stable
+ * because a resting order is immutable) to the number of consecutive passes it
+ * has been seen as an unbacked candidate. Only an order seen in the previous
+ * pass too — i.e. unchanged since the last run — is cleaned. The caller owns
+ * one tracker and passes it in every pass; the first pass sets the baseline.
+ */
+export type UnbackedTracker = {
+  streaks: Map<string, number>;
+};
+
+export const createUnbackedTracker = (): UnbackedTracker => ({
+  streaks: new Map(),
+});
+
+/**
+ * Choose which unbacked candidates to confirm this pass, and advance the
+ * tracker. Only orders that have rested UNCHANGED since the previous pass are
+ * chosen: a resting order is immutable, so the same `market:sequence_number`
+ * across passes is literally the same order, and one that survived a full
+ * interval is old and quiet rather than a fast-churning slot. This both targets
+ * stale orders and sidesteps the read->send race, which only bites orders that
+ * turn over quickly.
+ *
+ * The oldest (longest-resting) candidates come first so the `cap` confirms them
+ * and the rest age into a later pass rather than starving. The tracker is
+ * rebuilt from only this pass's candidates, so an order that was cancelled or
+ * replaced drops out and its successor (a new sequence number) starts over at
+ * one. With no tracker, nothing is ever chosen — there is no prior pass to
+ * compare against — which is why a single run only sets the baseline.
+ */
+export function selectStableUnbacked(
+  candidates: CleanableOrder[],
+  tracker: UnbackedTracker | undefined,
+  cap: number,
+): {
+  toConfirm: CleanableOrder[];
+  /** Candidates present in the previous pass too, so eligible this pass. */
+  stable: number;
+  /** Candidates seen for the first time (or after a change): not yet eligible. */
+  freshlySeen: number;
+  /** Eligible candidates left for a later pass because of the cap. */
+  overCap: number;
+} {
+  const identity = (order: CleanableOrder): string =>
+    `${order.market}:${order.sequenceNumber}`;
+  const prior = tracker?.streaks ?? new Map<string, number>();
+  const withStreak = candidates.map((order) => {
+    const id = identity(order);
+    return { order, id, streak: (prior.get(id) ?? 0) + 1 };
+  });
+  const stable = withStreak
+    .filter((entry) => entry.streak >= 2)
+    .sort((a, b) => b.streak - a.streak || (a.id < b.id ? -1 : 1));
+  const toConfirm = stable
+    .slice(0, Math.max(0, cap))
+    .map((entry) => entry.order);
+  if (tracker) {
+    tracker.streaks = new Map(
+      withStreak.map((entry) => [entry.id, entry.streak]),
+    );
+  }
+  return {
+    toConfirm,
+    stable: stable.length,
+    freshlySeen: withStreak.length - stable.length,
+    overCap: stable.length - toConfirm.length,
+  };
+}
 const MAX_COMPUTE_UNITS = 1_400_000;
 // Mandatory. Without it a multi-leg batch fails MaxLoadedAccountsDataSizeExceeded
 // having consumed zero compute units, which looks like a program bug.
@@ -521,6 +673,26 @@ export type CoreCollectionOptions = {
   minShrinkBlocks: number;
   /** Also clean expired orders, batched, and only when they pay for themselves. */
   globalClean: boolean;
+  /**
+   * In addition to expired orders, clean unbacked global orders. Each candidate
+   * is confirmed by simulation before it is included, so a still-backed order is
+   * never submitted.
+   */
+  cleanUnbacked: boolean;
+  /**
+   * Most unbacked candidates to confirm by simulation in one pass. Defaults to
+   * {@link DEFAULT_MAX_UNBACKED_SIMS}. The oldest (longest-resting) candidates
+   * are confirmed first; the rest wait for a later pass.
+   */
+  maxUnbackedSims?: number;
+  /**
+   * Tracks which unbacked orders have been resting unchanged across passes, so
+   * only old, quiet ones are cleaned (see {@link UnbackedTracker}). Without it,
+   * no unbacked order is ever cleaned — there is no "last run" to compare to.
+   */
+  unbackedTracker?: UnbackedTracker;
+  /** Maker pubkeys whose orders must never be cleaned. */
+  skipTraders: Set<string>;
   minRecoveryLamports: bigint;
   maxMarkets?: number;
   delayMs: number;
@@ -535,6 +707,55 @@ export type CoreCollectionResult = {
   recoveredLamports: bigint;
   cleanRewardLamports: bigint;
   signatures: string[];
+  /**
+   * A clean transaction failed and global clean was stopped for the rest of
+   * the pass (the next pass retries from a fresh read). Expected now and then
+   * on a live book; surfaced so a pass that cleaned little can be told apart
+   * from one that simply had little to clean.
+   */
+  cleanStoppedEarly: boolean;
+};
+
+/**
+ * Error codes the program returns when a clean's target order has moved since
+ * we read the market: `InvalidClean` (21 — the global no longer matches the
+ * order's side, logged "Wrong global provided", or the order is no longer
+ * eligible) and `WrongIndexHintParams` (10 — the slot now holds a different
+ * node, or defrag shrank the account past the index). Both mean the same
+ * thing operationally: skip this order, the next pass reads fresh state.
+ */
+const CLEAN_RACE_ERROR_CODES: ReadonlyMap<number, string> = new Map([
+  [21, 'InvalidClean'],
+  [10, 'WrongIndexHint'],
+]);
+
+const safeStringify = (value: unknown): string => {
+  if (typeof value === 'string') return value;
+  // A thrown send error carries its detail in the message (the `rpc` helper
+  // formats `${method} RPC failed: ${JSON.stringify(error)}`), which
+  // JSON.stringify of the Error object would drop — it has no enumerable
+  // fields. Read the message directly so the `Custom` code survives.
+  if (value instanceof Error) return value.stack ?? value.message;
+  try {
+    return JSON.stringify(value) ?? String(value);
+  } catch {
+    return String(value);
+  }
+};
+
+/**
+ * The program error code, if `value` is a race on a clean's target order (see
+ * {@link CLEAN_RACE_ERROR_CODES}). Reads both the structured `err` a
+ * simulation returns and the error a send throws, by matching the `Custom`
+ * code either carries, so a failed clean can be reported as an expected race
+ * ("an order moved since the read") rather than an opaque fault before global
+ * clean backs off for the pass.
+ */
+export const cleanRaceErrorCode = (value: unknown): number | null => {
+  const match = safeStringify(value).match(/"Custom"\s*:\s*(\d+)/);
+  if (match === null) return null;
+  const code = Number(match[1]);
+  return CLEAN_RACE_ERROR_CODES.has(code) ? code : null;
 };
 
 /**
@@ -574,6 +795,7 @@ export async function runCoreCollections(
     recoveredLamports: 0n,
     cleanRewardLamports: 0n,
     signatures: [],
+    cleanStoppedEarly: false,
   };
 
   console.log('Fetching core market accounts...');
@@ -622,16 +844,89 @@ export async function runCoreCollections(
     // market is worth sweeping says nothing about whether it holds expired
     // orders, and restricting the search to the selection lost 178 of 179
     // cleanable orders as soon as --min-shrink narrowed it.
+    const candidates: CleanableOrder[] = [];
     for (const plan of plans) {
       const data = dataByMarket.get(plan.pubkey);
       if (data === undefined) continue;
-      cleans.push(...findCleanableOrders(plan, data, slot, globals));
+      candidates.push(
+        ...findCleanableOrders(
+          plan,
+          data,
+          slot,
+          globals,
+          options.cleanUnbacked,
+        ),
+      );
     }
-    result.cleanableOrders = cleans.length;
+
+    // Never touch a whitelisted maker's orders.
+    const beforeSkip = candidates.length;
+    let kept = candidates.filter((c) => !options.skipTraders.has(c.maker));
+    const skipped = beforeSkip - kept.length;
+
+    // Expired orders are eligible outright. Unbacked candidates are only
+    // eligible if the maker's global balance has fallen short, which the
+    // program alone can judge: simulate each one and keep only those the
+    // program would accept. One dummy blockhash serves every sim
+    // (replaceRecentBlockhash), so this is N cheap simulateTransaction calls.
+    const expired = kept.filter((c) => c.kind === 'expired');
+    const unbackedCandidates = kept.filter((c) => c.kind === 'unbacked');
+    const unbacked: CleanableOrder[] = [];
+    if (unbackedCandidates.length > 0) {
+      const cap = options.maxUnbackedSims ?? DEFAULT_MAX_UNBACKED_SIMS;
+      const selection = selectStableUnbacked(
+        unbackedCandidates,
+        options.unbackedTracker,
+        cap,
+      );
+      console.log(
+        `${unbackedCandidates.length} unbacked candidates: ${selection.stable} unchanged since last pass` +
+          (selection.freshlySeen > 0
+            ? `, ${selection.freshlySeen} new or changed (not cleaned this pass)`
+            : '') +
+          (selection.overCap > 0
+            ? `, ${selection.overCap} over the ${cap}-sim cap (deferred)`
+            : '') +
+          `; confirming ${selection.toConfirm.length} by simulation...`,
+      );
+      for (const order of selection.toConfirm) {
+        if (options.shouldStop()) break;
+        const sim = await deps.simulate(
+          [createGlobalCleanInstruction(order, collector)],
+          40_000,
+          MAX_LOADED_ACCOUNTS_DATA_SIZE,
+        );
+        if (sim.err === null || sim.err === undefined) unbacked.push(order);
+      }
+    }
+    kept = [...expired, ...unbacked];
+
+    const byMaker = new Map<string, { expired: number; unbacked: number }>();
+    for (const c of kept) {
+      const m = byMaker.get(c.maker) ?? { expired: 0, unbacked: 0 };
+      m[c.kind] += 1;
+      byMaker.set(c.maker, m);
+    }
+    result.cleanableOrders = kept.length;
     console.log(
-      `${globals.size} global accounts; ${cleans.length} expired orders cleanable ` +
-        `(${Number(BigInt(cleans.length) * BigInt(GAS_DEPOSIT_LAMPORTS)) / 1e9} SOL of gas deposits)`,
+      `${globals.size} global accounts; ${expired.length} expired + ${unbacked.length} unbacked ` +
+        `= ${kept.length} cleanable (${Number(BigInt(kept.length) * BigInt(GAS_DEPOSIT_LAMPORTS)) / 1e9} SOL of gas deposits)` +
+        (skipped > 0 ? `; ${skipped} skipped by trader whitelist` : ''),
     );
+    // Preview: which traders have orders to clean (the unbacked ones especially).
+    const unbackedByMaker = [...byMaker.entries()]
+      .filter(([, v]) => v.unbacked > 0)
+      .sort((a, b) => b[1].unbacked - a[1].unbacked);
+    if (unbackedByMaker.length > 0) {
+      console.log('  traders with unbacked orders:');
+      for (const [maker, v] of unbackedByMaker) {
+        console.log(
+          `    ${maker}  ${v.unbacked} unbacked${v.expired ? `, ${v.expired} expired` : ''}`,
+        );
+      }
+    }
+
+    cleans = kept;
     if (!cleanBatchIsProfitable(cleans.length, options.sweepMarkets)) {
       console.log(
         '  skipping global clean: the deposits would not cover the signature it needs',
@@ -687,23 +982,29 @@ export async function runCoreCollections(
     recovered: bigint;
     reward: bigint;
     /**
-     * Whether a simulation failure should abort the run. Cleans are
-     * opportunistic: an expired order can be cancelled by anyone between the
-     * read and the send, which invalidates its index and fails the batch
-     * through no fault of ours. On an hourly schedule that must not take the
-     * sweep down with it. A sweep failing is a real problem and still stops.
+     * Whether a simulation failure should abort the run. A sweep failing is a
+     * real problem and stops the run. Clean batches are handled separately (see
+     * cleanItems): a failed clean backs off global clean for the pass but never
+     * aborts, so they do not rely on this flag.
      */
     optional: boolean;
+    /**
+     * The orders behind a clean batch. Present only on clean work items, which
+     * are sent through sendCleanBatch; the first failure stops global clean for
+     * the rest of the pass.
+     */
+    cleanItems?: CleanableOrder[];
   };
   const work: Work[] = [
     // Cleans first: cheap, and they free blocks a later sweep can truncate.
     ...cleanBatches.map((batch) => ({
       instructions: batch.map(cleanInstruction),
-      units: Math.min(MAX_COMPUTE_UNITS, 40_000 * batch.length + 10_000),
-      label: `clean ${batch.length} expired orders`,
+      units: Math.min(MAX_COMPUTE_UNITS, CLEAN_CU_EACH * batch.length + 10_000),
+      label: `clean ${batch.length} orders`,
       recovered: 0n,
       reward: BigInt(batch.length) * BigInt(GAS_DEPOSIT_LAMPORTS),
       optional: true,
+      cleanItems: batch,
     })),
     ...sweepBatches.map((batch) => ({
       instructions: batch.map(sweepInstruction),
@@ -725,10 +1026,76 @@ export async function runCoreCollections(
     return result;
   }
 
+  // Send one clean batch, which is exactly one transaction. Returns false if it
+  // did not land - the pre-send simulation rejected it, or the send threw (a
+  // raced order, a churn on the book, an RPC hiccup). On the first such failure
+  // the caller stops cleaning for the rest of this pass and waits for the next
+  // one, which reads fresh state and tries again. Both the simulation and the
+  // send are guarded, so a failed clean backs cleaning off rather than aborting
+  // the pass and taking the sweep down with it.
+  const sendCleanBatch = async (orders: CleanableOrder[]): Promise<boolean> => {
+    const units = Math.min(
+      MAX_COMPUTE_UNITS,
+      CLEAN_CU_EACH * orders.length + 10_000,
+    );
+    const ixs = orders.map(cleanInstruction);
+    const describe = (reason: unknown): string => {
+      const raceCode = cleanRaceErrorCode(reason);
+      return raceCode !== null
+        ? `${CLEAN_RACE_ERROR_CODES.get(raceCode)}: an order moved since the read`
+        : safeStringify(reason);
+    };
+
+    const sim = await deps.simulate(ixs, units, MAX_LOADED_ACCOUNTS_DATA_SIZE);
+    if (sim.err !== null && sim.err !== undefined) {
+      console.warn(
+        `  clean batch of ${orders.length} did not simulate (${describe(sim.err)})`,
+      );
+      return false;
+    }
+    try {
+      const sig = await deps.buildAndSend(
+        ixs,
+        units,
+        MAX_LOADED_ACCOUNTS_DATA_SIZE,
+      );
+      result.transactionsSent += 1;
+      result.cleanRewardLamports +=
+        BigInt(orders.length) * BigInt(GAS_DEPOSIT_LAMPORTS);
+      result.signatures.push(sig);
+      console.log(`clean ${orders.length} orders: ${sig}`);
+      await deps.sleep(options.delayMs);
+      return true;
+    } catch (error) {
+      console.warn(
+        `  clean batch of ${orders.length} failed to send (${describe(error)})`,
+      );
+      return false;
+    }
+  };
+
+  // Once a clean transaction fails, stop trying to clean for the rest of this
+  // pass. The book is churning or an order raced; rather than burn signatures
+  // retrying within the same pass, back off and let the next pass start over
+  // from a fresh read. Only global clean stops - the sweep still runs.
+  let cleanPhaseStopped = false;
+
   for (const [index, item] of work.entries()) {
     if (options.shouldStop()) {
       console.warn('Stopping before the next transaction.');
       break;
+    }
+    if (item.cleanItems) {
+      if (cleanPhaseStopped) continue;
+      const sent = await sendCleanBatch(item.cleanItems);
+      if (!sent) {
+        cleanPhaseStopped = true;
+        result.cleanStoppedEarly = true;
+        console.warn(
+          '  a clean transaction failed; stopping global clean for this pass (the next pass retries from a fresh read)',
+        );
+      }
+      continue;
     }
     const simulation = await deps.simulate(
       item.instructions,
@@ -736,11 +1103,9 @@ export async function runCoreCollections(
       MAX_LOADED_ACCOUNTS_DATA_SIZE,
     );
     if (simulation.err !== null && simulation.err !== undefined) {
-      const detail = `${item.label}: ${JSON.stringify(simulation.err)}`;
+      const detail = `${item.label}: ${safeStringify(simulation.err)}`;
       if (!item.optional) throw new Error(`Simulation failed for ${detail}`);
-      console.warn(
-        `  skipping ${detail} (an order was likely cancelled since the read)`,
-      );
+      console.warn(`  skipping ${detail}`);
       continue;
     }
     const signature = await deps.buildAndSend(
