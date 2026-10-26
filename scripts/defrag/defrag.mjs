@@ -840,13 +840,13 @@ if (!execute) {
   process.exit(0);
 }
 
-if (!process.env.KEYPAIR_PATH) throw new Error('KEYPAIR_PATH is not set; the collector keypair is required to execute');
-const keypairBytes = Uint8Array.from(JSON.parse(fs.readFileSync(process.env.KEYPAIR_PATH, 'utf8')));
+if (!KEYPAIR_PATH) throw new Error('set --keypair=PATH or KEYPAIR_PATH; the collector keypair is required to execute');
+const keypairBytes = Uint8Array.from(JSON.parse(fs.readFileSync(KEYPAIR_PATH, 'utf8')));
 const signer = Keypair.fromSecretKey(keypairBytes);
 if (signer.publicKey.toBase58() !== COLLECTOR) {
-  throw new Error(`${process.env.KEYPAIR_PATH} is ${signer.publicKey.toBase58()}, not the collector ${COLLECTOR}`);
+  throw new Error(`${KEYPAIR_PATH} is ${signer.publicKey.toBase58()}, not the collector ${COLLECTOR}`);
 }
-console.log(`signing with ${signer.publicKey.toBase58()} (${process.env.KEYPAIR_PATH})`);
+console.log(`signing with ${signer.publicKey.toBase58()} (${KEYPAIR_PATH})`);
 // kit needs its own signer object; the web3.js keypair above still gates the
 // collector check, so both paths verify the same key before anything is sent.
 const v1Signer = useV1 ? await loadV1Signer(keypairBytes) : null;
