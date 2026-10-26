@@ -863,8 +863,8 @@ Environment:
       `Core phases: ${coreResult.transactionsSent} transactions, ` +
         `${formatSOL(coreResult.recoveredLamports + coreResult.cleanRewardLamports)} recovered ` +
         `(${coreResult.marketsSelected} markets, ${coreResult.cleanableOrders} orders cleaned` +
-        (coreResult.cleansSkippedRaced > 0
-          ? `, ${coreResult.cleansSkippedRaced} skipped as raced`
+        (coreResult.cleanStoppedEarly
+          ? '; global clean stopped early after a failed tx (retries next pass)'
           : '') +
         `)`,
     );

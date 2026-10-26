@@ -273,8 +273,9 @@ export function findCleanableOrders(
     // mirrors that exactly. The side is read from a live snapshot, though, and
     // the slot can be cancelled or recycled to the other side before the clean
     // lands — at which point this global is "wrong" for the new order. That
-    // race is caught at send time (see sendCleans), not avoidable here: the
-    // selection is correct for the state we read.
+    // race is caught at send time (a failed clean stops global clean for the
+    // pass), not avoidable here: the selection is correct for the state we
+    // read.
     const isBid = data[payload + ORDER_IS_BID_OFFSET] === 1;
     const global = globalForMint.get(isBid ? plan.quoteMint : plan.baseMint);
     if (global === undefined) continue;
@@ -707,12 +708,12 @@ export type CoreCollectionResult = {
   cleanRewardLamports: bigint;
   signatures: string[];
   /**
-   * Cleans dropped because the order moved between our read and the send: the
-   * slot was cancelled or recycled into a different order (or a non-order
-   * node). Expected on a live book, not a failure — surfaced only so a run
-   * that cleans nothing can be told apart from one that raced on everything.
+   * A clean transaction failed and global clean was stopped for the rest of
+   * the pass (the next pass retries from a fresh read). Expected now and then
+   * on a live book; surfaced so a pass that cleaned little can be told apart
+   * from one that simply had little to clean.
    */
-  cleansSkippedRaced: number;
+  cleanStoppedEarly: boolean;
 };
 
 /**
@@ -746,8 +747,9 @@ const safeStringify = (value: unknown): string => {
  * The program error code, if `value` is a race on a clean's target order (see
  * {@link CLEAN_RACE_ERROR_CODES}). Reads both the structured `err` a
  * simulation returns and the error a send throws, by matching the `Custom`
- * code either carries, so the caller can treat a raced clean as an expected
- * skip rather than a fault.
+ * code either carries, so a failed clean can be reported as an expected race
+ * ("an order moved since the read") rather than an opaque fault before global
+ * clean backs off for the pass.
  */
 export const cleanRaceErrorCode = (value: unknown): number | null => {
   const match = safeStringify(value).match(/"Custom"\s*:\s*(\d+)/);
@@ -793,7 +795,7 @@ export async function runCoreCollections(
     recoveredLamports: 0n,
     cleanRewardLamports: 0n,
     signatures: [],
-    cleansSkippedRaced: 0,
+    cleanStoppedEarly: false,
   };
 
   console.log('Fetching core market accounts...');
@@ -980,14 +982,17 @@ export async function runCoreCollections(
     recovered: bigint;
     reward: bigint;
     /**
-     * Whether a simulation failure should abort the run. Cleans are
-     * opportunistic: an expired order can be cancelled by anyone between the
-     * read and the send, which invalidates its index and fails the batch
-     * through no fault of ours. On an hourly schedule that must not take the
-     * sweep down with it. A sweep failing is a real problem and still stops.
+     * Whether a simulation failure should abort the run. A sweep failing is a
+     * real problem and stops the run. Clean batches are handled separately (see
+     * cleanItems): a failed clean backs off global clean for the pass but never
+     * aborts, so they do not rely on this flag.
      */
     optional: boolean;
-    /** The orders behind a clean batch, so a failed batch can be bisected. */
+    /**
+     * The orders behind a clean batch. Present only on clean work items, which
+     * are sent through sendCleanBatch; the first failure stops global clean for
+     * the rest of the pass.
+     */
     cleanItems?: CleanableOrder[];
   };
   const work: Work[] = [
@@ -1021,63 +1026,32 @@ export async function runCoreCollections(
     return result;
   }
 
-  // A clean dropped to a single order that still will not go: say why. A race
-  // on the order (the slot was cancelled or recycled since we read it) is an
-  // expected skip and counted as such; anything else is a genuine warning.
-  const dropOneClean = (order: CleanableOrder, reason: unknown): void => {
-    const raceCode = cleanRaceErrorCode(reason);
-    if (raceCode !== null) {
-      result.cleansSkippedRaced += 1;
-      console.log(
-        `  skip clean ${order.market}@${order.orderIndex}: order moved since read (${CLEAN_RACE_ERROR_CODES.get(raceCode)})`,
-      );
-      return;
-    }
-    console.warn(
-      `  dropping 1 clean (${order.market}@${order.orderIndex}): ${safeStringify(reason)}`,
-    );
-  };
-
-  // Send a batch of cleans; if it will not go, bisect: split in half and retry
-  // each side, down to a single order. A batch is all-or-nothing on chain, so
-  // one order that raced since the read (InvalidClean / WrongIndexHint) would
-  // otherwise waste every good clean packed alongside it. Bisection isolates
-  // the bad one in O(log n) extra simulations and still sends the rest.
-  //
-  // Crucially, both the pre-send simulation AND the send itself are guarded.
-  // The send runs preflight against a newer slot, so a clean that passed our
-  // simulation can still fail there (or time out confirming). Left unguarded,
-  // that throw would abort the whole pass and take the sweep down with it; a
-  // raced clean must not do that. A send that throws is treated exactly like a
-  // failed simulation — bisected or, at a single order, dropped. Re-sends are
-  // safe: each recursion simulates first, so an order that actually landed
-  // before a confirmation timeout simulates as already-cleaned and is skipped,
-  // never sent twice.
-  const sendCleans = async (orders: CleanableOrder[]): Promise<void> => {
-    if (orders.length === 0 || options.shouldStop()) return;
+  // Send one clean batch, which is exactly one transaction. Returns false if it
+  // did not land - the pre-send simulation rejected it, or the send threw (a
+  // raced order, a churn on the book, an RPC hiccup). On the first such failure
+  // the caller stops cleaning for the rest of this pass and waits for the next
+  // one, which reads fresh state and tries again. Both the simulation and the
+  // send are guarded, so a failed clean backs cleaning off rather than aborting
+  // the pass and taking the sweep down with it.
+  const sendCleanBatch = async (orders: CleanableOrder[]): Promise<boolean> => {
     const units = Math.min(
       MAX_COMPUTE_UNITS,
       CLEAN_CU_EACH * orders.length + 10_000,
     );
     const ixs = orders.map(cleanInstruction);
-
-    const bisect = async (reason: unknown): Promise<void> => {
-      if (orders.length === 1) {
-        dropOneClean(orders[0], reason);
-        return;
-      }
-      const mid = Math.ceil(orders.length / 2);
-      console.warn(
-        `  clean batch of ${orders.length} failed (${safeStringify(reason)}); bisecting ${mid}+${orders.length - mid}`,
-      );
-      await sendCleans(orders.slice(0, mid));
-      await sendCleans(orders.slice(mid));
+    const describe = (reason: unknown): string => {
+      const raceCode = cleanRaceErrorCode(reason);
+      return raceCode !== null
+        ? `${CLEAN_RACE_ERROR_CODES.get(raceCode)}: an order moved since the read`
+        : safeStringify(reason);
     };
 
     const sim = await deps.simulate(ixs, units, MAX_LOADED_ACCOUNTS_DATA_SIZE);
     if (sim.err !== null && sim.err !== undefined) {
-      await bisect(sim.err);
-      return;
+      console.warn(
+        `  clean batch of ${orders.length} did not simulate (${describe(sim.err)})`,
+      );
+      return false;
     }
     try {
       const sig = await deps.buildAndSend(
@@ -1091,22 +1065,36 @@ export async function runCoreCollections(
       result.signatures.push(sig);
       console.log(`clean ${orders.length} orders: ${sig}`);
       await deps.sleep(options.delayMs);
+      return true;
     } catch (error) {
-      await bisect(error);
+      console.warn(
+        `  clean batch of ${orders.length} failed to send (${describe(error)})`,
+      );
+      return false;
     }
   };
+
+  // Once a clean transaction fails, stop trying to clean for the rest of this
+  // pass. The book is churning or an order raced; rather than burn signatures
+  // retrying within the same pass, back off and let the next pass start over
+  // from a fresh read. Only global clean stops - the sweep still runs.
+  let cleanPhaseStopped = false;
 
   for (const [index, item] of work.entries()) {
     if (options.shouldStop()) {
       console.warn('Stopping before the next transaction.');
       break;
     }
-    // Cleans run through their own simulate-send-bisect path, which tolerates
-    // the order racing out from under us at either step. Routing them here
-    // rather than through the generic send below keeps that tolerance whole:
-    // a raced clean never aborts the pass, and never double-sends.
     if (item.cleanItems) {
-      await sendCleans(item.cleanItems);
+      if (cleanPhaseStopped) continue;
+      const sent = await sendCleanBatch(item.cleanItems);
+      if (!sent) {
+        cleanPhaseStopped = true;
+        result.cleanStoppedEarly = true;
+        console.warn(
+          '  a clean transaction failed; stopping global clean for this pass (the next pass retries from a fresh read)',
+        );
+      }
       continue;
     }
     const simulation = await deps.simulate(
