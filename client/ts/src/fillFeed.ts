@@ -184,7 +184,17 @@ export class FillFeed {
           continue;
         }
         const filteredSignatures = signatures.filter((sig) => {
-          return sig.signature !== lastSignature && sig.slot >= lastSlot;
+          // Failed transactions never emit a fill, and handleSignature only
+          // discards them after paying for a full getTransaction. Shed them
+          // here instead: roughly a third of this program's signatures are
+          // failed aggregator routes (slippage), so fetching them is pure RPC
+          // budget spent to learn nothing, and that budget is what bounds how
+          // far behind the feed runs.
+          return (
+            sig.err == null &&
+            sig.signature !== lastSignature &&
+            sig.slot >= lastSlot
+          );
         });
 
         for (
@@ -221,7 +231,9 @@ export class FillFeed {
    * notification.
    */
   private async handleSignature(signature: ConfirmedSignatureInfo) {
-    console.log('Handling', signature.signature, 'slot', signature.slot);
+    // Deliberately not logging per signature: at mainnet rates this ran well
+    // over a hundred lines a second into the log shipper, which throttles the
+    // very loop whose latency we care about. Fills and anomalies still log.
     let tx: VersionedTransactionResponse | null;
     try {
       tx = await this.connection.getTransaction(signature.signature, {
