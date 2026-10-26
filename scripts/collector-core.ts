@@ -268,6 +268,13 @@ export function findCleanableOrders(
     else if (includeUnbacked && isGlobal) kind = 'unbacked';
     if (kind === null) continue;
 
+    // The program checks the global account against the order's side: a bid is
+    // backed in the quote mint, an ask in the base mint (global_clean.rs). This
+    // mirrors that exactly. The side is read from a live snapshot, though, and
+    // the slot can be cancelled or recycled to the other side before the clean
+    // lands — at which point this global is "wrong" for the new order. That
+    // race is caught at send time (see sendCleans), not avoidable here: the
+    // selection is correct for the state we read.
     const isBid = data[payload + ORDER_IS_BID_OFFSET] === 1;
     const global = globalForMint.get(isBid ? plan.quoteMint : plan.baseMint);
     if (global === undefined) continue;
@@ -612,6 +619,54 @@ export type CoreCollectionResult = {
   recoveredLamports: bigint;
   cleanRewardLamports: bigint;
   signatures: string[];
+  /**
+   * Cleans dropped because the order moved between our read and the send: the
+   * slot was cancelled or recycled into a different order (or a non-order
+   * node). Expected on a live book, not a failure — surfaced only so a run
+   * that cleans nothing can be told apart from one that raced on everything.
+   */
+  cleansSkippedRaced: number;
+};
+
+/**
+ * Error codes the program returns when a clean's target order has moved since
+ * we read the market: `InvalidClean` (21 — the global no longer matches the
+ * order's side, logged "Wrong global provided", or the order is no longer
+ * eligible) and `WrongIndexHintParams` (10 — the slot now holds a different
+ * node, or defrag shrank the account past the index). Both mean the same
+ * thing operationally: skip this order, the next pass reads fresh state.
+ */
+const CLEAN_RACE_ERROR_CODES: ReadonlyMap<number, string> = new Map([
+  [21, 'InvalidClean'],
+  [10, 'WrongIndexHint'],
+]);
+
+const safeStringify = (value: unknown): string => {
+  if (typeof value === 'string') return value;
+  // A thrown send error carries its detail in the message (the `rpc` helper
+  // formats `${method} RPC failed: ${JSON.stringify(error)}`), which
+  // JSON.stringify of the Error object would drop — it has no enumerable
+  // fields. Read the message directly so the `Custom` code survives.
+  if (value instanceof Error) return value.stack ?? value.message;
+  try {
+    return JSON.stringify(value) ?? String(value);
+  } catch {
+    return String(value);
+  }
+};
+
+/**
+ * The program error code, if `value` is a race on a clean's target order (see
+ * {@link CLEAN_RACE_ERROR_CODES}). Reads both the structured `err` a
+ * simulation returns and the error a send throws, by matching the `Custom`
+ * code either carries, so the caller can treat a raced clean as an expected
+ * skip rather than a fault.
+ */
+export const cleanRaceErrorCode = (value: unknown): number | null => {
+  const match = safeStringify(value).match(/"Custom"\s*:\s*(\d+)/);
+  if (match === null) return null;
+  const code = Number(match[1]);
+  return CLEAN_RACE_ERROR_CODES.has(code) ? code : null;
 };
 
 /**
@@ -651,6 +706,7 @@ export async function runCoreCollections(
     recoveredLamports: 0n,
     cleanRewardLamports: 0n,
     signatures: [],
+    cleansSkippedRaced: 0,
   };
 
   console.log('Fetching core market accounts...');
@@ -865,13 +921,38 @@ export async function runCoreCollections(
     return result;
   }
 
-  // Send a batch of cleans, and if it fails simulation, bisect: split in half
-  // and retry each side, down to a single order. A batch is all-or-nothing on
-  // chain, so one ineligible order (InvalidClean - already cleaned, or no
-  // longer eligible since the read) would otherwise waste every good clean
-  // packed alongside it. Bisection isolates the bad one in O(log n) extra
-  // simulations and still sends the rest. Only genuinely-ineligible single
-  // orders are dropped, with their error named.
+  // A clean dropped to a single order that still will not go: say why. A race
+  // on the order (the slot was cancelled or recycled since we read it) is an
+  // expected skip and counted as such; anything else is a genuine warning.
+  const dropOneClean = (order: CleanableOrder, reason: unknown): void => {
+    const raceCode = cleanRaceErrorCode(reason);
+    if (raceCode !== null) {
+      result.cleansSkippedRaced += 1;
+      console.log(
+        `  skip clean ${order.market}@${order.orderIndex}: order moved since read (${CLEAN_RACE_ERROR_CODES.get(raceCode)})`,
+      );
+      return;
+    }
+    console.warn(
+      `  dropping 1 clean (${order.market}@${order.orderIndex}): ${safeStringify(reason)}`,
+    );
+  };
+
+  // Send a batch of cleans; if it will not go, bisect: split in half and retry
+  // each side, down to a single order. A batch is all-or-nothing on chain, so
+  // one order that raced since the read (InvalidClean / WrongIndexHint) would
+  // otherwise waste every good clean packed alongside it. Bisection isolates
+  // the bad one in O(log n) extra simulations and still sends the rest.
+  //
+  // Crucially, both the pre-send simulation AND the send itself are guarded.
+  // The send runs preflight against a newer slot, so a clean that passed our
+  // simulation can still fail there (or time out confirming). Left unguarded,
+  // that throw would abort the whole pass and take the sweep down with it; a
+  // raced clean must not do that. A send that throws is treated exactly like a
+  // failed simulation — bisected or, at a single order, dropped. Re-sends are
+  // safe: each recursion simulates first, so an order that actually landed
+  // before a confirmation timeout simulates as already-cleaned and is skipped,
+  // never sent twice.
   const sendCleans = async (orders: CleanableOrder[]): Promise<void> => {
     if (orders.length === 0 || options.shouldStop()) return;
     const units = Math.min(
@@ -879,8 +960,26 @@ export async function runCoreCollections(
       CLEAN_CU_EACH * orders.length + 10_000,
     );
     const ixs = orders.map(cleanInstruction);
+
+    const bisect = async (reason: unknown): Promise<void> => {
+      if (orders.length === 1) {
+        dropOneClean(orders[0], reason);
+        return;
+      }
+      const mid = Math.ceil(orders.length / 2);
+      console.warn(
+        `  clean batch of ${orders.length} failed (${safeStringify(reason)}); bisecting ${mid}+${orders.length - mid}`,
+      );
+      await sendCleans(orders.slice(0, mid));
+      await sendCleans(orders.slice(mid));
+    };
+
     const sim = await deps.simulate(ixs, units, MAX_LOADED_ACCOUNTS_DATA_SIZE);
-    if (sim.err === null || sim.err === undefined) {
+    if (sim.err !== null && sim.err !== undefined) {
+      await bisect(sim.err);
+      return;
+    }
+    try {
       const sig = await deps.buildAndSend(
         ixs,
         units,
@@ -892,20 +991,9 @@ export async function runCoreCollections(
       result.signatures.push(sig);
       console.log(`clean ${orders.length} orders: ${sig}`);
       await deps.sleep(options.delayMs);
-      return;
+    } catch (error) {
+      await bisect(error);
     }
-    if (orders.length === 1) {
-      console.warn(
-        `  dropping 1 clean (${orders[0].market}@${orders[0].orderIndex}): ${JSON.stringify(sim.err)}`,
-      );
-      return;
-    }
-    const mid = Math.ceil(orders.length / 2);
-    console.warn(
-      `  clean batch of ${orders.length} failed (${JSON.stringify(sim.err)}); bisecting ${mid}+${orders.length - mid}`,
-    );
-    await sendCleans(orders.slice(0, mid));
-    await sendCleans(orders.slice(mid));
   };
 
   for (const [index, item] of work.entries()) {
@@ -913,20 +1001,21 @@ export async function runCoreCollections(
       console.warn('Stopping before the next transaction.');
       break;
     }
+    // Cleans run through their own simulate-send-bisect path, which tolerates
+    // the order racing out from under us at either step. Routing them here
+    // rather than through the generic send below keeps that tolerance whole:
+    // a raced clean never aborts the pass, and never double-sends.
+    if (item.cleanItems) {
+      await sendCleans(item.cleanItems);
+      continue;
+    }
     const simulation = await deps.simulate(
       item.instructions,
       item.units,
       MAX_LOADED_ACCOUNTS_DATA_SIZE,
     );
     if (simulation.err !== null && simulation.err !== undefined) {
-      const detail = `${item.label}: ${JSON.stringify(simulation.err)}`;
-      // A clean batch is bisected rather than skipped, so one bad order does
-      // not waste the good ones packed with it.
-      if (item.cleanItems) {
-        console.warn(`  ${detail}; bisecting to isolate the bad order(s)`);
-        await sendCleans(item.cleanItems);
-        continue;
-      }
+      const detail = `${item.label}: ${safeStringify(simulation.err)}`;
       if (!item.optional) throw new Error(`Simulation failed for ${detail}`);
       console.warn(`  skipping ${detail}`);
       continue;

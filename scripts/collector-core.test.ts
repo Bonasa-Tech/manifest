@@ -13,6 +13,7 @@ import {
   MARKET_BLOCK_SIZE,
   MARKET_FIXED_SIZE,
   cleanBatchIsProfitable,
+  cleanRaceErrorCode,
   findCleanableOrders,
   planMarket,
   selectMarkets,
@@ -215,6 +216,35 @@ test('unbacked candidates: only non-expired GLOBAL orders, only with --clean-unb
   assert.equal(cand[0].kind, 'unbacked');
   assert.equal(cand[0].orderIndex, 0);
   assert.equal(typeof cand[0].maker, 'string');
+});
+
+test('a raced clean is recognised from both a sim error and a thrown send error', () => {
+  // The order's slot was cancelled or recycled since we read it: the program
+  // returns InvalidClean (21, "Wrong global provided" or "Ineligible") or
+  // WrongIndexHint (10). Both must read as an expected skip, whether they
+  // arrive as the structured err a simulation returns or buried in the string
+  // of an error a send throws.
+  assert.equal(
+    cleanRaceErrorCode({ InstructionError: [2, { Custom: 21 }] }),
+    21,
+  );
+  assert.equal(
+    cleanRaceErrorCode({ InstructionError: [0, { Custom: 10 }] }),
+    10,
+  );
+  assert.equal(
+    cleanRaceErrorCode(
+      new Error('failed to send: {"InstructionError":[2,{"Custom":21}]}'),
+    ),
+    21,
+  );
+  // A different program error is a real fault, not a race: not classified.
+  assert.equal(
+    cleanRaceErrorCode({ InstructionError: [0, { Custom: 15 }] }),
+    null,
+  );
+  assert.equal(cleanRaceErrorCode('BlockhashNotFound'), null);
+  assert.equal(cleanRaceErrorCode(null), null);
 });
 
 test('a clean batch must out-earn the signature it needs', () => {

@@ -796,7 +796,11 @@ Environment:
     console.log(
       `Core phases: ${coreResult.transactionsSent} transactions, ` +
         `${formatSOL(coreResult.recoveredLamports + coreResult.cleanRewardLamports)} recovered ` +
-        `(${coreResult.marketsSelected} markets, ${coreResult.cleanableOrders} orders cleaned)`,
+        `(${coreResult.marketsSelected} markets, ${coreResult.cleanableOrders} orders cleaned` +
+        (coreResult.cleansSkippedRaced > 0
+          ? `, ${coreResult.cleansSkippedRaced} skipped as raced`
+          : '') +
+        `)`,
     );
     if (coreOnly) return;
   }
