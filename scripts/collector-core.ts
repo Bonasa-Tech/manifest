@@ -273,6 +273,10 @@ export function createGlobalCleanInstruction(
   const data = new Uint8Array(5);
   data[0] = GLOBAL_CLEAN_DISCRIMINANT;
   new DataView(data.buffer).setUint32(1, order.orderIndex, true);
+  // Account order must match GlobalCleanContext::load exactly:
+  // payer, market, system_program, global. Passing global and system in the
+  // wrong order makes the loader validate the global account as the system
+  // program and reject it with IncorrectProgramId.
   return {
     accounts: [
       {
@@ -280,8 +284,8 @@ export function createGlobalCleanInstruction(
         role: AccountRole.WRITABLE_SIGNER,
       },
       { address: address(order.market), role: AccountRole.WRITABLE },
-      { address: address(order.global), role: AccountRole.WRITABLE },
       { address: address(SYSTEM_PROGRAM), role: AccountRole.READONLY },
+      { address: address(order.global), role: AccountRole.WRITABLE },
     ],
     programAddress: address(MANIFEST_PROGRAM_ID.toBase58()),
     data,
@@ -738,9 +742,11 @@ export async function runCoreCollections(
     if (simulation.err !== null && simulation.err !== undefined) {
       const detail = `${item.label}: ${JSON.stringify(simulation.err)}`;
       if (!item.optional) throw new Error(`Simulation failed for ${detail}`);
-      console.warn(
-        `  skipping ${detail} (an order was likely cancelled since the read)`,
-      );
+      // A clean batch can fail for a transient reason (an order was cancelled
+      // between the read and the send), which is fine to skip. But a batch
+      // failing EVERY time points at a malformed instruction, not a race, so
+      // name the error rather than presuming a cancel.
+      console.warn(`  skipping ${detail}`);
       continue;
     }
     const signature = await deps.buildAndSend(
