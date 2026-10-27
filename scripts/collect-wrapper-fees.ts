@@ -122,9 +122,12 @@ const MAX_COMPUTE_UNITS = 1_400_000;
 const MAX_LOADED_ACCOUNTS_DATA_SIZE = 64 * 1024 * 1024;
 const DEFAULT_DELAY_MS = 1_000;
 // How many fresh-blockhash attempts a batch gets when its transaction expires
-// without landing. Expiry means the transaction can never land, so resending
-// the batch is safe; a landed-check runs before each retry to catch the
-// last-valid-block race. No priority fee: landing is best effort, retried.
+// without landing, or when preflight rejects it with BlockhashNotFound because
+// the simulating node lags the node that served the hash. Expiry means the
+// transaction can never land and a preflight rejection means it never entered
+// the network, so resending the batch is safe; a landed-check runs before each
+// expiry retry to catch the last-valid-block race. No priority fee: landing is
+// best effort, retried.
 const MAX_SEND_ATTEMPTS = 3;
 
 type CollectableWrapper = {
@@ -169,6 +172,15 @@ async function rpc<T>(method: string, params: unknown[]): Promise<T> {
     throw new Error(`${method} RPC failed: ${JSON.stringify(json.error)}`);
   }
   return json.result;
+}
+
+/** True when sendTransaction's preflight rejected the transaction because the
+ * simulating node has not yet seen the (freshly fetched) blockhash — a lag
+ * between load-balanced RPC nodes, not a stale hash on our side. The
+ * transaction never entered the network, so resending the same batch on a
+ * fresh blockhash is unconditionally safe. */
+function isBlockhashNotFound(error: unknown): boolean {
+  return error instanceof Error && error.message.includes('BlockhashNotFound');
 }
 
 async function getRentExemptBalances(
@@ -810,38 +822,81 @@ Environment:
         buildAndSend: async (instructions, units, dataSize) => {
           if (collector === undefined)
             throw new Error('collector keypair required to execute');
-          const { value } = await rpc<{
-            value: { blockhash: string; lastValidBlockHeight: number };
-          }>('getLatestBlockhash', [{ commitment: 'confirmed' }]);
-          const unsigned = createGenericMessage(
-            instructions,
-            collectorPublicKey,
-            value.blockhash,
-            BigInt(value.lastValidBlockHeight),
-            units,
-            dataSize,
-          );
-          const signed = await signTransactionMessageWithSigners(
-            setTransactionMessageFeePayerSigner(collector.signer, unsigned),
-          );
-          const encoded = getBase64EncodedWireTransaction(signed);
-          const signature = await rpc<string>('sendTransaction', [
-            encoded,
-            {
-              encoding: 'base64',
-              preflightCommitment: 'confirmed',
-              maxRetries: 3,
-            },
-          ]);
-          await connection.confirmTransaction(
-            {
-              signature,
-              blockhash: value.blockhash,
-              lastValidBlockHeight: value.lastValidBlockHeight,
-            },
-            'confirmed',
-          );
-          return signature;
+          for (let attempt = 1; ; attempt++) {
+            const { value } = await rpc<{
+              value: { blockhash: string; lastValidBlockHeight: number };
+            }>('getLatestBlockhash', [{ commitment: 'confirmed' }]);
+            const unsigned = createGenericMessage(
+              instructions,
+              collectorPublicKey,
+              value.blockhash,
+              BigInt(value.lastValidBlockHeight),
+              units,
+              dataSize,
+            );
+            const signed = await signTransactionMessageWithSigners(
+              setTransactionMessageFeePayerSigner(collector.signer, unsigned),
+            );
+            const encoded = getBase64EncodedWireTransaction(signed);
+            let signature: string | undefined;
+            try {
+              signature = await rpc<string>('sendTransaction', [
+                encoded,
+                {
+                  encoding: 'base64',
+                  preflightCommitment: 'confirmed',
+                  maxRetries: 3,
+                },
+              ]);
+              const confirmation = await connection.confirmTransaction(
+                {
+                  signature,
+                  blockhash: value.blockhash,
+                  lastValidBlockHeight: value.lastValidBlockHeight,
+                },
+                'confirmed',
+              );
+              if (confirmation.value.err !== null) {
+                throw new Error(
+                  `confirmation failed: ${JSON.stringify(confirmation.value.err)}`,
+                );
+              }
+              return signature;
+            } catch (error) {
+              if (signature === undefined && isBlockhashNotFound(error)) {
+                if (attempt >= MAX_SEND_ATTEMPTS) throw error;
+                console.warn(
+                  `  preflight hit BlockhashNotFound (lagging RPC node); retrying on a fresh blockhash (attempt ${attempt}/${MAX_SEND_ATTEMPTS})...`,
+                );
+                continue;
+              }
+              // Expiry without landing mirrors the wrapper send loop below:
+              // the transaction can no longer land, so resending is safe once
+              // a landed-check rules out the last-valid-block race.
+              const expired =
+                error instanceof Error &&
+                (error.name === 'TransactionExpiredBlockheightExceededError' ||
+                  error.message.includes('block height exceeded'));
+              if (!expired || signature === undefined) throw error;
+              const statuses = await rpc<{
+                value: ({ err: unknown } | null)[];
+              }>('getSignatureStatuses', [
+                [signature],
+                { searchTransactionHistory: true },
+              ]);
+              const status = statuses.value[0];
+              if (status !== null && status.err === null) return signature;
+              if (status !== null) {
+                throw new Error(
+                  `transaction landed with an error: ${JSON.stringify(status.err)} (${signature})`,
+                );
+              }
+              if (attempt >= MAX_SEND_ATTEMPTS) throw error;
+              console.warn(
+                `  transaction expired without landing; retrying on a fresh blockhash (attempt ${attempt}/${MAX_SEND_ATTEMPTS})...`,
+              );
+            }
+          }
         },
       },
       {
@@ -1127,6 +1182,16 @@ Environment:
           landedSignature = signature;
           break;
         } catch (error) {
+          if (
+            signature === undefined &&
+            isBlockhashNotFound(error) &&
+            attempt < MAX_SEND_ATTEMPTS
+          ) {
+            console.warn(
+              `Tx ${index + 1}/${batches.length} preflight hit BlockhashNotFound (lagging RPC node); retrying on a fresh blockhash...`,
+            );
+            continue;
+          }
           // An expired blockhash means the transaction can no longer land, so
           // rebuilding the same batch on a fresh blockhash is safe. Check it
           // really did not land first (last-valid-block race), and abort on
