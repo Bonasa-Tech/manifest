@@ -160,3 +160,74 @@ two spare nodes, which the paths that allocate twice depend on.
 
 Only relocation could gather interior holes, which is exactly the operation
 that is not exposed here.
+
+## DefiLlama reporting
+
+The stats server indexes finalized transactions for the authorized collector
+and serves `GET /fees?startTimestamp=SECONDS&endTimestamp=SECONDS`. Intervals
+are half-open (`start <= blockTime < end`) and limited to 31 days. All amounts
+are decimal **strings of lamports**, not SOL or USD.
+
+Reporting includes wrapper collections, core market/vault defrag (including
+rent released by resizing or closure), and expired global-order cleaning.
+Amounts are recognized when collected, not when originally charged. This is
+collector revenue only: separate UI/referral token destinations are outside
+this ledger. Collection gas and collector-funded account expansion are added
+back to the collector's balance change to recover gross collection receipts;
+`fundingLamports` separately identifies the latter. Ordinary wallet deposits,
+outgoing transfers, and failed transactions are excluded. A transaction mixing
+collections with unrelated instructions stops indexing for review rather than
+silently contaminating the total.
+
+The response contains `feesLamports`, `revenueLamports`, `fundingLamports`,
+`breakdown`, `collector`, the requested timestamps, `indexedThrough`,
+`methodology: "collection-basis-v1"`, and `complete: true`. HTTP 400 means an
+invalid interval. HTTP 503 means coverage is incomplete or the database is
+unavailable; it must never be interpreted as zero fees. Empty intervals return
+zero only after indexing has established complete coverage.
+
+The writer polls every hour independently of the hourly collector and
+DefiLlama's hourly adapter. It creates `manifest_fee_collections` and
+`manifest_fee_cursor` in the existing stats PostgreSQL database. Signatures are
+unique, retries are idempotent, and coverage advances only after the entire
+scan succeeds. A PostgreSQL advisory lock permits only one replica to index at
+a time. `READ_ONLY` instances serve the same ledger without running a writer.
+Rows from an interrupted scan do not establish coverage on their own.
+
+Configuration:
+
+- `DATABASE_URL`: existing stats database; the writer needs table/index creation
+  permission for the initial rollout.
+- `FEES_RPC_URL`: optional archival RPC override; otherwise uses `RPC_URL`.
+  Must support transaction version 1, finalized signature history, inner
+  instructions, and historical `getTransaction` results.
+- `FEES_START_TIMESTAMP`: optional Unix seconds; defaults to **1792972800**
+  (2026-10-26 00:00 UTC). This is a conservative initial reporting boundary,
+  not the date Manifest first charged fees. The RPC must return at least one
+  signature older than the boundary to establish initial coverage. Changing
+  the configured start for an existing cursor requires an explicit reindex;
+  the process refuses to silently shorten or expand coverage.
+
+Rollout:
+
+1. Deploy the stats server with the existing database and suitable RPC. Its
+   background task automatically creates the tables and backfills the default
+   reporting boundary. Monitor `Fee collection indexing failed` logs.
+2. Query a completed hour and a completed day; check `complete` and
+   `indexedThrough`, and reconcile receipts against collector transactions.
+   Adjacent hourly results must sum to the same daily total. Before extending
+   history, reset/rebuild the cursor under operator control with writers
+   stopped and establish coverage using archival data.
+3. Copy `integrations/defillama/fees/manifest-trade/index.ts` into
+   `DefiLlama/dimension-adapters/fees/manifest-trade/index.ts`. Its start date
+   matches the default indexer boundary; extend both only after validating
+   older history. The existing volume adapter remains unchanged.
+4. In that repository run `npm test fees manifest-trade 2026-10-27` (the date
+   is the end of the window), then test additional completed days. Submit the
+   adapter with the collection-basis methodology, including account resizing,
+   made explicit. Request attachment of `fees: manifest-trade` to the existing
+   Manifest Trade listing. DefiLlama reviews the classification and listing.
+
+Local checks: `yarn test:fee-collections`. The fixture is a public mainnet
+collection transaction with directly reconciled wallet balances. The prepared
+adapter is not automatically published or deployed by this repository.
