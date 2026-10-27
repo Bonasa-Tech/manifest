@@ -471,7 +471,7 @@ const run = async () => {
   app.get('/metadata', metadataHandler);
   app.get('/orderbook', orderbookHandler);
   app.get('/volume', volumeHandler);
-  app.get('/fees', expensiveQueryAdmission, async (req, res) => {
+  app.get('/fees', async (req, res) => {
     try {
       const { startTimestamp, endTimestamp } = req.query;
       if (

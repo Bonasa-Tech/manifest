@@ -1,30 +1,17 @@
-import bs58 from 'bs58';
-
 export const FEE_COLLECTOR = 'B6dmr2UAn2wgjdm3T4N1Vjd8oPYRRTguByW7AEngkeL6';
-const CORE = 'MNFSTqtC93rEfYHB6hF82sKdZpUDFWkViLByLd1k1Ms';
-const WRAPPER = 'wMNFSTkir3HgyZTsB7uqu3i7FA73grFCptPXgrZjksL';
-const SYSTEM = '11111111111111111111111111111111';
-const COMPUTE = 'ComputeBudget111111111111111111111111111111';
-export const COLLECTION_LABEL = 'Fee collections (including account resizing)';
+const HOUR = 3600;
+const RETENTION = 7 * 24 * HOUR;
 
-type Instruction = { programIdIndex: number; accounts: number[]; data: string };
+export const COLLECTION_LABEL = 'Collector SOL balance increases';
+
 export type CollectionTransaction = {
   slot: number;
   blockTime: number | null;
-  transaction: {
-    message: {
-      accountKeys: string[];
-      header: { numRequiredSignatures: number };
-      instructions: Instruction[];
-    };
-  };
+  transaction: { message: { accountKeys: string[] } };
   meta: null | {
-    err: unknown;
-    fee: number;
     preBalances: number[];
     postBalances: number[];
     loadedAddresses?: { writable: string[]; readonly: string[] };
-    innerInstructions?: { index: number; instructions: Instruction[] }[] | null;
   };
 };
 
@@ -35,76 +22,26 @@ function atoms(value: number): bigint {
   return BigInt(value);
 }
 
-/** Collection transactions mutate lamports directly, so transfer-only indexing
- * misses them. Accept only known collection instructions; mixed transactions
- * require review rather than attributing unrelated wallet movements to fees. */
-export function decodeCollection(tx: CollectionTransaction): null | {
-  lamports: string;
-  fundingLamports: string;
-} {
+/** Count the collector's actual SOL gain in each transaction, regardless of
+ * program, instruction, sender, or signer. Gas and other outflows within the
+ * transaction are already reflected in the balance change; do not add them back.
+ * Separate outgoing transactions do not offset positive incoming transactions. */
+export function decodeCollection(
+  tx: CollectionTransaction,
+): null | { lamports: string } {
   if (!tx.meta) throw new Error('Missing transaction metadata');
-  if (tx.meta.err != null) return null;
-  const { message } = tx.transaction;
   const keys = [
-    ...message.accountKeys,
+    ...tx.transaction.message.accountKeys,
     ...(tx.meta.loadedAddresses?.writable ?? []),
     ...(tx.meta.loadedAddresses?.readonly ?? []),
   ];
   const collector = keys.indexOf(FEE_COLLECTOR);
-  const isCollection = (ix: Instruction): boolean => {
-    const tag = bs58.decode(ix.data)[0];
-    return (
-      (keys[ix.programIdIndex] === CORE &&
-        [12, 14].includes(tag) &&
-        keys[ix.accounts[0]] === FEE_COLLECTOR) ||
-      (keys[ix.programIdIndex] === WRAPPER &&
-        tag === 7 &&
-        keys[ix.accounts[2]] === FEE_COLLECTOR)
-    );
-  };
-  const inner =
-    tx.meta.innerInstructions?.flatMap((group) => group.instructions) ?? [];
-  if (![...message.instructions, ...inner].some(isCollection)) return null;
-  if (!Array.isArray(tx.meta.innerInstructions)) {
-    throw new Error('Missing inner instructions for collection');
-  }
-  if (collector < 0 || collector >= message.header.numRequiredSignatures) {
-    throw new Error('Collection without collector signature');
-  }
-  for (const ix of message.instructions) {
-    const program = keys[ix.programIdIndex];
-    const tag = bs58.decode(ix.data)[0];
-    const wrapperDefrag =
-      program === WRAPPER &&
-      tag === 8 &&
-      keys[ix.accounts[1]] === FEE_COLLECTOR;
-    if (!isCollection(ix) && !wrapperDefrag && program !== COMPUTE) {
-      throw new Error('Mixed or unsupported collection transaction');
-    }
-  }
-  // Defrag may fund market expansion before reclaiming rent. Add that funding
-  // back to the wallet delta to measure gross receipts, not maintenance profit.
-  let funding = 0n;
-  for (const ix of inner) {
-    if (
-      keys[ix.programIdIndex] !== SYSTEM ||
-      keys[ix.accounts[0]] !== FEE_COLLECTOR
-    )
-      continue;
-    const data = Buffer.from(bs58.decode(ix.data));
-    if (data.length !== 12 || data.readUInt32LE(0) !== 2) {
-      throw new Error('Unsupported collector funding instruction');
-    }
-    funding += data.readBigUInt64LE(4);
-  }
-  const gas = collector === 0 ? atoms(tx.meta.fee) : 0n;
-  const receipts =
+  if (collector < 0)
+    throw new Error('Collector missing from transaction accounts');
+  const increase =
     atoms(tx.meta.postBalances[collector]) -
-    atoms(tx.meta.preBalances[collector]) +
-    gas +
-    funding;
-  if (receipts < 0n) throw new Error('Unexplained collector outflow');
-  return { lamports: receipts.toString(), fundingLamports: funding.toString() };
+    atoms(tx.meta.preBalances[collector]);
+  return increase > 0n ? { lamports: increase.toString() } : null;
 }
 
 export type Rpc = <T>(method: string, params: unknown[]) => Promise<T>;
@@ -133,14 +70,13 @@ type Signature = {
 type Collection = {
   blockTime: number;
   lamports: bigint;
-  fundingLamports: bigint;
 };
 
 export class FeeCollectionIndexer {
   private running = false;
   private signature?: string;
   private indexedThrough = 0;
-  private readonly collections = new Map<string, Collection>();
+  private readonly hourlyLamports = new Map<number, bigint>();
   readonly startTimestamp: number;
 
   constructor(
@@ -184,8 +120,9 @@ export class FeeCollectionIndexer {
             'Fee history ended before cursor/start boundary; archival RPC required',
           );
         }
-        newest ??= page[0].signature;
         for (const entry of page) {
+          if (entry.slot > slot) continue;
+          newest ??= entry.signature;
           if (entry.signature === this.signature) {
             done = true;
             break;
@@ -198,7 +135,6 @@ export class FeeCollectionIndexer {
             done = true;
             break;
           }
-          if (entry.err != null) continue;
           const tx = await this.rpc<CollectionTransaction | null>(
             'getTransaction',
             [
@@ -219,7 +155,6 @@ export class FeeCollectionIndexer {
             pending.set(entry.signature, {
               blockTime: entry.blockTime,
               lamports: BigInt(receipt.lamports),
-              fundingLamports: BigInt(receipt.fundingLamports),
             });
           }
         }
@@ -230,11 +165,23 @@ export class FeeCollectionIndexer {
       }
       // Commit the whole scan synchronously. Failed polls leave the previously
       // completed coverage and totals intact, and retry from the same cursor.
-      for (const [signature, collection] of pending) {
-        this.collections.set(signature, collection);
+      for (const collection of pending.values()) {
+        const hour = Math.floor(collection.blockTime / HOUR) * HOUR;
+        this.hourlyLamports.set(
+          hour,
+          (this.hourlyLamports.get(hour) ?? 0n) + collection.lamports,
+        );
       }
       this.signature = newest ?? this.signature;
-      this.indexedThrough = Math.max(this.indexedThrough, horizon);
+      this.indexedThrough = Math.max(
+        this.indexedThrough,
+        Math.floor(horizon / HOUR) * HOUR,
+      );
+      // Keep seven days of completed hours plus the pending current hour.
+      for (const hour of this.hourlyLamports.keys()) {
+        if (hour < this.indexedThrough - RETENTION)
+          this.hourlyLamports.delete(hour);
+      }
     } finally {
       this.running = false;
     }
@@ -246,34 +193,35 @@ export class FeeCollectionIndexer {
       !Number.isSafeInteger(end) ||
       start < 0 ||
       end <= start ||
-      end - start > 31 * 86400
+      start % HOUR !== 0 ||
+      end % HOUR !== 0 ||
+      end - start > RETENTION
     ) {
       throw new RangeError(
-        'Use integer Unix timestamps with 0 < end-start <= 31 days',
+        'Use whole-hour UTC Unix timestamps with 0 < end-start <= 7 days',
       );
     }
-    if (start < this.startTimestamp || end > this.indexedThrough) {
+    const coverageStart = Math.max(
+      Math.ceil(this.startTimestamp / HOUR) * HOUR,
+      this.indexedThrough - RETENTION,
+    );
+    if (start < coverageStart || end > this.indexedThrough) {
       throw new Error('Requested fee interval is not fully indexed');
     }
     let lamports = 0n;
-    let fundingLamports = 0n;
-    for (const collection of this.collections.values()) {
-      if (collection.blockTime >= start && collection.blockTime < end) {
-        lamports += collection.lamports;
-        fundingLamports += collection.fundingLamports;
-      }
+    for (let hour = start; hour < end; hour += HOUR) {
+      lamports += this.hourlyLamports.get(hour) ?? 0n;
     }
     return {
       startTimestamp: start,
       endTimestamp: end,
       indexedThrough: this.indexedThrough,
-      coverageStartTimestamp: this.startTimestamp,
+      coverageStartTimestamp: coverageStart,
       collector: FEE_COLLECTOR,
       complete: true,
-      methodology: 'collection-basis-v1',
+      methodology: 'collector-positive-sol-delta-v1',
       feesLamports: lamports.toString(),
       revenueLamports: lamports.toString(),
-      fundingLamports: fundingLamports.toString(),
       breakdown: { [COLLECTION_LABEL]: lamports.toString() },
     };
   }
