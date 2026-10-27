@@ -625,6 +625,8 @@ const run = async () => {
   process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
 
   await Promise.all([
+    // Index collector SOL balance increases at startup and hourly, keeping
+    // seven days of in-memory hourly totals for the /fees endpoint.
     (async () => {
       while (true) {
         try {
