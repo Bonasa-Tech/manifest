@@ -237,6 +237,43 @@ const run = async () => {
   const volumeHandler: RequestHandler = (_req, res) => {
     res.type('application/json').send(statsServer.getVolumeJson());
   };
+  const feesHandler: RequestHandler = async (req, res) => {
+    try {
+      const { startTimestamp, endTimestamp } = req.query;
+      if (
+        typeof startTimestamp !== 'string' ||
+        !/^\d+$/.test(startTimestamp) ||
+        typeof endTimestamp !== 'string' ||
+        !/^\d+$/.test(endTimestamp)
+      ) {
+        res
+          .status(400)
+          .json({
+            error: 'startTimestamp and endTimestamp are required Unix seconds',
+          });
+        return;
+      }
+      res.json(
+        await statsServer.feeCollections.query(
+          Number(startTimestamp),
+          Number(endTimestamp),
+        ),
+      );
+    } catch (error) {
+      if (error instanceof RangeError) {
+        res.status(400).json({ error: error.message });
+      } else {
+        console.error('Fee reporting unavailable:', error);
+        res.setHeader('Retry-After', String(ONE_HOUR_SEC));
+        res
+          .status(503)
+          .json({
+            error:
+              'Requested fee interval is not fully indexed or reporting is unavailable',
+          });
+      }
+    }
+  };
   const tradersHandler: RequestHandler = (req, res) => {
     try {
       const includeDebug = req.query.debug === 'true';
@@ -471,43 +508,7 @@ const run = async () => {
   app.get('/metadata', metadataHandler);
   app.get('/orderbook', orderbookHandler);
   app.get('/volume', volumeHandler);
-  app.get('/fees', async (req, res) => {
-    try {
-      const { startTimestamp, endTimestamp } = req.query;
-      if (
-        typeof startTimestamp !== 'string' ||
-        !/^\d+$/.test(startTimestamp) ||
-        typeof endTimestamp !== 'string' ||
-        !/^\d+$/.test(endTimestamp)
-      ) {
-        res
-          .status(400)
-          .json({
-            error: 'startTimestamp and endTimestamp are required Unix seconds',
-          });
-        return;
-      }
-      res.json(
-        await statsServer.feeCollections.query(
-          Number(startTimestamp),
-          Number(endTimestamp),
-        ),
-      );
-    } catch (error) {
-      if (error instanceof RangeError) {
-        res.status(400).json({ error: error.message });
-      } else {
-        console.error('Fee reporting unavailable:', error);
-        res.setHeader('Retry-After', String(ONE_HOUR_SEC));
-        res
-          .status(503)
-          .json({
-            error:
-              'Requested fee interval is not fully indexed or reporting is unavailable',
-          });
-      }
-    }
-  });
+  app.get('/fees', feesHandler);
   app.get('/traders', tradersHandler);
   app.get('/traders/debug', (req, res) => {
     const requestedLimit =
