@@ -57,6 +57,24 @@ const KNOWN_RUGGED_MARKETS: Set<string> = new Set([
   '72bGMGVVDbmEPRc16K5wT22sN4Wwg6YJN2GThAPCFFfT',
 ]);
 
+// Returns the token balance of a vault account. A vault whose mint was closed
+// by its issuer (Token-2022 mint-close-authority) comes back unparsed because
+// the RPC cannot resolve decimals without the mint, so fall back to reading
+// the raw SPL token amount (u64 LE at offset 64; same layout for Token and
+// Token-2022). A missing vault counts as zero so the market is still checked.
+function vaultBalanceAtoms(
+  info: AccountInfo<Buffer | ParsedAccountData> | null,
+): bigint {
+  if (!info) {
+    return 0n;
+  }
+  const data: Buffer | ParsedAccountData = info.data;
+  if ('parsed' in data) {
+    return BigInt(data.parsed['info']['tokenAmount']['amount']);
+  }
+  return data.readBigUInt64LE(64);
+}
+
 const run = async (): Promise<void> => {
   const connection: Connection = new Connection(RPC_URL);
   const marketPks: PublicKey[] =
@@ -64,12 +82,15 @@ const run = async (): Promise<void> => {
 
   const mismatchedMarkets: string[] = [];
   for (const marketPk of marketPks) {
-    const client: ManifestClient = await ManifestClient.getClientReadOnly(
+    // Load the market directly instead of through ManifestClient: the client
+    // unpacks both mints and crashes on markets whose mint account was closed
+    // by its issuer, and the mints are not needed to check balances.
+    const marketForMints: Market = await Market.loadFromAddress({
       connection,
-      marketPk,
-    );
-    const baseMint: PublicKey = client.market.baseMint();
-    const quoteMint: PublicKey = client.market.quoteMint();
+      address: marketPk,
+    });
+    const baseMint: PublicKey = marketForMints.baseMint();
+    const quoteMint: PublicKey = marketForMints.quoteMint();
 
     const parsedAccounts: RpcResponseAndContext<
       (AccountInfo<Buffer | ParsedAccountData> | null)[]
@@ -92,15 +113,11 @@ const run = async (): Promise<void> => {
     // Use BigInt end to end. These atom totals routinely exceed
     // Number.MAX_SAFE_INTEGER (2^53) on high-supply markets, so Number() math
     // loses precision and produces phantom mismatches.
-    const baseVaultBalanceAtoms: bigint = BigInt(
-      (parsedAccounts.value[1]?.data as ParsedAccountData).parsed['info'][
-        'tokenAmount'
-      ]['amount'],
+    const baseVaultBalanceAtoms: bigint = vaultBalanceAtoms(
+      parsedAccounts.value[1],
     );
-    const quoteVaultBalanceAtoms: bigint = BigInt(
-      (parsedAccounts.value[2]?.data as ParsedAccountData).parsed['info'][
-        'tokenAmount'
-      ]['amount'],
+    const quoteVaultBalanceAtoms: bigint = vaultBalanceAtoms(
+      parsedAccounts.value[2],
     );
 
     const baseExpectedAtoms: bigint =
