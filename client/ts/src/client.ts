@@ -665,15 +665,22 @@ export class ManifestClient {
         quoteGlobalPk,
       ]);
 
+    if (baseMintAccountInfo === null || quoteMintAccountInfo === null) {
+      const missingMintPk: PublicKey =
+        baseMintAccountInfo === null ? baseMintPk : quoteMintPk;
+      throw new Error(
+        `Mint ${missingMintPk.toBase58()} for market ${marketPk.toBase58()} does not exist. The mint account may have been closed by its issuer.`,
+      );
+    }
     const baseMint: Mint = unpackMint(
       baseMintPk,
       baseMintAccountInfo,
-      baseMintAccountInfo!.owner,
+      baseMintAccountInfo.owner,
     );
     const quoteMint: Mint = unpackMint(
       quoteMintPk,
       quoteMintAccountInfo,
-      quoteMintAccountInfo!.owner,
+      quoteMintAccountInfo.owner,
     );
 
     // Global accounts are optional
