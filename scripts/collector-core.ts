@@ -65,6 +65,16 @@ const ORDER_TYPE_OFFSET = 41;
 const ORDER_TYPE_GLOBAL = 3;
 // NO_EXPIRATION_LAST_VALID_SLOT; an order with this value never expires.
 const NO_EXPIRATION = 0;
+// Only treat an order as expired once it has been expired this many slots at
+// the time of the read. A freshly expired order on an active market is gone
+// within seconds — the matching engine cancels expired orders on touch and the
+// block gets recycled — so cleaning it races nearly every time: on mainnet,
+// every failed clean batch traced to orders expired 1-6 slots before the read
+// (WrongIndexHint when the block emptied, InvalidClean "Wrong global" when it
+// was recycled to the other side), while orders expired for tens of thousands
+// of slots simulated clean. Deferring a fresh order costs only its
+// 5,000-lamport deposit for a pass; one that persists is caught next pass.
+export const CLEAN_EXPIRY_BUFFER_SLOTS = 1_500;
 // ClaimedSeat.trader is the first field of the payload, so the maker pubkey of
 // an order sits at its trader_index block + the node header.
 const NODE_TYPE_RESTING_ORDER_SEAT_TRADER = NODE_PAYLOAD_OFFSET;
@@ -259,7 +269,9 @@ export function findCleanableOrders(
     const lastValidSlot = data.readUInt32LE(
       payload + ORDER_LAST_VALID_SLOT_OFFSET,
     );
-    const expired = lastValidSlot !== NO_EXPIRATION && lastValidSlot < nowSlot;
+    const expired =
+      lastValidSlot !== NO_EXPIRATION &&
+      lastValidSlot < nowSlot - CLEAN_EXPIRY_BUFFER_SLOTS;
     const isGlobal = data[payload + ORDER_TYPE_OFFSET] === ORDER_TYPE_GLOBAL;
     // Expired is eligible as-is; a non-expired global order is an unbacked
     // candidate. Everything else cannot be cleaned.
@@ -1033,23 +1045,24 @@ export async function runCoreCollections(
   // one, which reads fresh state and tries again. Both the simulation and the
   // send are guarded, so a failed clean backs cleaning off rather than aborting
   // the pass and taking the sweep down with it.
-  const sendCleanBatch = async (orders: CleanableOrder[]): Promise<boolean> => {
+  const describeCleanFailure = (reason: unknown): string => {
+    const raceCode = cleanRaceErrorCode(reason);
+    return raceCode !== null
+      ? `${CLEAN_RACE_ERROR_CODES.get(raceCode)}: an order moved since the read`
+      : safeStringify(reason);
+  };
+  const simulateAndSendCleans = async (
+    orders: CleanableOrder[],
+  ): Promise<boolean> => {
     const units = Math.min(
       MAX_COMPUTE_UNITS,
       CLEAN_CU_EACH * orders.length + 10_000,
     );
     const ixs = orders.map(cleanInstruction);
-    const describe = (reason: unknown): string => {
-      const raceCode = cleanRaceErrorCode(reason);
-      return raceCode !== null
-        ? `${CLEAN_RACE_ERROR_CODES.get(raceCode)}: an order moved since the read`
-        : safeStringify(reason);
-    };
-
     const sim = await deps.simulate(ixs, units, MAX_LOADED_ACCOUNTS_DATA_SIZE);
     if (sim.err !== null && sim.err !== undefined) {
       console.warn(
-        `  clean batch of ${orders.length} did not simulate (${describe(sim.err)})`,
+        `  clean batch of ${orders.length} did not simulate (${describeCleanFailure(sim.err)})`,
       );
       return false;
     }
@@ -1068,10 +1081,34 @@ export async function runCoreCollections(
       return true;
     } catch (error) {
       console.warn(
-        `  clean batch of ${orders.length} failed to send (${describe(error)})`,
+        `  clean batch of ${orders.length} failed to send (${describeCleanFailure(error)})`,
       );
       return false;
     }
+  };
+  const sendCleanBatch = async (orders: CleanableOrder[]): Promise<boolean> => {
+    if (await simulateAndSendCleans(orders)) return true;
+    if (orders.length <= 1) return false;
+    // One raced order fails the whole batch, and it kept failing every pass:
+    // the batch always contained at least one order that moved between the
+    // read and the simulation, so the stable orders behind it were never
+    // collected. Isolate instead: simulate each clean on its own, drop the
+    // movers, and send the survivors together.
+    const survivors: CleanableOrder[] = [];
+    for (const order of orders) {
+      if (options.shouldStop()) return false;
+      const sim = await deps.simulate(
+        [cleanInstruction(order)],
+        Math.min(MAX_COMPUTE_UNITS, CLEAN_CU_EACH + 10_000),
+        MAX_LOADED_ACCOUNTS_DATA_SIZE,
+      );
+      if (sim.err === null || sim.err === undefined) survivors.push(order);
+    }
+    console.warn(
+      `  ${survivors.length}/${orders.length} cleans survived individual simulation`,
+    );
+    if (survivors.length === 0) return false;
+    return simulateAndSendCleans(survivors);
   };
 
   // Once a clean transaction fails, stop trying to clean for the rest of this

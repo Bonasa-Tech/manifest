@@ -9,6 +9,7 @@
  */
 import * as assert from 'node:assert/strict';
 import {
+  CLEAN_EXPIRY_BUFFER_SLOTS,
   GAS_DEPOSIT_LAMPORTS,
   MARKET_BLOCK_SIZE,
   MARKET_FIXED_SIZE,
@@ -194,6 +195,25 @@ test('only expired orders are cleanable, and only where a global account exists'
   data[payload(0) + 40] = 0;
   assert.deepEqual(findCleanableOrders(plan, data, 5_000, withGlobal), []);
   assert.deepEqual(findCleanableOrders(plan, data, 5_000, new Map()), []);
+});
+
+test('a freshly expired order is deferred until past the expiry buffer', () => {
+  const data = market([O, O], 0n);
+  const payload = (block: number): number =>
+    MARKET_FIXED_SIZE + block * MARKET_BLOCK_SIZE + 16;
+  // Both bids. Block 0 expired but within the buffer (cleaning it would race
+  // the book: on an active market the block empties or is recycled within
+  // seconds of expiry); block 1 expired one slot past the buffer.
+  const nowSlot = 100_000;
+  data.writeUInt32LE(nowSlot - CLEAN_EXPIRY_BUFFER_SLOTS, payload(0) + 36);
+  data.writeUInt32LE(nowSlot - CLEAN_EXPIRY_BUFFER_SLOTS - 1, payload(1) + 36);
+  for (const b of [0, 1]) data[payload(b) + 40] = 1;
+  const plan = planMarket({ pubkey: MARKET, lamports: data.lamports, data })!;
+  const withGlobal = new Map([[plan.quoteMint, 'G'.repeat(43)]]);
+
+  const found = findCleanableOrders(plan, data, nowSlot, withGlobal);
+  assert.equal(found.length, 1, 'only the long-expired order is cleanable');
+  assert.equal(found[0].orderIndex, MARKET_BLOCK_SIZE);
 });
 
 test('unbacked candidates: only non-expired GLOBAL orders, only with --clean-unbacked', () => {
