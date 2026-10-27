@@ -2,7 +2,6 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import bs58 from 'bs58';
 import { readFileSync, readdirSync } from 'node:fs';
-import type { Pool } from 'pg';
 import {
   decodeCollection,
   FEE_COLLECTOR,
@@ -112,83 +111,38 @@ for (const file of readdirSync('scripts/fixtures/fee-collections')) {
   });
 }
 
-function harness() {
-  const state = {
-    start_timestamp: 100,
-    signature: null as string | null,
-    indexed_through: 0,
-  };
-  const rows = new Map<
-    string,
-    { time: number; amount: bigint; funding: bigint }
-  >();
-  const pool = {
-    async connect() {
-      return {
-        query: async (sql: string, args: any[] = []) =>
-          sql.includes('advisory_')
-            ? { rows: [{ locked: true }] }
-            : pool.query(sql, args),
-        release() {},
-      };
-    },
-    async query(sql: string, args: any[] = []) {
-      if (sql.startsWith('SELECT *')) return { rows: [{ ...state }] };
-      if (sql.startsWith('INSERT INTO manifest_fee_collections')) {
-        if (!rows.has(args[0]))
-          rows.set(args[0], {
-            time: args[2],
-            amount: BigInt(args[3]),
-            funding: BigInt(args[4]),
-          });
-      } else if (sql.startsWith('UPDATE')) {
-        state.signature = args[1];
-        state.indexed_through = args[2];
-      } else if (sql.startsWith('SELECT c.')) {
-        const selected = [...rows.values()].filter(
-          (r) => r.time >= args[1] && r.time < args[2],
-        );
-        return {
-          rows: [
-            {
-              ...state,
-              lamports: selected.reduce((n, r) => n + r.amount, 0n).toString(),
-              funding_lamports: '0',
-            },
-          ],
-        };
-      }
-      return { rows: [] };
-    },
-  };
+function harness(startMillis = 100000) {
   let missing = false;
+  let horizon = 300;
   let page = [
     { signature: 'a', slot: 5, blockTime: 150, err: null },
     { signature: 'old', slot: 1, blockTime: 99, err: null },
   ];
-  const rpc: Rpc = async <T>(method: string): Promise<T> => {
-    return (
-      method === 'getSlot'
-        ? 10
-        : method === 'getBlockTime'
-          ? 200
-          : method === 'getSignaturesForAddress'
-            ? page
-            : missing
-              ? null
-              : transaction()
-    ) as T;
+  const fetched: string[] = [];
+  const rpc: Rpc = async <T>(method: string, params: unknown[]): Promise<T> => {
+    if (method === 'getSlot') return 10 as T;
+    if (method === 'getBlockTime') return horizon as T;
+    if (method === 'getSignaturesForAddress') return page as T;
+    const signature = params[0] as string;
+    fetched.push(signature);
+    if (missing) return null as T;
+    const tx = transaction();
+    const entry = page.find((entry) => entry.signature === signature)!;
+    tx.blockTime = entry.blockTime;
+    tx.slot = entry.slot;
+    return tx as T;
   };
-  const indexer = new FeeCollectionIndexer(pool as unknown as Pool, rpc, 100);
   return {
-    indexer,
-    state,
-    rows,
+    indexer: new FeeCollectionIndexer(rpc, () => startMillis),
+    fetched,
     setMissing: (v: boolean) => {
       missing = v;
     },
     setPage: (v: typeof page) => {
       page = v;
+    },
+    setHorizon: (v: number) => {
+      horizon = v;
     },
   };
 }
@@ -196,39 +150,41 @@ test('replays idempotently and serves half-open intervals including genuine zero
   const h = harness();
   await h.indexer.poll();
   await h.indexer.poll();
-  assert.equal(h.rows.size, 1);
+  assert.deepEqual(h.fetched, ['a']);
   assert.equal((await h.indexer.query(100, 150)).feesLamports, '0');
   assert.equal((await h.indexer.query(150, 200)).feesLamports, '50000');
   await assert.rejects(h.indexer.query(99, 200), /not fully/);
-  await assert.rejects(h.indexer.query(100, 201), /not fully/);
+  await assert.rejects(h.indexer.query(100, 301), /not fully/);
   await assert.rejects(h.indexer.query(150, 150), RangeError);
 });
 test('missing transactions do not advance coverage and recover on retry', async () => {
   const h = harness();
   h.setMissing(true);
   await assert.rejects(h.indexer.poll(), /Missing fee transaction/);
-  assert.equal(h.state.indexed_through, 0);
+  await assert.rejects(h.indexer.query(100, 200), /not fully/);
   h.setMissing(false);
   await h.indexer.poll();
-  assert.equal(h.state.indexed_through, 200);
+  assert.equal((await h.indexer.query(100, 200)).feesLamports, '50000');
 });
 test('empty/pruned history fails instead of claiming complete zero', async () => {
   const h = harness();
   h.setPage([]);
-  await assert.rejects(h.indexer.poll(), /archival/);
-  assert.equal(h.state.indexed_through, 0);
+  await assert.rejects(h.indexer.poll(), /history ended/);
+  await assert.rejects(h.indexer.query(100, 200), /not fully/);
 });
-test('missing saved cursor cannot be replaced by reaching start boundary', async () => {
+test('missing cursor cannot be replaced by reaching startup boundary', async () => {
   const h = harness();
-  h.state.signature = 'missing';
+  await h.indexer.poll();
+  h.setPage([{ signature: 'old', slot: 1, blockTime: 99, err: null }]);
+  h.setHorizon(400);
   await assert.rejects(h.indexer.poll(), /cursor missing/);
-  assert.equal(h.state.indexed_through, 0);
+  assert.equal((await h.indexer.query(100, 200)).feesLamports, '50000');
+  await assert.rejects(h.indexer.query(100, 400), /not fully/);
 });
-test('partial writes are hidden until coverage commits, then deduplicated', async () => {
+test('partial scans are discarded until coverage commits, then deduplicated', async () => {
   const h = harness();
   h.setPage([{ signature: 'a', slot: 5, blockTime: 150, err: null }]);
   await assert.rejects(h.indexer.poll(), /pagination/);
-  assert.equal(h.rows.size, 1);
   await assert.rejects(h.indexer.query(100, 200), /not fully/);
   h.setPage([
     { signature: 'a', slot: 5, blockTime: 150, err: null },
@@ -236,6 +192,30 @@ test('partial writes are hidden until coverage commits, then deduplicated', asyn
   ]);
   await h.indexer.poll();
   assert.equal((await h.indexer.query(100, 200)).feesLamports, '50000');
+});
+test('restart resets coverage and does not fetch or report earlier collections', async () => {
+  const original = harness();
+  await original.indexer.poll();
+  assert.equal((await original.indexer.query(100, 200)).feesLamports, '50000');
+  const restarted = harness(200000);
+  restarted.setPage([
+    { signature: 'new', slot: 6, blockTime: 250, err: null },
+    { signature: 'a', slot: 5, blockTime: 150, err: null },
+  ]);
+  await restarted.indexer.poll();
+  assert.deepEqual(restarted.fetched, ['new']);
+  await assert.rejects(restarted.indexer.query(100, 300), /not fully/);
+  const result = await restarted.indexer.query(200, 300);
+  assert.equal(result.feesLamports, '50000');
+  assert.equal(result.coverageStartTimestamp, 200);
+});
+test('startup excludes the partial second and needs no collections to serve zero', async () => {
+  const h = harness(150001);
+  await h.indexer.poll();
+  assert.deepEqual(h.fetched, []);
+  assert.equal(h.indexer.startTimestamp, 151);
+  await assert.rejects(h.indexer.query(150, 200), /not fully/);
+  assert.equal((await h.indexer.query(151, 200)).feesLamports, '0');
 });
 
 test('wrapper collect includes resizing proceeds; defrag alone earns nothing', () => {

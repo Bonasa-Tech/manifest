@@ -625,14 +625,8 @@ const run = async () => {
 
   await Promise.all([
     (async () => {
-      if (IS_READ_ONLY) return;
-      let initialized = false;
       while (true) {
         try {
-          if (!initialized) {
-            await statsServer.feeCollections.initialize();
-            initialized = true;
-          }
           await statsServer.feeCollections.poll();
         } catch (error) {
           console.error(

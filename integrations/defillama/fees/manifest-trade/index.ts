@@ -46,9 +46,8 @@ const adapter: SimpleAdapter = {
   version: 2,
   pullHourly: true,
   chains: [CHAIN.SOLANA],
-  // Conservative reporting start, not a claim about the first fee charged.
-  // The stats indexer must backfill this boundary before submission.
-  start: '2026-10-26',
+  // Coverage is limited to the current stats-server process lifetime. Requests
+  // before its startup fail; there is no durable historical backfill or start date.
   fetch,
   methodology: {
     Fees: 'SOL collected from wrapper fees, advanced-order fees, expired-order cleaning and account resizing, recognized when collected; excludes fees paid to separate UI/referral destinations.',

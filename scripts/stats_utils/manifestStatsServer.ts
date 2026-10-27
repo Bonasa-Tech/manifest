@@ -1,5 +1,4 @@
 import {
-  DEFAULT_FEE_START_TIMESTAMP,
   FeeCollectionIndexer,
   feeRpc,
 } from './feeCollections';
@@ -325,11 +324,7 @@ export class ManifestStatsServer {
     });
 
     this.feeCollections = new FeeCollectionIndexer(
-      this.pool,
       feeRpc(process.env.FEES_RPC_URL || rpcUrl),
-      process.env.FEES_START_TIMESTAMP === undefined
-        ? DEFAULT_FEE_START_TIMESTAMP
-        : Number(process.env.FEES_START_TIMESTAMP),
     );
 
     this.pool.on('error', (err) => {

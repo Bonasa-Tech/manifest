@@ -1,9 +1,5 @@
 import bs58 from 'bs58';
-import type { Pool, PoolClient } from 'pg';
 
-// Conservative start shared with the prepared DefiLlama adapter.
-export const DEFAULT_FEE_START_TIMESTAMP =
-  Date.parse('2026-10-26T00:00:00Z') / 1000;
 export const FEE_COLLECTOR = 'B6dmr2UAn2wgjdm3T4N1Vjd8oPYRRTguByW7AEngkeL6';
 const CORE = 'MNFSTqtC93rEfYHB6hF82sKdZpUDFWkViLByLd1k1Ms';
 const WRAPPER = 'wMNFSTkir3HgyZTsB7uqu3i7FA73grFCptPXgrZjksL';
@@ -134,53 +130,33 @@ type Signature = {
   err: unknown;
 };
 
+type Collection = {
+  blockTime: number;
+  lamports: bigint;
+  fundingLamports: bigint;
+};
+
 export class FeeCollectionIndexer {
   private running = false;
-  constructor(
-    private pool: Pool,
-    private rpc: Rpc,
-    readonly startTimestamp: number,
-  ) {
-    if (!Number.isSafeInteger(startTimestamp) || startTimestamp <= 0)
-      throw new Error('Invalid FEES_START_TIMESTAMP');
-  }
+  private signature?: string;
+  private indexedThrough = 0;
+  private readonly collections = new Map<string, Collection>();
+  readonly startTimestamp: number;
 
-  async initialize(): Promise<void> {
-    await this.pool.query(`CREATE TABLE IF NOT EXISTS manifest_fee_collections (
-      signature TEXT PRIMARY KEY, slot BIGINT NOT NULL, block_time BIGINT NOT NULL,
-      lamports NUMERIC(30,0) NOT NULL, funding_lamports NUMERIC(30,0) NOT NULL
-    );
-    CREATE INDEX IF NOT EXISTS manifest_fee_collections_time ON manifest_fee_collections(block_time);
-    CREATE TABLE IF NOT EXISTS manifest_fee_cursor (
-      collector TEXT PRIMARY KEY, start_timestamp BIGINT NOT NULL,
-      signature TEXT, indexed_through BIGINT NOT NULL DEFAULT 0
-    )`);
-    await this.pool.query(
-      `INSERT INTO manifest_fee_cursor (collector,start_timestamp) VALUES ($1,$2)
-      ON CONFLICT DO NOTHING`,
-      [FEE_COLLECTOR, this.startTimestamp],
-    );
+  constructor(
+    private rpc: Rpc,
+    now: () => number = Date.now,
+  ) {
+    // Exclude the partial startup second: coverage begins at the first full
+    // second after this process's indexer is created. Nothing is persisted.
+    this.startTimestamp = Math.ceil(now() / 1000);
   }
 
   async poll(): Promise<void> {
     if (this.running) return;
     this.running = true;
-    let lock: PoolClient | undefined;
-    let locked = false;
+    const pending = new Map<string, Collection>();
     try {
-      lock = await this.pool.connect();
-      locked = (
-        await lock.query('SELECT pg_try_advisory_lock(62619402) AS locked')
-      ).rows[0].locked;
-      if (!locked) return;
-      const state = (
-        await lock.query(
-          'SELECT * FROM manifest_fee_cursor WHERE collector=$1',
-          [FEE_COLLECTOR],
-        )
-      ).rows[0];
-      if (!state || Number(state.start_timestamp) !== this.startTimestamp)
-        throw new Error('Fee start changed; explicit reindex required');
       // Snapshot the finalized horizon BEFORE querying signatures. Transactions
       // newer than it may also be stored, but do not advance coverage past it.
       const slot = await this.rpc<number>('getSlot', [
@@ -197,6 +173,7 @@ export class FeeCollectionIndexer {
           {
             commitment: 'finalized',
             limit: 1000,
+            minContextSlot: slot,
             ...(before ? { before } : {}),
           },
         ]);
@@ -209,14 +186,14 @@ export class FeeCollectionIndexer {
         }
         newest ??= page[0].signature;
         for (const entry of page) {
-          if (entry.signature === state.signature) {
+          if (entry.signature === this.signature) {
             done = true;
             break;
           }
           if (entry.blockTime === null)
             throw new Error(`Missing block time: ${entry.signature}`);
           if (entry.blockTime < this.startTimestamp) {
-            if (state.signature)
+            if (this.signature)
               throw new Error('Fee cursor missing from RPC history');
             done = true;
             break;
@@ -239,18 +216,11 @@ export class FeeCollectionIndexer {
           if (receipt) {
             if (tx.blockTime !== entry.blockTime || tx.slot !== entry.slot)
               throw new Error('Fee transaction metadata mismatch');
-            await lock.query(
-              `INSERT INTO manifest_fee_collections
-              (signature,slot,block_time,lamports,funding_lamports) VALUES ($1,$2,$3,$4,$5)
-              ON CONFLICT (signature) DO NOTHING`,
-              [
-                entry.signature,
-                tx.slot,
-                tx.blockTime,
-                receipt.lamports,
-                receipt.fundingLamports,
-              ],
-            );
+            pending.set(entry.signature, {
+              blockTime: entry.blockTime,
+              lamports: BigInt(receipt.lamports),
+              fundingLamports: BigInt(receipt.fundingLamports),
+            });
           }
         }
         const next = page[page.length - 1].signature;
@@ -258,20 +228,15 @@ export class FeeCollectionIndexer {
           throw new Error('Fee RPC pagination did not advance');
         before = next;
       }
-      // Rows may have been persisted during a partial scan. Coverage advances
-      // only after every signature was processed; retries safely deduplicate.
-      await lock.query(
-        `UPDATE manifest_fee_cursor SET signature=$2,
-        indexed_through=GREATEST(indexed_through,$3) WHERE collector=$1`,
-        [FEE_COLLECTOR, newest ?? state.signature, horizon],
-      );
-    } finally {
-      try {
-        if (locked) await lock!.query('SELECT pg_advisory_unlock(62619402)');
-      } finally {
-        lock?.release();
-        this.running = false;
+      // Commit the whole scan synchronously. Failed polls leave the previously
+      // completed coverage and totals intact, and retry from the same cursor.
+      for (const [signature, collection] of pending) {
+        this.collections.set(signature, collection);
       }
+      this.signature = newest ?? this.signature;
+      this.indexedThrough = Math.max(this.indexedThrough, horizon);
+    } finally {
+      this.running = false;
     }
   }
 
@@ -287,34 +252,29 @@ export class FeeCollectionIndexer {
         'Use integer Unix timestamps with 0 < end-start <= 31 days',
       );
     }
-    // One statement gives coverage and totals a consistent database snapshot.
-    const result = await this.pool.query(
-      `SELECT c.start_timestamp,c.indexed_through,
-      COALESCE((SELECT SUM(lamports) FROM manifest_fee_collections WHERE block_time >= $2 AND block_time < $3),0)::text AS lamports,
-      COALESCE((SELECT SUM(funding_lamports) FROM manifest_fee_collections WHERE block_time >= $2 AND block_time < $3),0)::text AS funding_lamports
-      FROM manifest_fee_cursor c WHERE collector=$1`,
-      [FEE_COLLECTOR, start, end],
-    );
-    const row = result.rows[0];
-    if (
-      !row ||
-      Number(row.start_timestamp) !== this.startTimestamp ||
-      start < Number(row.start_timestamp) ||
-      end > Number(row.indexed_through)
-    ) {
+    if (start < this.startTimestamp || end > this.indexedThrough) {
       throw new Error('Requested fee interval is not fully indexed');
+    }
+    let lamports = 0n;
+    let fundingLamports = 0n;
+    for (const collection of this.collections.values()) {
+      if (collection.blockTime >= start && collection.blockTime < end) {
+        lamports += collection.lamports;
+        fundingLamports += collection.fundingLamports;
+      }
     }
     return {
       startTimestamp: start,
       endTimestamp: end,
-      indexedThrough: Number(row.indexed_through),
+      indexedThrough: this.indexedThrough,
+      coverageStartTimestamp: this.startTimestamp,
       collector: FEE_COLLECTOR,
       complete: true,
       methodology: 'collection-basis-v1',
-      feesLamports: row.lamports as string,
-      revenueLamports: row.lamports as string,
-      fundingLamports: row.funding_lamports as string,
-      breakdown: { [COLLECTION_LABEL]: row.lamports as string },
+      feesLamports: lamports.toString(),
+      revenueLamports: lamports.toString(),
+      fundingLamports: fundingLamports.toString(),
+      breakdown: { [COLLECTION_LABEL]: lamports.toString() },
     };
   }
 }

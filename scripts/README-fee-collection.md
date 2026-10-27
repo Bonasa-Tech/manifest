@@ -182,51 +182,46 @@ silently contaminating the total.
 The response contains `feesLamports`, `revenueLamports`, `fundingLamports`,
 `breakdown`, `collector`, the requested timestamps, `indexedThrough`,
 `methodology: "collection-basis-v1"`, and `complete: true`. HTTP 400 means an
-invalid interval. HTTP 503 means coverage is incomplete or the database is
-unavailable; it must never be interpreted as zero fees. Empty intervals return
-zero only after indexing has established complete coverage.
+invalid interval. HTTP 503 means the interval is outside the current process's
+indexed coverage; it must never be interpreted as zero fees. Empty intervals
+return zero only after indexing has established complete coverage.
+`coverageStartTimestamp` identifies the first full second after startup.
 
-The writer polls every hour independently of the hourly collector and
-DefiLlama's hourly adapter. It creates `manifest_fee_collections` and
-`manifest_fee_cursor` in the existing stats PostgreSQL database. Signatures are
-unique, retries are idempotent, and coverage advances only after the entire
-scan succeeds. A PostgreSQL advisory lock permits only one replica to index at
-a time. `READ_ONLY` instances serve the same ledger without running a writer.
-Rows from an interrupted scan do not establish coverage on their own.
+Fee reporting is entirely in memory. It starts from stats-server startup time,
+with no configured start date, SQL tables, migrations, or persistent cursor.
+The first scan runs at startup and subsequent scans run hourly, independently
+of the hourly collector and DefiLlama adapter. Each successful scan commits its
+collections and coverage together. Signature deduplication prevents counting
+retries twice. Failed scans leave the last completed results intact.
 
-Configuration:
+Restarting the server discards its fee history and starts a new coverage
+window. Requests spanning or preceding that startup return HTTP 503, including
+requests for older intervals DefiLlama has already fetched. This design cannot
+backfill across restarts. A partial startup hour is unavailable; the adapter
+can report subsequent fully indexed hours. Each server replica has independent
+coverage, including `READ_ONLY` instances, since fee indexing makes no database
+writes. Use a stable instance for the fees endpoint if replicas restart at
+different times.
 
-- `DATABASE_URL`: existing stats database; the writer needs table/index creation
-  permission for the initial rollout.
-- `FEES_RPC_URL`: optional archival RPC override; otherwise uses `RPC_URL`.
-  Must support transaction version 1, finalized signature history, inner
-  instructions, and historical `getTransaction` results.
-- `FEES_START_TIMESTAMP`: optional Unix seconds; defaults to **1792972800**
-  (2026-10-26 00:00 UTC). This is a conservative initial reporting boundary,
-  not the date Manifest first charged fees. The RPC must return at least one
-  signature older than the boundary to establish initial coverage. Changing
-  the configured start for an existing cursor requires an explicit reindex;
-  the process refuses to silently shorten or expand coverage.
+The only optional fee-specific setting is `FEES_RPC_URL`, which overrides
+`RPC_URL`. The RPC must support transaction version 1, finalized signature
+history and transaction metadata (including inner instructions) since startup.
+No historical backfill before startup is performed.
 
 Rollout:
 
-1. Deploy the stats server with the existing database and suitable RPC. Its
-   background task automatically creates the tables and backfills the default
-   reporting boundary. Monitor `Fee collection indexing failed` logs.
-2. Query a completed hour and a completed day; check `complete` and
-   `indexedThrough`, and reconcile receipts against collector transactions.
-   Adjacent hourly results must sum to the same daily total. Before extending
-   history, reset/rebuild the cursor under operator control with writers
-   stopped and establish coverage using archival data.
+1. Deploy the stats server and monitor `Fee collection indexing failed` logs.
+2. After a complete hour has been indexed, query an interval entirely within
+   the current process lifetime. Check `complete`, `coverageStartTimestamp`
+   and `indexedThrough`, and reconcile receipts against collector transactions.
 3. Copy `integrations/defillama/fees/manifest-trade/index.ts` into
-   `DefiLlama/dimension-adapters/fees/manifest-trade/index.ts`. Its start date
-   matches the default indexer boundary; extend both only after validating
-   older history. The existing volume adapter remains unchanged.
-4. In that repository run `npm test fees manifest-trade 2026-10-27` (the date
-   is the end of the window), then test additional completed days. Submit the
-   adapter with the collection-basis methodology, including account resizing,
-   made explicit. Request attachment of `fees: manifest-trade` to the existing
-   Manifest Trade listing. DefiLlama reviews the classification and listing.
+   `DefiLlama/dimension-adapters/fees/manifest-trade/index.ts`. The adapter has
+   no fixed start date and propagates unavailable intervals as errors. The
+   existing volume adapter remains unchanged.
+4. Test an indexed interval with DefiLlama's runner before submission. Make
+   the collection-basis methodology, resizing proceeds, and restart-limited
+   history explicit to reviewers. Request attachment of `fees: manifest-trade`
+   to the existing Manifest Trade listing.
 
 Local checks: `yarn test:fee-collections`. The fixture is a public mainnet
 collection transaction with directly reconciled wallet balances. The prepared
