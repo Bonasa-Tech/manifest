@@ -1,3 +1,7 @@
+import {
+  FeeCollectionIndexer,
+  feeRpc,
+} from './feeCollections';
 import { Mutex } from 'async-mutex';
 import * as promClient from 'prom-client';
 import {
@@ -273,6 +277,8 @@ export class ManifestStatsServer {
   private readonly BACKFILL_SUMMARY_DEBOUNCE_MS: number = 120_000;
   private readonly BACKFILL_SUMMARY_MAX_SIGNATURES: number = 15;
 
+  readonly feeCollections: FeeCollectionIndexer;
+
   constructor(
     rpcUrl: string,
     isReadOnly: boolean,
@@ -316,6 +322,10 @@ export class ManifestStatsServer {
       // headroom for the writers; raise both together.
       max: positiveIntFromEnv('STATS_DB_POOL_MAX', 40),
     });
+
+    this.feeCollections = new FeeCollectionIndexer(
+      feeRpc(process.env.FEES_RPC_URL || rpcUrl),
+    );
 
     this.pool.on('error', (err) => {
       console.error('Unexpected database pool error:', err);

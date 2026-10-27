@@ -237,6 +237,43 @@ const run = async () => {
   const volumeHandler: RequestHandler = (_req, res) => {
     res.type('application/json').send(statsServer.getVolumeJson());
   };
+  const feesHandler: RequestHandler = async (req, res) => {
+    try {
+      const { startTimestamp, endTimestamp } = req.query;
+      if (
+        typeof startTimestamp !== 'string' ||
+        !/^\d+$/.test(startTimestamp) ||
+        typeof endTimestamp !== 'string' ||
+        !/^\d+$/.test(endTimestamp)
+      ) {
+        res
+          .status(400)
+          .json({
+            error: 'startTimestamp and endTimestamp are required Unix seconds',
+          });
+        return;
+      }
+      res.json(
+        await statsServer.feeCollections.query(
+          Number(startTimestamp),
+          Number(endTimestamp),
+        ),
+      );
+    } catch (error) {
+      if (error instanceof RangeError) {
+        res.status(400).json({ error: error.message });
+      } else {
+        console.error('Fee reporting unavailable:', error);
+        res.setHeader('Retry-After', String(ONE_HOUR_SEC));
+        res
+          .status(503)
+          .json({
+            error:
+              'Requested fee interval is not fully indexed or reporting is unavailable',
+          });
+      }
+    }
+  };
   const tradersHandler: RequestHandler = (req, res) => {
     try {
       const includeDebug = req.query.debug === 'true';
@@ -471,6 +508,7 @@ const run = async () => {
   app.get('/metadata', metadataHandler);
   app.get('/orderbook', orderbookHandler);
   app.get('/volume', volumeHandler);
+  app.get('/fees', feesHandler);
   app.get('/traders', tradersHandler);
   app.get('/traders/debug', (req, res) => {
     const requestedLimit =
@@ -587,6 +625,21 @@ const run = async () => {
   process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
 
   await Promise.all([
+    // Index collector SOL balance increases at startup and hourly, keeping
+    // seven days of in-memory hourly totals for the /fees endpoint.
+    (async () => {
+      while (true) {
+        try {
+          await statsServer.feeCollections.poll();
+        } catch (error) {
+          console.error(
+            'Fee collection indexing failed; coverage has not advanced:',
+            error,
+          );
+        }
+        await sleep(ONE_HOUR_SEC * 1_000);
+      }
+    })(),
     // Isolate advancing checkpoints so that it is more reliable. The most
     // important feature of stats server is accurate volume reporting, so dont
     // let the database cause issues with live serving of volume.
