@@ -129,6 +129,12 @@ const DEFAULT_DELAY_MS = 1_000;
 // expiry retry to catch the last-valid-block race. No priority fee: landing is
 // best effort, retried.
 const MAX_SEND_ATTEMPTS = 3;
+// Pause before a fresh-blockhash retry: BlockhashNotFound retries exist
+// because the sending node lags the hash-serving node, and retrying instantly
+// just re-loses the same race. Retries also switch to a finalized blockhash,
+// which every node behind the balancer has seen; it is ~32 slots older than a
+// confirmed one but still leaves ~120 slots (~48s) to land.
+const SEND_RETRY_DELAY_MS = 2_000;
 
 type CollectableWrapper = {
   pubkey: PublicKey;
@@ -825,7 +831,9 @@ Environment:
           for (let attempt = 1; ; attempt++) {
             const { value } = await rpc<{
               value: { blockhash: string; lastValidBlockHeight: number };
-            }>('getLatestBlockhash', [{ commitment: 'confirmed' }]);
+            }>('getLatestBlockhash', [
+              { commitment: attempt === 1 ? 'confirmed' : 'finalized' },
+            ]);
             const unsigned = createGenericMessage(
               instructions,
               collectorPublicKey,
@@ -866,8 +874,9 @@ Environment:
               if (signature === undefined && isBlockhashNotFound(error)) {
                 if (attempt >= MAX_SEND_ATTEMPTS) throw error;
                 console.warn(
-                  `  preflight hit BlockhashNotFound (lagging RPC node); retrying on a fresh blockhash (attempt ${attempt}/${MAX_SEND_ATTEMPTS})...`,
+                  `  preflight hit BlockhashNotFound (lagging RPC node); retrying on a finalized blockhash (attempt ${attempt}/${MAX_SEND_ATTEMPTS})...`,
                 );
+                await sleep(SEND_RETRY_DELAY_MS, () => stopRequested);
                 continue;
               }
               // Expiry without landing mirrors the wrapper send loop below:
@@ -1128,8 +1137,9 @@ Environment:
       let landed = false;
       let landedSignature: string | undefined;
       for (let attempt = 1; attempt <= MAX_SEND_ATTEMPTS; attempt++) {
-        const latestBlockhash =
-          await connection.getLatestBlockhash('confirmed');
+        const latestBlockhash = await connection.getLatestBlockhash(
+          attempt === 1 ? 'confirmed' : 'finalized',
+        );
         const transaction = await buildSignedTransaction(
           batch,
           collector!,
@@ -1188,8 +1198,9 @@ Environment:
             attempt < MAX_SEND_ATTEMPTS
           ) {
             console.warn(
-              `Tx ${index + 1}/${batches.length} preflight hit BlockhashNotFound (lagging RPC node); retrying on a fresh blockhash...`,
+              `Tx ${index + 1}/${batches.length} preflight hit BlockhashNotFound (lagging RPC node); retrying on a finalized blockhash...`,
             );
+            await sleep(SEND_RETRY_DELAY_MS, () => stopRequested);
             continue;
           }
           // An expired blockhash means the transaction can no longer land, so
