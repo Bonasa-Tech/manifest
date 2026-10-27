@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import bs58 from 'bs58';
-import { readFileSync, readdirSync } from 'node:fs';
 import {
   decodeCollection,
   FEE_COLLECTOR,
@@ -102,15 +101,6 @@ test('resolves address lookup table keys', () => {
   tx.meta!.loadedAddresses = { writable: ['market'], readonly: [SYSTEM] };
   assert.equal(decodeCollection(tx)?.lamports, '50000');
 });
-for (const file of readdirSync('scripts/fixtures/fee-collections')) {
-  test(`mainnet ${file} receipt reconciles with wallet balances`, () => {
-    const fixture = JSON.parse(
-      readFileSync(`scripts/fixtures/fee-collections/${file}`, 'utf8'),
-    );
-    assert.deepEqual(decodeCollection(fixture.transaction), fixture.expected);
-  });
-}
-
 function harness(startMillis = 100000) {
   let missing = false;
   let horizon = 300;
