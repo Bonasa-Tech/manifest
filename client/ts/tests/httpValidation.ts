@@ -1,5 +1,5 @@
 import { assert } from 'chai';
-import { GetProgramAccountsResponse } from '@solana/web3.js';
+import { GetProgramAccountsResponse, PublicKey } from '@solana/web3.js';
 import {
   isAuthorizedBearer,
   isValidSolanaSignature,
@@ -8,7 +8,7 @@ import {
   positiveIntFromEnv,
   validateUnixTimestampRange,
 } from '../../../scripts/stats_utils/httpValidation';
-import { enforceMarketAccountLimit } from '../../../scripts/stats_utils/marketFetcher';
+import { truncateMarketAccounts } from '../../../scripts/stats_utils/marketFetcher';
 
 describe('stats HTTP validation', () => {
   it('accepts bounded integer query values', () => {
@@ -69,15 +69,38 @@ describe('stats HTTP validation', () => {
     assert.isFalse(isValidSolanaSignature('1'.repeat(63)));
   });
 
-  it('rejects an RPC market collection above the configured bound', () => {
-    const syntheticAccounts: GetProgramAccountsResponse = new Array(3).fill(
-      {},
-    ) as GetProgramAccountsResponse;
-    assert.throws(
-      () => enforceMarketAccountLimit(syntheticAccounts, 2),
-      /refusing to track more than 2/,
+  it('truncates an RPC market collection above the configured bound', () => {
+    const syntheticAccounts: GetProgramAccountsResponse = [1, 2, 3].map(
+      (fill: number) => ({
+        pubkey: new PublicKey(new Uint8Array(32).fill(fill)),
+        account: {
+          data: Buffer.alloc(0),
+          executable: false,
+          lamports: 0,
+          owner: PublicKey.default,
+        },
+      }),
     );
-    assert.lengthOf(enforceMarketAccountLimit(syntheticAccounts, 3), 3);
+    const priorityPk: string = syntheticAccounts[2].pubkey.toBase58();
+    const isPriority = (marketPk: string): boolean => marketPk === priorityPk;
+
+    const kept: GetProgramAccountsResponse = truncateMarketAccounts(
+      syntheticAccounts,
+      isPriority,
+      2,
+    );
+    assert.lengthOf(kept, 2);
+    // Priority accounts survive truncation ahead of earlier non-priority ones.
+    assert.equal(kept[0].pubkey.toBase58(), priorityPk);
+    assert.equal(
+      kept[1].pubkey.toBase58(),
+      syntheticAccounts[0].pubkey.toBase58(),
+    );
+    // At or under the bound, the collection passes through untouched.
+    assert.strictEqual(
+      truncateMarketAccounts(syntheticAccounts, isPriority, 3),
+      syntheticAccounts,
+    );
   });
 
   it('falls back to the default for invalid capacity env values', () => {

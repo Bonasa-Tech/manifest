@@ -1,7 +1,4 @@
-import {
-  FeeCollectionIndexer,
-  feeRpc,
-} from './feeCollections';
+import { FeeCollectionIndexer, feeRpc } from './feeCollections';
 import { Mutex } from 'async-mutex';
 import * as promClient from 'prom-client';
 import {
@@ -47,6 +44,8 @@ import * as queries from './queries';
 import { lookupMintTicker } from './mint';
 import {
   fetchMarketProgramAccounts,
+  MARKET_EVICTION_HIGH_WATER,
+  MARKET_EVICTION_LOW_WATER,
   MAX_TRACKED_MARKETS,
 } from './marketFetcher';
 import { calculateTraderPnL } from './pnl';
@@ -412,8 +411,8 @@ export class ManifestStatsServer {
 
     // Get current acquisition value
     const currentValue = acquisitionValues.get(baseMint) || 0;
-    const usdcValue =
-      safeAtomsToNumber(quoteAtoms) / 10 ** market.quoteDecimals();
+    // quoteAtoms was already converted via safeAtomsToNumber by the caller.
+    const usdcValue = quoteAtoms / 10 ** market.quoteDecimals();
 
     if (baseAtomsDelta > 0) {
       acquisitionValues.set(baseMint, currentValue + usdcValue);
@@ -1045,8 +1044,13 @@ export class ManifestStatsServer {
     await this.loadState();
     await this.loadWrapperCache();
 
+    // If the chain has more markets than we are willing to track, keep the
+    // ones whose restored checkpoints show volume; the quiet remainder is
+    // dropped and re-tracked lazily on its next fill.
     const marketProgramAccounts: GetProgramAccountsResponse =
-      await fetchMarketProgramAccounts(this.connection);
+      await fetchMarketProgramAccounts(this.connection, (marketPk: string) =>
+        this.hasCheckpointVolume(marketPk),
+      );
 
     // Collect markets that need individual loading (when we only have pubkeys)
     const marketsToLoad: string[] = [];
@@ -3152,6 +3156,156 @@ export class ManifestStatsServer {
     });
   }
 
+  // True when any restored checkpoint bucket for the market holds volume.
+  private hasCheckpointVolume(marketPk: string): boolean {
+    const base: number[] | undefined =
+      this.baseVolumeAtomsCheckpoints.get(marketPk);
+    if (base !== undefined && base.some((v: number): boolean => v > 0)) {
+      return true;
+    }
+    const quote: number[] | undefined =
+      this.quoteVolumeAtomsCheckpoints.get(marketPk);
+    return quote !== undefined && quote.some((v: number): boolean => v > 0);
+  }
+
+  // A market is dead (evictable) when it has no volume in any checkpoint
+  // bucket of the last 24 hours and nothing pending since the last advance.
+  // Markets still advancing their checkpoints must additionally have been
+  // observed for the full 24h window (oldest timestamp populated), so a newly
+  // created quiet market is not evicted before it has had a day to trade.
+  // Orphans - checkpoint rows restored from the database for markets that no
+  // longer exist on chain (e.g. closed by defrag) - never advance, so the
+  // window requirement is waived for them; there is nothing to lose.
+  private isMarketEvictable(marketPk: string, nowSec: number): boolean {
+    if ((this.baseVolumeAtomsSinceLastCheckpoint.get(marketPk) || 0) > 0) {
+      return false;
+    }
+    if ((this.quoteVolumeAtomsSinceLastCheckpoint.get(marketPk) || 0) > 0) {
+      return false;
+    }
+    const timestamps: number[] = this.checkpointTimestamps.get(marketPk) || [];
+    const base: number[] = this.baseVolumeAtomsCheckpoints.get(marketPk) || [];
+    const quote: number[] =
+      this.quoteVolumeAtomsCheckpoints.get(marketPk) || [];
+    const dayAgo: number = nowSec - ONE_DAY_SEC;
+    for (let i: number = 0; i < timestamps.length; i++) {
+      if (
+        timestamps[i] >= dayAgo &&
+        ((base[i] || 0) > 0 || (quote[i] || 0) > 0)
+      ) {
+        return false;
+      }
+    }
+    if (
+      this.markets.has(marketPk) &&
+      (timestamps.length === 0 || timestamps[0] === 0)
+    ) {
+      return false;
+    }
+    return true;
+  }
+
+  // Drop every piece of per-market state. The market is re-tracked lazily by
+  // loadNewMarket on its next fill. Database rows from already-saved
+  // checkpoints are left alone; they stop being refreshed once the market is
+  // out of the checkpoint maps, and a restart that restores one is handled by
+  // the orphan path in isMarketEvictable.
+  private evictMarket(marketPk: string): void {
+    const market: Market | undefined = this.markets.get(marketPk);
+    if (market !== undefined) {
+      // Remove prometheus series so evicted markets do not report stale
+      // values forever (and the scrape payload actually shrinks).
+      this.volume.remove({
+        market: marketPk,
+        mint: market.baseMint().toBase58(),
+        side: 'base',
+      });
+      this.volume.remove({
+        market: marketPk,
+        mint: market.quoteMint().toBase58(),
+        side: 'quote',
+      });
+      this.lastPrice.remove({ market: marketPk });
+      this.fills.remove({ market: marketPk });
+
+      // Keep the PnL index in sync with `markets` (see indexMarketForPnL).
+      const baseMint: string = market.baseMint().toBase58();
+      const marketsForBase: string[] | undefined =
+        this.baseMintToStablecoinMarkets.get(baseMint);
+      if (marketsForBase !== undefined) {
+        const index: number = marketsForBase.indexOf(marketPk);
+        if (index >= 0) {
+          marketsForBase.splice(index, 1);
+        }
+        if (marketsForBase.length === 0) {
+          this.baseMintToStablecoinMarkets.delete(baseMint);
+        }
+      }
+    }
+    this.markets.delete(marketPk);
+    this.baseVolumeAtomsSinceLastCheckpoint.delete(marketPk);
+    this.quoteVolumeAtomsSinceLastCheckpoint.delete(marketPk);
+    this.baseVolumeAtomsCheckpoints.delete(marketPk);
+    this.quoteVolumeAtomsCheckpoints.delete(marketPk);
+    this.checkpointTimestamps.delete(marketPk);
+    this.lastPriceByMarket.delete(marketPk);
+    this.tickers.delete(marketPk);
+    this.fillLogResults.delete(marketPk);
+    this.createdAtBlockTimestamp.delete(marketPk);
+    this.orderbookMarketLastLoadMs.delete(marketPk);
+  }
+
+  /**
+   * Evict dead markets once the tracked set passes the high water mark,
+   * bringing it back down to the low water mark. Orphaned checkpoint entries
+   * (markets absent from `markets`) go first since they serve no endpoint.
+   * Must run under the fill mutex (called from runMemoryCleanup inside
+   * advanceCheckpoints) so eviction cannot race fill processing.
+   */
+  private evictDeadMarkets(): void {
+    // Same size measure as the loadNewMarket cap check.
+    const tracked: number = Math.max(
+      this.markets.size,
+      this.baseVolumeAtomsCheckpoints.size,
+    );
+    if (tracked <= MARKET_EVICTION_HIGH_WATER) {
+      return;
+    }
+    const evictTarget: number = tracked - MARKET_EVICTION_LOW_WATER;
+    const nowSec: number = Math.floor(Date.now() / 1000);
+
+    const candidates: string[] = [];
+    for (const marketPk of this.baseVolumeAtomsCheckpoints.keys()) {
+      if (
+        !this.markets.has(marketPk) &&
+        this.isMarketEvictable(marketPk, nowSec)
+      ) {
+        candidates.push(marketPk);
+      }
+    }
+    for (const marketPk of this.markets.keys()) {
+      if (candidates.length >= evictTarget) {
+        break;
+      }
+      if (this.isMarketEvictable(marketPk, nowSec)) {
+        candidates.push(marketPk);
+      }
+    }
+
+    const toEvict: string[] = candidates.slice(0, evictTarget);
+    for (const marketPk of toEvict) {
+      this.evictMarket(marketPk);
+    }
+    console.log(
+      `Evicted ${toEvict.length} dead markets (${tracked} tracked > high water ` +
+        `${MARKET_EVICTION_HIGH_WATER}, target ${MARKET_EVICTION_LOW_WATER}); ` +
+        `now tracking ${Math.max(
+          this.markets.size,
+          this.baseVolumeAtomsCheckpoints.size,
+        )}`,
+    );
+  }
+
   /**
    * Run all memory cleanup tasks
    */
@@ -3159,6 +3313,7 @@ export class ManifestStatsServer {
     this.logMemoryUsage();
     this.pruneInactiveTraders();
     this.pruneFillLogResults();
+    this.evictDeadMarkets();
     this.logMemoryUsage();
   }
 
