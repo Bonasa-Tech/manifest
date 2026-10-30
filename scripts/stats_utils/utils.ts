@@ -79,7 +79,9 @@ export async function fetchBtcPriceFromCoinGecko(): Promise<number> {
     const response = await fetch(
       'https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd',
     );
-    const data = await response.json();
+    const data = (await response.json()) as {
+      bitcoin?: { usd?: number };
+    };
     return data.bitcoin?.usd || 0;
   } catch (error) {
     console.error('Error fetching BTC price from CoinGecko:', error);
