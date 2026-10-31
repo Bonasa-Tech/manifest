@@ -1,0 +1,43 @@
+[package]
+name = "liquidity-wrapper"
+version = "0.1.0"
+edition = "2021"
+repository = "https://github.com/Bonasa-Tech/manifest"
+description = "Runs a Manifest reverse-order ladder as a position with its own seat and records its opening and closing balances"
+license-file = "LICENSE"
+
+[lints]
+workspace = true
+
+[lib]
+crate-type = ["cdylib", "lib"]
+name = "liquidity_wrapper"
+
+[features]
+no-entrypoint = []
+cpi = ["no-entrypoint"]
+default = []
+test-sbf = []
+
+[dependencies]
+manifest-dex = { path = "../manifest", features = ["no-entrypoint"] }
+solana-program = { workspace = true }
+solana-sdk-ids = { workspace = true }
+solana-system-interface = { workspace = true }
+pinocchio = { workspace = true }
+spl-token = { workspace = true, features = ["no-entrypoint"] }
+spl-token-2022 = { workspace = true, features = ["no-entrypoint"] }
+bytemuck = { workspace = true, features = ["derive"] }
+static_assertions = { workspace = true }
+solana-security-txt = { workspace = true }
+
+[dev-dependencies]
+solana-program-test = { workspace = true }
+solana-account = { workspace = true }
+solana-keypair = { workspace = true }
+solana-signer = { workspace = true }
+solana-transaction = { workspace = true }
+solana-instruction = { workspace = true }
+solana-clock = { workspace = true }
+tokio = { workspace = true }
+spl-token-2022-interface = { workspace = true }
