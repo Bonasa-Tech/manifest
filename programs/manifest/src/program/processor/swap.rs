@@ -7,8 +7,8 @@ use crate::{
     quantities::{BaseAtoms, QuoteAtoms, QuoteAtomsPerBaseAtom, WrapperU64},
     require,
     state::{
-        AddOrderToMarketArgs, AddOrderToMarketResult, MarketRefMut, OrderType,
-        NO_EXPIRATION_LAST_VALID_SLOT,
+        utils::settle_global_gas_refunds, AddOrderToMarketArgs, AddOrderToMarketResult,
+        MarketRefMut, OrderType, NO_EXPIRATION_LAST_VALID_SLOT,
     },
     validation::loaders::SwapContext,
 };
@@ -511,6 +511,15 @@ pub(crate) fn process_swap_core(
         order_index,
         last_valid_slot,
     })?;
+
+    // Matching can take global orders off the book, either by filling them or
+    // by cleaning up expired and unbacked ones. Each of those carries a gas
+    // prepayment, which `gas_refund_market_opt` sends to the market account
+    // for the fee collector to sweep rather than to the swapper. Must come
+    // after the token transfers above: the lamport move is direct, so a CPI
+    // in between that includes only one of the two accounts would fail the
+    // runtime lamport sum check. See `settle_global_gas_refunds`.
+    settle_global_gas_refunds(&global_trade_accounts_opts)?;
 
     Ok(())
 }

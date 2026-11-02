@@ -323,8 +323,10 @@ impl<'a> SwapContext<'a> {
                 )
             };
 
-        // Included in case we need to expand for a reverse order.
-        let _system_program: Program =
+        // Included in case we need to expand for a reverse order, and so the
+        // gas prepayment of a global order removed while matching can be
+        // settled onto the market.
+        let system_program: Program =
             Program::new(next_account_info(account_iter)?, &system_program::id())?;
 
         let market_fixed: Ref<MarketFixed> = market.get_fixed()?;
@@ -482,8 +484,9 @@ impl<'a> SwapContext<'a> {
                     } else {
                         None
                     },
+                    gas_refund_market_opt: Some(market.info),
                     market: *market.info.pubkey(),
-                    system_program: None,
+                    system_program: Some(system_program.clone()),
                     num_deferred_gas_refunds: Cell::new(0),
                 });
             }
@@ -525,11 +528,24 @@ pub struct GlobalTradeAccounts<'a> {
     // or receive gas prepayments.
     pub gas_payer_opt: Option<Signer<'a>>,
     pub gas_receiver_opt: Option<Signer<'a>>,
+
+    /// Market account that takes the gas prepayment of a removed global order
+    /// in place of `gas_receiver_opt`. Only swap sets it.
+    ///
+    /// The maker prepays [`crate::state::GAS_DEPOSIT_LAMPORTS`] per global
+    /// order so that whoever takes it off the book is paid for the work. That
+    /// is the right destination for a cancel, a batch update fill, or global
+    /// clean, where someone chose to do that work. A swap taker did not, and
+    /// is usually a program routing on an end user's behalf, so the
+    /// prepayment goes to the market for the fee collector to sweep instead of
+    /// becoming a windfall for the router. `gas_receiver_opt` stays set for
+    /// the cleanup log.
+    pub gas_refund_market_opt: Option<&'a AccountView>,
     pub market: Pubkey,
 
-    // Number of gas prepayment refunds owed to the gas receiver for removed
-    // global orders. Refunds are accumulated here and the lamports are only
-    // moved at the end of the instruction (settle_global_gas_refunds) because
+    // Number of gas prepayment refunds owed for removed global orders.
+    // Refunds are accumulated here and the lamports are only moved at the end
+    // of the instruction (settle_global_gas_refunds) because
     // moving them directly before a later CPI that includes only one of the
     // two accounts makes the runtime lamport sum check fail with
     // UnbalancedInstruction. Processors that pass a system_program must settle
@@ -645,6 +661,7 @@ impl<'a> BatchUpdateContext<'a> {
                         system_program: Some(system_program.clone()),
                         gas_payer_opt: Some(payer.clone()),
                         gas_receiver_opt: Some(payer.clone()),
+                        gas_refund_market_opt: None,
                         market: *market.info.pubkey(),
                         num_deferred_gas_refunds: Cell::new(0),
                     })

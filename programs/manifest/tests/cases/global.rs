@@ -15,6 +15,7 @@ use manifest::{
         NO_EXPIRATION_LAST_VALID_SLOT,
     },
 };
+use solana_account::Account;
 use solana_instruction::Instruction;
 use solana_keypair::Keypair;
 use solana_program::{pubkey::Pubkey, rent::Rent};
@@ -361,6 +362,22 @@ async fn global_match_order() -> anyhow::Result<()> {
 
     test_fixture.deposit(Token::SOL, 1_000_000).await?;
 
+    let global_key: Pubkey = test_fixture.global_fixture.key;
+    let market_key: Pubkey = test_fixture.market_fixture.key;
+    let rent: Rent = test_fixture
+        .context
+        .borrow_mut()
+        .banks_client
+        .get_rent()
+        .await?;
+    let global_lamports_before: u64 = test_fixture.try_load(&global_key).await?.unwrap().lamports;
+    // Everything the market holds above its rent minimum is protocol fees
+    // waiting for the collector. The global placement above already left an
+    // advanced order fee there, so compare the excess before and after.
+    let market_before: Account = test_fixture.try_load(&market_key).await?.unwrap();
+    let market_excess_before: u64 =
+        market_before.lamports - rent.minimum_balance(market_before.data.len());
+
     test_fixture
         .batch_update_with_global_for_keypair(
             None,
@@ -376,6 +393,22 @@ async fn global_match_order() -> anyhow::Result<()> {
             &test_fixture.payer_keypair().insecure_clone(),
         )
         .await?;
+
+    // A batch update taker asked to do the cleanup, so the gas prepayment is
+    // refunded to them and nothing is parked on the market. Only swap sends it
+    // to the market for the fee collector.
+    let global_lamports_after: u64 = test_fixture.try_load(&global_key).await?.unwrap().lamports;
+    assert_eq!(
+        global_lamports_before - global_lamports_after,
+        manifest::state::GAS_DEPOSIT_LAMPORTS,
+        "the global account must release exactly one gas prepayment",
+    );
+    let market_after: Account = test_fixture.try_load(&market_key).await?.unwrap();
+    assert_eq!(
+        market_after.lamports - rent.minimum_balance(market_after.data.len()),
+        market_excess_before,
+        "a batch update refund must not be parked on the market",
+    );
 
     test_fixture.market_fixture.reload().await;
     let orders: Vec<RestingOrder> = test_fixture.market_fixture.get_resting_orders().await;
