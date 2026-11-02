@@ -48,6 +48,7 @@ export const ORIGINATING_PROTOCOL_IDS = {
   F7p3dFrjRTbtRp8FRF6qHLomXbKRBzpvBLjtQcfcgmNe: 'relay',
   AgmLJBMDCqWynYnQiPCuj9ewsNNsBJXyzoUhD9LJzN51: 'fomo',
   '6Vo3245eszAb5wuqEMw8mGdbfRUdKbHhDHP5LcaGuTAB': 'pump',
+  D8C8iW6zmoKg5TRr8nQ7h14TMWqQX8FiBdj2ju5MF3wa: 'mayan',
   JTXJTXfr1wVRMEzqiPhXUr69zJtfGuLh5qEiXG772Zj: 'jtx',
   sighWH8KaiT7QhtV4w29ReVF8kG6D5yG3EQP1KYyGVF: 'jupui',
 } as const;
