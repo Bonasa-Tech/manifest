@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793027339136,
+  "lastUpdate": 1793638498741,
   "repoUrl": "https://github.com/Bonasa-Tech/manifest",
   "entries": {
     "CU Benchmark": [
@@ -15341,6 +15341,72 @@ window.BENCHMARK_DATA = {
           {
             "name": "MFX_99",
             "value": 2393,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "cyrbritt@gmail.com",
+            "name": "Britt Cyr",
+            "username": "brittcyr"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "0603ee7ddab2c420f3122ffebc47fb11ff1ea00a",
+          "message": "Send a swap's global gas prepayment to the market, not nowhere (#783)\n\n* Send a swap's global gas prepayment to the market, not nowhere\n\nA global order's maker prepays GAS_DEPOSIT_LAMPORTS so that whoever takes\nthe order off the book is paid for the work. SwapContext built its\nGlobalTradeAccounts with `system_program: None`, which is the flag\nremove_from_global uses to decide whether a refund is owed, so a swap that\nfilled a global order released nothing: the prepayment stayed on the global\naccount, where no instruction can ever reclaim it.\n\nKeep the system program and point the refund at the market account instead\nof a signer. The market is where pay_advanced_order_fee already parks\nprotocol fees for defrag to sweep, so the lamports now reach the fee\ncollector on its normal pass. This covers every way matching takes a global\norder off the book during a swap: a fill, an expired order, and an unbacked\none.\n\nA swap taker is the wrong person to pay here anyway. They did not ask to\nclean up a global order, and in practice they are a program routing on an\nend user's behalf, so the prepayment would be a windfall for the router.\nBatch update and global clean are unchanged: there someone chose to do the\ncleanup, and the refund still goes to the signer who asked.\n\nMechanics worth noting:\n\n- The destination is a new `gas_refund_market_opt` on GlobalTradeAccounts\n  rather than a replacement for `gas_receiver_opt`, so swap still names the\n  swapper in GlobalCleanupLog's `cleaner` field.\n- settle_global_gas_refunds runs at the very end of process_swap_core,\n  after the token transfers. The lamport move is a direct set_lamports, so\n  a CPI in between that included only one of the two accounts would fail\n  the runtime's lamport sum check with UnbalancedInstruction.\n- No account list change for clients. Both the market and the global are\n  already writable in the swap and swap_v2 builders.\n\nTests: swap_global asserts the global releases exactly one prepayment and\nthe market's excess over rent rises by the same amount. global_match_order\nasserts the complement, that a batch update taker is still refunded and\nnothing lands on the market. Both compare the market's excess before and\nafter, since the global placement already left an advanced order fee there.\n\n* Add the new field to the okx quote simulator's GlobalTradeAccounts\n\nclient/okx is a separate workspace member, so building manifest-dex alone\ndid not catch it. Quoting only reads the book and never settles a refund,\nso there is no market to credit.",
+          "timestamp": "2026-11-02T11:47:26-05:00",
+          "tree_id": "41a6a4a8203a6b326d42cf4ef1dff8848d539f0b",
+          "url": "https://github.com/Bonasa-Tech/manifest/commit/0603ee7ddab2c420f3122ffebc47fb11ff1ea00a"
+        },
+        "date": 1793638496809,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "PHX_50",
+            "value": 6748,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "PHX_95",
+            "value": 8819,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "PHX_99",
+            "value": 10866,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_50",
+            "value": 1120,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_95",
+            "value": 1588,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_99",
+            "value": 2389,
             "range": "",
             "unit": "CU",
             "extra": ""
