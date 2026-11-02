@@ -12,9 +12,10 @@ use manifest::{
     state::{constants::NO_EXPIRATION_LAST_VALID_SLOT, OrderType, RestingOrder},
     validation::get_vault_address,
 };
+use solana_account::Account;
 use solana_instruction::Instruction;
 use solana_keypair::Keypair;
-use solana_program::instruction::AccountMeta;
+use solana_program::{instruction::AccountMeta, pubkey::Pubkey, rent::Rent};
 use solana_program_test::{tokio, ProgramTestContext};
 use solana_signer::Signer;
 use solana_transaction::Transaction;
@@ -1001,6 +1002,24 @@ async fn swap_global() -> anyhow::Result<()> {
         1 * SOL_UNIT_SIZE
     );
     assert_eq!(test_fixture.payer_usdc_fixture.balance_atoms().await, 0);
+
+    let global_key: Pubkey = test_fixture.global_fixture.key;
+    let market_key: Pubkey = test_fixture.market_fixture.key;
+    let rent: Rent = test_fixture
+        .context
+        .borrow_mut()
+        .banks_client
+        .get_rent()
+        .await?;
+    let global_lamports_before: u64 = test_fixture.try_load(&global_key).await?.unwrap().lamports;
+    // Creation and every expansion fund the market at exactly its rent
+    // minimum, so everything above that is protocol fees waiting for the
+    // collector. Compare the excess before and after to stay independent of
+    // the advanced order fee the global placement already left there.
+    let market_before: Account = test_fixture.try_load(&market_key).await?.unwrap();
+    let market_excess_before: u64 =
+        market_before.lamports - rent.minimum_balance(market_before.data.len());
+
     test_fixture
         .swap_with_global(SOL_UNIT_SIZE, 1_000 * USDC_UNIT_SIZE, true, true)
         .await?;
@@ -1009,6 +1028,25 @@ async fn swap_global() -> anyhow::Result<()> {
     assert_eq!(
         test_fixture.payer_usdc_fixture.balance_atoms().await,
         1_000 * USDC_UNIT_SIZE
+    );
+
+    // Filling the global order takes it off the book, which releases the
+    // maker's gas prepayment. A swapper does not get it: it lands on the market
+    // as excess over rent, which is what the fee collector sweeps.
+    let global_lamports_after: u64 = test_fixture.try_load(&global_key).await?.unwrap().lamports;
+    assert_eq!(
+        global_lamports_before - global_lamports_after,
+        manifest::state::GAS_DEPOSIT_LAMPORTS,
+        "the global account must release exactly one gas prepayment",
+    );
+
+    let market_after: Account = test_fixture.try_load(&market_key).await?.unwrap();
+    let market_excess_after: u64 =
+        market_after.lamports - rent.minimum_balance(market_after.data.len());
+    assert_eq!(
+        market_excess_after - market_excess_before,
+        manifest::state::GAS_DEPOSIT_LAMPORTS,
+        "the gas prepayment must be parked on the market for the fee collector",
     );
 
     Ok(())

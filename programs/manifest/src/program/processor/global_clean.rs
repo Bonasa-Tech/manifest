@@ -64,6 +64,7 @@ pub(crate) fn process_global_clean(
         market: *market.pubkey(),
         gas_payer_opt: None,
         gas_receiver_opt: Some(payer),
+        gas_refund_market_opt: None,
         num_deferred_gas_refunds: std::cell::Cell::new(0),
     };
 

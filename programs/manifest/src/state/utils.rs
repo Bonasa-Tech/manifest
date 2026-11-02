@@ -1,9 +1,9 @@
 use crate::validation::AccountViewExt;
-use pinocchio::{account::RefMut, error::ProgramError, ProgramResult};
-// Only the certora build names the type; the rest reaches it through the
-// account wrappers.
-#[cfg(feature = "certora")]
-use pinocchio::account::AccountView;
+use pinocchio::{
+    account::{AccountView, RefMut},
+    error::ProgramError,
+    ProgramResult,
+};
 
 #[cfg(not(feature = "certora"))]
 use crate::program::invoke_signed;
@@ -195,6 +195,7 @@ pub(crate) fn settle_global_gas_refunds(
         let GlobalTradeAccounts {
             global,
             gas_receiver_opt,
+            gas_refund_market_opt,
             ..
         } = global_trade_accounts;
 
@@ -236,7 +237,13 @@ pub(crate) fn settle_global_gas_refunds(
         // writing the balances rather than asking the system program.
         global.set_lamports(global.lamports() - refund_lamports);
         {
-            let receiver = gas_receiver_opt.as_ref().unwrap();
+            // Either the signer who asked for the removal or, for a swap, the
+            // market account the fee collector sweeps. See
+            // `gas_refund_market_opt`.
+            let receiver: &AccountView = match gas_refund_market_opt {
+                Some(market_info) => market_info,
+                None => gas_receiver_opt.as_ref().unwrap().info,
+            };
             receiver.set_lamports(receiver.lamports() + refund_lamports);
         }
     }
@@ -656,6 +663,7 @@ mod tests {
                 system_program: None,
                 gas_payer_opt: None,
                 gas_receiver_opt: None,
+                gas_refund_market_opt: None,
                 market: Pubkey::new_unique(),
                 num_deferred_gas_refunds: Cell::new(0),
             });
