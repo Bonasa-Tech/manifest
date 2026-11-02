@@ -379,6 +379,54 @@ async fn swap_full_match_test_buy_exact_in() -> anyhow::Result<()> {
 }
 
 #[tokio::test]
+async fn swap_exact_out_rejects_partial_fill() -> anyhow::Result<()> {
+    let mut test_fixture: TestFixture = TestFixture::new().await;
+
+    let maker: Keypair = test_fixture.second_keypair.insecure_clone();
+    test_fixture.claim_seat_for_keypair(&maker).await?;
+    test_fixture
+        .deposit_for_keypair(Token::SOL, SOL_UNIT_SIZE, &maker)
+        .await?;
+    test_fixture
+        .place_order_for_keypair(
+            Side::Ask,
+            SOL_UNIT_SIZE,
+            2,
+            0,
+            NO_EXPIRATION_LAST_VALID_SLOT,
+            OrderType::Limit,
+            &maker,
+        )
+        .await?;
+
+    test_fixture
+        .usdc_mint_fixture
+        .mint_to(&test_fixture.payer_usdc_fixture.key, 2_000 * USDC_UNIT_SIZE)
+        .await;
+
+    let base_before: u64 = test_fixture.payer_sol_fixture.balance_atoms().await;
+    let quote_before: u64 = test_fixture.payer_usdc_fixture.balance_atoms().await;
+
+    // Only one SOL is available, at a price that would consume the entire
+    // maximum input. The exact-out request for two SOL must fail atomically.
+    assert!(test_fixture
+        .swap(2_000 * USDC_UNIT_SIZE, 2 * SOL_UNIT_SIZE, false, false)
+        .await
+        .is_err());
+
+    assert_eq!(
+        test_fixture.payer_sol_fixture.balance_atoms().await,
+        base_before
+    );
+    assert_eq!(
+        test_fixture.payer_usdc_fixture.balance_atoms().await,
+        quote_before
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn swap_full_match_test_buy_exact_out() -> anyhow::Result<()> {
     let mut test_fixture: TestFixture = TestFixture::new().await;
 
