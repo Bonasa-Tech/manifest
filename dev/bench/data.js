@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793638498741,
+  "lastUpdate": 1793639473997,
   "repoUrl": "https://github.com/Bonasa-Tech/manifest",
   "entries": {
     "CU Benchmark": [
@@ -15407,6 +15407,72 @@ window.BENCHMARK_DATA = {
           {
             "name": "MFX_99",
             "value": 2389,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "cyrbritt@gmail.com",
+            "name": "Britt Cyr",
+            "username": "brittcyr"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "198c0f9000dec94376060021b0cb53b0716d0744",
+          "message": "Fix exact-out swaps to reject short fills (#781)\n\n* Fix exact-out swaps to reject short fills\n\n* Fix exact-out coverage regression",
+          "timestamp": "2026-11-02T12:07:09-05:00",
+          "tree_id": "dc45838cf829218ec79a9bc79620195faa48f86a",
+          "url": "https://github.com/Bonasa-Tech/manifest/commit/198c0f9000dec94376060021b0cb53b0716d0744"
+        },
+        "date": 1793639472064,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "PHX_50",
+            "value": 6748,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "PHX_95",
+            "value": 8819,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "PHX_99",
+            "value": 10866,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_50",
+            "value": 1119,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_95",
+            "value": 1589,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_99",
+            "value": 2392,
             "range": "",
             "unit": "CU",
             "extra": ""
