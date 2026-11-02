@@ -48,7 +48,7 @@ pub struct Position {
     pub created_with: Snapshot,
     /// What closing handed back to the owner, at the closing price, which
     /// the first CancelOrders or ClosePosition records (nonzero once
-    /// closing began).
+    /// closing began). Grows with every ClosePosition after the first.
     pub closed_with: Snapshot,
     pub total_orders: u16,
     pub placed_orders: u16,

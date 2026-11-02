@@ -1,5 +1,5 @@
 use manifest::{
-    deps::hypertree::{get_helper, DataIndex, HyperTreeValueIteratorTrait, RBNode, NIL},
+    deps::hypertree::{get_helper, DataIndex, RBNode, NIL},
     program::{
         batch_update::{CancelOrderParams, MarketDataTreeNodeType, PlaceOrderParams},
         batch_update_instruction, claim_seat_instruction, deposit_instruction, get_dynamic_account,
@@ -29,6 +29,10 @@ use solana_program::{
 };
 use solana_sdk_ids::system_program;
 use solana_system_interface::instruction as system_instruction;
+use spl_token_2022::{
+    extension::{transfer_fee::TransferFeeConfig, BaseStateWithExtensions, StateWithExtensions},
+    state::Mint,
+};
 
 use crate::{
     instruction::CREATE_FIXED_DATA_LEN,
@@ -58,6 +62,9 @@ const MIN_RESTING_PERCENT: u128 = 99;
 /// PlaceOrders fails with this when an order rested with less than that;
 /// clear of the token programs' and Manifest's own error codes.
 pub const ERROR_ORDER_CROSSED: u32 = 1000;
+/// PlaceOrders fails with this on a Token-2022 mint that carries a transfer
+/// fee config, see `check_no_transfer_fee`.
+pub const ERROR_TRANSFER_FEE: u32 = 1001;
 
 /// Accounts PlaceOrders and ClosePosition share, see TradingAccounts.
 const TRADING_ACCOUNTS: usize = 16;
@@ -126,6 +133,24 @@ fn expand_market(
             data,
         },
         &[payer, market, system_program],
+    )
+}
+
+/// Claims the trader's seat, growing the market by two free blocks first:
+/// one for the seat, one left over so Manifest does not ask the trader to
+/// grow the market after claiming.
+fn claim_seat(
+    payer: &AccountView,
+    trader: &AccountView,
+    market: &AccountView,
+    system_program: &AccountView,
+    trader_seeds: &[&[u8]],
+) -> ProgramResult {
+    expand_market(payer, market, system_program, 2)?;
+    invoke_signed(
+        &claim_seat_instruction(market.pubkey(), trader.pubkey()),
+        &[trader, market, system_program],
+        &[trader_seeds],
     )
 }
 
@@ -239,13 +264,12 @@ pub(crate) fn process_create_position(
         )?;
     }
 
-    // Two free blocks: one for the seat, one left over so Manifest does not
-    // ask the trader to grow the market after claiming.
-    expand_market(owner.info, market, system_program.as_ref(), 2)?;
-    invoke_signed(
-        &claim_seat_instruction(market.pubkey(), trader.pubkey()),
-        &[trader, market, system_program.as_ref()],
-        &[&[TRADER_SEED, position.info.pubkey().as_ref(), &[trader_bump]]],
+    claim_seat(
+        owner.info,
+        trader,
+        market,
+        system_program.as_ref(),
+        &[TRADER_SEED, position.info.pubkey().as_ref(), &[trader_bump]],
     )
 }
 
@@ -300,11 +324,6 @@ impl<'a> Open<'a> {
         if state.owner != *owner.pubkey() {
             return Err(ProgramError::IllegalOwner);
         }
-        // Closing is final: a closed position cannot be re-closed or place
-        // anything again.
-        if state.is_closed() {
-            return Err(ProgramError::AccountAlreadyInitialized);
-        }
         if state.market != *market.pubkey() {
             return Err(ProgramError::InvalidArgument);
         }
@@ -353,27 +372,17 @@ impl<'a> Open<'a> {
         ]
     }
 
-    /// Cancels every resting order of the trader, found by walking the whole
-    /// book; how many it found.
-    fn cancel_all(&self) -> Result<usize, ProgramError> {
-        let cancels: Vec<CancelOrderParams> = {
-            let data = self.market.try_borrow()?;
-            let market: MarketRef = get_dynamic_account(&data);
-            let index: DataIndex = market.get_trader_index(self.trader.pubkey());
-            if index == NIL {
-                return Ok(0);
-            }
-            market
-                .get_bids()
-                .iter::<RestingOrder>()
-                .chain(market.get_asks().iter::<RestingOrder>())
-                .filter(|(_, order)| order.get_trader_index() == index)
-                .map(|(i, order)| {
-                    CancelOrderParams::new_with_hint(order.get_sequence_number(), Some(i))
-                })
-                .collect()
-        };
-        self.cancel(cancels)
+    /// The seat's withdrawable balances, or None when the market has no seat
+    /// for the trader: Manifest's defrag reclaims a seat that holds neither
+    /// balances nor orders, as a position's does until its first placement.
+    fn seat_balance(&self) -> Result<Option<(u64, u64)>, ProgramError> {
+        let data = self.market.try_borrow()?;
+        let market: MarketRef = get_dynamic_account(&data);
+        if market.get_trader_index(self.trader.pubkey()) == NIL {
+            return Ok(None);
+        }
+        let (base, quote) = market.get_trader_balance(self.trader.pubkey());
+        Ok(Some((base.as_u64(), quote.as_u64())))
     }
 
     /// Cancels the trader's resting orders at these market indices, which
@@ -454,6 +463,23 @@ struct Trading<'a> {
     open: Open<'a>,
     base: Side<'a>,
     quote: Side<'a>,
+}
+
+/// Placement moves exactly what the ladder locks through two transfers, and
+/// closing must close the trader's token accounts, which Token-2022 refuses
+/// while they hold withheld fees. A mint with a transfer fee config can turn
+/// a fee on at any time, even if it is zero now, so no position on it ever
+/// takes funds.
+fn check_no_transfer_fee(side: &Side) -> ProgramResult {
+    if side.mint.owner_pubkey() != spl_token_2022::id() {
+        return Ok(());
+    }
+    let data = side.mint.try_borrow()?;
+    let mint = StateWithExtensions::<Mint>::unpack(&data).map_err(to_program_error)?;
+    if mint.get_extension::<TransferFeeConfig>().is_ok() {
+        return Err(ProgramError::Custom(ERROR_TRANSFER_FEE));
+    }
+    Ok(())
 }
 
 fn token_amount(account: &AccountView) -> Result<u64, ProgramError> {
@@ -650,6 +676,8 @@ pub(crate) fn process_place_orders(
     if data.is_empty() || !data.len().is_multiple_of(2) || data.len() / 2 > MAX_ORDERS_PER_PLACE {
         return Err(ProgramError::InvalidInstructionData);
     }
+    check_no_transfer_fee(&ctx.base)?;
+    check_no_transfer_fee(&ctx.quote)?;
 
     // Mark the orders placed and work out what they need, before any call
     // out, so the position is not borrowed across them.
@@ -710,16 +738,26 @@ pub(crate) fn process_place_orders(
             .ok_or(ProgramError::ArithmeticOverflow)?;
     }
 
+    let (owner, trader, market) = (ctx.open.owner.info, ctx.open.trader, ctx.open.market);
+    let system_program = ctx.open.system_program;
+    // A defrag before this placement may have reclaimed the empty seat.
+    if ctx.open.seat_balance()?.is_none() {
+        claim_seat(
+            owner,
+            trader,
+            market,
+            system_program,
+            &ctx.open.trader_seeds(),
+        )?;
+    }
     ctx.deposit(&ctx.base, need_base)?;
     ctx.deposit(&ctx.quote, need_quote)?;
     if orders.is_empty() {
         return Ok(());
     }
 
-    let (owner, trader, market) = (ctx.open.owner.info, ctx.open.trader, ctx.open.market);
     // Room for every order plus the five spare blocks Manifest tops its
     // reserve up to after a batch, so the batch itself never grows the market.
-    let system_program = ctx.open.system_program;
     expand_market(owner, market, system_program, orders.len() as u32 + 5)?;
     // Manifest charges a batch with reverse orders a flat fee from its payer.
     // Taking someone's reverse order needs no block beyond these: an order
@@ -826,41 +864,51 @@ pub(crate) fn process_close_position(
     data: &[u8],
 ) -> ProgramResult {
     let ctx = Trading::load(program_id, accounts)?;
-    if data.len() != 8 {
-        return Err(ProgramError::InvalidInstructionData);
-    }
-    let price_e9 = ctx
-        .open
-        .closing_price(u64::from_le_bytes(data.try_into().unwrap()))?;
+    let (price_e9, indices) = closing_data(data)?;
+    let price_e9 = ctx.open.closing_price(price_e9)?;
 
-    ctx.open.cancel_all()?;
-    let (base, quote) = {
-        let data = ctx.open.market.try_borrow()?;
-        let market: MarketRef = get_dynamic_account(&data);
-        let (base, quote) = market.get_trader_balance(ctx.open.trader.pubkey());
-        (base.as_u64(), quote.as_u64())
-    };
+    ctx.open.cancel_at(&indices)?;
+    // A reclaimed seat held nothing.
+    let (base, quote) = ctx.open.seat_balance()?.unwrap_or((0, 0));
     let base = ctx.withdraw_all(&ctx.base, base)?;
     let quote = ctx.withdraw_all(&ctx.quote, quote)?;
 
     // Everything the trader still holds goes back to the owner; the account
     // disappears with its last lamport.
     let (owner, trader) = (ctx.open.owner.info, ctx.open.trader);
-    invoke_signed(
-        &system_instruction::transfer(trader.pubkey(), owner.pubkey(), trader.lamports()),
-        &[trader, owner],
-        &[&ctx.open.trader_seeds()],
-    )?;
+    let lamports = trader.lamports();
+    if lamports > 0 {
+        invoke_signed(
+            &system_instruction::transfer(trader.pubkey(), owner.pubkey(), lamports),
+            &[trader, owner],
+            &[&ctx.open.trader_seeds()],
+        )?;
+    }
 
-    let now = Clock::get()?.unix_timestamp;
     let mut bytes = ctx.open.position.try_borrow_mut()?;
     let state: &mut Position = bytemuck::from_bytes_mut(&mut bytes[..POSITION_HEADER_SIZE]);
-    state.closed_at = now.max(state.created_at).max(1);
-    state.closed_with = Snapshot {
-        base_atoms: base,
-        quote_atoms: quote,
-        price_e9,
-    };
+    if state.is_closed() {
+        // A sweep after the close: orders the close missed came back with
+        // what they hold, and count as handed back on close.
+        state.closed_with.base_atoms = state
+            .closed_with
+            .base_atoms
+            .checked_add(base)
+            .ok_or(ProgramError::ArithmeticOverflow)?;
+        state.closed_with.quote_atoms = state
+            .closed_with
+            .quote_atoms
+            .checked_add(quote)
+            .ok_or(ProgramError::ArithmeticOverflow)?;
+    } else {
+        let now = Clock::get()?.unix_timestamp;
+        state.closed_at = now.max(state.created_at).max(1);
+        state.closed_with = Snapshot {
+            base_atoms: base,
+            quote_atoms: quote,
+            price_e9,
+        };
+    }
     Ok(())
 }
 
@@ -870,15 +918,24 @@ pub(crate) fn process_cancel_orders(
     data: &[u8],
 ) -> ProgramResult {
     let open = Open::load(program_id, &mut accounts.iter(), false)?;
-    if data.len() < 8 || (data.len() - 8) % 4 != 0 {
+    let (price_e9, indices) = closing_data(data)?;
+    open.closing_price(price_e9)?;
+    open.cancel_at(&indices)?;
+    Ok(())
+}
+
+/// CancelOrders' and ClosePosition's data: the closing price, then the market
+/// indices of the seat's orders to cancel.
+fn closing_data(data: &[u8]) -> Result<(u64, Vec<DataIndex>), ProgramError> {
+    if data.len() < 8 || !(data.len() - 8).is_multiple_of(4) {
         return Err(ProgramError::InvalidInstructionData);
     }
     let (price_e9, indices) = data.split_at(8);
-    open.closing_price(u64::from_le_bytes(price_e9.try_into().unwrap()))?;
-    let indices: Vec<DataIndex> = indices
-        .chunks_exact(4)
-        .map(|b| DataIndex::from_le_bytes(b.try_into().unwrap()))
-        .collect();
-    open.cancel_at(&indices)?;
-    Ok(())
+    Ok((
+        u64::from_le_bytes(price_e9.try_into().unwrap()),
+        indices
+            .chunks_exact(4)
+            .map(|b| DataIndex::from_le_bytes(b.try_into().unwrap()))
+            .collect(),
+    ))
 }

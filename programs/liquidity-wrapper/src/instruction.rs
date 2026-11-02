@@ -31,15 +31,24 @@ pub enum PositionInstruction {
     /// orders. An order already placed fails the whole instruction, and so
     /// does one that traded more than 1% of its size against the book on the
     /// way in (`ERROR_ORDER_CROSSED`). Refused once closing began (a
-    /// CancelOrders recorded the closing price).
+    /// CancelOrders recorded the closing price), and on a Token-2022 mint
+    /// with a transfer fee config (`ERROR_TRANSFER_FEE`). Claims the seat
+    /// again if a Manifest defrag reclaimed it while it was empty.
     PlaceOrders = 1,
     /// Accounts: see [`TradingAccounts`].
-    /// Data: closing price_e9 u64, nonzero; ignored when a CancelOrders
-    /// already recorded one.
+    /// Data: closing price_e9 u64, nonzero, ignored once a CancelOrders or
+    /// ClosePosition recorded one; then u32 market indices of the seat's
+    /// orders, as for CancelOrders.
     ///
-    /// Cancels every order of the seat, withdraws the seat's balances to the
-    /// owner, closes the trader's token accounts and returns the trader's
-    /// lamports, then writes the closing snapshot. Final.
+    /// Cancels the seat's orders at these indices, withdraws the seat's
+    /// balances to the owner, closes the trader's token accounts and returns
+    /// the trader's lamports, then writes the closing snapshot. Its cost
+    /// follows the list, not the book, so it cannot tell whether the seat
+    /// still holds orders it was not given: one that flipped in after the
+    /// client read the book, or that a Manifest defrag moved. A position
+    /// therefore stays sweepable after closing: CancelOrders and
+    /// ClosePosition still work on it, and a later ClosePosition adds what
+    /// it withdraws to the closing snapshot, keeping its time and price.
     ClosePosition = 2,
     /// Accounts: 0 owner [signer], 1 position [writable], 2 trader
     /// [writable], 3 market [writable], 4 system program, 5 Manifest program.
@@ -164,9 +173,16 @@ pub fn place_orders_instruction(accounts: &TradingAccounts, orders: &[u16]) -> I
     }
 }
 
-pub fn close_position_instruction(accounts: &TradingAccounts, price_e9: u64) -> Instruction {
+pub fn close_position_instruction(
+    accounts: &TradingAccounts,
+    price_e9: u64,
+    indices: &[u32],
+) -> Instruction {
     let mut data = vec![PositionInstruction::ClosePosition as u8];
     data.extend_from_slice(&price_e9.to_le_bytes());
+    for i in indices {
+        data.extend_from_slice(&i.to_le_bytes());
+    }
     Instruction {
         program_id: crate::ID,
         accounts: accounts.metas(),

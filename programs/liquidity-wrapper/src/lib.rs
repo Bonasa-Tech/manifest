@@ -13,9 +13,11 @@
 //! the stored ladder and opening price: it pulls exactly what they need from
 //! the owner's wallet into the seat and adds that to the opening snapshot. A
 //! bitmap marks each order placed, so none can be placed twice and a
-//! placement cut short resumes from chain data. `ClosePosition` cancels every
-//! order of the seat, withdraws its balances to the owner and records them as
-//! the closing snapshot; after that the account never changes again.
+//! placement cut short resumes from chain data. `ClosePosition` cancels the
+//! seat's orders at the market indices it is given, withdraws its balances to
+//! the owner and records them as the closing snapshot. Nothing can be placed
+//! after that, but orders the close missed can still be cancelled and swept
+//! into the snapshot.
 
 pub mod instruction;
 pub mod processor;

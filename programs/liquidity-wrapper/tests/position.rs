@@ -3,7 +3,7 @@ use liquidity_wrapper::{
         cancel_orders_instruction, close_position_instruction, create_position_instruction,
         place_orders_instruction, TradingAccounts,
     },
-    processor::{ERROR_ORDER_CROSSED, MAX_ORDERS_PER_PLACE},
+    processor::{ERROR_ORDER_CROSSED, ERROR_TRANSFER_FEE, MAX_ORDERS_PER_PLACE},
     state::{
         get_position_address, get_trader_address, placed_bitmap_len, Ladder, Position,
         POSITION_DISCRIMINANT, POSITION_HEADER_SIZE,
@@ -13,9 +13,9 @@ use manifest::{
     deps::hypertree::HyperTreeValueIteratorTrait,
     program::{
         batch_update::PlaceOrderParams, batch_update_instruction, claim_seat_instruction,
-        create_global_instruction, create_market_instructions, deposit_instruction,
-        get_dynamic_value_or, global_add_trader_instruction, global_deposit_instruction,
-        global_withdraw_instruction,
+        create_global_instruction, create_market_instructions, defrag_instruction,
+        deposit_instruction, get_dynamic_value_or, global_add_trader_instruction,
+        global_deposit_instruction, global_withdraw_instruction,
     },
     quantities::WrapperU64,
     state::{MarketValue, OrderType, RestingOrder},
@@ -24,11 +24,18 @@ use manifest::{
 use solana_clock::Clock;
 use solana_instruction::Instruction;
 use solana_keypair::Keypair;
-use solana_program::{program_pack::Pack, pubkey::Pubkey};
+use solana_program::pubkey::Pubkey;
 use solana_program_test::{BanksClientError, ProgramTest, ProgramTestContext};
 use solana_signer::Signer;
 use solana_system_interface::instruction as system_instruction;
 use solana_transaction::Transaction;
+use spl_token_2022::{
+    extension::{
+        transfer_fee::instruction::initialize_transfer_fee_config, BaseStateWithExtensions,
+        ExtensionType, StateWithExtensions,
+    },
+    state::{Account, Mint},
+};
 
 const BASE_DECIMALS: u8 = 8;
 const QUOTE_DECIMALS: u8 = 6;
@@ -77,13 +84,22 @@ struct Opened {
 }
 
 async fn setup() -> Fixture {
-    setup_with(false).await
+    setup_with(Base::Token).await
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Base {
+    Token,
+    /// Token-2022, as tokenised stocks are.
+    Token2022,
+    /// Token-2022 with a transfer fee config, at zero.
+    TransferFee,
 }
 
 /// A fresh Manifest market with a base of 8 decimals (Token-2022 when
-/// `base_2022`, as tokenised stocks are) and a 6-decimal quote, and an owner
+/// `base` says so) and a 6-decimal quote, and an owner
 /// wallet holding both.
-async fn setup_with(base_2022: bool) -> Fixture {
+async fn setup_with(base: Base) -> Fixture {
     let mut program = ProgramTest::default();
     program.prefer_bpf(true);
     program.add_program("liquidity_wrapper", liquidity_wrapper::ID, None);
@@ -91,13 +107,19 @@ async fn setup_with(base_2022: bool) -> Fixture {
     program.set_compute_max_units(1_400_000);
     let mut ctx = program.start_with_context().await;
     let owner = ctx.payer.insecure_clone();
-    let base_program = if base_2022 {
+    let base_program = if base != Base::Token {
         spl_token_2022::id()
     } else {
         spl_token::id()
     };
-    let base_mint = create_mint(&mut ctx, &base_program, BASE_DECIMALS).await;
-    let quote_mint = create_mint(&mut ctx, &spl_token::id(), QUOTE_DECIMALS).await;
+    let base_mint = create_mint(
+        &mut ctx,
+        &base_program,
+        BASE_DECIMALS,
+        base == Base::TransferFee,
+    )
+    .await;
+    let quote_mint = create_mint(&mut ctx, &spl_token::id(), QUOTE_DECIMALS, false).await;
 
     let market = Keypair::new();
     let ixs =
@@ -135,18 +157,35 @@ async fn setup_with(base_2022: bool) -> Fixture {
     }
 }
 
-async fn create_mint(ctx: &mut ProgramTestContext, program: &Pubkey, decimals: u8) -> Pubkey {
+async fn create_mint(
+    ctx: &mut ProgramTestContext,
+    program: &Pubkey,
+    decimals: u8,
+    transfer_fee: bool,
+) -> Pubkey {
     let mint = Keypair::new();
     let rent = ctx.banks_client.get_rent().await.unwrap();
     let payer = ctx.payer.pubkey();
-    let ixs = [
-        system_instruction::create_account(
-            &payer,
-            &mint.pubkey(),
-            rent.minimum_balance(spl_token::state::Mint::LEN),
-            spl_token::state::Mint::LEN as u64,
-            program,
-        ),
+    let extensions: &[ExtensionType] = if transfer_fee {
+        &[ExtensionType::TransferFeeConfig]
+    } else {
+        &[]
+    };
+    let len = ExtensionType::try_calculate_account_len::<Mint>(extensions).unwrap();
+    let mut ixs = vec![system_instruction::create_account(
+        &payer,
+        &mint.pubkey(),
+        rent.minimum_balance(len),
+        len as u64,
+        program,
+    )];
+    if transfer_fee {
+        ixs.push(
+            initialize_transfer_fee_config(program, &mint.pubkey(), Some(&payer), None, 0, 0)
+                .unwrap(),
+        );
+    }
+    ixs.push(
         spl_token_2022::instruction::initialize_mint(
             program,
             &mint.pubkey(),
@@ -155,7 +194,7 @@ async fn create_mint(ctx: &mut ProgramTestContext, program: &Pubkey, decimals: u
             decimals,
         )
         .unwrap(),
-    ];
+    );
     send(ctx, &ixs, &[&mint]).await.unwrap();
     mint.pubkey()
 }
@@ -168,12 +207,27 @@ async fn token_account(
 ) -> Pubkey {
     let account = Keypair::new();
     let rent = ctx.banks_client.get_rent().await.unwrap();
+    // Whatever extensions the mint asks of its accounts.
+    let mint_data = ctx
+        .banks_client
+        .get_account(*mint)
+        .await
+        .unwrap()
+        .unwrap()
+        .data;
+    let required = ExtensionType::get_required_init_account_extensions(
+        &StateWithExtensions::<Mint>::unpack(&mint_data)
+            .unwrap()
+            .get_extension_types()
+            .unwrap(),
+    );
+    let len = ExtensionType::try_calculate_account_len::<Account>(&required).unwrap();
     let ixs = [
         system_instruction::create_account(
             &ctx.payer.pubkey(),
             &account.pubkey(),
-            rent.minimum_balance(spl_token::state::Account::LEN),
-            spl_token::state::Account::LEN as u64,
+            rent.minimum_balance(len),
+            len as u64,
             program,
         ),
         spl_token_2022::instruction::initialize_account(program, &account.pubkey(), mint, owner)
@@ -355,6 +409,24 @@ impl Fixture {
             &[],
         )
         .await
+    }
+
+    /// ClosePosition with the indices of every order the seat holds, read
+    /// as the app reads them.
+    async fn close_ix(&mut self, o: &Opened, price_e9: u64) -> Instruction {
+        let indices = order_indices(self, &o.trader).await;
+        close_position_instruction(&o.accounts, price_e9, &indices)
+    }
+
+    /// Fresh trader token accounts, as the app creates them again before a
+    /// sweep: the close took the old ones.
+    async fn renew_trader_accounts(&mut self, o: &mut Opened) {
+        let (base_program, base_mint, quote_mint) =
+            (self.base_program, self.base_mint, self.quote_mint);
+        o.accounts.trader_base =
+            token_account(&mut self.ctx, &base_program, &base_mint, &o.trader).await;
+        o.accounts.trader_quote =
+            token_account(&mut self.ctx, &spl_token::id(), &quote_mint, &o.trader).await;
     }
 
     async fn wallet(&mut self) -> (u64, u64) {
@@ -572,7 +644,7 @@ async fn compute_units_per_batch() {
         measure(&mut f.ctx, &[ix]).await
     );
     let resting = orders_of(&mut f, &o.trader).await.len();
-    let close = close_position_instruction(&o.accounts, PRICE_E9);
+    let close = f.close_ix(&o, PRICE_E9).await;
     let units = measure(&mut f.ctx, &[close]).await;
     println!("CU close with {resting} orders: {units}");
 }
@@ -606,7 +678,7 @@ async fn others_cannot_trade_a_position() {
     };
     let place = place_orders_instruction(&theirs, &[0]);
     assert!(send(&mut f.ctx, &[place], &[&other]).await.is_err());
-    let close = close_position_instruction(&theirs, PRICE_E9);
+    let close = close_position_instruction(&theirs, PRICE_E9, &[]);
     assert!(send(&mut f.ctx, &[close], &[&other]).await.is_err());
     let indices = order_indices(&mut f, &o.trader).await;
     let cancel =
@@ -615,17 +687,17 @@ async fn others_cannot_trade_a_position() {
 
     // Nor can the owner send what it withdraws to someone else's wallet.
     theirs.owner = f.owner.pubkey();
-    let close = close_position_instruction(&theirs, PRICE_E9);
+    let close = close_position_instruction(&theirs, PRICE_E9, &[]);
     assert!(send(&mut f.ctx, &[close], &[]).await.is_err());
 }
 
-async fn close_returns_everything(base_2022: bool) {
-    let mut f = setup_with(base_2022).await;
+async fn close_returns_everything(base: Base) {
+    let mut f = setup_with(base).await;
     let o = f.open(BANDS).await;
     let before = f.wallet().await;
     let owner_lamports = lamports(&mut f.ctx, &f.owner.pubkey()).await;
     f.place(&o, &all(TOTAL)).await.unwrap();
-    let close = close_position_instruction(&o.accounts, 51_000_000_000);
+    let close = f.close_ix(&o, 51_000_000_000).await;
     send(&mut f.ctx, &[close], &[]).await.unwrap();
 
     assert!(orders_of(&mut f, &o.trader).await.is_empty());
@@ -651,20 +723,18 @@ async fn close_returns_everything(base_2022: bool) {
     }
     assert!(lamports(&mut f.ctx, &f.owner.pubkey()).await > owner_lamports - 50_000_000);
 
-    // Final.
+    // Nothing goes out again.
     assert!(f.place(&o, &[0]).await.is_err());
-    let again = close_position_instruction(&o.accounts, PRICE_E9);
-    assert!(send(&mut f.ctx, &[again], &[]).await.is_err());
 }
 
 #[tokio::test]
 async fn close_cancels_every_order_and_returns_everything() {
-    close_returns_everything(false).await;
+    close_returns_everything(Base::Token).await;
 }
 
 #[tokio::test]
 async fn close_works_with_a_token_2022_base() {
-    close_returns_everything(true).await;
+    close_returns_everything(Base::Token2022).await;
 }
 
 #[tokio::test]
@@ -683,7 +753,7 @@ async fn tokens_sent_to_the_trader_go_back_but_not_into_the_snapshot() {
         1_000_000,
     )
     .await;
-    let close = close_position_instruction(&o.accounts, PRICE_E9);
+    let close = f.close_ix(&o, PRICE_E9).await;
     send(&mut f.ctx, &[close], &[]).await.unwrap();
 
     let (p, _) = load(&mut f.ctx, &o.position).await;
@@ -758,7 +828,7 @@ async fn fills_show_up_in_the_closing_snapshot() {
     let resting = orders_of(&mut f, &o.trader).await;
     assert!(resting.iter().filter(|r| r.get_is_bid()).count() > 10);
 
-    let close = close_position_instruction(&o.accounts, PRICE_E9);
+    let close = f.close_ix(&o, PRICE_E9).await;
     send(&mut f.ctx, &[close], &[]).await.unwrap();
     assert!(orders_of(&mut f, &o.trader).await.is_empty());
     let (p, _) = load(&mut f.ctx, &o.position).await;
@@ -789,9 +859,109 @@ async fn cancel_orders_takes_a_bounded_bite() {
     );
     send(&mut f.ctx, &[cancel], &[]).await.unwrap();
     assert_eq!(orders_of(&mut f, &o.trader).await.len(), TOTAL - 5);
-    let close = close_position_instruction(&o.accounts, PRICE_E9);
+    let close = f.close_ix(&o, PRICE_E9).await;
     send(&mut f.ctx, &[close], &[]).await.unwrap();
     assert!(orders_of(&mut f, &o.trader).await.is_empty());
+}
+
+#[tokio::test]
+async fn orders_a_close_missed_are_swept_into_the_snapshot() {
+    let mut f = setup().await;
+    let mut o = f.open(BANDS).await;
+    let before = f.wallet().await;
+    f.place(&o, &all(TOTAL)).await.unwrap();
+    let indices = order_indices(&mut f, &o.trader).await;
+
+    // A close given only some of the seat's orders, as when one flipped in
+    // or moved after the client read the book, leaves the rest resting.
+    let close = close_position_instruction(&o.accounts, 51_000_000_000, &indices[..5]);
+    send(&mut f.ctx, &[close], &[]).await.unwrap();
+    assert_eq!(orders_of(&mut f, &o.trader).await.len(), TOTAL - 5);
+    let (first, _) = load(&mut f.ctx, &o.position).await;
+    assert!(first.closed_at > 0);
+    assert!(f.place(&o, &[0]).await.is_err());
+
+    // They can still be cancelled, and a second close sweeps them in.
+    let cancel = cancel_orders_instruction(
+        &f.owner.pubkey(),
+        &o.position,
+        &f.market,
+        PRICE_E9,
+        &indices[5..10],
+    );
+    send(&mut f.ctx, &[cancel], &[]).await.unwrap();
+    f.renew_trader_accounts(&mut o).await;
+    let close = f.close_ix(&o, 49_000_000_000).await;
+    send(&mut f.ctx, &[close], &[]).await.unwrap();
+    assert!(orders_of(&mut f, &o.trader).await.is_empty());
+    assert_eq!(f.wallet().await, before);
+    let (p, _) = load(&mut f.ctx, &o.position).await;
+    assert_eq!(p.closed_at, first.closed_at);
+    assert_eq!(
+        (
+            p.closed_with.base_atoms,
+            p.closed_with.quote_atoms,
+            p.closed_with.price_e9
+        ),
+        (
+            p.created_with.base_atoms,
+            p.created_with.quote_atoms,
+            51_000_000_000
+        )
+    );
+    for account in [o.trader, o.accounts.trader_base, o.accounts.trader_quote] {
+        assert_eq!(lamports(&mut f.ctx, &account).await, 0);
+    }
+
+    // Sweeping an empty seat changes nothing.
+    f.renew_trader_accounts(&mut o).await;
+    let close = f.close_ix(&o, PRICE_E9).await;
+    send(&mut f.ctx, &[close], &[]).await.unwrap();
+    assert_eq!(load(&mut f.ctx, &o.position).await.0, p);
+}
+
+/// Deep bids of one outside maker, `batches` of 25.
+async fn crowd_the_book(f: &mut Fixture, batches: u32) {
+    let (maker, _) = outside_bid_of(f, 100_000, 1, -3, OrderType::Limit).await;
+    for _ in 0..batches {
+        let ix = batch_update_instruction(
+            &f.market,
+            &maker.pubkey(),
+            None,
+            vec![],
+            (0..25)
+                .map(|_| PlaceOrderParams::new(100_000, 1, -3, true, OrderType::Limit, 0))
+                .collect(),
+            None,
+            None,
+            None,
+            None,
+        );
+        send(&mut f.ctx, &[ix], &[&maker]).await.unwrap();
+    }
+}
+
+#[tokio::test]
+async fn closing_costs_what_the_seat_holds_not_the_book() {
+    let mut units = vec![];
+    for batches in [0, 20] {
+        let mut f = setup().await;
+        let o = f.open(BANDS).await;
+        f.place(&o, &all(TOTAL)).await.unwrap();
+        crowd_the_book(&mut f, batches).await;
+        let book = {
+            let m = market(&mut f.ctx, &f.market).await;
+            m.get_bids().iter::<RestingOrder>().count()
+                + m.get_asks().iter::<RestingOrder>().count()
+        };
+        let close = f.close_ix(&o, PRICE_E9).await;
+        let cu = measure(&mut f.ctx, &[close]).await;
+        println!("CU close of {TOTAL} orders on a book of {book}: {cu}");
+        units.push(cu);
+    }
+    // Only the tree's depth grows with the book: a few hundred units per
+    // order, where walking 500 more orders would cost tens of thousands.
+    assert!(units[1] < units[0] + 15_000, "{units:?}");
 }
 
 #[tokio::test]
@@ -1003,7 +1173,7 @@ async fn full_ladder_closes_after_bounded_cancels() {
     for chunk in all(1024).chunks(MAX_ORDERS_PER_PLACE) {
         f.place(&o, chunk).await.unwrap();
     }
-    let close = close_position_instruction(&o.accounts, PRICE_E9);
+    let close = f.close_ix(&o, PRICE_E9).await;
     assert!(send(&mut f.ctx, std::slice::from_ref(&close), &[])
         .await
         .is_err());
@@ -1377,13 +1547,8 @@ async fn an_unbacked_global_order_in_the_way_is_removed_for_free() {
     // it at close.
     let rent = f.ctx.banks_client.get_rent().await.unwrap();
     assert!(lamports(&mut f.ctx, &o.trader).await >= rent.minimum_balance(0));
-    send(
-        &mut f.ctx,
-        &[close_position_instruction(&o.accounts, PRICE_E9)],
-        &[],
-    )
-    .await
-    .unwrap();
+    let close = f.close_ix(&o, PRICE_E9).await;
+    send(&mut f.ctx, &[close], &[]).await.unwrap();
     assert_eq!(lamports(&mut f.ctx, &o.trader).await, 0);
     // No quote came in: the ask never traded with the bid.
     assert_eq!(
@@ -1488,13 +1653,8 @@ async fn random_trading_around_the_ladder_never_charges_the_trader() {
             "seed {seed}: {went_out} bites out, {crossed} crossed, {} unplaced",
             unplaced.len()
         );
-        send(
-            &mut f.ctx,
-            &[close_position_instruction(&o.accounts, PRICE_E9)],
-            &[],
-        )
-        .await
-        .unwrap();
+        let close = f.close_ix(&o, PRICE_E9).await;
+        send(&mut f.ctx, &[close], &[]).await.unwrap();
         assert_eq!(lamports(&mut f.ctx, &o.trader).await, 0);
     }
 }
@@ -1510,7 +1670,7 @@ async fn the_first_cancel_records_the_closing_price() {
     // A zero price is refused, by either instruction.
     let cancel = cancel_orders_instruction(&owner, &o.position, &f.market, 0, &indices[..1]);
     assert!(send(&mut f.ctx, &[cancel], &[]).await.is_err());
-    let close = close_position_instruction(&o.accounts, 0);
+    let close = f.close_ix(&o, 0).await;
     assert!(send(&mut f.ctx, &[close], &[]).await.is_err());
 
     // The first cancel's price stands; later ones and the close keep it.
@@ -1534,9 +1694,93 @@ async fn the_first_cancel_records_the_closing_price() {
         &indices[1..2],
     );
     send(&mut f.ctx, &[cancel], &[]).await.unwrap();
-    let close = close_position_instruction(&o.accounts, 48_000_000_000);
+    let close = f.close_ix(&o, 48_000_000_000).await;
     send(&mut f.ctx, &[close], &[]).await.unwrap();
     let p = load(&mut f.ctx, &o.position).await.0;
     assert!(p.closed_at > 0);
     assert_eq!(p.closed_with.price_e9, 51_000_000_000);
+}
+
+/// Runs a Manifest defrag on the market as its test collector, reclaiming
+/// every empty seat.
+async fn defrag(f: &mut Fixture) {
+    let collector = Keypair::new_from_array([42; 32]);
+    f.ctx.set_account(
+        &collector.pubkey(),
+        &solana_account::AccountSharedData::from(solana_account::Account::new(
+            1_000_000_000,
+            0,
+            &solana_sdk_ids::system_program::id(),
+        )),
+    );
+    let ix = defrag_instruction(
+        &f.market,
+        &collector.pubkey(),
+        &f.base_mint,
+        &f.quote_mint,
+        f.base_program,
+        spl_token::id(),
+        None,
+    );
+    send(&mut f.ctx, &[ix], &[&collector]).await.unwrap();
+}
+
+async fn has_seat(f: &mut Fixture, trader: &Pubkey) -> bool {
+    market(&mut f.ctx, &f.market).await.get_trader_index(trader) != manifest::deps::hypertree::NIL
+}
+
+#[tokio::test]
+async fn a_seat_reclaimed_before_placing_is_claimed_again() {
+    let mut f = setup().await;
+    let o = f.open(BANDS).await;
+    let before = f.wallet().await;
+    defrag(&mut f).await;
+    assert!(!has_seat(&mut f, &o.trader).await);
+
+    f.place(&o, &all(TOTAL)).await.unwrap();
+    assert!(has_seat(&mut f, &o.trader).await);
+    assert_eq!(orders_of(&mut f, &o.trader).await.len(), TOTAL);
+    assert_trader_paid_nothing(&mut f, &o).await;
+
+    let close = f.close_ix(&o, PRICE_E9).await;
+    send(&mut f.ctx, &[close], &[]).await.unwrap();
+    assert_eq!(f.wallet().await, before);
+}
+
+#[tokio::test]
+async fn a_position_whose_seat_was_reclaimed_still_closes() {
+    let mut f = setup().await;
+    let o = f.open(BANDS).await;
+    defrag(&mut f).await;
+    assert!(!has_seat(&mut f, &o.trader).await);
+
+    let close = f.close_ix(&o, PRICE_E9).await;
+    send(&mut f.ctx, &[close], &[]).await.unwrap();
+    let (p, _) = load(&mut f.ctx, &o.position).await;
+    assert!(p.closed_at > 0);
+    assert_eq!(
+        (p.closed_with.base_atoms, p.closed_with.quote_atoms),
+        (0, 0)
+    );
+    for account in [o.trader, o.accounts.trader_base, o.accounts.trader_quote] {
+        assert_eq!(lamports(&mut f.ctx, &account).await, 0);
+    }
+}
+
+#[tokio::test]
+async fn a_mint_with_a_transfer_fee_config_is_refused() {
+    let mut f = setup_with(Base::TransferFee).await;
+    let o = f.open(BANDS).await;
+    let before = f.wallet().await;
+    // Even at a zero fee: its authority can raise it at any time.
+    let err = f.place(&o, &all(TOTAL)).await.unwrap_err();
+    assert!(
+        format!("{err:?}").contains(&format!("Custom({ERROR_TRANSFER_FEE})")),
+        "{err:?}"
+    );
+    assert_eq!(f.wallet().await, before);
+
+    // Nothing went in, so it closes.
+    let close = f.close_ix(&o, PRICE_E9).await;
+    send(&mut f.ctx, &[close], &[]).await.unwrap();
 }
