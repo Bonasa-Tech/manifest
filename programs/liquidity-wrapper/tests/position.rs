@@ -3,7 +3,9 @@ use liquidity_wrapper::{
         cancel_orders_instruction, close_position_instruction, create_position_instruction,
         place_orders_instruction, TradingAccounts,
     },
-    processor::{ERROR_ORDER_CROSSED, ERROR_TRANSFER_FEE, MAX_ORDERS_PER_PLACE},
+    processor::{
+        ERROR_NOT_NEAREST_FIRST, ERROR_ORDER_CROSSED, ERROR_TRANSFER_FEE, MAX_ORDERS_PER_PLACE,
+    },
     state::{
         get_position_address, get_trader_address, placed_bitmap_len, Ladder, Position,
         POSITION_DISCRIMINANT, POSITION_HEADER_SIZE,
@@ -360,8 +362,15 @@ impl Fixture {
     async fn open(&mut self, bands: &[BandSpec]) -> Opened {
         let created_at = now(&mut self.ctx).await;
         let owner = self.owner.pubkey();
-        let ix =
-            create_position_instruction(&owner, &self.market, created_at, PRICE_E9, &ladder(bands));
+        let ix = create_position_instruction(
+            &owner,
+            &self.market,
+            &self.base_mint,
+            &self.quote_mint,
+            created_at,
+            PRICE_E9,
+            &ladder(bands),
+        );
         send(&mut self.ctx, &[ix], &[]).await.unwrap();
         self.trading(&owner, created_at, self.owner_base, self.owner_quote)
             .await
@@ -442,6 +451,22 @@ fn all(total: usize) -> Vec<u16> {
     (0..total as u16).collect()
 }
 
+/// The ladder's order indices nearest the opening price first, both sides
+/// together, as the app places them.
+fn nearest_first(bands: &[BandSpec]) -> Vec<u16> {
+    let bytes = ladder(bands);
+    let (ladder, total) = Ladder::parse(&bytes).unwrap();
+    let mut ks = all(total);
+    ks.sort_by_key(|&k| {
+        ladder
+            .order(k as usize, PRICE_E9, BASE_DECIMALS, QUOTE_DECIMALS)
+            .unwrap()
+            .unwrap()
+            .distance_e8
+    });
+    ks
+}
+
 #[tokio::test]
 async fn create_claims_a_seat_of_its_own() {
     let mut f = setup().await;
@@ -487,14 +512,14 @@ async fn placed_orders_match_the_ladder_and_take_exactly_what_they_lock() {
     let mut f = setup().await;
     let o = f.open(BANDS).await;
     let before = f.wallet().await;
-    // Any order, any batches.
-    let evens: Vec<u16> = (0..TOTAL as u16).filter(|k| k % 2 == 0).collect();
-    let odds: Vec<u16> = (0..TOTAL as u16).filter(|k| k % 2 == 1).collect();
-    f.place(&o, &evens).await.unwrap();
-    f.place(&o, &odds).await.unwrap();
+    // Any batches, nearest first.
+    let sequence = nearest_first(BANDS);
+    let (near, far) = sequence.split_at(7);
+    f.place(&o, near).await.unwrap();
+    f.place(&o, far).await.unwrap();
 
     let ladder_bytes = ladder(BANDS);
-    let ladder = Ladder::parse(&ladder_bytes).unwrap();
+    let (ladder, _) = Ladder::parse(&ladder_bytes).unwrap();
     let expected: Vec<_> = (0..TOTAL)
         .map(|k| {
             ladder
@@ -573,10 +598,11 @@ async fn placed_orders_match_the_ladder_and_take_exactly_what_they_lock() {
 async fn an_order_goes_out_at_most_once() {
     let mut f = setup().await;
     let o = f.open(BANDS).await;
-    f.place(&o, &[3]).await.unwrap();
+    // The nearest bid.
+    f.place(&o, &[9]).await.unwrap();
     let wallet = f.wallet().await;
-    assert!(f.place(&o, &[3]).await.is_err());
-    assert!(f.place(&o, &[4, 4]).await.is_err());
+    assert!(f.place(&o, &[9]).await.is_err());
+    assert!(f.place(&o, &[8, 8]).await.is_err());
     assert!(f.place(&o, &[TOTAL as u16]).await.is_err());
     assert!(f.place(&o, &[]).await.is_err());
     // A failed batch places and takes nothing.
@@ -584,7 +610,54 @@ async fn an_order_goes_out_at_most_once() {
     assert_eq!(orders_of(&mut f, &o.trader).await.len(), 1);
     let (p, _) = load(&mut f.ctx, &o.position).await;
     assert_eq!(p.placed_orders, 1);
-    f.place(&o, &[4]).await.unwrap();
+    f.place(&o, &[8]).await.unwrap();
+}
+
+#[tokio::test]
+async fn the_ladder_goes_out_nearest_first() {
+    let mut f = setup().await;
+    let o = f.open(BANDS).await;
+    let refused = |err: BanksClientError| {
+        assert!(
+            format!("{err:?}").contains(&format!("Custom({ERROR_NOT_NEAREST_FIRST})")),
+            "{err:?}"
+        );
+    };
+    // The farthest bid while nearer ones are out, and a batch that skips one.
+    refused(f.place(&o, &[0]).await.unwrap_err());
+    refused(f.place(&o, &[9, 7]).await.unwrap_err());
+    // Each side on its own: the nearest ask goes out with no bid.
+    f.place(&o, &[10]).await.unwrap();
+    // In any order within the batch, as long as the batch closes the gap.
+    f.place(&o, &[7, 9, 8]).await.unwrap();
+    refused(f.place(&o, &[12]).await.unwrap_err());
+    f.place(&o, &[11, 12]).await.unwrap();
+    assert_eq!(orders_of(&mut f, &o.trader).await.len(), 6);
+    assert_trader_paid_nothing(&mut f, &o).await;
+}
+
+#[tokio::test]
+async fn overlapping_bands_go_out_by_distance_across_them() {
+    let mut f = setup().await;
+    // Asks at +0.1% to +1%, and at +0.5% to +5%: the second band's first
+    // level (+0.725%) lies among the first band's.
+    let o = f
+        .open(&[
+            (10, 100, 10, 200, 10_000_000),
+            (50, 500, 10, 200, 10_000_000),
+        ])
+        .await;
+    let sequence = nearest_first(&[
+        (10, 100, 10, 200, 10_000_000),
+        (50, 500, 10, 200, 10_000_000),
+    ]);
+    // The second band's first level ahead of its turn.
+    let err = f.place(&o, &[0, 1, 10]).await.unwrap_err();
+    assert!(format!("{err:?}").contains(&format!("Custom({ERROR_NOT_NEAREST_FIRST})")));
+    for chunk in sequence.chunks(3) {
+        f.place(&o, chunk).await.unwrap();
+    }
+    assert_eq!(orders_of(&mut f, &o.trader).await.len(), 20);
 }
 
 #[tokio::test]
@@ -609,35 +682,23 @@ async fn compute_units_per_batch() {
             (10, 3000, 150, 200, 1_000_000),
         ])
         .await;
-    let mut next = 0u16;
-    for n in [1u16, 10, 20, 30, 40, 50] {
-        // Alternate sides like the app: nearest first on both.
-        let batch: Vec<u16> = (0..n)
-            .map(|i| {
-                if i % 2 == 0 {
-                    149 - (next + i / 2)
-                } else {
-                    150 + next + i / 2
-                }
-            })
-            .collect();
-        next += n.div_ceil(2);
-        let ix = place_orders_instruction(&o.accounts, &batch);
+    // Nearest first on both sides, as the app places them.
+    let sequence = nearest_first(&[
+        (-3000, -10, 150, 50, 1_000_000),
+        (10, 3000, 150, 200, 1_000_000),
+    ]);
+    let mut rest = &sequence[..];
+    for n in [1usize, 10, 20, 30, 40, 50] {
+        let (batch, later) = rest.split_at(n);
+        rest = later;
+        let ix = place_orders_instruction(&o.accounts, batch);
         let units = measure(&mut f.ctx, &[ix]).await;
         println!("CU place {n}: {units}");
         assert!(units < 1_400_000);
     }
     // A full instruction's worth.
-    let batch: Vec<u16> = (0..MAX_ORDERS_PER_PLACE as u16)
-        .map(|i| {
-            if i % 2 == 0 {
-                149 - (next + i / 2)
-            } else {
-                150 + next + i / 2
-            }
-        })
-        .collect();
-    let ix = place_orders_instruction(&o.accounts, &batch);
+    let batch = &rest[..MAX_ORDERS_PER_PLACE];
+    let ix = place_orders_instruction(&o.accounts, batch);
     println!(
         "CU place {}: {}",
         batch.len(),
@@ -685,10 +746,27 @@ async fn others_cannot_trade_a_position() {
         cancel_orders_instruction(&other.pubkey(), &o.position, &f.market, PRICE_E9, &indices);
     assert!(send(&mut f.ctx, &[cancel], &[&other]).await.is_err());
 
-    // Nor can the owner send what it withdraws to someone else's wallet.
+    // Nor can the owner send what it withdraws to someone else's wallet,
+    // or name token accounts of the wrong mint or no token account at all.
     theirs.owner = f.owner.pubkey();
     let close = close_position_instruction(&theirs, PRICE_E9, &[]);
-    assert!(send(&mut f.ctx, &[close], &[]).await.is_err());
+    let err = send(&mut f.ctx, &[close], &[]).await.unwrap_err();
+    assert!(format!("{err:?}").contains("IllegalOwner"), "{err:?}");
+    let swapped = TradingAccounts {
+        owner_base: f.owner_quote,
+        owner_quote: f.owner_base,
+        ..o.accounts
+    };
+    let close = close_position_instruction(&swapped, PRICE_E9, &[]);
+    let err = send(&mut f.ctx, &[close], &[]).await.unwrap_err();
+    assert!(format!("{err:?}").contains("InvalidAccountData"), "{err:?}");
+    let not_a_token_account = TradingAccounts {
+        owner_base: f.market,
+        ..o.accounts
+    };
+    let close = close_position_instruction(&not_a_token_account, PRICE_E9, &[]);
+    let err = send(&mut f.ctx, &[close], &[]).await.unwrap_err();
+    assert!(format!("{err:?}").contains("IllegalOwner"), "{err:?}");
 }
 
 async fn close_returns_everything(base: Base) {
@@ -890,6 +968,14 @@ async fn orders_a_close_missed_are_swept_into_the_snapshot() {
         &indices[5..10],
     );
     send(&mut f.ctx, &[cancel], &[]).await.unwrap();
+    // The close took the trader's token accounts, which the cancelled
+    // orders' funds need on their way out.
+    let close = f.close_ix(&o, 49_000_000_000).await;
+    let err = send(&mut f.ctx, &[close], &[]).await.unwrap_err();
+    assert!(
+        format!("{err:?}").contains("UninitializedAccount"),
+        "{err:?}"
+    );
     f.renew_trader_accounts(&mut o).await;
     let close = f.close_ix(&o, 49_000_000_000).await;
     send(&mut f.ctx, &[close], &[]).await.unwrap();
@@ -913,8 +999,8 @@ async fn orders_a_close_missed_are_swept_into_the_snapshot() {
         assert_eq!(lamports(&mut f.ctx, &account).await, 0);
     }
 
-    // Sweeping an empty seat changes nothing.
-    f.renew_trader_accounts(&mut o).await;
+    // Sweeping an empty seat needs no trader token accounts, and changes
+    // nothing.
     let close = f.close_ix(&o, PRICE_E9).await;
     send(&mut f.ctx, &[close], &[]).await.unwrap();
     assert_eq!(load(&mut f.ctx, &o.position).await.0, p);
@@ -1039,6 +1125,8 @@ async fn same_owner_market_and_time_cannot_be_created_twice() {
     let ix = create_position_instruction(
         &f.owner.pubkey(),
         &f.market,
+        &f.base_mint,
+        &f.quote_mint,
         created_at,
         PRICE_E9,
         &ladder(BANDS),
@@ -1054,8 +1142,9 @@ async fn creation_checks_time_market_and_ladder() {
     let mut f = setup().await;
     let t = now(&mut f.ctx).await;
     let owner = f.owner.pubkey();
+    let (base_mint, quote_mint) = (f.base_mint, f.quote_mint);
     let create = |market: &Pubkey, at: i64, price: u64, ladder: &[u8]| {
-        create_position_instruction(&owner, market, at, price, ladder)
+        create_position_instruction(&owner, market, &base_mint, &quote_mint, at, price, ladder)
     };
     let good = ladder(BANDS);
     let not_a_market = f.base_mint;
@@ -1145,8 +1234,15 @@ async fn lamports_sent_beforehand_do_not_block_creation() {
         ];
         send(&mut f.ctx, &gifts, &[&griefer]).await.unwrap();
 
-        let ix =
-            create_position_instruction(&f.owner.pubkey(), &f.market, t, PRICE_E9, &ladder(BANDS));
+        let ix = create_position_instruction(
+            &f.owner.pubkey(),
+            &f.market,
+            &f.base_mint,
+            &f.quote_mint,
+            t,
+            PRICE_E9,
+            &ladder(BANDS),
+        );
         send(&mut f.ctx, &[ix], &[]).await.unwrap();
         let (p, _) = load(&mut f.ctx, &position).await;
         assert_eq!(p.total_orders as usize, TOTAL);
@@ -1170,7 +1266,11 @@ async fn full_ladder_closes_after_bounded_cancels() {
             (10, 5000, 512, 200, 1_000_000),
         ])
         .await;
-    for chunk in all(1024).chunks(MAX_ORDERS_PER_PLACE) {
+    let sequence = nearest_first(&[
+        (-5000, -10, 512, 50, 1_000_000),
+        (10, 5000, 512, 200, 1_000_000),
+    ]);
+    for chunk in sequence.chunks(MAX_ORDERS_PER_PLACE) {
         f.place(&o, chunk).await.unwrap();
     }
     let close = f.close_ix(&o, PRICE_E9).await;
@@ -1593,7 +1693,8 @@ async fn random_trading_around_the_ladder_never_charges_the_trader() {
             other_trader(&mut f).await,
             other_trader(&mut f).await,
         ];
-        let mut unplaced: Vec<u16> = all(TOTAL);
+        let sequence = nearest_first(BANDS);
+        let mut unplaced = sequence.clone();
         let (mut went_out, mut crossed) = (0, 0);
         for _ in 0..40 {
             if rng.below(3) > 0 {
@@ -1633,17 +1734,24 @@ async fn random_trading_around_the_ladder_never_charges_the_trader() {
                 // their business.
                 let _ = other_orders(&mut f, t, orders).await;
             } else if !unplaced.is_empty() {
+                // The nearest few, in a random order.
                 let n = (1 + rng.below(6) as usize).min(unplaced.len());
-                let mut bite = Vec::with_capacity(n);
-                for _ in 0..n {
-                    bite.push(unplaced.swap_remove(rng.below(unplaced.len() as u64) as usize));
+                let mut bite: Vec<u16> = unplaced.drain(..n).collect();
+                for i in (1..n).rev() {
+                    bite.swap(i, rng.below(i as u64 + 1) as usize);
                 }
                 match f.place(&o, &bite).await {
                     Ok(()) => went_out += 1,
                     Err(err) => {
                         assert!(is_crossed(&err), "seed {seed}: {err:?}");
                         crossed += 1;
-                        unplaced.extend(bite);
+                        // Back in front, nearest first again.
+                        bite.append(&mut unplaced);
+                        unplaced = sequence
+                            .iter()
+                            .copied()
+                            .filter(|k| bite.contains(k))
+                            .collect();
                     }
                 }
                 assert_trader_paid_nothing(&mut f, &o).await;
@@ -1770,17 +1878,32 @@ async fn a_position_whose_seat_was_reclaimed_still_closes() {
 #[tokio::test]
 async fn a_mint_with_a_transfer_fee_config_is_refused() {
     let mut f = setup_with(Base::TransferFee).await;
-    let o = f.open(BANDS).await;
-    let before = f.wallet().await;
+    let created_at = now(&mut f.ctx).await;
     // Even at a zero fee: its authority can raise it at any time.
-    let err = f.place(&o, &all(TOTAL)).await.unwrap_err();
+    let ix = create_position_instruction(
+        &f.owner.pubkey(),
+        &f.market,
+        &f.base_mint,
+        &f.quote_mint,
+        created_at,
+        PRICE_E9,
+        &ladder(BANDS),
+    );
+    let err = send(&mut f.ctx, &[ix], &[]).await.unwrap_err();
     assert!(
         format!("{err:?}").contains(&format!("Custom({ERROR_TRANSFER_FEE})")),
         "{err:?}"
     );
-    assert_eq!(f.wallet().await, before);
-
-    // Nothing went in, so it closes.
-    let close = f.close_ix(&o, PRICE_E9).await;
-    send(&mut f.ctx, &[close], &[]).await.unwrap();
+    // Nor does naming another mint than the market's get past it.
+    let ix = create_position_instruction(
+        &f.owner.pubkey(),
+        &f.market,
+        &f.quote_mint,
+        &f.quote_mint,
+        created_at,
+        PRICE_E9,
+        &ladder(BANDS),
+    );
+    let err = send(&mut f.ctx, &[ix], &[]).await.unwrap_err();
+    assert!(format!("{err:?}").contains("InvalidArgument"), "{err:?}");
 }

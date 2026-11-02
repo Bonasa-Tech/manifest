@@ -7,8 +7,8 @@ use manifest::{
     },
     quantities::WrapperU64,
     state::{
-        MarketFixed, MarketRef, OrderType, RestingOrder, ADVANCED_ORDER_FEE_LAMPORTS,
-        MARKET_BLOCK_SIZE,
+        claimed_seat::ClaimedSeat, MarketFixed, MarketRef, OrderType, RestingOrder,
+        ADVANCED_ORDER_FEE_LAMPORTS, MARKET_BLOCK_SIZE,
     },
     utils::create_account,
     validation::{
@@ -31,9 +31,10 @@ use solana_sdk_ids::system_program;
 use solana_system_interface::instruction as system_instruction;
 use spl_token_2022::{
     extension::{transfer_fee::TransferFeeConfig, BaseStateWithExtensions, StateWithExtensions},
-    state::Mint,
+    state::{Account as TokenAccount, Mint},
 };
 
+pub use crate::state::ERROR_NOT_NEAREST_FIRST;
 use crate::{
     instruction::CREATE_FIXED_DATA_LEN,
     state::{
@@ -166,6 +167,8 @@ pub(crate) fn process_create_position(
     let market: &AccountView = next_account_info(iter)?;
     let system_program: Program = Program::new(next_account_info(iter)?, &system_program::id())?;
     let _manifest_program: Program = Program::new(next_account_info(iter)?, &manifest::ID)?;
+    let base_mint: &AccountView = next_account_info(iter)?;
+    let quote_mint: &AccountView = next_account_info(iter)?;
 
     if data.len() < CREATE_FIXED_DATA_LEN || data.len() - CREATE_FIXED_DATA_LEN > MAX_LADDER_BYTES {
         return Err(ProgramError::InvalidInstructionData);
@@ -173,18 +176,24 @@ pub(crate) fn process_create_position(
     let created_at = i64::from_le_bytes(data[..8].try_into().unwrap());
     let price_e9 = u64::from_le_bytes(data[8..16].try_into().unwrap());
     let ladder_bytes = &data[CREATE_FIXED_DATA_LEN..];
-    let ladder = Ladder::parse(ladder_bytes)?;
-    let total_orders = ladder.total_orders();
+    let (ladder, total_orders) = Ladder::parse(ladder_bytes)?;
     if price_e9 == 0 {
         return Err(ProgramError::InvalidArgument);
     }
 
     // A real Manifest market: owned by Manifest and carrying its discriminant.
     // Every order of the ladder must be one it takes, or placing would get
-    // stuck on it.
+    // stuck on it, and neither mint may carry a transfer fee.
     {
         let market = ManifestAccountInfo::<MarketFixed>::new(market)?;
         let fixed = market.get_fixed()?;
+        if fixed.get_base_mint() != base_mint.pubkey()
+            || fixed.get_quote_mint() != quote_mint.pubkey()
+        {
+            return Err(ProgramError::InvalidArgument);
+        }
+        check_no_transfer_fee(base_mint)?;
+        check_no_transfer_fee(quote_mint)?;
         ladder.check_orders(
             price_e9,
             fixed.get_base_mint_decimals(),
@@ -372,17 +381,30 @@ impl<'a> Open<'a> {
         ]
     }
 
-    /// The seat's withdrawable balances, or None when the market has no seat
-    /// for the trader: Manifest's defrag reclaims a seat that holds neither
-    /// balances nor orders, as a position's does until its first placement.
-    fn seat_balance(&self) -> Result<Option<(u64, u64)>, ProgramError> {
+    /// Whether the market has a seat for the trader: Manifest's defrag
+    /// reclaims a seat that holds neither balances nor orders, as a
+    /// position's does until its first placement.
+    fn has_seat(&self) -> Result<bool, ProgramError> {
         let data = self.market.try_borrow()?;
         let market: MarketRef = get_dynamic_account(&data);
-        if market.get_trader_index(self.trader.pubkey()) == NIL {
-            return Ok(None);
+        Ok(market.get_trader_index(self.trader.pubkey()) != NIL)
+    }
+
+    /// The seat's withdrawable balances; nothing for a reclaimed seat.
+    fn seat_balance(&self) -> Result<(u64, u64), ProgramError> {
+        let data = self.market.try_borrow()?;
+        let market: MarketRef = get_dynamic_account(&data);
+        let index = market.get_trader_index(self.trader.pubkey());
+        if index == NIL {
+            return Ok((0, 0));
         }
-        let (base, quote) = market.get_trader_balance(self.trader.pubkey());
-        Ok(Some((base.as_u64(), quote.as_u64())))
+        // Manifest's balance getter looks the seat up again by key.
+        let seat: &ClaimedSeat =
+            get_helper::<RBNode<ClaimedSeat>>(market.dynamic, index).get_value();
+        Ok((
+            seat.base_withdrawable_balance.as_u64(),
+            seat.quote_withdrawable_balance.as_u64(),
+        ))
     }
 
     /// Cancels the trader's resting orders at these market indices, which
@@ -468,13 +490,14 @@ struct Trading<'a> {
 /// Placement moves exactly what the ladder locks through two transfers, and
 /// closing must close the trader's token accounts, which Token-2022 refuses
 /// while they hold withheld fees. A mint with a transfer fee config can turn
-/// a fee on at any time, even if it is zero now, so no position on it ever
-/// takes funds.
-fn check_no_transfer_fee(side: &Side) -> ProgramResult {
-    if side.mint.owner_pubkey() != spl_token_2022::id() {
+/// a fee on at any time, even if it is zero now, so no position is created
+/// on one. Token-2022 adds no extension to a mint after it is initialised,
+/// so a mint that passes here passes for good.
+fn check_no_transfer_fee(mint: &AccountView) -> ProgramResult {
+    if mint.owner_pubkey() != spl_token_2022::id() {
         return Ok(());
     }
-    let data = side.mint.try_borrow()?;
+    let data = mint.try_borrow()?;
     let mint = StateWithExtensions::<Mint>::unpack(&data).map_err(to_program_error)?;
     if mint.get_extension::<TransferFeeConfig>().is_ok() {
         return Err(ProgramError::Custom(ERROR_TRANSFER_FEE));
@@ -482,12 +505,32 @@ fn check_no_transfer_fee(side: &Side) -> ProgramResult {
     Ok(())
 }
 
-fn token_amount(account: &AccountView) -> Result<u64, ProgramError> {
-    let data = account.try_borrow()?;
-    if data.len() < 72 {
-        return Err(ProgramError::InvalidAccountData);
+impl Side<'_> {
+    /// The amount in `account`, a token account of this side's mint and
+    /// token program owned by `owner`; None when no account is there.
+    fn token_amount(
+        &self,
+        account: &AccountView,
+        owner: &AccountView,
+    ) -> Result<Option<u64>, ProgramError> {
+        if account.data_len() == 0 && account.owned_by(as_raw_key(&system_program::id())) {
+            return Ok(None);
+        }
+        if !account.owned_by(as_raw_key(self.token_program.pubkey())) {
+            return Err(ProgramError::IllegalOwner);
+        }
+        let data = account.try_borrow()?;
+        let token = StateWithExtensions::<TokenAccount>::unpack(&data)
+            .map_err(to_program_error)?
+            .base;
+        if token.mint.as_ref() != self.mint.pubkey().as_ref() {
+            return Err(ProgramError::InvalidAccountData);
+        }
+        if token.owner.as_ref() != owner.pubkey().as_ref() {
+            return Err(ProgramError::IllegalOwner);
+        }
+        Ok(Some(token.amount))
     }
-    Ok(u64::from_le_bytes(data[64..72].try_into().unwrap()))
 }
 
 impl<'a> Trading<'a> {
@@ -514,14 +557,6 @@ impl<'a> Trading<'a> {
         {
             return Err(ProgramError::InvalidArgument);
         }
-        // Withdrawals leave through the owner's token accounts, so they must
-        // be the owner's. Mints and balances the token program checks.
-        for account in [owner_base, owner_quote] {
-            let data = account.try_borrow()?;
-            if data.len() < 72 || data[32..64] != *open.owner.pubkey().as_ref() {
-                return Err(ProgramError::IllegalOwner);
-            }
-        }
         for program in [base_token_program, quote_token_program] {
             if *program.pubkey() != spl_token_2022::id() && *program.pubkey() != spl_token::id() {
                 return Err(ProgramError::IncorrectProgramId);
@@ -532,7 +567,7 @@ impl<'a> Trading<'a> {
             fixed.get_quote_mint_decimals(),
         );
         drop(fixed);
-        Ok(Trading {
+        let trading = Trading {
             open,
             base: Side {
                 mint: base_mint,
@@ -550,7 +585,14 @@ impl<'a> Trading<'a> {
                 token_program: quote_token_program,
                 decimals: quote_decimals,
             },
-        })
+        };
+        // Withdrawals leave through the owner's token accounts, so they must
+        // be the owner's, of the side's mint.
+        for side in [&trading.base, &trading.quote] {
+            side.token_amount(side.owner_token, trading.open.owner.info)?
+                .ok_or(ProgramError::UninitializedAccount)?;
+        }
+        Ok(trading)
     }
 
     /// Owner's wallet → trader's token account → seat.
@@ -597,11 +639,19 @@ impl<'a> Trading<'a> {
 
     /// Seat → trader's token account → owner's wallet, then closes the
     /// trader's token account into the owner. Tokens sent straight to that
-    /// account go back with the rest but are not the position's: the seat
-    /// balance is what it returns.
-    fn withdraw_all(&self, side: &Side, seat_balance: u64) -> Result<u64, ProgramError> {
+    /// account go back with the rest; the snapshot counts only the seat
+    /// balance. A trader token account that is not there (an earlier close
+    /// took it) is only needed when the seat holds something on this side.
+    fn withdraw_all(&self, side: &Side, seat_balance: u64) -> ProgramResult {
         let seeds = self.open.trader_seeds();
         let (trader, owner) = (self.open.trader, self.open.owner.info);
+        if side.token_amount(side.trader_token, trader)?.is_none() {
+            return if seat_balance == 0 {
+                Ok(())
+            } else {
+                Err(ProgramError::UninitializedAccount)
+            };
+        }
         if seat_balance > 0 {
             invoke_signed(
                 &withdraw_instruction(
@@ -624,7 +674,9 @@ impl<'a> Trading<'a> {
                 &[&seeds],
             )?;
         }
-        let amount = token_amount(side.trader_token)?;
+        let amount = side
+            .token_amount(side.trader_token, trader)?
+            .unwrap_or_default();
         if amount > 0 {
             invoke_signed(
                 &spl_token_2022::instruction::transfer_checked(
@@ -653,8 +705,7 @@ impl<'a> Trading<'a> {
             .map_err(to_program_error)?,
             &[side.trader_token, owner, trader],
             &[&seeds],
-        )?;
-        Ok(seat_balance)
+        )
     }
 }
 
@@ -676,8 +727,6 @@ pub(crate) fn process_place_orders(
     if data.is_empty() || !data.len().is_multiple_of(2) || data.len() / 2 > MAX_ORDERS_PER_PLACE {
         return Err(ProgramError::InvalidInstructionData);
     }
-    check_no_transfer_fee(&ctx.base)?;
-    check_no_transfer_fee(&ctx.quote)?;
 
     // Mark the orders placed and work out what they need, before any call
     // out, so the position is not borrowed across them.
@@ -725,6 +774,7 @@ pub(crate) fn process_place_orders(
                 orders.push(order);
             }
         }
+        ladder.check_nearest_first(placed)?;
         state.placed_orders += (data.len() / 2) as u16;
         state.created_with.base_atoms = state
             .created_with
@@ -741,7 +791,7 @@ pub(crate) fn process_place_orders(
     let (owner, trader, market) = (ctx.open.owner.info, ctx.open.trader, ctx.open.market);
     let system_program = ctx.open.system_program;
     // A defrag before this placement may have reclaimed the empty seat.
-    if ctx.open.seat_balance()?.is_none() {
+    if !ctx.open.has_seat()? {
         claim_seat(
             owner,
             trader,
@@ -767,6 +817,9 @@ pub(crate) fn process_place_orders(
         &system_instruction::transfer(owner.pubkey(), trader.pubkey(), ADVANCED_ORDER_FEE_LAMPORTS),
         &[owner, trader],
     )?;
+    // Nearest first within the batch too, so an order that trades on the
+    // way in flips to where no later one of the batch reaches.
+    orders.sort_by_key(|o| o.distance_e8);
     let params: Vec<PlaceOrderParams> = orders
         .iter()
         .map(|o| {
@@ -868,10 +921,9 @@ pub(crate) fn process_close_position(
     let price_e9 = ctx.open.closing_price(price_e9)?;
 
     ctx.open.cancel_at(&indices)?;
-    // A reclaimed seat held nothing.
-    let (base, quote) = ctx.open.seat_balance()?.unwrap_or((0, 0));
-    let base = ctx.withdraw_all(&ctx.base, base)?;
-    let quote = ctx.withdraw_all(&ctx.quote, quote)?;
+    let (base, quote) = ctx.open.seat_balance()?;
+    ctx.withdraw_all(&ctx.base, base)?;
+    ctx.withdraw_all(&ctx.quote, quote)?;
 
     // Everything the trader still holds goes back to the owner; the account
     // disappears with its last lamport.

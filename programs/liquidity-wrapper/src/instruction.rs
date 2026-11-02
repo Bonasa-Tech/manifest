@@ -12,13 +12,14 @@ use crate::state::{get_position_address, get_trader_address};
 pub enum PositionInstruction {
     /// Accounts: 0 owner [signer, writable, pays rent], 1 position PDA
     /// [writable], 2 trader PDA [writable], 3 Manifest market [writable],
-    /// 4 system program, 5 Manifest program.
+    /// 4 system program, 5 Manifest program, 6 base mint, 7 quote mint.
     /// Data: created_at i64, opening price_e9 u64, then the ladder bytes to
     /// the end, all little-endian.
     ///
     /// Creates the position and its trader, funds the trader to the rent
     /// minimum and claims the trader's seat on the market (the owner pays
-    /// for the market's growth).
+    /// for the market's growth). Refused on a Token-2022 mint with a
+    /// transfer fee config (`ERROR_TRANSFER_FEE`).
     CreatePosition = 0,
     /// Accounts: see [`TradingAccounts`], followed by 16 base global
     /// [writable], 17 base global vault [writable], 18 quote global
@@ -28,12 +29,15 @@ pub enum PositionInstruction {
     ///
     /// Places these orders of the ladder: pulls exactly what they need from
     /// the owner's token accounts into the seat and lays them as reverse
-    /// orders. An order already placed fails the whole instruction, and so
-    /// does one that traded more than 1% of its size against the book on the
-    /// way in (`ERROR_ORDER_CROSSED`). Refused once closing began (a
-    /// CancelOrders recorded the closing price), and on a Token-2022 mint
-    /// with a transfer fee config (`ERROR_TRANSFER_FEE`). Claims the seat
-    /// again if a Manifest defrag reclaimed it while it was empty.
+    /// orders, nearest the opening price first. An order already placed
+    /// fails the whole instruction, and so does one that traded more than 1%
+    /// of its size against the book on the way in (`ERROR_ORDER_CROSSED`),
+    /// and a batch after which some order is out while a nearer one of its
+    /// side is not (`ERROR_NOT_NEAREST_FIRST`): the ladder goes out from the
+    /// opening price outwards, so its own flipped orders never stand in the
+    /// way. Refused once closing began (a CancelOrders recorded the closing
+    /// price). Claims the seat again if a Manifest defrag reclaimed it while
+    /// it was empty.
     PlaceOrders = 1,
     /// Accounts: see [`TradingAccounts`].
     /// Data: closing price_e9 u64, nonzero, ignored once a CancelOrders or
@@ -42,7 +46,9 @@ pub enum PositionInstruction {
     ///
     /// Cancels the seat's orders at these indices, withdraws the seat's
     /// balances to the owner, closes the trader's token accounts and returns
-    /// the trader's lamports, then writes the closing snapshot. Its cost
+    /// the trader's lamports, then writes the closing snapshot. A trader
+    /// token account that does not exist is fine when the seat holds nothing
+    /// on its side. Its cost
     /// follows the list, not the book, so it cannot tell whether the seat
     /// still holds orders it was not given: one that flipped in after the
     /// client read the book, or that a Manifest defrag moved. A position
@@ -82,6 +88,8 @@ pub const CREATE_FIXED_DATA_LEN: usize = 16;
 pub fn create_position_instruction(
     owner: &Pubkey,
     market: &Pubkey,
+    base_mint: &Pubkey,
+    quote_mint: &Pubkey,
     created_at: i64,
     price_e9: u64,
     ladder: &[u8],
@@ -101,6 +109,8 @@ pub fn create_position_instruction(
             AccountMeta::new(*market, false),
             AccountMeta::new_readonly(solana_sdk_ids::system_program::id(), false),
             AccountMeta::new_readonly(manifest::ID, false),
+            AccountMeta::new_readonly(*base_mint, false),
+            AccountMeta::new_readonly(*quote_mint, false),
         ],
         data,
     }

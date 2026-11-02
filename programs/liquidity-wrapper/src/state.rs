@@ -95,7 +95,7 @@ pub fn get_trader_address(position: &Pubkey) -> (Pubkey, u8) {
 // The ladder is a list of bands, each spreading `levels` orders evenly over
 // [lo_bp, hi_bp] around the opening price, every order the same size in quote
 // atoms. Order k is level k counted through the bands in order. The client
-// (manifest-app lib/stonks/ladder.ts) computes the same orders with the same
+// (manifest-app lib/spreads/ladder.ts) computes the same orders with the same
 // integer arithmetic to preview and to pick which ones to place.
 //
 //   header: version u8 (= 2), band count u8, 2 reserved bytes
@@ -126,8 +126,9 @@ pub struct Ladder<'a> {
 }
 
 impl<'a> Ladder<'a> {
-    /// Checks the encoding and every band, so later reads cannot fail.
-    pub fn parse(bytes: &'a [u8]) -> Result<Self, ProgramError> {
+    /// Checks the encoding and every band, so later reads cannot fail; the
+    /// ladder and how many orders it describes.
+    pub fn parse(bytes: &'a [u8]) -> Result<(Self, usize), ProgramError> {
         if bytes.len() < LADDER_HEADER_BYTES || bytes[0] != LADDER_VERSION {
             return Err(ProgramError::InvalidInstructionData);
         }
@@ -148,7 +149,7 @@ impl<'a> Ladder<'a> {
         if total > MAX_TOTAL_ORDERS {
             return Err(ProgramError::InvalidInstructionData);
         }
-        Ok(ladder)
+        Ok((ladder, total))
     }
 
     /// A ladder that already passed `parse`, as a position stores it.
@@ -169,12 +170,6 @@ impl<'a> Ladder<'a> {
             spread_e1: u16::from_le_bytes([b[6], b[7]]),
             size_quote_atoms: u64::from_le_bytes(b[8..16].try_into().unwrap()),
         }
-    }
-
-    pub fn total_orders(&self) -> usize {
-        (0..self.band_count())
-            .map(|i| self.band(i).levels as usize)
-            .sum()
     }
 
     /// Fails when any order around `price_e9` is one Manifest cannot take.
@@ -221,6 +216,96 @@ impl<'a> Ladder<'a> {
         }
         Err(ProgramError::InvalidArgument)
     }
+
+    /// Fails unless, on each side of the opening price, no placed order is
+    /// farther from it than an unplaced one. Placing nearest first keeps the
+    /// position from trading with itself: an order that fills flips to the
+    /// other side by its spread, so it stays between the position's
+    /// outermost bid and ask, and every later order goes out beyond those.
+    /// Levels at the opening price, which place nothing, are on neither side.
+    pub fn check_nearest_first(&self, placed: &[u8]) -> Result<(), ProgramError> {
+        let is_placed = |k: usize| placed[k / 8] & (1 << (k % 8)) != 0;
+        // Per side, the farthest placed and the nearest unplaced distance.
+        let mut bids = (0u64, u64::MAX);
+        let mut asks = (0u64, u64::MAX);
+        let mut first = 0;
+        for i in 0..self.band_count() {
+            let b = self.band(i);
+            let levels = b.levels as usize;
+            // Levels rise in price: bids, perhaps one at the opening price,
+            // then asks.
+            let bid_levels = partition_point(levels, |l| level_rel_e8(&b, l) < 0);
+            let ask_from = if bid_levels < levels && level_rel_e8(&b, bid_levels) == 0 {
+                bid_levels + 1
+            } else {
+                bid_levels
+            };
+            // Bids nearest first from the top, asks from the bottom.
+            let placed_here = |l: usize| is_placed(first + l);
+            for (side, (last_placed, first_unplaced)) in [
+                (&mut bids, frontier((0..bid_levels).rev(), placed_here)?),
+                (&mut asks, frontier(ask_from..levels, placed_here)?),
+            ] {
+                if let Some(l) = last_placed {
+                    side.0 = side.0.max(level_rel_e8(&b, l).unsigned_abs());
+                }
+                if let Some(l) = first_unplaced {
+                    side.1 = side.1.min(level_rel_e8(&b, l).unsigned_abs());
+                }
+            }
+            first += levels;
+        }
+        if bids.0 > bids.1 || asks.0 > asks.1 {
+            return Err(ProgramError::Custom(ERROR_NOT_NEAREST_FIRST));
+        }
+        Ok(())
+    }
+}
+
+/// PlaceOrders fails with this when an order would go out before a nearer
+/// one of its side, see `Ladder::check_nearest_first`.
+pub const ERROR_NOT_NEAREST_FIRST: u32 = 1002;
+
+/// Along one side's levels of a band, nearest first: the last placed and the
+/// first unplaced level. Fails when a placed level follows an unplaced one.
+fn frontier(
+    mut near: impl Iterator<Item = usize>,
+    is_placed: impl Fn(usize) -> bool,
+) -> Result<(Option<usize>, Option<usize>), ProgramError> {
+    let mut last_placed = None;
+    for l in near.by_ref() {
+        if !is_placed(l) {
+            if near.any(&is_placed) {
+                return Err(ProgramError::Custom(ERROR_NOT_NEAREST_FIRST));
+            }
+            return Ok((last_placed, Some(l)));
+        }
+        last_placed = Some(l);
+    }
+    Ok((last_placed, None))
+}
+
+/// The first of `0..n` for which `pred` is false, `pred` true on a prefix.
+fn partition_point(n: usize, pred: impl Fn(usize) -> bool) -> usize {
+    let (mut lo, mut hi) = (0, n);
+    while lo < hi {
+        let mid = (lo + hi) / 2;
+        if pred(mid) {
+            lo = mid + 1;
+        } else {
+            hi = mid;
+        }
+    }
+    lo
+}
+
+/// Level `i`'s centre relative to the opening price, in 1e-8: lo + (i + ½) ·
+/// width / levels. Fits an i64 (at most about 3.3e8 · 2^17), and rises with
+/// the level.
+fn level_rel_e8(b: &Band, i: usize) -> i64 {
+    let lo = b.lo_bp as i64 * 10_000;
+    let width = (b.hi_bp as i64 - b.lo_bp as i64) * 10_000;
+    lo + (2 * i as i64 + 1) * width / (2 * b.levels as i64)
 }
 
 /// One order as Manifest takes it: quote atoms per base atom is
@@ -234,6 +319,8 @@ pub struct LadderOrder {
     /// Quote atoms a bid locks: base × price, rounded up as Manifest does.
     pub quote_atoms: u64,
     pub spread_e1: u16,
+    /// Distance from the opening price, in 1e-8 of it.
+    pub distance_e8: u64,
 }
 
 fn pow10(e: u32) -> Result<i128, ProgramError> {
@@ -250,10 +337,7 @@ fn level_order(
     quote_decimals: u8,
 ) -> Result<Option<LadderOrder>, ProgramError> {
     let overflow = || ProgramError::ArithmeticOverflow;
-    let lo = b.lo_bp as i128 * 10_000;
-    let width = (b.hi_bp as i128 - b.lo_bp as i128) * 10_000;
-    // Level centres: lo + (i + ½) · width / levels, in 1e-8.
-    let rel_e8 = lo + (2 * i + 1) * width / (2 * b.levels as i128);
+    let rel_e8 = level_rel_e8(b, i as usize) as i128;
     // Quote tokens per base token, scaled by 1e17; above zero as lo > -100%.
     let price = price_e9 as i128 * (REL_ONE + rel_e8);
     if price <= 0 {
@@ -296,5 +380,6 @@ fn level_order(
         price_exponent: exponent as i8,
         quote_atoms: quote_atoms as u64,
         spread_e1: b.spread_e1,
+        distance_e8: rel_e8.unsigned_abs() as u64,
     }))
 }

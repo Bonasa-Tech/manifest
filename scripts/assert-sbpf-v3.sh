@@ -7,16 +7,19 @@ if (( $# == 0 )); then
   exit 2
 fi
 
-# Without readelf on PATH (macOS), use the llvm-readelf of the platform-tools
-# the workspace pins, which cargo-build-sbf has installed.
+# readelf or llvm-readelf on PATH; failing both (macOS without LLVM), the
+# llvm-readelf of the platform-tools the workspace pins, which cargo-build-sbf
+# has installed.
 if command -v readelf >/dev/null 2>&1; then
   elf_reader=readelf
+elif command -v llvm-readelf >/dev/null 2>&1; then
+  elf_reader=llvm-readelf
 else
   root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
   tools_version="$(awk -F'"' '/^tools-version/{print $2}' "$root/Cargo.toml")"
   elf_reader="$HOME/.cache/solana/$tools_version/platform-tools/llvm/bin/llvm-readelf"
   if [[ -z "$tools_version" || ! -x "$elf_reader" ]]; then
-    echo "readelf is not on PATH and platform-tools ${tools_version:-?} has no llvm-readelf at $elf_reader; run cargo build-sbf first" >&2
+    echo "neither readelf nor llvm-readelf is on PATH, and platform-tools ${tools_version:-?} has no llvm-readelf at $elf_reader; install binutils or LLVM, or run cargo build-sbf first" >&2
     exit 1
   fi
 fi
