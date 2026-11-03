@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793639473997,
+  "lastUpdate": 1793726076074,
   "repoUrl": "https://github.com/Bonasa-Tech/manifest",
   "entries": {
     "CU Benchmark": [
@@ -15473,6 +15473,72 @@ window.BENCHMARK_DATA = {
           {
             "name": "MFX_99",
             "value": 2392,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "cyrbritt@gmail.com",
+            "name": "Britt Cyr",
+            "username": "brittcyr"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "014add1f00ac3a49dfdd2a838b8617546ff05c31",
+          "message": "Charge a lamport fee on the ui-wrapper and let the collector sweep it (#785)\n\nThe ui-wrapper did every operation for free. Add UI_WRAPPER_FEE_LAMPORTS,\n100_000 lamports or ten times the sibling wrapper's fee, credited to the\nwrapper state on the two instructions that can pay it without any change to\nthe accounts callers already pass: CreateWrapper and PlaceOrder.\n\nCancelOrder and SettleFunds cannot pay. CancelOrder takes no payer and its\nowner is a read-only signer, so nothing in it can be debited; SettleFunds\ncarries no system program at all. Charging either means adding an account,\nwhich is a separate decision.\n\nThe fee lands on the wrapper state rather than on the collector because the\ncollector is not among the accounts these instructions already take. That\nneeds a way back out, so Collect arrives with it: a new tag 6 that sweeps\neverything above the rent minimum to the hardcoded collector, the same shape\nand the same key as the wrapper's. Without it the fee would accrue somewhere\nnothing can reach.\n\nExpansion also had to stop eating the fee. expand_wrapper_if_needed funded a\nnew block by transferring the gap between the new rent minimum and the\naccount's current balance, which spends any surplus on the user's own rent.\nIt now charges the rent delta between the old and new size, the way the\nwrapper prices expansion. The two were the same number until this account\nstarted carrying a balance above rent, so this changes nothing about today's\nbehavior and is what makes the fee collectible at all.",
+          "timestamp": "2026-11-03T12:10:17-05:00",
+          "tree_id": "bc1cc308056216b1aaf3ff05f56f8a71486131f5",
+          "url": "https://github.com/Bonasa-Tech/manifest/commit/014add1f00ac3a49dfdd2a838b8617546ff05c31"
+        },
+        "date": 1793726067526,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "PHX_50",
+            "value": 6748,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "PHX_95",
+            "value": 8819,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "PHX_99",
+            "value": 10866,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_50",
+            "value": 1120,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_95",
+            "value": 1579,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_99",
+            "value": 2381,
             "range": "",
             "unit": "CU",
             "extra": ""
