@@ -14,8 +14,9 @@ use hypertree::trace;
 use instruction::ManifestWrapperInstruction;
 use pinocchio::{account::AccountView, error::ProgramError, ProgramResult};
 use processors::{
-    cancel_order::process_cancel_order, create_wrapper::process_create_wrapper,
-    place_order::process_place_order, settle_funds::process_settle_funds,
+    cancel_order::process_cancel_order, collect::process_collect,
+    create_wrapper::process_create_wrapper, place_order::process_place_order,
+    settle_funds::process_settle_funds,
 };
 use solana_program::{declare_id, pubkey::Pubkey};
 
@@ -34,6 +35,15 @@ security_txt! {
 }
 
 declare_id!("UMnFStVeG1ecZFc2gc5K3vFy3sMpotq8C91mXBQDGwh");
+
+/// Fee charged per fee-bearing ui-wrapper instruction, in lamports,
+/// transferred from the payer to the wrapper state.
+pub const UI_WRAPPER_FEE_LAMPORTS: u64 = 100_000;
+
+/// Program deployer, allowed to collect the accrued fees off a wrapper state.
+/// The same hardcoded collector as the core's and the wrapper's, re-exported
+/// so the key (and its `test` feature twin) exists in exactly one place.
+pub use manifest::program::processor::defrag::DEFRAG_COLLECTOR as COLLECTOR;
 
 #[cfg(not(feature = "no-entrypoint"))]
 pinocchio::program_entrypoint!(process_instruction, {
@@ -79,6 +89,9 @@ pub fn process_instruction(
         }
         ManifestWrapperInstruction::SettleFunds => {
             process_settle_funds(program_id, accounts, data)?;
+        }
+        ManifestWrapperInstruction::Collect => {
+            process_collect(program_id, accounts, data)?;
         }
     }
 

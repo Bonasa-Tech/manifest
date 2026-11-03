@@ -10,7 +10,7 @@ use hypertree::{
     RedBlackTreeReadOnly, NIL,
 };
 use manifest::{
-    program::{get_dynamic_account, invoke},
+    program::{get_dynamic_account, invoke, invoke_passthrough_refs},
     quantities::BaseAtoms,
     require,
     state::{claimed_seat::ClaimedSeat, MarketFixed, RestingOrder},
@@ -47,6 +47,32 @@ const_assert_eq!(
 // Does not align to 8 bytes but not necessary
 // const_assert_eq!(size_of::<UnusedWrapperFreeListPadding>() % 8, 0);
 
+// Fee here is UI_WRAPPER_FEE_LAMPORTS, credited to the wrapper state. It
+// lands there rather than on the collector directly because the collector is
+// not one of the accounts any of these instructions already takes, and the
+// point of charging here is to not change what callers have to pass. Collect
+// sweeps it off later. Users who do not wish to pay this fee should use their
+// own wrapper or interact directly with the manifest program.
+pub(crate) fn collect_fee<'a>(
+    payer: &Signer<'a>,
+    wrapper_state: &WrapperStateAccountInfo<'a>,
+) -> ProgramResult {
+    // The system program's transfer, encoded directly. Building it through
+    // `system_instruction::transfer` bincode encodes the instruction enum and
+    // allocates a vector for the data and another for the account metas, and
+    // this runs on every placement.
+    let mut data: [u8; 12] = [0; 12];
+    data[0] = 2;
+    data[4..].copy_from_slice(&crate::UI_WRAPPER_FEE_LAMPORTS.to_le_bytes());
+    invoke_passthrough_refs(
+        &solana_sdk_ids::system_program::id(),
+        &[payer.info, wrapper_state.info],
+        &data,
+    )?;
+
+    Ok(())
+}
+
 pub(crate) fn expand_wrapper_if_needed<'a>(
     wrapper_state_account_info: &WrapperStateAccountInfo<'a>,
     payer: &Signer<'a>,
@@ -66,7 +92,14 @@ pub(crate) fn expand_wrapper_if_needed<'a>(
 
         let rent: Rent = Rent::get()?;
         let new_minimum_balance: u64 = rent.try_minimum_balance(new_size)?;
-        let lamports_diff: u64 = new_minimum_balance.saturating_sub(wrapper_state.lamports());
+        // Charge the rent the extra block costs, not the gap to the account's
+        // current balance. The two were the same number until this account
+        // started carrying fees: with a surplus sitting on it, funding up to
+        // the new minimum spends that surplus on the user's own rent and the
+        // fee is never collectible. The sibling wrapper prices expansion the
+        // same way, for the same reason.
+        let old_minimum_balance: u64 = rent.try_minimum_balance(wrapper_state.data_len())?;
+        let lamports_diff: u64 = new_minimum_balance.saturating_sub(old_minimum_balance);
 
         invoke(
             &system_instruction::transfer(payer.pubkey(), wrapper_state.pubkey(), lamports_diff),
