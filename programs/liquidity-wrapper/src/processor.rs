@@ -30,8 +30,12 @@ use solana_program::{
 use solana_sdk_ids::system_program;
 use solana_system_interface::instruction as system_instruction;
 use spl_token_2022::{
-    extension::{transfer_fee::TransferFeeConfig, BaseStateWithExtensions, StateWithExtensions},
-    state::{Account as TokenAccount, Mint},
+    extension::{
+        default_account_state::DefaultAccountState, non_transferable::NonTransferable,
+        transfer_fee::TransferFeeConfig, transfer_hook::TransferHook, BaseStateWithExtensions,
+        StateWithExtensions,
+    },
+    state::{Account as TokenAccount, AccountState, Mint},
 };
 
 pub use crate::state::ERROR_NOT_NEAREST_FIRST;
@@ -39,8 +43,8 @@ use crate::{
     instruction::CREATE_FIXED_DATA_LEN,
     state::{
         get_position_address, get_trader_address, placed_bitmap_len, Ladder, LadderOrder, Position,
-        Snapshot, MAX_CREATED_AT_DRIFT_SECONDS, MAX_LADDER_BYTES, POSITION_DISCRIMINANT,
-        POSITION_HEADER_SIZE, POSITION_SEED, TRADER_SEED,
+        Price, Snapshot, MAX_CREATED_AT_DRIFT_SECONDS, MAX_LADDER_BYTES, POSITION_DISCRIMINANT,
+        POSITION_HEADER_SIZE, POSITION_SEED, PRICE_BYTES, TRADER_SEED,
     },
 };
 
@@ -63,9 +67,9 @@ const MIN_RESTING_PERCENT: u128 = 99;
 /// PlaceOrders fails with this when an order rested with less than that;
 /// clear of the token programs' and Manifest's own error codes.
 pub const ERROR_ORDER_CROSSED: u32 = 1000;
-/// PlaceOrders fails with this on a Token-2022 mint that carries a transfer
-/// fee config, see `check_no_transfer_fee`.
-pub const ERROR_TRANSFER_FEE: u32 = 1001;
+/// CreatePosition fails with this on a Token-2022 mint the position cannot
+/// trade, see `check_mint`.
+pub const ERROR_UNSUPPORTED_MINT: u32 = 1001;
 
 /// Accounts PlaceOrders and ClosePosition share, see TradingAccounts.
 const TRADING_ACCOUNTS: usize = 16;
@@ -80,8 +84,8 @@ fn create_pda(
     program_id: &Pubkey,
     space: usize,
     seeds: &[&[u8]],
+    rent: &Rent,
 ) -> ProgramResult {
-    let rent = Rent::get()?;
     let current = account.lamports();
     if current == 0 {
         return create_account(
@@ -89,7 +93,7 @@ fn create_pda(
             account,
             system_program,
             program_id,
-            &rent,
+            rent,
             space as u64,
             seeds.iter().map(|s| s.to_vec()).collect(),
         );
@@ -174,12 +178,9 @@ pub(crate) fn process_create_position(
         return Err(ProgramError::InvalidInstructionData);
     }
     let created_at = i64::from_le_bytes(data[..8].try_into().unwrap());
-    let price_e9 = u64::from_le_bytes(data[8..16].try_into().unwrap());
+    let price = Price::read(&data[8..CREATE_FIXED_DATA_LEN])?;
     let ladder_bytes = &data[CREATE_FIXED_DATA_LEN..];
     let (ladder, total_orders) = Ladder::parse(ladder_bytes)?;
-    if price_e9 == 0 {
-        return Err(ProgramError::InvalidArgument);
-    }
 
     // A real Manifest market: owned by Manifest and carrying its discriminant.
     // Every order of the ladder must be one it takes, or placing would get
@@ -192,10 +193,10 @@ pub(crate) fn process_create_position(
         {
             return Err(ProgramError::InvalidArgument);
         }
-        check_no_transfer_fee(base_mint)?;
-        check_no_transfer_fee(quote_mint)?;
+        check_mint(base_mint)?;
+        check_mint(quote_mint)?;
         ladder.check_orders(
-            price_e9,
+            price,
             fixed.get_base_mint_decimals(),
             fixed.get_quote_mint_decimals(),
         )?;
@@ -217,6 +218,7 @@ pub(crate) fn process_create_position(
         return Err(ProgramError::InvalidSeeds);
     }
 
+    let rent = Rent::get()?;
     let created_at_bytes = created_at.to_le_bytes();
     let bump_bytes = [bump];
     create_pda(
@@ -232,6 +234,7 @@ pub(crate) fn process_create_position(
             &created_at_bytes,
             &bump_bytes,
         ],
+        &rent,
     )?;
 
     {
@@ -246,11 +249,11 @@ pub(crate) fn process_create_position(
             created_with: Snapshot {
                 base_atoms: 0,
                 quote_atoms: 0,
-                price_e9,
+                price,
             },
             closed_with: Snapshot::default(),
             total_orders: total_orders as u16,
-            placed_orders: 0,
+            _reserved: 0,
             ladder_len: ladder_bytes.len() as u16,
             bump,
             trader_bump,
@@ -261,7 +264,7 @@ pub(crate) fn process_create_position(
     // The trader is a plain system account that only ever holds the rent
     // minimum between instructions. Lamports someone sent it beforehand
     // simply count towards that.
-    let rent_minimum = Rent::get()?.try_minimum_balance(0)?;
+    let rent_minimum = rent.try_minimum_balance(0)?;
     if trader.lamports() < rent_minimum {
         invoke(
             &system_instruction::transfer(
@@ -359,18 +362,15 @@ impl<'a> Open<'a> {
     }
 
     /// The closing price: the first CancelOrders or ClosePosition records
-    /// `price_e9`, and every later one keeps what it found, so the snapshot
+    /// `price`, and every later one keeps what it found, so the snapshot
     /// prices the position as of when its unwinding began.
-    fn closing_price(&self, price_e9: u64) -> Result<u64, ProgramError> {
-        if price_e9 == 0 {
-            return Err(ProgramError::InvalidArgument);
-        }
+    fn closing_price(&self, price: Price) -> Result<Price, ProgramError> {
         let mut bytes = self.position.try_borrow_mut()?;
         let state: &mut Position = bytemuck::from_bytes_mut(&mut bytes[..POSITION_HEADER_SIZE]);
-        if state.closed_with.price_e9 == 0 {
-            state.closed_with.price_e9 = price_e9;
+        if !state.closed_with.price.is_set() {
+            state.closed_with.price = price;
         }
-        Ok(state.closed_with.price_e9)
+        Ok(state.closed_with.price)
     }
 
     fn trader_seeds(&self) -> [&[u8]; 3] {
@@ -487,20 +487,37 @@ struct Trading<'a> {
     quote: Side<'a>,
 }
 
-/// Placement moves exactly what the ladder locks through two transfers, and
-/// closing must close the trader's token accounts, which Token-2022 refuses
-/// while they hold withheld fees. A mint with a transfer fee config can turn
-/// a fee on at any time, even if it is zero now, so no position is created
-/// on one. Token-2022 adds no extension to a mint after it is initialised,
-/// so a mint that passes here passes for good.
-fn check_no_transfer_fee(mint: &AccountView) -> ProgramResult {
+/// Refuses a Token-2022 mint whose transfers the position cannot make or
+/// account for. Placement moves exactly what the ladder locks through plain
+/// transfer_checked calls, and closing closes the trader's token accounts.
+/// - A transfer fee config: the fee can be turned on at any time, even if it
+///   is zero now, and withheld fees keep the trader's accounts open.
+/// - A transfer hook with a program set: its extra accounts are not passed.
+/// - Accounts that start frozen: the trader's would take no deposit.
+/// - Non-transferable tokens.
+///
+/// Tokenised stocks carry a transfer hook extension without a program and a
+/// default account state of initialized, and pass. Their authorities could
+/// set either later, which would stop deposits at the token program; no
+/// extension can be added to a mint after it is initialised.
+fn check_mint(mint: &AccountView) -> ProgramResult {
     if mint.owner_pubkey() != spl_token_2022::id() {
         return Ok(());
     }
     let data = mint.try_borrow()?;
     let mint = StateWithExtensions::<Mint>::unpack(&data).map_err(to_program_error)?;
-    if mint.get_extension::<TransferFeeConfig>().is_ok() {
-        return Err(ProgramError::Custom(ERROR_TRANSFER_FEE));
+    let hooked = mint
+        .get_extension::<TransferHook>()
+        .is_ok_and(|hook| Option::<Pubkey>::from(hook.program_id).is_some());
+    let frozen = mint
+        .get_extension::<DefaultAccountState>()
+        .is_ok_and(|default| default.state == AccountState::Frozen as u8);
+    if hooked
+        || frozen
+        || mint.get_extension::<TransferFeeConfig>().is_ok()
+        || mint.get_extension::<NonTransferable>().is_ok()
+    {
+        return Err(ProgramError::Custom(ERROR_UNSUPPORTED_MINT));
     }
     Ok(())
 }
@@ -645,13 +662,13 @@ impl<'a> Trading<'a> {
     fn withdraw_all(&self, side: &Side, seat_balance: u64) -> ProgramResult {
         let seeds = self.open.trader_seeds();
         let (trader, owner) = (self.open.trader, self.open.owner.info);
-        if side.token_amount(side.trader_token, trader)?.is_none() {
+        let Some(held) = side.token_amount(side.trader_token, trader)? else {
             return if seat_balance == 0 {
                 Ok(())
             } else {
                 Err(ProgramError::UninitializedAccount)
             };
-        }
+        };
         if seat_balance > 0 {
             invoke_signed(
                 &withdraw_instruction(
@@ -674,9 +691,11 @@ impl<'a> Trading<'a> {
                 &[&seeds],
             )?;
         }
-        let amount = side
-            .token_amount(side.trader_token, trader)?
-            .unwrap_or_default();
+        // No mint the program takes charges a transfer fee: the withdrawal
+        // arrives whole.
+        let amount = held
+            .checked_add(seat_balance)
+            .ok_or(ProgramError::ArithmeticOverflow)?;
         if amount > 0 {
             invoke_signed(
                 &spl_token_2022::instruction::transfer_checked(
@@ -755,27 +774,22 @@ pub(crate) fn process_place_orders(
             // Orders that round to nothing count as placed without an order.
             if let Some(order) = ladder.order(
                 k,
-                state.created_with.price_e9,
+                state.created_with.price,
                 ctx.base.decimals,
                 ctx.quote.decimals,
             )? {
-                let need = if order.is_bid {
-                    &mut need_quote
+                let (need, atoms) = if order.is_bid {
+                    (&mut need_quote, order.quote_atoms)
                 } else {
-                    &mut need_base
+                    (&mut need_base, order.base_atoms)
                 };
                 *need = need
-                    .checked_add(if order.is_bid {
-                        order.quote_atoms
-                    } else {
-                        order.base_atoms
-                    })
+                    .checked_add(atoms)
                     .ok_or(ProgramError::ArithmeticOverflow)?;
                 orders.push(order);
             }
         }
         ladder.check_nearest_first(placed)?;
-        state.placed_orders += (data.len() / 2) as u16;
         state.created_with.base_atoms = state
             .created_with
             .base_atoms
@@ -917,8 +931,8 @@ pub(crate) fn process_close_position(
     data: &[u8],
 ) -> ProgramResult {
     let ctx = Trading::load(program_id, accounts)?;
-    let (price_e9, indices) = closing_data(data)?;
-    let price_e9 = ctx.open.closing_price(price_e9)?;
+    let (price, indices) = closing_data(data)?;
+    let price = ctx.open.closing_price(price)?;
 
     ctx.open.cancel_at(&indices)?;
     let (base, quote) = ctx.open.seat_balance()?;
@@ -958,7 +972,7 @@ pub(crate) fn process_close_position(
         state.closed_with = Snapshot {
             base_atoms: base,
             quote_atoms: quote,
-            price_e9,
+            price,
         };
     }
     Ok(())
@@ -970,21 +984,21 @@ pub(crate) fn process_cancel_orders(
     data: &[u8],
 ) -> ProgramResult {
     let open = Open::load(program_id, &mut accounts.iter(), false)?;
-    let (price_e9, indices) = closing_data(data)?;
-    open.closing_price(price_e9)?;
+    let (price, indices) = closing_data(data)?;
+    open.closing_price(price)?;
     open.cancel_at(&indices)?;
     Ok(())
 }
 
 /// CancelOrders' and ClosePosition's data: the closing price, then the market
 /// indices of the seat's orders to cancel.
-fn closing_data(data: &[u8]) -> Result<(u64, Vec<DataIndex>), ProgramError> {
-    if data.len() < 8 || !(data.len() - 8).is_multiple_of(4) {
+fn closing_data(data: &[u8]) -> Result<(Price, Vec<DataIndex>), ProgramError> {
+    if data.len() < PRICE_BYTES || !(data.len() - PRICE_BYTES).is_multiple_of(4) {
         return Err(ProgramError::InvalidInstructionData);
     }
-    let (price_e9, indices) = data.split_at(8);
+    let (price, indices) = data.split_at(PRICE_BYTES);
     Ok((
-        u64::from_le_bytes(price_e9.try_into().unwrap()),
+        Price::read(price)?,
         indices
             .chunks_exact(4)
             .map(|b| DataIndex::from_le_bytes(b.try_into().unwrap()))

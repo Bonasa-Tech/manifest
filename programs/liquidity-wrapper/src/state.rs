@@ -4,7 +4,7 @@ use solana_program::pubkey::Pubkey;
 use static_assertions::const_assert_eq;
 
 /// First 8 bytes of every position account.
-pub const POSITION_DISCRIMINANT: u64 = u64::from_le_bytes(*b"mfxposn2");
+pub const POSITION_DISCRIMINANT: u64 = u64::from_le_bytes(*b"mfxposn3");
 
 /// How far the creation time named in the PDA seeds may be from the cluster
 /// clock. The client picks the time before signing, so it has to allow for the
@@ -22,14 +22,65 @@ pub const POSITION_SEED: &[u8] = b"position";
 /// the market and its two token accounts.
 pub const TRADER_SEED: &[u8] = b"trader";
 
-/// One balance snapshot. Prices are quote tokens per base token scaled by
-/// 1e9, so they do not depend on either mint's decimals.
+/// A price in quote tokens per base token, `mantissa · 10^exponent`, in
+/// Manifest's own format: it keeps its digits however cheap or dear the
+/// token, and does not depend on either mint's decimals. Zero (a zero
+/// mantissa) only where none is set.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Pod, Zeroable)]
+pub struct Price {
+    pub mantissa: u32,
+    pub exponent: i8,
+    pub _padding: [u8; 3],
+}
+
+/// Exponents a price may carry: far beyond any token's, and small enough
+/// that the ladder arithmetic cannot overflow on them.
+pub const PRICE_EXPONENTS: core::ops::RangeInclusive<i8> = -40..=20;
+/// A price in instruction data: mantissa u32, exponent i8, little-endian.
+pub const PRICE_BYTES: usize = 5;
+
+impl Price {
+    pub const fn new(mantissa: u32, exponent: i8) -> Self {
+        Price {
+            mantissa,
+            exponent,
+            _padding: [0; 3],
+        }
+    }
+
+    pub fn is_set(&self) -> bool {
+        self.mantissa != 0
+    }
+
+    /// A price from instruction data; it must be set and its exponent in
+    /// range.
+    pub fn read(bytes: &[u8]) -> Result<Self, ProgramError> {
+        let price = Price::new(
+            u32::from_le_bytes(bytes[..4].try_into().unwrap()),
+            bytes[4] as i8,
+        );
+        if !price.is_set() || !PRICE_EXPONENTS.contains(&price.exponent) {
+            return Err(ProgramError::InvalidArgument);
+        }
+        Ok(price)
+    }
+
+    pub fn to_bytes(&self) -> [u8; PRICE_BYTES] {
+        let mut out = [0; PRICE_BYTES];
+        out[..4].copy_from_slice(&self.mantissa.to_le_bytes());
+        out[4] = self.exponent as u8;
+        out
+    }
+}
+
+/// One balance snapshot.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Pod, Zeroable)]
 pub struct Snapshot {
     pub base_atoms: u64,
     pub quote_atoms: u64,
-    pub price_e9: u64,
+    pub price: Price,
 }
 
 /// Fixed header of a position account. `ladder_len` bytes of the ladder
@@ -51,7 +102,8 @@ pub struct Position {
     /// closing began). Grows with every ClosePosition after the first.
     pub closed_with: Snapshot,
     pub total_orders: u16,
-    pub placed_orders: u16,
+    /// Was the placed count; the bitmap after the ladder holds it.
+    pub _reserved: u16,
     pub ladder_len: u16,
     pub bump: u8,
     pub trader_bump: u8,
@@ -66,7 +118,7 @@ impl Position {
 
     /// A CancelOrders or ClosePosition recorded the closing price.
     pub fn is_closing(&self) -> bool {
-        self.closed_with.price_e9 != 0
+        self.closed_with.price.is_set()
     }
 }
 
@@ -107,9 +159,10 @@ const BAND_BYTES: usize = 16;
 
 /// Scale of `rel_e8`, an order's distance from the opening price.
 const REL_ONE: i128 = 100_000_000;
-/// Scale of `price_e9 * (REL_ONE + rel_e8)`, the price in quote tokens per
-/// base token.
-const PRICE_SCALE_EXP: i32 = 17;
+const REL_ONE_EXP: i32 = 8;
+/// Largest power of ten a band's size (a u64) is scaled up by on its way to
+/// base atoms, so that the product stays inside an i128.
+const MAX_SIZE_SCALE_EXP: i32 = 18;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Band {
@@ -172,23 +225,23 @@ impl<'a> Ladder<'a> {
         }
     }
 
-    /// Fails when any order around `price_e9` is one Manifest cannot take.
+    /// Fails when any order around `price` is one Manifest cannot take.
     /// Within a band prices rise with the level, and the price exponent with
     /// them, while the base amount falls; so each band's lowest and highest
     /// level are its extremes.
     pub fn check_orders(
         &self,
-        price_e9: u64,
+        price: Price,
         base_decimals: u8,
         quote_decimals: u8,
     ) -> Result<(), ProgramError> {
         for i in 0..self.band_count() {
             let b = self.band(i);
-            level_order(&b, 0, price_e9, base_decimals, quote_decimals)?;
+            level_order(&b, 0, price, base_decimals, quote_decimals)?;
             level_order(
                 &b,
                 b.levels as i128 - 1,
-                price_e9,
+                price,
                 base_decimals,
                 quote_decimals,
             )?;
@@ -196,12 +249,12 @@ impl<'a> Ladder<'a> {
         Ok(())
     }
 
-    /// Order `k` around `price_e9`, None when it rounds to nothing (no
+    /// Order `k` around `price`, None when it rounds to nothing (no
     /// distance from the price, or too small for one base atom).
     pub fn order(
         &self,
         k: usize,
-        price_e9: u64,
+        price: Price,
         base_decimals: u8,
         quote_decimals: u8,
     ) -> Result<Option<LadderOrder>, ProgramError> {
@@ -212,7 +265,7 @@ impl<'a> Ladder<'a> {
                 k -= b.levels as usize;
                 continue;
             }
-            return level_order(&b, k as i128, price_e9, base_decimals, quote_decimals);
+            return level_order(&b, k as i128, price, base_decimals, quote_decimals);
         }
         Err(ProgramError::InvalidArgument)
     }
@@ -332,37 +385,45 @@ fn pow10(e: u32) -> Result<i128, ProgramError> {
 fn level_order(
     b: &Band,
     i: i128,
-    price_e9: u64,
+    price: Price,
     base_decimals: u8,
     quote_decimals: u8,
 ) -> Result<Option<LadderOrder>, ProgramError> {
     let overflow = || ProgramError::ArithmeticOverflow;
     let rel_e8 = level_rel_e8(b, i as usize) as i128;
-    // Quote tokens per base token, scaled by 1e17; above zero as lo > -100%.
-    let price = price_e9 as i128 * (REL_ONE + rel_e8);
-    if price <= 0 {
+    // Quote atoms per base atom at the level: p · 10^x, with p = mantissa ·
+    // (1 + rel) · 1e8, above zero as lo > -100%.
+    let mut p = price.mantissa as i128 * (REL_ONE + rel_e8);
+    if p <= 0 {
         return Err(ProgramError::InvalidArgument);
     }
-    // Quote atoms per base atom = price · 10^(qd − bd − 17). Keep the ten
-    // leading digits that fit a u32 mantissa; the rest round down.
-    let mut mantissa = price;
-    let mut exponent = quote_decimals as i32 - base_decimals as i32 - PRICE_SCALE_EXP;
-    while mantissa > u32::MAX as i128 {
-        mantissa /= 10;
-        exponent += 1;
+    let mut x = price.exponent as i32 - REL_ONE_EXP + quote_decimals as i32 - base_decimals as i32;
+    // Base atoms are size · 10^-x / p: a price far below one quote atom per
+    // base atom gives up digits of p, never more than it has.
+    while x < -MAX_SIZE_SCALE_EXP {
+        p /= 10;
+        x += 1;
     }
-    // Reverse orders take exponents up to 0 (ReverseTight) and Manifest's
-    // prices go down to 10^-18.
-    if !(-18..=0).contains(&exponent) {
+    if p == 0 {
         return Err(ProgramError::InvalidArgument);
     }
     // Base atoms worth the band's size at the level's price.
-    let base_atoms = (b.size_quote_atoms as i128)
-        .checked_mul(pow10(base_decimals as u32 + PRICE_SCALE_EXP as u32)?)
-        .ok_or_else(overflow)?
-        / price
-            .checked_mul(pow10(quote_decimals as u32)?)
-            .ok_or_else(overflow)?;
+    let size = b.size_quote_atoms as i128;
+    let base_atoms = if x <= 0 {
+        size.checked_mul(pow10((-x) as u32)?).ok_or_else(overflow)? / p
+    } else {
+        size / p.checked_mul(pow10(x as u32)?).ok_or_else(overflow)?
+    };
+    // Manifest takes a u32 mantissa and exponents from -18 (its smallest
+    // price) to 0 (ReverseTight's largest); the digits beyond round down.
+    let (mut mantissa, mut exponent) = (p, x);
+    while mantissa > u32::MAX as i128 || exponent < -18 {
+        mantissa /= 10;
+        exponent += 1;
+    }
+    if exponent > 0 || mantissa == 0 {
+        return Err(ProgramError::InvalidArgument);
+    }
     let base_atoms: u64 = base_atoms.try_into().map_err(|_| overflow())?;
     let scale = pow10((-exponent) as u32)?;
     let quote_atoms: u64 = ((base_atoms as i128 * mantissa + scale - 1) / scale)
@@ -375,10 +436,10 @@ fn level_order(
     }
     Ok(Some(LadderOrder {
         is_bid: rel_e8 < 0,
-        base_atoms: base_atoms as u64,
+        base_atoms,
         price_mantissa: mantissa as u32,
         price_exponent: exponent as i8,
-        quote_atoms: quote_atoms as u64,
+        quote_atoms,
         spread_e1: b.spread_e1,
         distance_e8: rel_e8.unsigned_abs() as u64,
     }))

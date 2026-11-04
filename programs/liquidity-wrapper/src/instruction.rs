@@ -5,7 +5,7 @@ use solana_program::{
     pubkey::Pubkey,
 };
 
-use crate::state::{get_position_address, get_trader_address};
+use crate::state::{get_position_address, get_trader_address, Price, PRICE_BYTES};
 
 #[repr(u8)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -13,13 +13,14 @@ pub enum PositionInstruction {
     /// Accounts: 0 owner [signer, writable, pays rent], 1 position PDA
     /// [writable], 2 trader PDA [writable], 3 Manifest market [writable],
     /// 4 system program, 5 Manifest program, 6 base mint, 7 quote mint.
-    /// Data: created_at i64, opening price_e9 u64, then the ladder bytes to
-    /// the end, all little-endian.
+    /// Data: created_at i64, opening price (see [`Price`]: mantissa u32,
+    /// exponent i8), then the ladder bytes to the end, all little-endian.
     ///
     /// Creates the position and its trader, funds the trader to the rent
     /// minimum and claims the trader's seat on the market (the owner pays
     /// for the market's growth). Refused on a Token-2022 mint with a
-    /// transfer fee config (`ERROR_TRANSFER_FEE`).
+    /// transfer fee config, a transfer hook program, accounts frozen by
+    /// default or non-transferable tokens (`ERROR_UNSUPPORTED_MINT`).
     CreatePosition = 0,
     /// Accounts: see [`TradingAccounts`], followed by 16 base global
     /// [writable], 17 base global vault [writable], 18 quote global
@@ -40,26 +41,27 @@ pub enum PositionInstruction {
     /// it was empty.
     PlaceOrders = 1,
     /// Accounts: see [`TradingAccounts`].
-    /// Data: closing price_e9 u64, nonzero, ignored once a CancelOrders or
-    /// ClosePosition recorded one; then u32 market indices of the seat's
-    /// orders, as for CancelOrders.
+    /// Data: closing price (mantissa u32, exponent i8), set, ignored once a
+    /// CancelOrders or ClosePosition recorded one; then u32 market indices
+    /// of the seat's orders, as for CancelOrders.
     ///
     /// Cancels the seat's orders at these indices, withdraws the seat's
     /// balances to the owner, closes the trader's token accounts and returns
     /// the trader's lamports, then writes the closing snapshot. A trader
     /// token account that does not exist is fine when the seat holds nothing
-    /// on its side. Its cost
-    /// follows the list, not the book, so it cannot tell whether the seat
-    /// still holds orders it was not given: one that flipped in after the
-    /// client read the book, or that a Manifest defrag moved. A position
-    /// therefore stays sweepable after closing: CancelOrders and
-    /// ClosePosition still work on it, and a later ClosePosition adds what
-    /// it withdraws to the closing snapshot, keeping its time and price.
+    /// on its side. Its cost follows the list, not the book, so it cannot
+    /// tell whether the seat still holds orders it was not given: one that
+    /// flipped in after the client read the book, or that a Manifest defrag
+    /// moved. A position therefore stays sweepable after closing:
+    /// CancelOrders and ClosePosition still work on it, and a later
+    /// ClosePosition adds what it withdraws to the closing snapshot, keeping
+    /// its time and price.
     ClosePosition = 2,
     /// Accounts: 0 owner [signer], 1 position [writable], 2 trader
     /// [writable], 3 market [writable], 4 system program, 5 Manifest program.
-    /// Data: closing price_e9 u64, nonzero, then u32 market indices of the
-    /// seat's orders, strictly increasing, little-endian, to the end.
+    /// Data: closing price (mantissa u32, exponent i8), set, then u32 market
+    /// indices of the seat's orders, strictly increasing, little-endian, to
+    /// the end.
     ///
     /// Cancels the seat's orders at these indices, for ladders too long to
     /// cancel inside one ClosePosition. Its cost follows the list, not the
@@ -82,8 +84,8 @@ impl TryFrom<u8> for PositionInstruction {
     }
 }
 
-/// created_at + price_e9, before the ladder.
-pub const CREATE_FIXED_DATA_LEN: usize = 16;
+/// created_at + price, before the ladder.
+pub const CREATE_FIXED_DATA_LEN: usize = 8 + PRICE_BYTES;
 
 pub fn create_position_instruction(
     owner: &Pubkey,
@@ -91,14 +93,14 @@ pub fn create_position_instruction(
     base_mint: &Pubkey,
     quote_mint: &Pubkey,
     created_at: i64,
-    price_e9: u64,
+    price: Price,
     ladder: &[u8],
 ) -> Instruction {
     let (position, _) = get_position_address(owner, market, created_at);
     let (trader, _) = get_trader_address(&position);
     let mut data = vec![PositionInstruction::CreatePosition as u8];
     data.extend_from_slice(&created_at.to_le_bytes());
-    data.extend_from_slice(&price_e9.to_le_bytes());
+    data.extend_from_slice(&price.to_bytes());
     data.extend_from_slice(ladder);
     Instruction {
         program_id: crate::ID,
@@ -185,11 +187,11 @@ pub fn place_orders_instruction(accounts: &TradingAccounts, orders: &[u16]) -> I
 
 pub fn close_position_instruction(
     accounts: &TradingAccounts,
-    price_e9: u64,
+    price: Price,
     indices: &[u32],
 ) -> Instruction {
     let mut data = vec![PositionInstruction::ClosePosition as u8];
-    data.extend_from_slice(&price_e9.to_le_bytes());
+    data.extend_from_slice(&price.to_bytes());
     for i in indices {
         data.extend_from_slice(&i.to_le_bytes());
     }
@@ -204,12 +206,12 @@ pub fn cancel_orders_instruction(
     owner: &Pubkey,
     position: &Pubkey,
     market: &Pubkey,
-    price_e9: u64,
+    price: Price,
     indices: &[u32],
 ) -> Instruction {
     let (trader, _) = get_trader_address(position);
     let mut data = vec![PositionInstruction::CancelOrders as u8];
-    data.extend_from_slice(&price_e9.to_le_bytes());
+    data.extend_from_slice(&price.to_bytes());
     for i in indices {
         data.extend_from_slice(&i.to_le_bytes());
     }
