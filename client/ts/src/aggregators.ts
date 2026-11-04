@@ -27,6 +27,7 @@ export const AGGREGATOR_PROGRAM_IDS = {
  */
 export const ORIGINATING_PROTOCOL_IDS = {
   LiMoM9rMhrdYrfzUCxQppvxCSG1FcrUK9G8uLq4A1GF: 'kamino',
+  KLend2g3cP87fffoy8q1mQqGKjrxjC8boSyAYavgmjD: 'kamino', // Kamino Lend
   UMnFStVeG1ecZFc2gc5K3vFy3sMpotq8C91mXBQDGwh: 'cabana',
   BQ72nSv9f3PRyRKCBnHLVrerrv37CYTHm5h3s9VSGQDV: 'jupiter', // JUP 1
   '2MFoS3MPtvyQ4Wh4M9pdfPjz6UhVoNbFbGJAskCPCj3h': 'jupiter', // JUP 2
