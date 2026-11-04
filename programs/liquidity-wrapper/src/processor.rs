@@ -119,6 +119,8 @@ fn create_pda(
 
 /// Grows the market until it has `blocks` free blocks, paid by `payer`, so
 /// that the trader, which only holds the rent minimum, never pays for it.
+// TODO: use manifest's expand_market_instruction once it takes a block
+// count, instead of encoding Expand here.
 fn expand_market(
     payer: &AccountView,
     market: &AccountView,
@@ -391,6 +393,9 @@ impl<'a> Open<'a> {
     }
 
     /// The seat's withdrawable balances; nothing for a reclaimed seat.
+    /// Looks the seat up afresh rather than reuse cancel_at's index: that
+    /// one predates the cancel CPI, and a Manifest that ever moved seats
+    /// there would have close withdraw another seat's balance.
     fn seat_balance(&self) -> Result<(u64, u64), ProgramError> {
         let data = self.market.try_borrow()?;
         let market: MarketRef = get_dynamic_account(&data);
@@ -495,6 +500,11 @@ struct Trading<'a> {
 /// - A transfer hook with a program set: its extra accounts are not passed.
 /// - Accounts that start frozen: the trader's would take no deposit.
 /// - Non-transferable tokens.
+///
+/// Pausable and PermanentDelegate mints pass: the tokenised stocks this is
+/// for carry both. Their authority can then pause transfers, which stops
+/// placing and closing until it resumes them, or move tokens out of the
+/// trader's accounts; a position on such a mint trusts its issuer.
 ///
 /// Tokenised stocks carry a transfer hook extension without a program and a
 /// default account state of initialized, and pass. Their authorities could

@@ -160,9 +160,10 @@ const BAND_BYTES: usize = 16;
 /// Scale of `rel_e8`, an order's distance from the opening price.
 const REL_ONE: i128 = 100_000_000;
 const REL_ONE_EXP: i32 = 8;
-/// Largest power of ten a band's size (a u64) is scaled up by on its way to
-/// base atoms, so that the product stays inside an i128.
-const MAX_SIZE_SCALE_EXP: i32 = 18;
+/// Manifest's smallest price exponent. Also the largest power of ten a
+/// band's size (a u64) is scaled up by on its way to base atoms, which keeps
+/// the product inside an i128.
+const MIN_PRICE_EXP: i32 = -18;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Band {
@@ -400,7 +401,7 @@ fn level_order(
     let mut x = price.exponent as i32 - REL_ONE_EXP + quote_decimals as i32 - base_decimals as i32;
     // Base atoms are size · 10^-x / p: a price far below one quote atom per
     // base atom gives up digits of p, never more than it has.
-    while x < -MAX_SIZE_SCALE_EXP {
+    while x < MIN_PRICE_EXP {
         p /= 10;
         x += 1;
     }
@@ -414,10 +415,11 @@ fn level_order(
     } else {
         size / p.checked_mul(pow10(x as u32)?).ok_or_else(overflow)?
     };
-    // Manifest takes a u32 mantissa and exponents from -18 (its smallest
-    // price) to 0 (ReverseTight's largest); the digits beyond round down.
+    // Manifest takes a u32 mantissa and exponents from MIN_PRICE_EXP, which
+    // x is already at or above, to 0 (ReverseTight's largest); the digits
+    // beyond round down.
     let (mut mantissa, mut exponent) = (p, x);
-    while mantissa > u32::MAX as i128 || exponent < -18 {
+    while mantissa > u32::MAX as i128 {
         mantissa /= 10;
         exponent += 1;
     }
