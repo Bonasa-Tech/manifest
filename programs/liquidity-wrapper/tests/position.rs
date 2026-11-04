@@ -316,12 +316,12 @@ async fn mint_to(
     send(ctx, &[ix], &[]).await.unwrap();
 }
 
-async fn now(ctx: &mut ProgramTestContext) -> i64 {
+async fn now(ctx: &mut ProgramTestContext) -> u32 {
     ctx.banks_client
         .get_sysvar::<Clock>()
         .await
         .unwrap()
-        .unix_timestamp
+        .unix_timestamp as u32
 }
 
 async fn send(
@@ -454,7 +454,7 @@ impl Fixture {
     async fn trading(
         &mut self,
         owner: &Pubkey,
-        created_at: i64,
+        created_at: u32,
         owner_base: Pubkey,
         owner_quote: Pubkey,
     ) -> Opened {
@@ -1270,7 +1270,7 @@ async fn creation_checks_time_market_and_ladder() {
     let t = now(&mut f.ctx).await;
     let owner = f.owner.pubkey();
     let (base_mint, quote_mint) = (f.base_mint, f.quote_mint);
-    let create = |market: &Pubkey, at: i64, price: Price, ladder: &[u8]| {
+    let create = |market: &Pubkey, at: u32, price: Price, ladder: &[u8]| {
         create_position_instruction(&owner, market, &base_mint, &quote_mint, at, price, ladder)
     };
     let good = ladder(BANDS);

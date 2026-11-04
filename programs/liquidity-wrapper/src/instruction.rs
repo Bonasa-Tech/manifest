@@ -13,7 +13,7 @@ pub enum PositionInstruction {
     /// Accounts: 0 owner [signer, writable, pays rent], 1 position PDA
     /// [writable], 2 trader PDA [writable], 3 Manifest market [writable],
     /// 4 system program, 5 Manifest program, 6 base mint, 7 quote mint.
-    /// Data: created_at i64, opening price (see [`Price`]: mantissa u32,
+    /// Data: created_at u32 (unix seconds), opening price (see [`Price`]: mantissa u32,
     /// exponent i8), then the ladder bytes to the end, all little-endian.
     ///
     /// Creates the position and its trader, funds the trader to the rent
@@ -85,14 +85,14 @@ impl TryFrom<u8> for PositionInstruction {
 }
 
 /// created_at + price, before the ladder.
-pub const CREATE_FIXED_DATA_LEN: usize = 8 + PRICE_BYTES;
+pub const CREATE_FIXED_DATA_LEN: usize = 4 + PRICE_BYTES;
 
 pub fn create_position_instruction(
     owner: &Pubkey,
     market: &Pubkey,
     base_mint: &Pubkey,
     quote_mint: &Pubkey,
-    created_at: i64,
+    created_at: u32,
     price: Price,
     ladder: &[u8],
 ) -> Instruction {

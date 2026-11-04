@@ -177,8 +177,8 @@ pub(crate) fn process_create_position(
     if data.len() < CREATE_FIXED_DATA_LEN || data.len() - CREATE_FIXED_DATA_LEN > MAX_LADDER_BYTES {
         return Err(ProgramError::InvalidInstructionData);
     }
-    let created_at = i64::from_le_bytes(data[..8].try_into().unwrap());
-    let price = Price::read(&data[8..CREATE_FIXED_DATA_LEN])?;
+    let created_at = u32::from_le_bytes(data[..4].try_into().unwrap());
+    let price = Price::read(&data[4..CREATE_FIXED_DATA_LEN])?;
     let ladder_bytes = &data[CREATE_FIXED_DATA_LEN..];
     let (ladder, total_orders) = Ladder::parse(ladder_bytes)?;
 
@@ -205,7 +205,7 @@ pub(crate) fn process_create_position(
     // The creation time is part of the address, so the client chooses it; it
     // must still be the actual time, give or take the transaction's lifetime.
     let now = Clock::get()?.unix_timestamp;
-    if created_at <= 0 || (now - created_at).abs() > MAX_CREATED_AT_DRIFT_SECONDS {
+    if created_at == 0 || (now - created_at as i64).abs() > MAX_CREATED_AT_DRIFT_SECONDS {
         return Err(ProgramError::InvalidArgument);
     }
 
@@ -967,7 +967,8 @@ pub(crate) fn process_close_position(
             .checked_add(quote)
             .ok_or(ProgramError::ArithmeticOverflow)?;
     } else {
-        let now = Clock::get()?.unix_timestamp;
+        // Past 2106 the time saturates rather than strand the position.
+        let now = u32::try_from(Clock::get()?.unix_timestamp).unwrap_or(u32::MAX);
         state.closed_at = now.max(state.created_at).max(1);
         state.closed_with = Snapshot {
             base_atoms: base,

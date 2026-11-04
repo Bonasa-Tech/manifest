@@ -4,7 +4,7 @@ use solana_program::pubkey::Pubkey;
 use static_assertions::const_assert_eq;
 
 /// First 8 bytes of every position account.
-pub const POSITION_DISCRIMINANT: u64 = u64::from_le_bytes(*b"mfxposn3");
+pub const POSITION_DISCRIMINANT: u64 = u64::from_le_bytes(*b"mfxposn4");
 
 /// How far the creation time named in the PDA seeds may be from the cluster
 /// clock. The client picks the time before signing, so it has to allow for the
@@ -91,9 +91,9 @@ pub struct Position {
     pub discriminant: u64,
     pub owner: Pubkey,
     pub market: Pubkey,
-    pub created_at: i64,
+    pub created_at: u32,
     /// 0 while the position is open.
-    pub closed_at: i64,
+    pub closed_at: u32,
     /// What placing the ladder took from the owner so far, at the opening
     /// price. Grows with every batch.
     pub created_with: Snapshot,
@@ -108,7 +108,7 @@ pub struct Position {
     pub bump: u8,
     pub trader_bump: u8,
 }
-pub const POSITION_HEADER_SIZE: usize = 144;
+pub const POSITION_HEADER_SIZE: usize = 136;
 const_assert_eq!(core::mem::size_of::<Position>(), POSITION_HEADER_SIZE);
 
 impl Position {
@@ -126,7 +126,7 @@ pub const fn placed_bitmap_len(total_orders: usize) -> usize {
     total_orders.div_ceil(8)
 }
 
-pub fn get_position_address(owner: &Pubkey, market: &Pubkey, created_at: i64) -> (Pubkey, u8) {
+pub fn get_position_address(owner: &Pubkey, market: &Pubkey, created_at: u32) -> (Pubkey, u8) {
     Pubkey::find_program_address(
         &[
             POSITION_SEED,
