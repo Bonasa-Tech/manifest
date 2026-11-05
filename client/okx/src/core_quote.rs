@@ -413,6 +413,9 @@ impl Manifest {
                 system_program: None,
                 gas_payer_opt: None,
                 gas_receiver_opt: None,
+                // Quoting only reads the book; it never settles a refund, and
+                // these are throwaway copies of the accounts anyway.
+                gas_refund_market_opt: None,
                 market: snapshot.key,
                 num_deferred_gas_refunds: Cell::new(0),
             }))

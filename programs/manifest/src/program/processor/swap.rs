@@ -7,8 +7,8 @@ use crate::{
     quantities::{BaseAtoms, QuoteAtoms, QuoteAtomsPerBaseAtom, WrapperU64},
     require,
     state::{
-        AddOrderToMarketArgs, AddOrderToMarketResult, MarketRefMut, OrderType,
-        NO_EXPIRATION_LAST_VALID_SLOT,
+        utils::settle_global_gas_refunds, AddOrderToMarketArgs, AddOrderToMarketResult,
+        MarketRefMut, OrderType, NO_EXPIRATION_LAST_VALID_SLOT,
     },
     validation::loaders::SwapContext,
 };
@@ -49,9 +49,9 @@ pub struct SwapParams {
     pub in_atoms: u64,
     pub out_atoms: u64,
     pub is_base_in: bool,
-    // Exact in is a technical term that doesnt actually mean exact. It is
-    // desired. If not that much can be fulfilled, less will be allowed assuming
-    // the min_out/max_in is satisfied.
+    // Exact-in may consume less than the requested input when the book is
+    // exhausted, but must satisfy the minimum output. Exact-out must deliver
+    // the requested output without exceeding the maximum input.
     pub is_exact_in: bool,
 }
 
@@ -67,7 +67,7 @@ impl SwapParams {
 }
 
 #[inline(always)]
-fn exact_in_minimum_satisfied<F>(
+fn minimum_output_satisfied<F>(
     minimum_output: u64,
     gross_output: u64,
     calculate_post_fee: F,
@@ -257,21 +257,10 @@ pub(crate) fn process_swap_core(
         }
     };
 
-    // Accepted risk: in the case of fully exhausting the book, exact in/out
-    // will not be respected. It should be treated as a desired in/out. This
-    // pushes the burden of checking the results onto the caller program.
-    // Production integrations use exact-in; direct exact-out is intentionally
-    // unsupported unless a composing program validates the returned amounts.
-
-    // Example case is exact quote in. User wants exact quote in of 1_000_000
-    // and min base out of 1_000. Suppose they fully exhaust the book and get
-    // out 2_000 but that is not enough to fully use the entire 1_000_000. In
-    // this case the ix will succeed.
-
-    // Another interesting case is exact quote out. Suppose the user is doing
-    // exact quote out 1_000_000 with max_base_in of 1_000. If it fully exhausts
-    // the book without using the entire max_base_in and that is still not
-    // enough for the exact quote amount, the transaction will still succeed.
+    // Exact-in may exhaust the book before consuming the requested input; that
+    // is safe as long as the minimum output is met. Exact-out must fail if the
+    // book is exhausted before delivering the requested post-fee output. Both
+    // output guarantees are checked after matching below.
 
     let price: QuoteAtomsPerBaseAtom = if is_base_in {
         QuoteAtomsPerBaseAtom::MIN
@@ -304,31 +293,31 @@ pub(crate) fn process_swap_core(
         },
     )?;
 
-    if is_exact_in {
-        let gross_out_atoms_traded: u64 = if is_base_in {
-            quote_atoms_traded.as_u64()
-        } else {
-            base_atoms_traded.as_u64()
-        };
-        let minimum_satisfied =
-            exact_in_minimum_satisfied(out_atoms, gross_out_atoms_traded, |gross_output| {
-                calculate_post_fee_amount(
-                    gross_output,
-                    !is_base_in,
-                    &token_program_base,
-                    &token_program_quote,
-                    &base_mint,
-                    &quote_mint,
-                )
-            })?;
-        require!(
-            minimum_satisfied,
-            ManifestError::InsufficientOut,
-            "Insufficient post-fee out atoms returned. Minimum: {} Gross actual: {}",
-            out_atoms,
-            gross_out_atoms_traded
-        )?;
+    let gross_out_atoms_traded: u64 = if is_base_in {
+        quote_atoms_traded.as_u64()
     } else {
+        base_atoms_traded.as_u64()
+    };
+    let output_satisfied =
+        minimum_output_satisfied(out_atoms, gross_out_atoms_traded, |gross_output| {
+            calculate_post_fee_amount(
+                gross_output,
+                !is_base_in,
+                &token_program_base,
+                &token_program_quote,
+                &base_mint,
+                &quote_mint,
+            )
+        })?;
+    require!(
+        output_satisfied,
+        ManifestError::InsufficientOut,
+        "Insufficient post-fee out atoms returned. Minimum: {} Gross actual: {}",
+        out_atoms,
+        gross_out_atoms_traded
+    )?;
+
+    if !is_exact_in {
         let in_atoms_traded = if is_base_in {
             base_atoms_traded.as_u64()
         } else {
@@ -511,6 +500,15 @@ pub(crate) fn process_swap_core(
         order_index,
         last_valid_slot,
     })?;
+
+    // Matching can take global orders off the book, either by filling them or
+    // by cleaning up expired and unbacked ones. Each of those carries a gas
+    // prepayment, which `gas_refund_market_opt` sends to the market account
+    // for the fee collector to sweep rather than to the swapper. Must come
+    // after the token transfers above: the lamport move is direct, so a CPI
+    // in between that includes only one of the two accounts would fail the
+    // runtime lamport sum check. See `settle_global_gas_refunds`.
+    settle_global_gas_refunds(&global_trade_accounts_opts)?;
 
     Ok(())
 }
@@ -859,14 +857,21 @@ mod tests {
 
     #[test]
     fn base_output_fee_cannot_bypass_exact_in_minimum() {
-        assert!(!exact_in_minimum_satisfied(100, 100, ten_percent_post_fee).unwrap());
-        assert!(exact_in_minimum_satisfied(90, 100, ten_percent_post_fee).unwrap());
+        assert!(!minimum_output_satisfied(100, 100, ten_percent_post_fee).unwrap());
+        assert!(minimum_output_satisfied(90, 100, ten_percent_post_fee).unwrap());
     }
 
     #[test]
     fn quote_output_fee_cannot_bypass_exact_in_minimum() {
-        assert!(!exact_in_minimum_satisfied(1_000, 1_000, ten_percent_post_fee).unwrap());
-        assert!(exact_in_minimum_satisfied(900, 1_000, ten_percent_post_fee).unwrap());
+        assert!(!minimum_output_satisfied(1_000, 1_000, ten_percent_post_fee).unwrap());
+        assert!(minimum_output_satisfied(900, 1_000, ten_percent_post_fee).unwrap());
+    }
+
+    #[test]
+    fn exact_out_rejects_a_short_post_fee_output() {
+        assert!(!minimum_output_satisfied(100, 99, Ok).unwrap());
+        assert!(!minimum_output_satisfied(100, 100, ten_percent_post_fee).unwrap());
+        assert!(minimum_output_satisfied(100, 100, Ok).unwrap());
     }
 
     #[test]

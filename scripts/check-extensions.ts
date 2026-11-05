@@ -367,9 +367,40 @@ async function main(): Promise<void> {
   }
   process.stderr.write('\n');
 
+  // A null from getMultipleAccountsInfo means the account does not exist at
+  // the queried slot, not that the RPC call failed (failures throw). Mints
+  // closed by their issuer via the Token-2022 mint close authority (e.g.
+  // EmE2GsWHXivLZTqVosJkx9BPmisDtMmzYmtnAZpEb7Wn, base mint of market
+  // 9idCkxF7BZsQuSK6TURYbMK3xh6z9DTdQAmzSBESG2wd) stay null forever, so they
+  // are reported separately and must not fail the run. Each null is
+  // re-checked individually so a transient RPC gap still counts as missing.
+  const closedMints: string[] = [];
+  const missingMints: string[] = [];
+  for (const mint of mintList) {
+    if (accountMap.get(mint)) {
+      continue;
+    }
+    try {
+      const recheck: AccountInfo<Buffer> | null =
+        await connection.getAccountInfo(new PublicKey(mint));
+      if (recheck) {
+        accountMap.set(mint, recheck);
+      } else {
+        console.error(
+          `Mint ${mint} does not exist on chain; it was likely closed by its issuer`,
+        );
+        closedMints.push(mint);
+      }
+    } catch (error) {
+      console.error(
+        `Mint ${mint} could not be fetched: ${(error as Error).message}`,
+      );
+      missingMints.push(mint);
+    }
+  }
+
   // Analyze each mint
   const results: ExtensionInfo[] = [];
-  const missingMints: string[] = [];
   for (const mint of mintList) {
     const accountInfo: AccountInfo<Buffer> | null | undefined =
       accountMap.get(mint);
@@ -400,8 +431,7 @@ async function main(): Promise<void> {
     };
 
     if (!accountInfo) {
-      console.error(`Mint account ${mint} was not returned by RPC`);
-      missingMints.push(mint);
+      // Already classified as closed or missing in the verification pass.
       continue;
     }
 
@@ -484,6 +514,17 @@ async function main(): Promise<void> {
     }
     for (const mint of missingMints) {
       console.error(`  Missing mint: ${mint}`);
+    }
+  }
+  if (closedMints.length > 0) {
+    console.log(
+      `CLOSED MINTS (closed by their issuer, informational): ${closedMints.length}`,
+    );
+    for (const mint of closedMints) {
+      const markets: string[] = marketMintInfo
+        .filter((m) => m.baseMint === mint || m.quoteMint === mint)
+        .map((m) => m.marketAddress);
+      console.log(`  ${mint} (markets: ${markets.join(', ')})`);
     }
   }
   console.log(`${'='.repeat(120)}\n`);
@@ -589,6 +630,14 @@ async function main(): Promise<void> {
       message += `**INCOMPLETE REPORT:** ${unparsedMarkets.length} market(s) could not be parsed and ${missingMints.length} mint account(s) were unavailable.\n\n`;
     }
 
+    if (closedMints.length > 0) {
+      message += `**Mints closed by their issuer (${closedMints.length}, informational):**\n`;
+      for (const mint of closedMints) {
+        message += `• \`${mint}\`\n`;
+      }
+      message += '\n';
+    }
+
     if (withFees.length > 0) {
       message += `**Mints with non-zero transfer fees (${withFees.length}):**\n`;
       for (const r of withFees) {
@@ -644,7 +693,9 @@ async function main(): Promise<void> {
 
   // Permissionlessly created malformed accounts must not hide findings for all
   // healthy markets. Finish the report, then leave a failing exit status so
-  // automation cannot mistake a partial scan for a clean scan.
+  // automation cannot mistake a partial scan for a clean scan. Mints closed by
+  // their issuer are excluded: they can never be fetched again, so failing on
+  // them would make every future run red with no action to take.
   if (unparsedMarkets.length > 0 || missingMints.length > 0) {
     process.exitCode = 1;
   }

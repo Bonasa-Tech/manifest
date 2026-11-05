@@ -27,6 +27,7 @@ export const AGGREGATOR_PROGRAM_IDS = {
  */
 export const ORIGINATING_PROTOCOL_IDS = {
   LiMoM9rMhrdYrfzUCxQppvxCSG1FcrUK9G8uLq4A1GF: 'kamino',
+  KLend2g3cP87fffoy8q1mQqGKjrxjC8boSyAYavgmjD: 'kamino', // Kamino Lend
   UMnFStVeG1ecZFc2gc5K3vFy3sMpotq8C91mXBQDGwh: 'cabana',
   BQ72nSv9f3PRyRKCBnHLVrerrv37CYTHm5h3s9VSGQDV: 'jupiter', // JUP 1
   '2MFoS3MPtvyQ4Wh4M9pdfPjz6UhVoNbFbGJAskCPCj3h': 'jupiter', // JUP 2
@@ -48,8 +49,12 @@ export const ORIGINATING_PROTOCOL_IDS = {
   F7p3dFrjRTbtRp8FRF6qHLomXbKRBzpvBLjtQcfcgmNe: 'relay',
   AgmLJBMDCqWynYnQiPCuj9ewsNNsBJXyzoUhD9LJzN51: 'fomo',
   '6Vo3245eszAb5wuqEMw8mGdbfRUdKbHhDHP5LcaGuTAB': 'pump',
+  D8C8iW6zmoKg5TRr8nQ7h14TMWqQX8FiBdj2ju5MF3wa: 'mayan',
   JTXJTXfr1wVRMEzqiPhXUr69zJtfGuLh5qEiXG772Zj: 'jtx',
   sighWH8KaiT7QhtV4w29ReVF8kG6D5yG3EQP1KYyGVF: 'jupui',
+  A2rCQdCqQB4wu72x9Q7iq1QugtdZmcyWsiSPfgfZzu2u: 'jupiter', // perps keeper
+  AJooF3xRkSx1PUC5Y9dNZHy9LMHcx5xKhPxj4iW4jepf: 'jupiter', // perps keeper
+  HAWK3BVnwptKRFYfVoVGhBc2TYxpyG9jmAbkHeW9tyKE: 'hawkfi', // LP management signer
 } as const;
 
 /**
@@ -58,7 +63,14 @@ export const ORIGINATING_PROTOCOL_IDS = {
  * should be substituted in place of it.
  */
 export const DELEGATING_SIGNERS: Set<string> = new Set<string>([
-  'sighWH8KaiT7QhtV4w29ReVF8kG6D5yG3EQP1KYyGVF',
+  'sighWH8KaiT7QhtV4w29ReVF8kG6D5yG3EQP1KYyGVF', // Jupiter frontend retail flow (jupui)
+  'A2rCQdCqQB4wu72x9Q7iq1QugtdZmcyWsiSPfgfZzu2u', // Jupiter perps keeper
+  'AJooF3xRkSx1PUC5Y9dNZHy9LMHcx5xKhPxj4iW4jepf', // Jupiter perps keeper
+  'LanderCPY8SMqLtqft8QHJSWe1efUTo8BSsqyGM6jXA', // DFlow landing service
+  'E9BzZER9vhBTPjBpT9QC1NaiinSXonZWgF89HkpKJxGF', // DFlow
+  'F7vdaX8SxZ8zZsmqKV1p7E8ZbMEpLrgjjUp5mrCapFVX', // Titan
+  'BaGgQui6Ght7i9U8P9EoHaBy9M16B9iQ1qSTwZ1Lphvy', // Bitget
+  'dche7M2764e8AxNihBdn7uffVzZvTBNeL8x4LZg5E2c', // HawkFi
 ]);
 
 const PROGRAM_INVOKE_PATTERN =

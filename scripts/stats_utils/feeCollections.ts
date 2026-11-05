@@ -54,7 +54,10 @@ export function feeRpc(url: string): Rpc {
       signal: AbortSignal.timeout(30_000),
     });
     if (!response.ok) throw new Error(`Fee RPC HTTP ${response.status}`);
-    const body = await response.json();
+    const body = (await response.json()) as {
+      error?: { message: string };
+      result?: T;
+    };
     if (body.error) throw new Error(`Fee RPC ${method}: ${body.error.message}`);
     return body.result as T;
   };

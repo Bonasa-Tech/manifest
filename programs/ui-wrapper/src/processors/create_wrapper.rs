@@ -6,7 +6,7 @@ use solana_sdk_ids::system_program;
 
 use crate::wrapper_user::ManifestWrapperUserFixed;
 
-use super::shared::{expand_wrapper_if_needed, WrapperStateAccountInfo};
+use super::shared::{collect_fee, expand_wrapper_if_needed, WrapperStateAccountInfo};
 
 pub(crate) fn process_create_wrapper(
     _program_id: &Pubkey,
@@ -32,6 +32,9 @@ pub(crate) fn process_create_wrapper(
 
     // Expand wrapper so there is an initial block available.
     expand_wrapper_if_needed(&wrapper_state, &payer, &system_program)?;
+
+    // Collect fee.
+    collect_fee(&payer, &wrapper_state)?;
 
     Ok(())
 }

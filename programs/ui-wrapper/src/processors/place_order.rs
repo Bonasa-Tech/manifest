@@ -42,8 +42,9 @@ use crate::{
 };
 
 use super::shared::{
-    check_signer, expand_wrapper_if_needed, get_market_info_index_for_market, sync_fast,
-    MarketInfosTree, OpenOrdersTree, UnusedWrapperFreeListPadding, WrapperStateAccountInfo,
+    check_signer, collect_fee, expand_wrapper_if_needed, get_market_info_index_for_market,
+    sync_fast, MarketInfosTree, OpenOrdersTree, UnusedWrapperFreeListPadding,
+    WrapperStateAccountInfo,
 };
 
 #[derive(BorshDeserialize, BorshSerialize, Clone)]
@@ -449,6 +450,9 @@ pub(crate) fn process_place_order(
 
     // Sync to get the balance correct and remove any expired orders.
     sync_fast(&wrapper_state, &market, market_info_index)?;
+
+    // Collect fee.
+    collect_fee(&payer, &wrapper_state)?;
 
     Ok(())
 }

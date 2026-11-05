@@ -592,6 +592,7 @@ fn cvt_assume_global_trade_accounts_gen<'a>(
         system_program: system_program.map(|info| crate::validation::Program { info }),
         gas_payer_opt: Some(Signer { info: trader }),
         gas_receiver_opt: Some(Signer { info: trader }),
+        gas_refund_market_opt: None,
         market: *market.pubkey(),
         num_deferred_gas_refunds: std::cell::Cell::new(0),
     };
