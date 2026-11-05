@@ -210,10 +210,12 @@ const run = async () => {
   );
 
   // Set up Express routes
-  const tickersHandler: RequestHandler = (_req, res) => {
+  const tickersHandler: RequestHandler = (req, res) => {
     // Serve the pre-serialized cache verbatim. Use type().send(string) rather
     // than send(object) so Express doesn't re-stringify it.
-    res.type('application/json').send(statsServer.getTickersJson());
+    res
+      .type('application/json')
+      .send(statsServer.getTickersJson(req.query.aggregate === 'true'));
   };
   const metadataHandler: RequestHandler = (_req, res) => {
     res.send(JSON.stringify(Object.fromEntries(statsServer.getMetadata())));
