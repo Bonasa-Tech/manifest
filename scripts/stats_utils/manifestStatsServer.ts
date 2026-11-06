@@ -58,6 +58,7 @@ import { parseTransactionForFills } from './backfill';
 import { VolumeMonitor } from './volumeMonitor';
 import { MarketMakerMonitor } from './marketMakerMonitor';
 import { appendUniqueFill } from './fillRetention';
+import { aggregateTickers, MarketTicker } from './tickers';
 
 // Memory management constants
 const MAX_TRADERS = 50000; // Maximum number of traders to track in memory
@@ -103,7 +104,7 @@ export class ManifestStatsServer {
   // registry for old stuff like wsol.
   private tickers: Map<string, [string, string]> = new Map();
 
-  // Cached, pre-serialized JSON for the /tickers endpoint. Rebuilt on each
+  // Cached, pre-serialized pair and per-market JSON for /tickers. Rebuilt on each
   // checkpoint advance (every VOLUME_CHECKPOINT_DURATION_SEC, ~5 min) so the
   // endpoint serves a string verbatim instead of looping over every market,
   // base58-encoding mints, and running JSON.stringify on every request.
@@ -123,6 +124,7 @@ export class ManifestStatsServer {
   // keeps prices live at the cost of a light per-request loop + serialization,
   // while still avoiding the 24h-volume summation and base58 work.
   private cachedTickersJson: string | null = null;
+  private cachedAggregatedTickersJson: string | null = null;
   private cachedVolumeJson: string = '{}';
   private cachedNotionalJson: string = '{}';
   private cachedCheckpointsJson: string = '{}';
@@ -1450,11 +1452,12 @@ export class ManifestStatsServer {
 
   /**
    * Get Tickers
+   * Defaults to individual markets; true aggregates each base/quote mint pair.
    *
    * https://docs.google.com/document/d/1v27QFoQq1SKT3Priq3aqPgB70Xd_PnDzbOCiuoCyixw/edit?tab=t.0#heading=h.pa64vhp5pbih
    */
-  getTickers() {
-    const tickers: any = [];
+  getTickers(aggregate: boolean = false): MarketTicker[] {
+    const tickers: MarketTicker[] = [];
     const currentTimestamp = Math.floor(Date.now() / 1000);
     const twentyFourHoursAgo = currentTimestamp - ONE_DAY_SEC;
 
@@ -1476,7 +1479,7 @@ export class ManifestStatsServer {
         }
       }
 
-      const ticker: any = {
+      const ticker: MarketTicker = {
         ticker_id: marketPk,
         base_currency: market.baseMint().toBase58(),
         target_currency: market.quoteMint().toBase58(),
@@ -1511,7 +1514,7 @@ export class ManifestStatsServer {
 
       tickers.push(ticker);
     });
-    return tickers;
+    return aggregate ? aggregateTickers(tickers) : tickers;
   }
 
   /**
@@ -1522,19 +1525,28 @@ export class ManifestStatsServer {
    * alternative if live `last_price` is needed. Built lazily on first use so
    * requests before the first advance still get a valid response.
    */
-  getTickersJson(): string {
-    if (this.cachedTickersJson === null) {
+  getTickersJson(aggregate: boolean = false): string {
+    if (
+      this.cachedTickersJson === null ||
+      this.cachedAggregatedTickersJson === null
+    ) {
       this.refreshTickersCache();
     }
-    return this.cachedTickersJson!;
+    return aggregate
+      ? this.cachedAggregatedTickersJson!
+      : this.cachedTickersJson!;
   }
 
   /**
-   * Rebuild the cached /tickers payload from the current checkpoint state.
+   * Rebuild both /tickers views from the same current checkpoint state.
    * Called after checkpoints advance (and lazily on first request).
    */
   private refreshTickersCache(): void {
-    this.cachedTickersJson = JSON.stringify(this.getTickers());
+    const marketTickers = this.getTickers(false);
+    this.cachedTickersJson = JSON.stringify(marketTickers);
+    this.cachedAggregatedTickersJson = JSON.stringify(
+      aggregateTickers(marketTickers),
+    );
   }
 
   /**
