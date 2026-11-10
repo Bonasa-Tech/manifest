@@ -70,7 +70,9 @@ How the comparison works:
 
 - A confirmed log entry records the `slot` its defrag landed in. That slot is
   the "since". Entries written before the field existed are resolved from their
-  recorded signature on demand.
+  recorded signature on demand. With this filter enabled, a confirmed entry is
+  a baseline rather than a permanent "done" marker, so the same log supports
+  recurring sweeps without `--ignore-log`.
 - A market is kept when the feed's newest fill slot for it is at or after that
   slot. The check is a map lookup, not a scan.
 - A market with no logged defrag is **kept** — there is no "since" to measure.
@@ -85,6 +87,11 @@ How the comparison works:
   was not listening then, so its silence says nothing. Restarting after more
   than ~150 slots of downtime resets the window, and a state file written before
   this field existed is treated as covering nothing.
+- Brief WebSocket disconnects within a watcher process are accepted and do not
+  reset `coverageFrom`. A fill broadcast only during such a gap can be missed;
+  that market becomes eligible when another fill is observed. The stale-state
+  gate still rejects a watcher that remains materially behind when a sweep
+  starts.
 
 A consequence: the filter does little until the watcher has been up longer than
 the usual gap since a market was last swept. Early on most markets come back

@@ -102,10 +102,18 @@ setInterval(() => {
 }, FLUSH_MS).unref?.();
 
 let backoff = 1_000;
+let activeSocket;
+let reconnectTimer;
 
 function connect() {
+  // `error` is normally followed by `close`, and both may arrive for one
+  // failed connection. Keep one owner for the socket and one reconnect timer
+  // so an outage cannot fan out into multiple live feed subscriptions.
+  if (activeSocket || reconnectTimer) return;
   const ws = new WebSocket(FEED_URL);
+  activeSocket = ws;
   let alive = false;
+  let closeReason = 'closed';
 
   ws.on('open', () => {
     alive = true;
@@ -146,16 +154,31 @@ function connect() {
     dirty = true;
   });
 
-  const reconnect = (why) => {
+  const reconnect = () => {
+    // Ignore a duplicate terminal event from a socket already handled.
+    if (activeSocket !== ws) return;
+    activeSocket = undefined;
     if (!alive && backoff < 30_000) backoff = Math.min(backoff * 2, 30_000);
     alive = false;
     flush();
-    console.warn(`feed ${why}; reconnecting in ${backoff}ms`);
-    setTimeout(connect, backoff);
+    // Brief WebSocket observation gaps are an accepted tradeoff for this
+    // operational filter. We intentionally keep the existing coverage window
+    // across a transport reconnect; a fill seen only during the gap can be
+    // missed until that market fills again. The defrag runner's lag gate still
+    // refuses state that remains materially behind when a sweep starts.
+    console.warn(`feed ${closeReason}; reconnecting in ${backoff}ms`);
+    reconnectTimer = setTimeout(() => {
+      reconnectTimer = undefined;
+      connect();
+    }, backoff);
   };
 
-  ws.on('error', (e) => reconnect(`error: ${e.message}`));
-  ws.on('close', () => reconnect('closed'));
+  ws.on('error', (e) => {
+    closeReason = `error: ${e.message}`;
+    // `close` is the sole reconnect path, guaranteeing one replacement socket.
+    ws.terminate();
+  });
+  ws.on('close', reconnect);
 }
 
 for (const sig of ['SIGINT', 'SIGTERM']) {
