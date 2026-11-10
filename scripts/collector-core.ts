@@ -55,6 +55,10 @@ const QUOTE_VAULT_OFFSET = 112;
 const NUM_BYTES_ALLOCATED_OFFSET = 152;
 // RestingOrder payload: price(16) atoms(8) seq(8) trader_index(4)
 // last_valid_slot(4) is_bid(1) order_type(1) spread(2) padding(20).
+// price is a u128 of quote atoms per base atom scaled by 10^18, stored as two
+// little-endian u64 words (QuoteAtomsPerBaseAtom keeps 8-byte alignment).
+const ORDER_PRICE_OFFSET = 0;
+const ORDER_BASE_ATOMS_OFFSET = 16;
 const ORDER_SEQUENCE_OFFSET = 24;
 const ORDER_TRADER_INDEX_OFFSET = 32;
 const ORDER_LAST_VALID_SLOT_OFFSET = 36;
@@ -217,18 +221,11 @@ export function planMarket(account: MarketAccount): MarketPlan | null {
   };
 }
 
-/**
- * Expired resting orders, which GlobalClean can remove for the gas deposit.
- *
- * Only expiry is detected here. An unbacked global order is also eligible, but
- * establishing that needs the maker's balance from the global account, and
- * getting it wrong wastes a transaction on an Ineligible clean. Expiry is
- * decidable from the market bytes alone.
- *
- * `globalForMint` must contain only global accounts that exist: GlobalClean
- * requires one whose mint matches the order's side (quote for a bid, base for
- * an ask), so an order on a market with no such global cannot be cleaned.
- */
+/** A u128 stored as two little-endian u64 words, as the program stores price. */
+function readU128LE(data: Buffer, at: number): bigint {
+  return data.readBigUInt64LE(at) | (data.readBigUInt64LE(at + 8) << 64n);
+}
+
 /** The order owner pubkey, read from the ClaimedSeat at trader_index. */
 function readMaker(data: Buffer, traderIndex: number): string | null {
   const seat =
@@ -237,14 +234,46 @@ function readMaker(data: Buffer, traderIndex: number): string | null {
   return new PublicKey(data.subarray(seat, seat + 32)).toBase58();
 }
 
+const U64_MAX = (1n << 64n) - 1n;
+const U128_MAX = (1n << 128n) - 1n;
+const PRICE_SCALE = 10n ** 18n;
+
+/**
+ * Global atoms an order needs to be backed, mirroring `required_global_atoms`
+ * in global_clean.rs: an ask is backed in base atoms one-for-one, a bid in
+ * quote atoms at `ceil(price * base_atoms / 10^18)`.
+ *
+ * `null` is the program's `None`: the quote does not fit, which makes the order
+ * eligible regardless of balance (`required.map_or(true, ...)`). The program
+ * reaches that through a u128 overflow or a quote above u64, both checked here
+ * because BigInt has neither limit of its own.
+ */
+export function requiredGlobalAtoms(
+  price: bigint,
+  baseAtoms: bigint,
+  isBid: boolean,
+): bigint | null {
+  if (!isBid) return baseAtoms;
+  const product = price * baseAtoms;
+  if (product > U128_MAX) return null;
+  const quote = (product + PRICE_SCALE - 1n) / PRICE_SCALE;
+  return quote > U64_MAX ? null : quote;
+}
+
 /**
  * Orders GlobalClean can remove.
  *
- * Expired orders are eligible outright. With `includeUnbacked`, non-expired
- * GLOBAL orders are returned too as candidates (kind 'unbacked'): whether they
- * are actually cleanable depends on the maker's live global balance, which the
- * caller confirms by simulating the clean. Non-global, non-expired orders are
- * never cleanable and are skipped.
+ * Expired orders are eligible outright. With `includeUnbacked`, a non-expired
+ * GLOBAL order is returned (kind 'unbacked') only when the maker's balance in
+ * the global for that side is short of what the order needs — the program's own
+ * eligibility test, evaluated against the same bytes the program would read.
+ * Every other order is not cleanable and is skipped.
+ *
+ * Testing it here rather than leaving it to simulation is the difference
+ * between a candidate set of every global order on the program (40,580 on
+ * mainnet, almost all of them perfectly backed) and the few that are actually
+ * cleanable. The caller still simulates what survives, but as a final check on
+ * the read -> send race, not as a search.
  *
  * `globalForMint` must contain only global accounts that exist: GlobalClean
  * needs one whose mint matches the order's side (quote for a bid, base for an
@@ -254,7 +283,7 @@ export function findCleanableOrders(
   plan: MarketPlan,
   data: Buffer,
   nowSlot: number,
-  globalForMint: Map<string, string>,
+  globalForMint: Map<string, GlobalAccount>,
   includeUnbacked = false,
 ): CleanableOrder[] {
   const out: CleanableOrder[] = [];
@@ -296,13 +325,28 @@ export function findCleanableOrders(
       data.readUInt32LE(payload + ORDER_TRADER_INDEX_OFFSET),
     );
     if (maker === null) continue;
+
+    // An expired order is eligible whatever the maker holds. A global one is
+    // eligible only while its backing is short, so apply the program's test
+    // now: a trader with no deposit reads as zero, exactly as the program's
+    // get_balance_atoms does for an evicted one.
+    if (kind === 'unbacked') {
+      const required = requiredGlobalAtoms(
+        readU128LE(data, payload + ORDER_PRICE_OFFSET),
+        data.readBigUInt64LE(payload + ORDER_BASE_ATOMS_OFFSET),
+        isBid,
+      );
+      const balance = global.balances.get(maker) ?? 0n;
+      if (required !== null && balance >= required) continue;
+    }
+
     out.push({
       market: plan.pubkey,
       // The instruction takes a byte offset into the dynamic area, not a
       // block number.
       orderIndex: block * MARKET_BLOCK_SIZE,
       sequenceNumber: data.readBigUInt64LE(payload + ORDER_SEQUENCE_OFFSET),
-      global,
+      global: global.pubkey,
       lastValidSlot,
       maker,
       kind,
@@ -418,6 +462,20 @@ export function cleanBatchIsProfitable(
 export const MARKET_FIXED_DISCRIMINANT = 4859840929024028656n;
 export const GLOBAL_FIXED_DISCRIMINANT = 10787423733276977665n;
 const GLOBAL_MINT_OFFSET = 8;
+// GlobalFixed: discriminant(8) mint(32) vault(32) traders_root(4)
+// deposits_root(4) deposits_max(4) free_list_head(4) num_bytes_allocated(4)
+// vault_bump(1) global_bump(1) num_seats_claimed(2) = 96.
+const GLOBAL_FIXED_SIZE = 96;
+const GLOBAL_DEPOSITS_ROOT_OFFSET = 76;
+// The dynamic area is 64-byte blocks: the same 16-byte RBNode header the
+// market uses, then a 48-byte payload. GlobalDeposit is trader(32)
+// balance_atoms(8) padding(8).
+const GLOBAL_BLOCK_SIZE = 64;
+const DEPOSIT_BALANCE_OFFSET = 32;
+// DataIndex::MAX. The certora build uses 0x7FFFFFFF instead, so the walk below
+// treats any out-of-bounds index as a terminator rather than matching on one
+// sentinel value.
+const NIL = 0xffff_ffff;
 
 /** Little-endian u64 discriminant as the base58 bytes a memcmp filter needs. */
 export function discriminantBase58(
@@ -430,16 +488,72 @@ export function discriminantBase58(
 }
 
 /**
- * Mint -> global account address, for every global account that exists.
+ * One global account: its address and every trader's deposited balance.
+ *
+ * The balances are what make an unbacked order decidable off-chain. GlobalClean
+ * accepts a non-expired global order only when the maker's balance in the
+ * global for that side has fallen below what the order needs (global_clean.rs),
+ * so holding the balance map here turns "candidate" from "any global order" —
+ * the whole global book, tens of thousands of orders — into the handful that
+ * the program would actually accept.
+ */
+export type GlobalAccount = {
+  pubkey: string;
+  mint: string;
+  /** trader pubkey -> balance_atoms. Absent means zero: an evicted trader. */
+  balances: Map<string, bigint>;
+};
+
+/**
+ * Every trader's balance, read by walking the global deposits red-black tree.
+ *
+ * The tree is walked rather than the blocks scanned linearly because a freed
+ * block keeps its old bytes: a linear scan would read stale deposits as live
+ * ones and conclude an order is backed when its collateral is long gone. RPC
+ * bytes are untrusted, so a bad index or a cycle has to terminate the walk
+ * instead of looping or reading out of bounds.
+ */
+export function parseGlobalDeposits(data: Buffer): Map<string, bigint> {
+  const balances = new Map<string, bigint>();
+  if (data.length < GLOBAL_FIXED_SIZE) return balances;
+  const root = data.readUInt32LE(GLOBAL_DEPOSITS_ROOT_OFFSET);
+  const dynamic = data.length - GLOBAL_FIXED_SIZE;
+  const seen = new Set<number>();
+  const stack: number[] = [root];
+  while (stack.length > 0) {
+    const index = stack.pop() as number;
+    if (index === NIL) continue;
+    if (index % GLOBAL_BLOCK_SIZE !== 0) continue;
+    if (index + GLOBAL_BLOCK_SIZE > dynamic) continue;
+    if (seen.has(index)) continue;
+    seen.add(index);
+    const node = GLOBAL_FIXED_SIZE + index;
+    stack.push(data.readUInt32LE(node), data.readUInt32LE(node + 4));
+    const payload = node + NODE_PAYLOAD_OFFSET;
+    balances.set(
+      new PublicKey(data.subarray(payload, payload + 32)).toBase58(),
+      data.readBigUInt64LE(payload + DEPOSIT_BALANCE_OFFSET),
+    );
+  }
+  return balances;
+}
+
+/**
+ * Mint -> global account, for every global account that exists.
  *
  * GlobalClean needs a global whose mint matches the order's side, so an order
  * whose mint has no global account is simply not cleanable. Reading the set
  * that exists is cheaper and less error-prone than deriving PDAs and probing.
+ *
+ * Full account data, not just the mint: the deposits tree is what decides
+ * whether a global order is unbacked. There are a few hundred of these and
+ * each is a few KB, so this is far cheaper than the market fetch beside it —
+ * and vastly cheaper than the simulation it replaces.
  */
 export async function fetchGlobalAccounts(
   rpc: <T>(method: string, params: unknown[]) => Promise<T>,
   bs58encode: (b: Buffer) => string,
-): Promise<Map<string, string>> {
+): Promise<Map<string, GlobalAccount>> {
   const accounts = await rpc<
     { pubkey: string; account: { data: [string, 'base64'] } }[]
   >('getProgramAccounts', [
@@ -447,7 +561,6 @@ export async function fetchGlobalAccounts(
     {
       commitment: 'confirmed',
       encoding: 'base64',
-      dataSlice: { offset: 0, length: GLOBAL_MINT_OFFSET + 32 },
       filters: [
         {
           memcmp: {
@@ -458,14 +571,18 @@ export async function fetchGlobalAccounts(
       ],
     },
   ]);
-  const byMint = new Map<string, string>();
+  const byMint = new Map<string, GlobalAccount>();
   for (const { pubkey, account } of accounts) {
     const data = Buffer.from(account.data[0], 'base64');
-    if (data.length < GLOBAL_MINT_OFFSET + 32) continue;
+    if (data.length < GLOBAL_FIXED_SIZE) continue;
     const mint = new PublicKey(
       data.subarray(GLOBAL_MINT_OFFSET, GLOBAL_MINT_OFFSET + 32),
     ).toBase58();
-    byMint.set(mint, pubkey);
+    byMint.set(mint, {
+      pubkey,
+      mint,
+      balances: parseGlobalDeposits(data),
+    });
   }
   return byMint;
 }
@@ -554,9 +671,11 @@ export const MAX_CLEANS_PER_TX = 55;
 // Measured ~1,650 CU per clean on mainnet; 3,000 leaves generous margin.
 const CLEAN_CU_EACH = 3_000;
 // Default ceiling on per-pass unbacked confirmation simulations. Each is one
-// RPC round trip, so an unbounded set (15k+ global orders observed) could take
-// an hour; this keeps a pass short. Overridable via the maxUnbackedSims option.
-export const DEFAULT_MAX_UNBACKED_SIMS = 1_000;
+// RPC round trip, so the cap is what keeps a pass short. 50 is small because
+// the candidates reaching it are already confirmed unbacked from the global
+// balances: the simulation is a last check on the read -> send race, not a
+// search through the book. Overridable via the maxUnbackedSims option.
+export const DEFAULT_MAX_UNBACKED_SIMS = 50;
 
 /**
  * Carried across passes to tell an old, quiet unbacked order from a fast
@@ -568,10 +687,22 @@ export const DEFAULT_MAX_UNBACKED_SIMS = 1_000;
  */
 export type UnbackedTracker = {
   streaks: Map<string, number>;
+  /**
+   * Identity the last pass stopped on; the next resumes after it. Sorting by
+   * how long an order has rested and taking the first `cap` looks fair but is
+   * not: a streak only grows, so the same prefix is picked every pass and
+   * anything behind it is never reached. Resuming past the last one examined
+   * covers the whole set in `ceil(n / cap)` passes whatever the simulations
+   * return. An identity rather than an index because candidates come and go
+   * between passes, which would shift a positional cursor onto an unrelated
+   * order.
+   */
+  cursor: string;
 };
 
 export const createUnbackedTracker = (): UnbackedTracker => ({
   streaks: new Map(),
+  cursor: '',
 });
 
 /**
@@ -583,12 +714,13 @@ export const createUnbackedTracker = (): UnbackedTracker => ({
  * stale orders and sidesteps the read->send race, which only bites orders that
  * turn over quickly.
  *
- * The oldest (longest-resting) candidates come first so the `cap` confirms them
- * and the rest age into a later pass rather than starving. The tracker is
- * rebuilt from only this pass's candidates, so an order that was cancelled or
- * replaced drops out and its successor (a new sequence number) starts over at
- * one. With no tracker, nothing is ever chosen — there is no prior pass to
- * compare against — which is why a single run only sets the baseline.
+ * When more are eligible than the `cap` allows, the pass takes a `cap`-sized
+ * window starting where the last one stopped, so consecutive passes walk the
+ * whole set rather than re-examining one end of it. The tracker is rebuilt from
+ * only this pass's candidates, so an order that was cancelled or replaced drops
+ * out and its successor (a new sequence number) starts over at one. With no
+ * tracker, nothing is ever chosen — there is no prior pass to compare against —
+ * which is why a single run only sets the baseline.
  */
 export function selectStableUnbacked(
   candidates: CleanableOrder[],
@@ -610,16 +742,29 @@ export function selectStableUnbacked(
     const id = identity(order);
     return { order, id, streak: (prior.get(id) ?? 0) + 1 };
   });
+  // Ordered by identity, not by streak: a stable ordering is what makes the
+  // cursor below cover every candidate. Streak order would re-pick the same
+  // prefix forever, since resting one more pass only lengthens a streak.
   const stable = withStreak
     .filter((entry) => entry.streak >= 2)
-    .sort((a, b) => b.streak - a.streak || (a.id < b.id ? -1 : 1));
-  const toConfirm = stable
-    .slice(0, Math.max(0, cap))
-    .map((entry) => entry.order);
+    .sort((a, b) => (a.id < b.id ? -1 : 1));
+  const window = Math.max(0, Math.min(cap, stable.length));
+  // Resume after the identity the last pass stopped on, wrapping to the start
+  // once past the end. A first pass, or a cursor whose order is gone, begins at
+  // the first candidate that sorts after it.
+  const resumeAt = tracker?.cursor ?? '';
+  const after = stable.findIndex((entry) => entry.id > resumeAt);
+  const start = after === -1 ? 0 : after;
+  const toConfirm = Array.from(
+    { length: window },
+    (_unused, offset) => stable[(start + offset) % stable.length].order,
+  );
   if (tracker) {
     tracker.streaks = new Map(
       withStreak.map((entry) => [entry.id, entry.streak]),
     );
+    if (window > 0)
+      tracker.cursor = stable[(start + window - 1) % stable.length].id;
   }
   return {
     toConfirm,
@@ -896,11 +1041,14 @@ export async function runCoreCollections(
     let kept = candidates.filter((c) => !options.skipTraders.has(c.maker));
     const skipped = beforeSkip - kept.length;
 
-    // Expired orders are eligible outright. Unbacked candidates are only
-    // eligible if the maker's global balance has fallen short, which the
-    // program alone can judge: simulate each one and keep only those the
-    // program would accept. One dummy blockhash serves every sim
-    // (replaceRecentBlockhash), so this is N cheap simulateTransaction calls.
+    // Expired orders are eligible outright. An unbacked one has already been
+    // measured against the maker's global balance in findCleanableOrders, so
+    // what arrives here is what the program would accept as of the read. The
+    // simulation is the guard on the gap between read and send: the maker can
+    // top up, or the order can be cancelled and its block recycled, in which
+    // case the clean would fail and take its whole batch down. One dummy
+    // blockhash serves every sim (replaceRecentBlockhash), so these are cheap
+    // simulateTransaction calls — but each is a round trip, hence the cap.
     const expired = kept.filter((c) => c.kind === 'expired');
     const unbackedCandidates = kept.filter((c) => c.kind === 'unbacked');
     const unbacked: CleanableOrder[] = [];
@@ -912,12 +1060,12 @@ export async function runCoreCollections(
         cap,
       );
       console.log(
-        `${unbackedCandidates.length} unbacked candidates: ${selection.stable} unchanged since last pass` +
+        `${unbackedCandidates.length} unbacked orders: ${selection.stable} unchanged since last pass` +
           (selection.freshlySeen > 0
             ? `, ${selection.freshlySeen} new or changed (not cleaned this pass)`
             : '') +
           (selection.overCap > 0
-            ? `, ${selection.overCap} over the ${cap}-sim cap (deferred)`
+            ? `, ${selection.overCap} past the ${cap}-sim cap (next pass resumes there)`
             : '') +
           `; confirming ${selection.toConfirm.length} by simulation...`,
       );
@@ -931,6 +1079,12 @@ export async function runCoreCollections(
         if (sim.err === null || sim.err === undefined) unbacked.push(order);
       }
     }
+    // Expired first, and the packer preserves this order, so expired orders
+    // fill the earliest clean transactions. That matters because the first
+    // clean batch that fails stops global clean for the whole pass: the
+    // unambiguous orders (expiry is decidable from the market bytes, with a
+    // 1,500-slot buffer behind it) should be banked before the ones whose
+    // eligibility depends on a balance that a maker can top up mid-pass.
     kept = [...expired, ...unbacked];
 
     const byMaker = new Map<string, { expired: number; unbacked: number }>();

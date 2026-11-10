@@ -8,6 +8,7 @@
  * Run with: yarn test:collector-core
  */
 import * as assert from 'node:assert/strict';
+import { PublicKey } from '@solana/web3.js';
 import {
   CLEAN_EXPIRY_BUFFER_SLOTS,
   GAS_DEPOSIT_LAMPORTS,
@@ -17,11 +18,14 @@ import {
   cleanRaceErrorCode,
   createUnbackedTracker,
   findCleanableOrders,
+  parseGlobalDeposits,
   planMarket,
+  requiredGlobalAtoms,
   selectMarkets,
   selectStableUnbacked,
   sweepComputeUnits,
   type CleanableOrder,
+  type GlobalAccount,
   type MarketPlan,
 } from './collector-core';
 
@@ -35,6 +39,29 @@ const MARKET = '1'.repeat(43);
 
 const rentMinimum = (space: number): bigint =>
   BigInt((space + ACCOUNT_OVERHEAD_BYTES) * LAMPORTS_PER_BYTE_YEAR_EXEMPT);
+
+const GLOBAL = 'G'.repeat(43);
+
+/**
+ * Write a 1:1 price and `atoms` base atoms into an order payload, so a bid for
+ * it needs exactly `atoms` quote atoms of backing. Price is a u128 of quote
+ * atoms per base atom scaled by 10^18, stored as two little-endian u64 words.
+ */
+const priceOneToOne = (data: Buffer, payload: number, atoms: bigint): void => {
+  data.writeBigUInt64LE(10n ** 18n, payload);
+  data.writeBigUInt64LE(0n, payload + 8);
+  data.writeBigUInt64LE(atoms, payload + 16);
+};
+
+/** A global account holding `balances`; traders left out read as zero. */
+const globalWith = (
+  mint: string,
+  balances: [string, bigint][] = [],
+): GlobalAccount => ({
+  pubkey: GLOBAL,
+  mint,
+  balances: new Map(balances),
+});
 
 /**
  * Build a market account whose dynamic area has `layout` as its block types,
@@ -184,11 +211,11 @@ test('only expired orders are cleanable, and only where a global account exists'
   data[payload(0) + 40] = 1; // a bid, so the QUOTE mint's global applies
   const plan = planMarket({ pubkey: MARKET, lamports: data.lamports, data })!;
 
-  const withGlobal = new Map([[plan.quoteMint, 'G'.repeat(43)]]);
+  const withGlobal = new Map([[plan.quoteMint, globalWith(plan.quoteMint)]]);
   const found = findCleanableOrders(plan, data, 5_000, withGlobal);
   assert.equal(found.length, 1, 'only the expired bid is cleanable');
   assert.equal(found[0].orderIndex, 0);
-  assert.equal(found[0].global, 'G'.repeat(43));
+  assert.equal(found[0].global, GLOBAL);
 
   // An ask needs the BASE mint's global; with only the quote one mapped it is
   // not cleanable, because the instruction would be rejected.
@@ -209,7 +236,7 @@ test('a freshly expired order is deferred until past the expiry buffer', () => {
   data.writeUInt32LE(nowSlot - CLEAN_EXPIRY_BUFFER_SLOTS - 1, payload(1) + 36);
   for (const b of [0, 1]) data[payload(b) + 40] = 1;
   const plan = planMarket({ pubkey: MARKET, lamports: data.lamports, data })!;
-  const withGlobal = new Map([[plan.quoteMint, 'G'.repeat(43)]]);
+  const withGlobal = new Map([[plan.quoteMint, globalWith(plan.quoteMint)]]);
 
   const found = findCleanableOrders(plan, data, nowSlot, withGlobal);
   assert.equal(found.length, 1, 'only the long-expired order is cleanable');
@@ -224,11 +251,14 @@ test('unbacked candidates: only non-expired GLOBAL orders, only with --clean-unb
   for (const b of [0, 1]) {
     data.writeUInt32LE(0, payload(b) + 36); // never expires
     data[payload(b) + 40] = 1; // bid -> quote mint global
+    priceOneToOne(data, payload(b), 1_000n);
   }
   data[payload(0) + 41] = 3; // OrderType::Global
   data[payload(1) + 41] = 0; // OrderType::Limit
   const plan = planMarket({ pubkey: MARKET, lamports: data.lamports, data })!;
-  const withGlobal = new Map([[plan.quoteMint, 'G'.repeat(43)]]);
+  // The maker has nothing deposited, so the global order's 1,000 quote atoms
+  // are unbacked.
+  const withGlobal = new Map([[plan.quoteMint, globalWith(plan.quoteMint)]]);
 
   // Without the flag, no non-expired order is returned.
   assert.deepEqual(findCleanableOrders(plan, data, 5_000, withGlobal), []);
@@ -239,6 +269,139 @@ test('unbacked candidates: only non-expired GLOBAL orders, only with --clean-unb
   assert.equal(cand[0].kind, 'unbacked');
   assert.equal(cand[0].orderIndex, 0);
   assert.equal(typeof cand[0].maker, 'string');
+});
+
+test('a global order the maker has deposited for is not a candidate at all', () => {
+  // The whole point of reading the balances: a backed global order must never
+  // reach the simulation queue. Before this check every global order on the
+  // program was a candidate (40,580 on mainnet), the per-pass cap was spent
+  // re-simulating backed ones, and nothing was ever cleaned.
+  const data = market([O], 0n);
+  const payload = MARKET_FIXED_SIZE + 16;
+  data.writeUInt32LE(0, payload + 36); // never expires
+  data[payload + 40] = 1; // bid -> quote mint global
+  data[payload + 41] = 3; // OrderType::Global
+  priceOneToOne(data, payload, 1_000n);
+  const plan = planMarket({ pubkey: MARKET, lamports: data.lamports, data })!;
+  const maker = new PublicKey(
+    data.subarray(MARKET_FIXED_SIZE + 16, MARKET_FIXED_SIZE + 48),
+  ).toBase58();
+
+  const fully = new Map([
+    [plan.quoteMint, globalWith(plan.quoteMint, [[maker, 1_000n]])],
+  ]);
+  assert.deepEqual(
+    findCleanableOrders(plan, data, 5_000, fully, true),
+    [],
+    'balance exactly covers the order: ineligible, as the program requires',
+  );
+
+  const short = new Map([
+    [plan.quoteMint, globalWith(plan.quoteMint, [[maker, 999n]])],
+  ]);
+  assert.equal(
+    findCleanableOrders(plan, data, 5_000, short, true).length,
+    1,
+    'one atom short is unbacked',
+  );
+
+  // An ask is backed in base atoms one-for-one, and reads the BASE global.
+  data[payload + 40] = 0;
+  const asks = new Map([
+    [plan.baseMint, globalWith(plan.baseMint, [[maker, 1_000n]])],
+  ]);
+  assert.deepEqual(findCleanableOrders(plan, data, 5_000, asks, true), []);
+  const asksShort = new Map([
+    [plan.baseMint, globalWith(plan.baseMint, [[maker, 1n]])],
+  ]);
+  assert.equal(
+    findCleanableOrders(plan, data, 5_000, asksShort, true).length,
+    1,
+  );
+});
+
+test('global balances come from the deposits tree, not a block scan', () => {
+  // GlobalFixed is 96 bytes, then 64-byte blocks: a 16-byte RBNode header
+  // (left, right, parent, color, payload_type, padding) and a GlobalDeposit of
+  // trader(32) balance_atoms(8) padding(8).
+  const GLOBAL_FIXED_SIZE = 96;
+  const GLOBAL_BLOCK_SIZE = 64;
+  const NIL = 0xffff_ffff;
+  const trader = (c: string): Buffer => Buffer.alloc(32, c.charCodeAt(0));
+  const key = (c: string): string => new PublicKey(trader(c)).toBase58();
+
+  const data = Buffer.alloc(GLOBAL_FIXED_SIZE + 3 * GLOBAL_BLOCK_SIZE);
+  data.writeUInt32LE(0, 76); // deposits_root_index -> block 0
+  const node = (index: number, left: number, right: number): number => {
+    const at = GLOBAL_FIXED_SIZE + index;
+    data.writeUInt32LE(left, at);
+    data.writeUInt32LE(right, at + 4);
+    data.writeUInt32LE(NIL, at + 8);
+    return at + 16;
+  };
+  // Root holds A, its only child holds B.
+  let payload = node(0, GLOBAL_BLOCK_SIZE, NIL);
+  trader('A').copy(data, payload);
+  data.writeBigUInt64LE(10n, payload + 32);
+  payload = node(GLOBAL_BLOCK_SIZE, NIL, NIL);
+  trader('B').copy(data, payload);
+  data.writeBigUInt64LE(20n, payload + 32);
+  // A freed block whose old deposit bytes survive. A linear scan would read C
+  // as a live 99-atom balance and call every order of its long-gone maker
+  // backed; only the tree walk knows it is unreachable.
+  payload = node(2 * GLOBAL_BLOCK_SIZE, NIL, NIL);
+  trader('C').copy(data, payload);
+  data.writeBigUInt64LE(99n, payload + 32);
+
+  const balances = parseGlobalDeposits(data);
+  assert.deepEqual(
+    [...balances.entries()].sort(),
+    [
+      [key('A'), 10n],
+      [key('B'), 20n],
+    ].sort(),
+  );
+
+  // Untrusted RPC bytes: a cycle must terminate, and a bogus root must not
+  // throw or read out of bounds.
+  data.writeUInt32LE(0, GLOBAL_FIXED_SIZE + GLOBAL_BLOCK_SIZE); // B.left -> root
+  assert.equal(parseGlobalDeposits(data).size, 2, 'a cycle terminates');
+  data.writeUInt32LE(9_999, 76);
+  assert.equal(
+    parseGlobalDeposits(data).size,
+    0,
+    'an out-of-range root is empty',
+  );
+  data.writeUInt32LE(NIL, 76);
+  assert.equal(parseGlobalDeposits(data).size, 0, 'an empty tree is empty');
+  assert.equal(
+    parseGlobalDeposits(Buffer.alloc(8)).size,
+    0,
+    'truncated is empty',
+  );
+});
+
+test('required global atoms mirrors the program, None included', () => {
+  // Ask: base atoms one for one.
+  assert.equal(requiredGlobalAtoms(0n, 7n, false), 7n);
+  // Bid: ceil(price * atoms / 10^18). 1.5 quote per base over 3 base atoms.
+  assert.equal(requiredGlobalAtoms(15n * 10n ** 17n, 3n, true), 5n);
+  // Rounding is up, as the program's round_up=true demands: anything above an
+  // exact atom costs the next one.
+  assert.equal(requiredGlobalAtoms(1n, 1n, true), 1n);
+  assert.equal(requiredGlobalAtoms(0n, 1n, true), 0n);
+  // The largest quote that still fits u64 is not None: 1:1 over a full u64.
+  assert.equal(
+    requiredGlobalAtoms(10n ** 18n, 2n ** 64n - 1n, true),
+    2n ** 64n - 1n,
+  );
+  // One atom past it is the program's None: eligible whatever the balance.
+  assert.equal(
+    requiredGlobalAtoms(2n * 10n ** 18n, 2n ** 64n - 1n, true),
+    null,
+  );
+  // So is a u128 overflow in the product itself.
+  assert.equal(requiredGlobalAtoms((1n << 127n) + 1n, 4n, true), null);
 });
 
 const unbackedCandidate = (
@@ -286,22 +449,47 @@ test('a replaced order (new sequence number) starts its wait over', () => {
   assert.equal(next.freshlySeen, 1);
 });
 
-test('the sim cap defers the newest, confirming the longest-resting first', () => {
+test('the sim cap rotates, so every eligible candidate is reached', () => {
+  // The bug this guards: ordering by how long an order has rested and taking
+  // the first `cap` picks the same prefix every pass, because resting one more
+  // pass only lengthens a streak. On mainnet that spent all 1,000 sims of
+  // every pass on the same 1,000 orders and never reached the other 37,378.
   const tracker = createUnbackedTracker();
-  const old = unbackedCandidate('A'.repeat(43), 1n);
-  const mid = unbackedCandidate('B'.repeat(43), 2n);
-  // `old` seen three passes, `mid` two: both stable, `old` has the longer streak.
-  selectStableUnbacked([old], tracker, 1_000);
-  selectStableUnbacked([old, mid], tracker, 1_000);
-  const capped = selectStableUnbacked([old, mid], tracker, 1);
-  assert.equal(capped.stable, 2);
-  assert.equal(capped.overCap, 1);
-  assert.equal(capped.toConfirm.length, 1);
-  assert.equal(
-    capped.toConfirm[0].market,
-    old.market,
-    'oldest confirmed first',
+  const markets = ['A', 'B', 'C', 'D'].map((c) => c.repeat(43));
+  const all = markets.map((m, i) => unbackedCandidate(m, BigInt(i)));
+  selectStableUnbacked(all, tracker, 2); // baseline pass: nothing eligible yet
+
+  const seen: string[] = [];
+  for (let pass = 0; pass < 2; pass += 1) {
+    const chosen = selectStableUnbacked(all, tracker, 2);
+    assert.equal(chosen.stable, 4);
+    assert.equal(chosen.overCap, 2);
+    seen.push(...chosen.toConfirm.map((o) => o.market));
+  }
+  assert.deepEqual(
+    [...seen].sort(),
+    [...markets].sort(),
+    'two passes at a cap of 2 cover all four, with no repeats',
   );
+
+  // And it keeps going round rather than stopping at the end of the list.
+  const wrapped = selectStableUnbacked(all, tracker, 2);
+  assert.deepEqual(
+    wrapped.toConfirm.map((o) => o.market),
+    seen.slice(0, 2),
+    'the third pass starts the cycle again',
+  );
+});
+
+test('a cap at or above the candidate count confirms every one of them', () => {
+  const tracker = createUnbackedTracker();
+  const all = ['A', 'B', 'C'].map((c, i) =>
+    unbackedCandidate(c.repeat(43), BigInt(i)),
+  );
+  selectStableUnbacked(all, tracker, 50);
+  const chosen = selectStableUnbacked(all, tracker, 50);
+  assert.equal(chosen.toConfirm.length, 3);
+  assert.equal(chosen.overCap, 0);
 });
 
 test('without a tracker there is no last run to compare, so nothing is chosen', () => {

@@ -205,21 +205,30 @@ const unbackedTracker = createUnbackedTracker();
 const UNBACKED_STATE_PATH = process.env.UNBACKED_STATE_PATH;
 
 // Best effort: a missing or unreadable state file just means a fresh baseline.
+// The file is `{streaks, cursor}`; a file written before the cursor existed is
+// a bare streak map, and is read as one so a restart keeps its baseline instead
+// of silently waiting another pass for every order.
 function loadUnbackedState(): void {
   if (UNBACKED_STATE_PATH === undefined) return;
   try {
     const raw = fs.readFileSync(UNBACKED_STATE_PATH, 'utf8');
     const parsed: unknown = JSON.parse(raw);
-    if (parsed !== null && typeof parsed === 'object') {
-      unbackedTracker.streaks = new Map(
-        Object.entries(parsed as Record<string, number>).filter(
-          ([, n]) => typeof n === 'number' && Number.isFinite(n),
-        ),
-      );
-      console.log(
-        `Loaded ${unbackedTracker.streaks.size} unbacked-order streaks from ${UNBACKED_STATE_PATH}`,
-      );
-    }
+    if (parsed === null || typeof parsed !== 'object') return;
+    const record = parsed as Record<string, unknown>;
+    const streaks: unknown =
+      typeof record.streaks === 'object' && record.streaks !== null
+        ? record.streaks
+        : record;
+    unbackedTracker.streaks = new Map(
+      Object.entries(streaks as Record<string, number>).filter(
+        ([, n]) => typeof n === 'number' && Number.isFinite(n),
+      ),
+    );
+    if (typeof record.cursor === 'string')
+      unbackedTracker.cursor = record.cursor;
+    console.log(
+      `Loaded ${unbackedTracker.streaks.size} unbacked-order streaks from ${UNBACKED_STATE_PATH}`,
+    );
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
       console.warn(
@@ -234,7 +243,10 @@ function saveUnbackedState(): void {
   try {
     fs.writeFileSync(
       UNBACKED_STATE_PATH,
-      JSON.stringify(Object.fromEntries(unbackedTracker.streaks)),
+      JSON.stringify({
+        streaks: Object.fromEntries(unbackedTracker.streaks),
+        cursor: unbackedTracker.cursor,
+      }),
     );
   } catch (error) {
     console.warn(
@@ -841,8 +853,9 @@ Options:
                              which traders have unbacked orders.
                              CLEAN_SKIP_TRADERS whitelists makers to leave alone.
   --max-unbacked-sims=N      Cap unbacked confirmation simulations per pass
-                             (default ${DEFAULT_MAX_UNBACKED_SIMS}); longest-resting
-                             orders first, the rest wait for a later pass.
+                             (default ${DEFAULT_MAX_UNBACKED_SIMS}); if more are
+                             eligible, the next pass resumes where this one
+                             stopped.
   --tail-tighten             Also take markets whose free tail can truncate.
   --min-shrink=N             With --tail-tighten, require N blocks of shrink.
   --max-markets=N            Cap markets per run, highest recovery first.
