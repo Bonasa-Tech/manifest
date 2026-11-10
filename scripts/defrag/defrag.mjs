@@ -23,10 +23,8 @@
 // Scope / safety:
 //   --min-shrink=N           only markets whose free tail truncates >= N blocks
 //   --quiet-only             skip markets traded within ~1 day
-//   --filled-since-defrag    only markets the fill feed saw trade since their
-//                            last recorded defrag (needs fill-watcher.mjs running)
-//   --fill-state=NAME        fill-watcher state file in --state-dir
-//                            (default fill-state.json)
+//   --filled-since-defrag    exclusive long-running sweep mode: own the fill
+//                            feed and sweep markets filled since their last pass
 //   --include-active         allow active markets (warn integrators first)
 //   --allow-close            permit closing emptied markets  (also needs --yes-destroy-market-addresses)
 //   --max-markets=N          cap per run, highest recovery first
@@ -35,7 +33,8 @@
 //   --execute                submit; omit for a read-only dry run
 //   --v1                     pack as v1 transactions (up to 19 markets/tx)
 //   --batch / --no-batch     force or forbid batching (sweep-only batches by default)
-//   --pace=MS                delay between transactions (default 3000)
+//   --pace=MS                delay between transactions (default 3000); required
+//                            as the sweep interval in --filled-since-defrag mode
 //   --health-every=N         sample program health every N transactions (0 disables)
 //   --state-dir=DIR          where logs/plan cache/abort state live (default ./defrag-state)
 //   --use-cached-plan        reuse a recent unfiltered plan cache instead of re-simulating
@@ -57,6 +56,7 @@ import {
 import bs58 from 'bs58';
 import fs from 'node:fs';
 import path from 'node:path';
+import WebSocket from 'ws';
 
 // ===== rpc =====
 function makeRpc(url) {
@@ -482,6 +482,9 @@ const seatsOnly = process.argv.includes('--seats-only');
 // Sweep excess lamports and truncate the existing free tail, touching no
 // entry: both budgets zero. Needs the two-budget program release to be live.
 const sweepOnly = process.argv.includes('--sweep-only');
+if (filledSinceDefrag && !sweepOnly) {
+  throw new Error('--filled-since-defrag is an exclusive sweep mode and requires --sweep-only');
+}
 const budgetArg = process.argv.find((a) => a.startsWith('--budget='))?.slice(9);
 const seatBudgetArg = process.argv.find((a) => a.startsWith('--seat-budget='))?.slice(14);
 if ([seatsOnly, sweepOnly, budgetArg !== undefined].filter(Boolean).length > 1) {
@@ -526,45 +529,121 @@ const WIRE_BUDGET = 1210;
 // address count binds first at 19 markets, so the size budget is never the
 // constraint and no cushion is needed below it.
 const CU_BUDGET = 1_300_000;
-const closures = [];
 const QUIET_SLOTS = 216_000; // ~1 day
+const paceArg = process.argv.find((a) => a.startsWith('--pace='))?.slice(7);
+const PACE_MS = paceArg === undefined ? 3_000 : Number(paceArg);
+if (filledSinceDefrag && paceArg === undefined) {
+  throw new Error('--filled-since-defrag requires --pace=MS as its sweep interval');
+}
+if (!Number.isFinite(PACE_MS) || PACE_MS < 0 || (filledSinceDefrag && PACE_MS === 0)) {
+  throw new Error(`invalid --pace: ${paceArg}`);
+}
+// In continuous mode --pace is the sweep cadence. Transactions inside a pass
+// keep the ordinary three-second gap so an hourly cadence does not also make an
+// hourly gap between transactions.
+const TRANSACTION_DELAY_MS = filledSinceDefrag ? 3_000 : PACE_MS;
+
 // A market's lamports grow from `pay_advanced_order_fee` (5000 lamports per
 // batch that PLACES a global or reverse order) and its free tail grows when any
 // order leaves, by cancel or expiry as much as by fill. So "had a fill" is
 // strictly narrower than "accrued something a sweep would collect": this filter
 // trades recovery for fewer transactions, it does not identify all the markets
 // worth sweeping. Measure before relying on it.
-// Fills come from the fill feed (wss://mfx-feed-mainnet.fly.dev), which is a
-// live broadcaster: it has no history and no replay, so a one-shot run cannot
-// ask it what traded since the last sweep. `fill-watcher.mjs` stays connected
-// between sweeps and records market -> last fill slot into the state dir; this
-// reads that file. Keep the watcher running wherever the sweep is scheduled.
-const fillStatePath = path.join(stateDir, flag('fill-state') ?? 'fill-state.json');
-// The watcher records the newest slot it has seen. If it died, that stalls
-// while the chain moves on, and every market then looks unfilled - the one
-// failure mode of this filter that loses money silently. Refuse to filter past
-// this much drift.
-const FILL_STATE_MAX_LAG_SLOTS = 5_000; // ~33 min
-let fillState;
 
-/// market -> newest fill slot the watcher has recorded, plus how far behind the
-/// chain the watcher itself is.
-function loadFillState() {
-  if (!fs.existsSync(fillStatePath)) {
-    throw new Error(
-      `--filled-since-defrag needs ${fillStatePath}, written by fill-watcher.mjs.\n` +
-        `  Start it first:  node scripts/defrag/fill-watcher.mjs --state-dir=${stateDir}`,
-    );
-  }
-  const raw = JSON.parse(fs.readFileSync(fillStatePath, 'utf8'));
-  if (!raw || typeof raw.lastSeenSlot !== 'number' || typeof raw.markets !== 'object') {
-    throw new Error(`${fillStatePath} is not a fill-watcher state file`);
-  }
-  // A state file from before coverageFrom existed cannot vouch for any window,
-  // so treat its whole history as unobserved rather than as silence.
-  if (typeof raw.coverageFrom !== 'number') raw.coverageFrom = Infinity;
-  return raw;
+// The fill feed is live-only, so continuous mode owns one WebSocket for its
+// entire lifetime and retains the newest fill slot per market in memory. A
+// process restart deliberately resets coverage: the first pass is conservative
+// and establishes fresh per-market defrag baselines for later passes.
+function createIntegratedFillWatcher() {
+  const feedUrl = process.env.FILL_FEED_URL ?? 'wss://mfx-feed-mainnet.fly.dev';
+  const markets = new Map();
+  let coverageFrom = Infinity;
+  let fills = 0;
+  let connected = false;
+  let activeSocket;
+  let reconnectTimer;
+  let backoff = 1_000;
+  let waiters = [];
+
+  const releaseWaiters = () => {
+    const ready = waiters;
+    waiters = [];
+    for (const resolve of ready) resolve();
+  };
+
+  const connect = () => {
+    if (activeSocket || reconnectTimer) return;
+    const ws = new WebSocket(feedUrl);
+    activeSocket = ws;
+    let opened = false;
+    let closeReason = 'closed';
+
+    ws.on('open', async () => {
+      opened = true;
+      try {
+        if (!Number.isFinite(coverageFrom)) {
+          coverageFrom = await rpc('getSlot', [{ commitment: 'confirmed' }]);
+        }
+        if (activeSocket !== ws || ws.readyState !== WebSocket.OPEN) return;
+        connected = true;
+        backoff = 1_000;
+        console.log(`fill feed connected: ${feedUrl} (coverage from slot ${coverageFrom})`);
+        releaseWaiters();
+      } catch (e) {
+        closeReason = `coverage RPC failed: ${e.message}`;
+        ws.terminate();
+      }
+    });
+
+    ws.on('message', (data) => {
+      let fill;
+      try {
+        fill = JSON.parse(String(data));
+      } catch {
+        return;
+      }
+      const { market, slot } = fill ?? {};
+      if (typeof market !== 'string' || !Number.isFinite(slot)) return;
+      fills++;
+      if (!(markets.get(market) >= slot)) markets.set(market, slot);
+    });
+
+    ws.on('error', (e) => {
+      closeReason = `error: ${e.message}`;
+      // `close` owns reconnect scheduling, so one failed socket creates one
+      // replacement rather than an error/close pair creating two.
+      ws.terminate();
+    });
+
+    ws.on('close', () => {
+      if (activeSocket !== ws) return;
+      activeSocket = undefined;
+      connected = false;
+      if (!opened && backoff < 30_000) backoff = Math.min(backoff * 2, 30_000);
+      console.warn(`fill feed ${closeReason}; reconnecting in ${backoff}ms`);
+      reconnectTimer = setTimeout(() => {
+        reconnectTimer = undefined;
+        connect();
+      }, backoff);
+    });
+  };
+
+  connect();
+  return {
+    waitUntilConnected() {
+      if (connected) return Promise.resolve();
+      return new Promise((resolve) => waiters.push(resolve));
+    },
+    snapshot() {
+      if (!connected) throw new Error('fill feed disconnected before sweep start');
+      return { coverageFrom, fills, markets: new Map(markets) };
+    },
+  };
 }
+
+async function runSweep(fillTracker) {
+  const closures = [];
+  const fillState = fillTracker?.snapshot();
 
 /// Slot of the last logged defrag for a market whose log entry predates the
 /// `slot` field, read from the recorded signature. Memoized into
@@ -587,15 +666,11 @@ async function resolveLoggedDefragSlot(pubkey) {
 /// watcher started. Callers keep those, exactly as they keep markets that have
 /// never been defragged.
 function hadFillSince(pubkey, sinceSlot) {
-  const lastFill = fillState.markets[pubkey];
+  const lastFill = fillState.markets.get(pubkey);
   if (lastFill !== undefined && lastFill >= sinceSlot) return { filled: true, unknown: false };
   if (sinceSlot < fillState.coverageFrom) return { filled: false, unknown: true };
   return { filled: false, unknown: false };
 }
-
-const paceArg = process.argv.find((a) => a.startsWith('--pace='))?.slice(7);
-const DELAY_MS = paceArg === undefined ? 3_000 : Number(paceArg);
-if (!Number.isFinite(DELAY_MS) || DELAY_MS < 0) throw new Error(`invalid --pace: ${paceArg}`);
 // How many transactions between health samples, and what counts as bad enough
 // to stop. A single sample is noisy, so two consecutive bad ones are required;
 // an absolute floor keeps a 1-of-12 blip from tripping it.
@@ -709,26 +784,13 @@ if (listArg) {
 markets = markets.filter((m) => !done.has(m.pubkey));
 
 const currentSlot = await rpc('getSlot', [{ commitment: 'confirmed' }]);
-// Fail fast on a stale fill index. A feed that is behind reports "no fills" for
-// markets that have just traded, which would silently drop them from the sweep
-// - the one failure mode of this filter that loses money without saying so.
 if (filledSinceDefrag) {
-  fillState = loadFillState();
-  const lag = currentSlot - fillState.lastSeenSlot;
-  if (lag > FILL_STATE_MAX_LAG_SLOTS) {
-    throw new Error(
-      `${fillStatePath} is ${lag} slots behind chain (limit ${FILL_STATE_MAX_LAG_SLOTS}); ` +
-        'the fill watcher is probably not running, and every market would look unfilled. ' +
-        'Restart fill-watcher.mjs and let it catch up, or re-run without --filled-since-defrag',
-    );
-  }
   const coverageSlots = Number.isFinite(fillState.coverageFrom)
     ? currentSlot - fillState.coverageFrom
     : 0;
   console.log(
-    `fill state: ${Object.keys(fillState.markets).length} markets with fills, ` +
-      `watcher ${lag} slots behind chain, continuous coverage for the last ` +
-      `${coverageSlots} slots (~${(coverageSlots / 150).toFixed(0)} min) (recorded ${fillState.updatedAt})`,
+    `fill state: ${fillState.markets.size} markets, ${fillState.fills} fills observed, ` +
+      `coverage for the last ${coverageSlots} slots (~${(coverageSlots / 150).toFixed(0)} min)`,
   );
   if (coverageSlots < 9_000) {
     console.log(
@@ -1013,7 +1075,7 @@ if (!execute) {
   fs.writeFileSync(path.join(stateDir, 'inspect-payloads.json'), JSON.stringify({ blockhash, payloads }, null, 2));
   console.log(`\nwrote ${path.join(stateDir, 'inspect-payloads.json')}`);
   console.log('Dry run only. Add --execute to submit.');
-  process.exit(0);
+  return;
 }
 
 if (!KEYPAIR_PATH) throw new Error('set --keypair=PATH or KEYPAIR_PATH; the collector keypair is required to execute');
@@ -1159,7 +1221,29 @@ while (queue.length) {
       process.exit(2);
     }
   }
-  if (queue.length) await new Promise((r) => setTimeout(r, DELAY_MS));
+  if (queue.length) await new Promise((r) => setTimeout(r, TRANSACTION_DELAY_MS));
 }
 console.log(`\nDefragged ${doneCount}/${selected.length} markets in ${sent} transactions, recovered ${(recoveredTotal / 1e9).toFixed(3)} SOL (market lamports; vault excess sweeps additionally to collector token accounts).`);
+}
+
+if (filledSinceDefrag) {
+  const fillTracker = createIntegratedFillWatcher();
+  let cycle = 0;
+  while (true) {
+    await fillTracker.waitUntilConnected();
+    const startedAt = Date.now();
+    cycle++;
+    console.log(`\n========== continuous sweep ${cycle} | ${new Date(startedAt).toISOString()} ==========`);
+    await runSweep(fillTracker);
+    const elapsed = Date.now() - startedAt;
+    const waitMs = Math.max(0, PACE_MS - elapsed);
+    console.log(
+      `\ncontinuous sweep ${cycle} finished in ${(elapsed / 60_000).toFixed(1)} min; ` +
+        `next start in ${(waitMs / 60_000).toFixed(1)} min (--pace=${PACE_MS})`,
+    );
+    await new Promise((resolve) => setTimeout(resolve, waitMs));
+  }
+} else {
+  await runSweep();
+}
 
