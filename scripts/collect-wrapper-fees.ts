@@ -205,21 +205,30 @@ const unbackedTracker = createUnbackedTracker();
 const UNBACKED_STATE_PATH = process.env.UNBACKED_STATE_PATH;
 
 // Best effort: a missing or unreadable state file just means a fresh baseline.
+// The file is `{streaks, cursor}`; a file written before the cursor existed is
+// a bare streak map, and is read as one so a restart keeps its baseline instead
+// of silently waiting another pass for every order.
 function loadUnbackedState(): void {
   if (UNBACKED_STATE_PATH === undefined) return;
   try {
     const raw = fs.readFileSync(UNBACKED_STATE_PATH, 'utf8');
     const parsed: unknown = JSON.parse(raw);
-    if (parsed !== null && typeof parsed === 'object') {
-      unbackedTracker.streaks = new Map(
-        Object.entries(parsed as Record<string, number>).filter(
-          ([, n]) => typeof n === 'number' && Number.isFinite(n),
-        ),
-      );
-      console.log(
-        `Loaded ${unbackedTracker.streaks.size} unbacked-order streaks from ${UNBACKED_STATE_PATH}`,
-      );
-    }
+    if (parsed === null || typeof parsed !== 'object') return;
+    const record = parsed as Record<string, unknown>;
+    const streaks: unknown =
+      typeof record.streaks === 'object' && record.streaks !== null
+        ? record.streaks
+        : record;
+    unbackedTracker.streaks = new Map(
+      Object.entries(streaks as Record<string, number>).filter(
+        ([, n]) => typeof n === 'number' && Number.isFinite(n),
+      ),
+    );
+    if (typeof record.cursor === 'string')
+      unbackedTracker.cursor = record.cursor;
+    console.log(
+      `Loaded ${unbackedTracker.streaks.size} unbacked-order streaks from ${UNBACKED_STATE_PATH}`,
+    );
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
       console.warn(
@@ -234,7 +243,10 @@ function saveUnbackedState(): void {
   try {
     fs.writeFileSync(
       UNBACKED_STATE_PATH,
-      JSON.stringify(Object.fromEntries(unbackedTracker.streaks)),
+      JSON.stringify({
+        streaks: Object.fromEntries(unbackedTracker.streaks),
+        cursor: unbackedTracker.cursor,
+      }),
     );
   } catch (error) {
     console.warn(
@@ -294,6 +306,27 @@ const DEFAULT_DELAY_MS = 1_000;
 // expiry retry to catch the last-valid-block race. No priority fee: landing is
 // best effort, retried.
 const MAX_SEND_ATTEMPTS = 3;
+// How many wrappers may fail alone, back to back, before the run treats the
+// cause as systemic rather than per-wrapper and stops. One bad wrapper must not
+// end a sweep; a program upgrade or a wrong collector key should not be
+// simulated against all 400 of them one at a time.
+const MAX_CONSECUTIVE_WRAPPER_FAILURES = 5;
+
+/**
+ * Halve a batch that failed simulation, preserving order.
+ *
+ * A batch can fail for a reason that belongs to one wrapper (its state raced,
+ * or defrag rejects it) or to the batch as a whole (the compute estimate was
+ * too low for what it actually costs). Halving resolves both without knowing
+ * which: repeated halving isolates a bad wrapper down to a batch of one, and
+ * shrinks an over-budget batch until it fits.
+ */
+export function splitBatch(
+  batch: CollectableWrapper[],
+): [CollectableWrapper[], CollectableWrapper[]] {
+  const half = Math.ceil(batch.length / 2);
+  return [batch.slice(0, half), batch.slice(half)];
+}
 
 type CollectableWrapper = {
   pubkey: PublicKey;
@@ -565,7 +598,23 @@ function serializedSize(
   }
 }
 
-/** Greedily packs the maximum number of Collect instructions into v1 transactions. */
+/**
+ * Packs Collect instructions into the fewest v1 transactions.
+ *
+ * Each wrapper goes into the earliest transaction that still has room for it,
+ * not merely the one being filled. With --defrag the per-wrapper compute cost
+ * spans three orders of magnitude (an already-packed wrapper measured 1,155 CU,
+ * the 618KB outlier 566,509), and the caller orders wrappers by lamports
+ * recovered, which is uncorrelated with that cost. A single forward pass
+ * therefore closed a transaction every time a large wrapper came up and
+ * stranded whatever small ones happened to sit in front of it: a 2026-11-10
+ * mainnet pass sent 20 wrappers as 12 + 5 + 1 + 2, and three of those four
+ * transactions used under 6% of the compute budget they were given.
+ *
+ * Trying earliest-first keeps the highest-value wrappers in the earliest
+ * transactions, which is what the amount ordering is for - a run that stops on
+ * an error has still collected the most it could.
+ */
 export function packCollectTransactions(
   wrappers: CollectableWrapper[],
   collector: PublicKey,
@@ -584,38 +633,45 @@ export function packCollectTransactions(
     maxWrappersPerTransaction ?? V1_MAX_WRAPPERS,
     V1_MAX_WRAPPERS,
   );
-  const batches: CollectableWrapper[][] = [];
-  let current: CollectableWrapper[] = [];
-  let currentCu = 0;
+  // Compute budget is carried per batch so the cheap checks can reject a batch
+  // before paying to compile a candidate message for it.
+  const batches: { items: CollectableWrapper[]; cu: number }[] = [];
 
   for (const wrapper of wrappers) {
     const wrapperCu: number = withDefrag
       ? (wrapper.defragCu ?? estimateDefragCu(wrapper.space))
       : 0;
-    const candidate = [...current, wrapper];
-    if (
-      candidate.length <= configuredCap &&
-      (!withDefrag || currentCu + wrapperCu <= CU_BUDGET_PER_TRANSACTION) &&
-      (serializedSize(candidate, collector, withDefrag) ?? Infinity) <=
-        V1_MAX_TRANSACTION_SIZE
-    ) {
-      current = candidate;
-      currentCu += wrapperCu;
+    const batch = batches.find(
+      (candidate) =>
+        candidate.items.length < configuredCap &&
+        (!withDefrag ||
+          candidate.cu + wrapperCu <= CU_BUDGET_PER_TRANSACTION) &&
+        (serializedSize(
+          [...candidate.items, wrapper],
+          collector,
+          withDefrag,
+        ) ?? Infinity) <= V1_MAX_TRANSACTION_SIZE,
+    );
+    if (batch !== undefined) {
+      batch.items.push(wrapper);
+      batch.cu += wrapperCu;
       continue;
     }
 
-    if (current.length === 0) {
+    // Nothing open can take it, so it opens a transaction of its own. One that
+    // does not fit even alone is a real error rather than a full batch.
+    if (
+      (serializedSize([wrapper], collector, withDefrag) ?? Infinity) >
+      V1_MAX_TRANSACTION_SIZE
+    ) {
       throw new Error(
         `A single Collect instruction exceeds ${V1_MAX_TRANSACTION_SIZE} bytes`,
       );
     }
-    batches.push(current);
-    current = [wrapper];
-    currentCu = wrapperCu;
+    batches.push({ items: [wrapper], cu: wrapperCu });
   }
 
-  if (current.length > 0) batches.push(current);
-  return batches;
+  return batches.map(({ items }) => items);
 }
 
 function optionValue(name: string): string | undefined {
@@ -841,8 +897,9 @@ Options:
                              which traders have unbacked orders.
                              CLEAN_SKIP_TRADERS whitelists makers to leave alone.
   --max-unbacked-sims=N      Cap unbacked confirmation simulations per pass
-                             (default ${DEFAULT_MAX_UNBACKED_SIMS}); longest-resting
-                             orders first, the rest wait for a later pass.
+                             (default ${DEFAULT_MAX_UNBACKED_SIMS}); if more are
+                             eligible, the next pass resumes where this one
+                             stopped.
   --tail-tighten             Also take markets whose free tail can truncate.
   --min-shrink=N             With --tail-tighten, require N blocks of shrink.
   --max-markets=N            Cap markets per run, highest recovery first.
@@ -858,9 +915,13 @@ Options:
                              separate watcher process is used.
 
 Execution safety:
-  Every transaction is simulated before submission. Ctrl-C stops before the
-  next transaction; a second Ctrl-C exits immediately. Any error stops the run
-  (in --loop mode, only the current pass; the loop continues to the next).
+  Every transaction is simulated before submission. A batch that fails
+  simulation is halved and retried, down to single wrappers, so one bad wrapper
+  is reported and left for a later pass instead of ending the sweep; ${MAX_CONSECUTIVE_WRAPPER_FAILURES}
+  wrappers failing alone in a row is treated as systemic and does stop. A send
+  or confirmation failure still stops the run. Ctrl-C stops before the next
+  transaction; a second Ctrl-C exits immediately (in --loop mode a stopped pass
+  ends only that pass; the loop continues to the next).
 
 Environment:
   RPC_URL                    Required Solana RPC URL.
@@ -1333,10 +1394,20 @@ Environment:
   let collectedLamports = 0n;
   let successfulTransactions = 0;
   let failed = false;
+  // A failed simulation splits its batch and retries the halves rather than
+  // ending the run. Packing puts wrappers in the earliest transaction with
+  // room, so a cheap one that always fails would otherwise sit in the first
+  // transaction of every pass and block every wrapper behind it forever -
+  // including the high-value ones the amount ordering exists to collect first.
+  const queue: CollectableWrapper[][] = [...batches];
+  const skipped: CollectableWrapper[] = [];
+  let consecutiveFailures = 0;
   try {
-    for (const [index, batch] of batches.entries()) {
+    for (let index = 0; index < queue.length; index += 1) {
+      const batch = queue[index];
       if (stopRequested) break;
 
+      let simulationFailed = false;
       let landed = false;
       let landedSignature: string | undefined;
       for (let attempt = 1; attempt <= MAX_SEND_ATTEMPTS; attempt++) {
@@ -1353,11 +1424,11 @@ Environment:
         const wireSize = Buffer.from(encodedTransaction, 'base64').length;
 
         console.log(
-          `\nTx ${index + 1}/${batches.length}${attempt > 1 ? ` (attempt ${attempt}/${MAX_SEND_ATTEMPTS})` : ''}: simulating ${batch.length} wrappers (${wireSize} bytes)...`,
+          `\nTx ${index + 1}/${queue.length}${attempt > 1 ? ` (attempt ${attempt}/${MAX_SEND_ATTEMPTS})` : ''}: simulating ${batch.length} wrappers (${wireSize} bytes)...`,
         );
         const simulation = await simulateTransaction(encodedTransaction, true);
         if (simulation.err !== null) {
-          failed = true;
+          simulationFailed = true;
           console.error(`Simulation failed: ${JSON.stringify(simulation.err)}`);
           for (const log of simulation.logs ?? []) console.error(`  ${log}`);
           break;
@@ -1400,7 +1471,7 @@ Environment:
             attempt < MAX_SEND_ATTEMPTS
           ) {
             console.warn(
-              `Tx ${index + 1}/${batches.length} preflight hit BlockhashNotFound (lagging RPC node); retrying on a fresh blockhash...`,
+              `Tx ${index + 1}/${queue.length} preflight hit BlockhashNotFound (lagging RPC node); retrying on a fresh blockhash...`,
             );
             continue;
           }
@@ -1422,7 +1493,7 @@ Environment:
             const status = statuses.value[0];
             if (status !== null && status.err === null) {
               console.log(
-                `Tx ${index + 1}/${batches.length} landed despite the expiry report (${signature}).`,
+                `Tx ${index + 1}/${queue.length} landed despite the expiry report (${signature}).`,
               );
               landed = true;
               landedSignature = signature;
@@ -1431,36 +1502,68 @@ Environment:
             if (status !== null) {
               failed = true;
               console.error(
-                `Tx ${index + 1}/${batches.length} landed WITH an error: ${JSON.stringify(status.err)} (${signature})`,
+                `Tx ${index + 1}/${queue.length} landed WITH an error: ${JSON.stringify(status.err)} (${signature})`,
               );
               break;
             }
             if (attempt < MAX_SEND_ATTEMPTS) {
               console.warn(
-                `Tx ${index + 1}/${batches.length} expired without landing; retrying with a fresh blockhash...`,
+                `Tx ${index + 1}/${queue.length} expired without landing; retrying with a fresh blockhash...`,
               );
               continue;
             }
           }
           failed = true;
-          console.error(`Tx ${index + 1}/${batches.length} failed:`, error);
+          console.error(`Tx ${index + 1}/${queue.length} failed:`, error);
           break;
         }
       }
+      // Composition problem: split and retry the halves at this same position,
+      // so the second half is still attempted even if the first keeps failing.
+      // A lone wrapper that cannot simulate is reported and left for a later
+      // pass; the rest of the sweep continues.
+      if (simulationFailed && !stopRequested) {
+        if (batch.length > 1) {
+          const [first, second] = splitBatch(batch);
+          console.warn(
+            `  splitting into ${first.length} + ${second.length} wrappers and retrying`,
+          );
+          queue.splice(index, 1, first, second);
+          index -= 1;
+          continue;
+        }
+        skipped.push(batch[0]);
+        consecutiveFailures += 1;
+        console.warn(
+          `  skipping ${batch[0].pubkey.toBase58()} for this pass (${consecutiveFailures} in a row)`,
+        );
+        if (consecutiveFailures >= MAX_CONSECUTIVE_WRAPPER_FAILURES) {
+          failed = true;
+          console.error(
+            `  ${consecutiveFailures} wrappers failed alone in a row; the cause looks systemic, stopping`,
+          );
+          break;
+        }
+        continue;
+      }
+      // A send or confirmation failure is about the network rather than this
+      // batch's contents, and the retries above have already been spent, so it
+      // still stops the run.
       if (!landed || failed || stopRequested) {
         if (!landed && !failed && !stopRequested) failed = true;
         break;
       }
+      consecutiveFailures = 0;
 
       const batchLamports = batch.reduce((sum, { amount }) => sum + amount, 0n);
       collected += batch.length;
       collectedLamports += batchLamports;
       successfulTransactions += 1;
       console.log(
-        `Confirmed tx ${index + 1}/${batches.length}: ${batch.length} wrappers, ${formatSOL(batchLamports)} SOL, ${landedSignature}`,
+        `Confirmed tx ${index + 1}/${queue.length}: ${batch.length} wrappers, ${formatSOL(batchLamports)} SOL, ${landedSignature}`,
       );
 
-      if (index + 1 < batches.length && !stopRequested) {
+      if (index + 1 < queue.length && !stopRequested) {
         console.log(
           `Waiting ${delayMs}ms before the next transaction (Ctrl-C to stop)...`,
         );
@@ -1472,10 +1575,20 @@ Environment:
   }
 
   console.log(
-    `\nCollected ${formatSOL(collectedLamports)} SOL from ${collected}/${collectableWrappers.length} wrappers in ${successfulTransactions}/${batches.length} transactions.`,
+    `\nCollected ${formatSOL(collectedLamports)} SOL from ${collected}/${collectableWrappers.length} wrappers in ${successfulTransactions}/${queue.length} transactions.`,
   );
+  if (skipped.length > 0) {
+    console.warn(
+      `${skipped.length} wrapper(s) could not be simulated and were left for a later pass: ` +
+        skipped.map(({ pubkey }) => pubkey.toBase58()).join(', '),
+    );
+  }
   if (stopRequested) console.log('Stopped by operator request.');
-  if (failed) process.exitCode = 1;
+  // A skipped wrapper no longer ends the sweep, but it still has to be visible
+  // to whatever ran the sweep: before splitting existed, any such failure left
+  // a non-zero exit, and a cron that only reads the status would otherwise stop
+  // noticing a wrapper that fails on every single pass.
+  if (failed || skipped.length > 0) process.exitCode = 1;
 }
 
 // Optionally run forever on an interval instead of once, so the collector can

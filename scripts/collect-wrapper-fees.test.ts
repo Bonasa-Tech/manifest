@@ -13,6 +13,7 @@ import {
   estimateBatchDefragCu,
   estimateDefragCu,
   packCollectTransactions,
+  splitBatch,
 } from './collect-wrapper-fees';
 
 // Mirrors the script's own constants; a copy here fails the test if either
@@ -130,6 +131,44 @@ const tests: [string, () => void | Promise<void>][] = [
     },
   ],
   [
+    'a large wrapper does not strand the small ones in front of it',
+    () => {
+      // The shape that wasted transactions on mainnet: wrappers arrive ordered
+      // by lamports recovered, so cheap and expensive ones interleave. A
+      // forward-only pass closed a transaction at every large wrapper and left
+      // each small one alone, sending this as five transactions.
+      const wrappers = [
+        wrapper(0, 1_600),
+        wrapper(1, MEASURED_LARGEST_WRAPPER_SPACE),
+        wrapper(2, 1_600),
+        wrapper(3, MEASURED_LARGEST_WRAPPER_SPACE),
+        wrapper(4, 1_600),
+      ];
+      const batches = packCollectTransactions(
+        wrappers,
+        COLLECTOR,
+        undefined,
+        true,
+      );
+      assert.equal(batches.length, 3, 'the three small wrappers should share');
+      assert.deepEqual(
+        batches.map((batch) => batch.length),
+        [3, 1, 1],
+      );
+      assert.deepEqual(
+        batches[0].map(({ space }) => space),
+        [1_600, 1_600, 1_600],
+      );
+      // Still in value order within the transaction that collects them.
+      assert.deepEqual(
+        batches[0].map(({ pubkey }) => pubkey.toBase58()),
+        [wrappers[0], wrappers[2], wrappers[4]].map(({ pubkey }) =>
+          pubkey.toBase58(),
+        ),
+      );
+    },
+  ],
+  [
     'no batch is packed past the compute budget',
     () => {
       const sizes = [928, 1_600, 4_288, 8_128, 36_352, 290_752, 618_304];
@@ -158,6 +197,41 @@ const tests: [string, () => void | Promise<void>][] = [
         wrappers.length,
         'packing dropped wrappers',
       );
+    },
+  ],
+  [
+    'a failed batch halves instead of ending the run',
+    () => {
+      // Packing backfills low-value wrappers into earlier transactions, so a
+      // simulation failure must not be fatal: a cheap wrapper that always
+      // fails would otherwise sit in the first transaction of every pass and
+      // block every wrapper behind it, high-value ones included. Halving
+      // isolates one bad wrapper and also shrinks a batch whose compute
+      // estimate was too low, without having to tell those apart.
+      const batch = Array.from({ length: 7 }, (_, at) => wrapper(at, 1_600));
+      const [first, second] = splitBatch(batch);
+      assert.equal(first.length, 4);
+      assert.equal(second.length, 3);
+      assert.deepEqual(
+        [...first, ...second].map(({ pubkey }) => pubkey.toBase58()),
+        batch.map(({ pubkey }) => pubkey.toBase58()),
+        'halving must preserve order and lose nothing',
+      );
+
+      // Halving a pair isolates each one, which is what bottoms out at a
+      // single wrapper the run can report and skip.
+      assert.deepEqual(
+        splitBatch(batch.slice(0, 2)).map((half) => half.length),
+        [1, 1],
+      );
+      // Repeated halving terminates: every split is strictly smaller.
+      let longest = batch;
+      for (let step = 0; step < 10 && longest.length > 1; step += 1) {
+        const [half] = splitBatch(longest);
+        assert.ok(half.length < longest.length, 'split did not shrink');
+        longest = half;
+      }
+      assert.equal(longest.length, 1);
     },
   ],
   [

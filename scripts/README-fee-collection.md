@@ -93,6 +93,19 @@ per transaction** (the 64-address limit binds at three addresses per market) and
 up to 24 cleans. Candidate batches are serialized to check the real wire size
 before being accepted.
 
+Wrapper batching with `--defrag` is bound by the 1.3M compute budget, not by
+size or addresses, because per-wrapper defrag cost spans three orders of
+magnitude. Each wrapper goes into the earliest transaction that still has room,
+so a large wrapper takes a transaction of its own without stranding the small
+ones ordered in front of it.
+
+Because that backfills low-value wrappers into earlier transactions, a batch
+that fails simulation is **halved and retried** rather than ending the run. A
+lone wrapper that still cannot simulate is reported and left for a later pass.
+Five wrappers failing alone in a row is treated as a systemic cause and does
+stop. Send and confirmation failures still stop the run — those are about the
+network, not the batch's contents.
+
 ### Execution
 
 - `--execute` — submit. Without it the command is read-only.
