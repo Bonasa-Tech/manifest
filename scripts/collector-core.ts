@@ -677,6 +677,14 @@ export type CoreCollectionOptions = {
   /** Sweep markets for accrued fees (and any already-free tail). */
   sweepMarkets: boolean;
   /**
+   * When present, only these markets are eligible for a sweep. Other core
+   * phases still inspect every market; this filter is intentionally limited
+   * to the zero-relocation market defrag.
+   */
+  sweepMarketPubkeys?: ReadonlySet<string>;
+  /** Called immediately after a market sweep transaction is confirmed. */
+  onMarketsSwept?: (markets: readonly string[]) => void;
+  /**
    * Require the sweep to truncate at least this many blocks, i.e. target tail
    * tightening specifically rather than fee collection. See the note at the
    * top of this file: on active markets that rent is largely re-paid by
@@ -719,6 +727,8 @@ export type CoreCollectionResult = {
   recoveredLamports: bigint;
   cleanRewardLamports: bigint;
   signatures: string[];
+  /** Markets whose sweep transaction was confirmed during this pass. */
+  sweptMarkets: string[];
   /**
    * A clean transaction failed and global clean was stopped for the rest of
    * the pass (the next pass retries from a fresh read). Expected now and then
@@ -807,6 +817,7 @@ export async function runCoreCollections(
     recoveredLamports: 0n,
     cleanRewardLamports: 0n,
     signatures: [],
+    sweptMarkets: [],
     cleanStoppedEarly: false,
   };
 
@@ -823,8 +834,17 @@ export async function runCoreCollections(
     `${plans.length} markets read; ${expanders} excluded because defrag would expand them at the collector's expense`,
   );
 
+  const sweepCandidates =
+    options.sweepMarketPubkeys === undefined
+      ? plans
+      : plans.filter((plan) => options.sweepMarketPubkeys!.has(plan.pubkey));
+  if (options.sweepMarketPubkeys !== undefined) {
+    console.log(
+      `Fill filter: ${sweepCandidates.length}/${plans.length} markets filled since their last confirmed sweep`,
+    );
+  }
   let selected = options.sweepMarkets
-    ? selectMarkets(plans, {
+    ? selectMarkets(sweepCandidates, {
         minRecoveryLamports: options.minRecoveryLamports,
         minShrinkBlocks: options.minShrinkBlocks,
       })
@@ -1006,6 +1026,8 @@ export async function runCoreCollections(
      * the rest of the pass.
      */
     cleanItems?: CleanableOrder[];
+    /** The markets behind a sweep work item. */
+    sweepItems?: MarketPlan[];
   };
   const work: Work[] = [
     // Cleans first: cheap, and they free blocks a later sweep can truncate.
@@ -1028,6 +1050,7 @@ export async function runCoreCollections(
       recovered: batch.reduce((sum, plan) => sum + plan.recoveredLamports, 0n),
       reward: 0n,
       optional: false,
+      sweepItems: batch,
     })),
   ];
 
@@ -1154,6 +1177,11 @@ export async function runCoreCollections(
     result.recoveredLamports += item.recovered;
     result.cleanRewardLamports += item.reward;
     result.signatures.push(signature);
+    if (item.sweepItems !== undefined) {
+      const sweptMarkets = item.sweepItems.map((plan) => plan.pubkey);
+      result.sweptMarkets.push(...sweptMarkets);
+      options.onMarketsSwept?.(sweptMarkets);
+    }
     console.log(
       `[${index + 1}/${work.length}] ${item.label}: ${Number(item.recovered + item.reward) / 1e9} SOL, ${signature}`,
     );

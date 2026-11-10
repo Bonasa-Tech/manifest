@@ -6,7 +6,10 @@
  */
 import { PublicKey } from '@solana/web3.js';
 import * as assert from 'node:assert/strict';
+import { WebSocketServer } from 'ws';
 import {
+  PendingFillMarkets,
+  createFillWatcher,
   estimateBatchDefragCu,
   estimateDefragCu,
   packCollectTransactions,
@@ -47,7 +50,7 @@ function wrapper(index: number, space: number): TestWrapper {
   };
 }
 
-const tests: [string, () => void][] = [
+const tests: [string, () => void | Promise<void>][] = [
   [
     'a small wrapper no longer reserves a fiftieth of the budget',
     () => {
@@ -186,18 +189,93 @@ const tests: [string, () => void][] = [
       assert.equal(estimateBatchDefragCu(batches[0], false), 0);
     },
   ],
+  [
+    'a confirmed sweep clears only fills that preceded that sweep',
+    () => {
+      const pending = new PendingFillMarkets();
+      pending.record('market-a');
+      const beforeSweep = pending.snapshot();
+
+      // This second fill lands while the transaction built from beforeSweep
+      // is in flight, so acknowledging that transaction must not drop it.
+      pending.record('market-a');
+      assert.equal(pending.acknowledge(['market-a'], beforeSweep), 0);
+      assert.equal(pending.size, 1);
+
+      const nextSweep = pending.snapshot();
+      assert.equal(pending.acknowledge(['market-a'], nextSweep), 1);
+      assert.equal(pending.size, 0);
+    },
+  ],
+  [
+    'the integrated fill watcher owns one reconnecting socket',
+    async () => {
+      const server = new WebSocketServer({ port: 0, host: '127.0.0.1' });
+      await new Promise<void>((resolve) => server.once('listening', resolve));
+      const address = server.address();
+      assert.ok(address !== null && typeof address === 'object');
+
+      let connections = 0;
+      let activeConnections = 0;
+      let maximumActiveConnections = 0;
+      server.on('connection', (socket) => {
+        connections += 1;
+        activeConnections += 1;
+        maximumActiveConnections = Math.max(
+          maximumActiveConnections,
+          activeConnections,
+        );
+        socket.once('close', () => {
+          activeConnections -= 1;
+        });
+      });
+
+      const watcher = createFillWatcher(`ws://127.0.0.1:${address.port}`);
+      const waitFor = async (condition: () => boolean, timeoutMs = 4_000) => {
+        const deadline = Date.now() + timeoutMs;
+        while (!condition()) {
+          if (Date.now() >= deadline) throw new Error('condition timed out');
+          await new Promise((resolve) => setTimeout(resolve, 20));
+        }
+      };
+
+      try {
+        await watcher.waitUntilConnected();
+        assert.equal(connections, 1);
+        for (const socket of server.clients) {
+          socket.send(JSON.stringify({ market: 'market-a', slot: 123 }));
+        }
+        await waitFor(() => watcher.snapshot().has('market-a'));
+        assert.equal(watcher.snapshot().size, 1);
+
+        for (const socket of server.clients) socket.close();
+        await waitFor(() => connections === 2);
+        assert.equal(maximumActiveConnections, 1);
+      } finally {
+        watcher.close();
+        for (const socket of server.clients) socket.terminate();
+        await new Promise<void>((resolve, reject) => {
+          server.close((error) => (error ? reject(error) : resolve()));
+        });
+      }
+    },
+  ],
 ];
 
-let failures = 0;
-for (const [name, body] of tests) {
-  try {
-    body();
-    console.log(`  ok  ${name}`);
-  } catch (error) {
-    failures += 1;
-    console.error(`FAIL  ${name}`);
-    console.error(`      ${error instanceof Error ? error.message : error}`);
+async function main(): Promise<void> {
+  let failures = 0;
+  for (const [name, body] of tests) {
+    try {
+      await body();
+      console.log(`  ok  ${name}`);
+    } catch (error) {
+      failures += 1;
+      console.error(`FAIL  ${name}`);
+      console.error(`      ${error instanceof Error ? error.message : error}`);
+    }
   }
+  console.log(`\n${tests.length - failures}/${tests.length} passed`);
+  if (failures > 0) process.exit(1);
 }
-console.log(`\n${tests.length - failures}/${tests.length} passed`);
-if (failures > 0) process.exit(1);
+
+void main();
