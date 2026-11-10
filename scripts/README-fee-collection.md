@@ -74,6 +74,9 @@ One of `--wrapper`, `--all-public`, or `--markets` is required.
   worthwhile markets. `--min-shrink=3` typically selects ~90 markets.
 - `--max-markets=N` (env `MAX_MARKETS`) — process at most N markets, highest
   recovery first. Useful for a paced first run.
+- `--filled-since-defrag` — with `--markets --loop=SECONDS`, sweep only markets
+  observed on the live fill feed since their last confirmed sweep. This is an
+  explicit opt-in; wrapper collection and global cleaning remain unfiltered.
 
 ### Batching and pacing
 
@@ -81,7 +84,9 @@ One of `--wrapper`, `--all-public`, or `--markets` is required.
   v1 maximum of 61 wrappers (32 with `--defrag`, where the 64-instruction limit
   binds first).
 - `--delay-ms=N` (env `COLLECT_DELAY_MS`) — delay between transactions,
-  default 10,000ms.
+  default 1,000ms.
+- `--loop=SECONDS` — run passes continuously on the existing fixed-rate
+  start-to-start interval. Passes never overlap.
 
 Core-side batching is automatic and measured, not estimated: **19 market sweeps
 per transaction** (the 64-address limit binds at three addresses per market) and
@@ -93,11 +98,31 @@ before being accepted.
 - `--execute` — submit. Without it the command is read-only.
 - `--help` — usage.
 
+### Filled-since-defrag loop
+
+`--filled-since-defrag` runs the fill watcher inside this collector process.
+It owns one reconnecting WebSocket and keeps an in-memory set of markets with
+pending fills. A market leaves the set only after its sweep transaction is
+confirmed; if another fill arrives while that transaction is in flight, it
+stays pending for the next pass.
+
+There are no fill slots, fill-state files, shared state directories, or second
+watcher process. Because the feed is live-only, restarting the collector starts
+with an empty set and fills broadcast while it is down are not recovered.
+Brief WebSocket gaps have the same tradeoff and are accepted. Before each pass,
+the loop waits until its one socket is connected again.
+
+The flag requires both `--markets` and `--loop=SECONDS`; it is not available as
+a one-shot mode. Without the flag, `--loop` retains the ordinary unfiltered
+market behavior.
+
 ### Environment
 
 - `RPC_URL` — required.
 - `KEYPAIR_PATH` — authorized collector keypair; required with `--execute`.
   Defaults to `~/.config/solana/id.json`.
+- `FILL_FEED_URL` — optional fill-feed override for
+  `--filled-since-defrag`; defaults to `wss://mfx-feed-mainnet.fly.dev`.
 
 ## Recipes
 
@@ -113,6 +138,10 @@ yarn collect:wrapper-fees --markets --global-clean --execute
 
 # Wrapper side, unchanged
 yarn collect:wrapper-fees --defrag --all-public --execute
+
+# Production loop, with core market sweeps gated by fills
+yarn collect:wrapper-fees --all-public --defrag --markets --global-clean \
+  --clean-unbacked --execute --loop=1200 --filled-since-defrag
 
 # First run on a new deployment: pace it
 yarn collect:wrapper-fees --markets --max-markets=50 --execute

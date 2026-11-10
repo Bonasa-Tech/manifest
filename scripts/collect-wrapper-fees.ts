@@ -21,6 +21,7 @@ import {
 import { Connection, PublicKey } from '@solana/web3.js';
 import bs58 from 'bs58';
 import * as fs from 'fs';
+import WebSocket from 'ws';
 import { PROGRAM_ID as WRAPPER_PROGRAM_ID } from '../client/ts/src/wrapper';
 import {
   DEFAULT_MAX_UNBACKED_SIMS,
@@ -29,6 +30,170 @@ import {
 } from './collector-core';
 
 const { RPC_URL, KEYPAIR_PATH } = process.env;
+
+export type FillSnapshot = ReadonlyMap<string, number>;
+
+/**
+ * Fills waiting for a confirmed market sweep. The generation is deliberately
+ * local rather than a Solana slot: it only prevents a fill that arrives during
+ * a sweep from being cleared with the older fill that caused that sweep.
+ */
+export class PendingFillMarkets {
+  private readonly generations = new Map<string, number>();
+  private nextGeneration = 1;
+
+  record(market: string): void {
+    this.generations.set(market, this.nextGeneration);
+    this.nextGeneration += 1;
+  }
+
+  snapshot(): FillSnapshot {
+    return new Map(this.generations);
+  }
+
+  acknowledge(markets: readonly string[], snapshot: FillSnapshot): number {
+    let cleared = 0;
+    for (const market of markets) {
+      const observedGeneration = snapshot.get(market);
+      if (
+        observedGeneration !== undefined &&
+        this.generations.get(market) === observedGeneration
+      ) {
+        this.generations.delete(market);
+        cleared += 1;
+      }
+    }
+    return cleared;
+  }
+
+  get size(): number {
+    return this.generations.size;
+  }
+}
+
+type FillWatcher = {
+  waitUntilConnected: () => Promise<void>;
+  snapshot: () => FillSnapshot;
+  acknowledge: (
+    markets: readonly string[],
+    snapshot: FillSnapshot,
+  ) => number;
+  pendingCount: () => number;
+  close: () => void;
+};
+
+/** One in-process, reconnecting subscription to the live Manifest fill feed. */
+export function createFillWatcher(
+  feedUrl =
+    process.env.FILL_FEED_URL ?? 'wss://mfx-feed-mainnet.fly.dev',
+): FillWatcher {
+  const pending = new PendingFillMarkets();
+  let activeSocket: WebSocket | undefined;
+  let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
+  let connected = false;
+  let stopped = false;
+  let backoffMs = 1_000;
+  let waiters: {
+    resolve: () => void;
+    reject: (error: Error) => void;
+  }[] = [];
+
+  const releaseWaiters = () => {
+    const ready = waiters;
+    waiters = [];
+    for (const waiter of ready) waiter.resolve();
+  };
+
+  const connect = () => {
+    if (stopped || activeSocket !== undefined || reconnectTimer !== undefined)
+      return;
+    const ws = new WebSocket(feedUrl);
+    activeSocket = ws;
+    let opened = false;
+    let closeReason = 'closed';
+
+    ws.on('open', () => {
+      if (activeSocket !== ws || stopped) return;
+      opened = true;
+      connected = true;
+      backoffMs = 1_000;
+      console.log(`Fill feed connected: ${feedUrl}`);
+      releaseWaiters();
+    });
+
+    ws.on('message', (data) => {
+      let fill: unknown;
+      try {
+        fill = JSON.parse(String(data));
+      } catch {
+        return;
+      }
+      const market =
+        fill !== null && typeof fill === 'object' && 'market' in fill
+          ? (fill as { market?: unknown }).market
+          : undefined;
+      if (typeof market === 'string') pending.record(market);
+    });
+
+    ws.on('error', (error) => {
+      closeReason = `error: ${error.message}`;
+      // `close` is the sole reconnect path, so one failed socket can create
+      // only one replacement even when ws emits both error and close.
+      ws.terminate();
+    });
+
+    ws.on('close', () => {
+      if (activeSocket !== ws) return;
+      activeSocket = undefined;
+      connected = false;
+      if (stopped) return;
+      if (!opened) backoffMs = Math.min(backoffMs * 2, 30_000);
+      console.warn(
+        `Fill feed ${closeReason}; reconnecting in ${backoffMs}ms`,
+      );
+      reconnectTimer = setTimeout(() => {
+        reconnectTimer = undefined;
+        connect();
+      }, backoffMs);
+    });
+  };
+
+  connect();
+  return {
+    waitUntilConnected() {
+      if (connected) return Promise.resolve();
+      if (stopped) return Promise.reject(new Error('fill feed stopped'));
+      return new Promise<void>((resolve, reject) => {
+        waiters.push({ resolve, reject });
+      });
+    },
+    snapshot() {
+      if (!connected) throw new Error('fill feed disconnected before pass');
+      return pending.snapshot();
+    },
+    acknowledge(markets, snapshot) {
+      return pending.acknowledge(markets, snapshot);
+    },
+    pendingCount() {
+      return pending.size;
+    },
+    close() {
+      if (stopped) return;
+      stopped = true;
+      connected = false;
+      if (reconnectTimer !== undefined) {
+        clearTimeout(reconnectTimer);
+        reconnectTimer = undefined;
+      }
+      const error = new Error('fill feed stopped');
+      for (const waiter of waiters) waiter.reject(error);
+      waiters = [];
+      const ws = activeSocket;
+      activeSocket = undefined;
+      if (ws !== undefined) ws.close();
+    },
+  };
+}
 
 // One tracker for the whole process, so --loop passes can tell an order that
 // has rested unchanged since the last pass from a fast-churning one. Only
@@ -616,7 +781,7 @@ async function simulateTransaction(
   return simulation.value;
 }
 
-async function run(): Promise<void> {
+async function run(fillWatcher?: FillWatcher): Promise<void> {
   if (process.argv.includes('--help')) {
     console.log(`Usage:
   yarn collect:wrapper-fees --wrapper=ADDRESS
@@ -687,6 +852,10 @@ Options:
                              pass that overruns the interval is followed
                              immediately by the next - never concurrently - and
                              a pass that errors is logged and the loop continues.
+  --filled-since-defrag      With --markets and --loop, keep one fill-feed socket
+                             in this process and sweep only markets filled since
+                             their last confirmed sweep. No state directory or
+                             separate watcher process is used.
 
 Execution safety:
   Every transaction is simulated before submission. Ctrl-C stops before the
@@ -701,7 +870,9 @@ Environment:
   CLEAN_SKIP_TRADERS         Maker pubkeys (comma/space separated) never cleaned.
   MAX_UNBACKED_SIMS          Alternative unbacked-sim cap (default ${DEFAULT_MAX_UNBACKED_SIMS}).
   UNBACKED_STATE_PATH        If set, persist the unbacked-order baseline here so
-                             a restart keeps "unchanged since last run" state.`);
+                             a restart keeps "unchanged since last run" state.
+  FILL_FEED_URL              Fill feed override for --filled-since-defrag
+                             (default wss://mfx-feed-mainnet.fly.dev).`);
     return;
   }
 
@@ -712,6 +883,7 @@ Environment:
   const withDefrag = process.argv.includes('--defrag');
   // Core-program phases. Opt-in, so every existing invocation is unchanged.
   const sweepMarkets = process.argv.includes('--markets');
+  const filledSinceDefrag = process.argv.includes('--filled-since-defrag');
   const globalClean = process.argv.includes('--global-clean');
   const cleanUnbacked = process.argv.includes('--clean-unbacked');
   const maxUnbackedSims =
@@ -737,6 +909,16 @@ Environment:
   if (tailTighten && !sweepMarkets) {
     throw new Error(
       '--tail-tighten applies to the market sweep; pass --markets as well',
+    );
+  }
+  if (filledSinceDefrag && !sweepMarkets) {
+    throw new Error(
+      '--filled-since-defrag filters the market sweep; pass --markets as well',
+    );
+  }
+  if (filledSinceDefrag && fillWatcher === undefined) {
+    throw new Error(
+      '--filled-since-defrag requires --loop=SECONDS so fills can be observed between passes',
     );
   }
   // GlobalClean pays one gas deposit per order and a transaction costs one
@@ -789,7 +971,16 @@ Environment:
   process.on('SIGINT', onInterrupt);
 
   if (sweepMarkets || globalClean) {
+    const fillSnapshot = filledSinceDefrag
+      ? fillWatcher!.snapshot()
+      : undefined;
+    let acknowledgedFills = 0;
     console.log(`Mode: ${execute ? 'EXECUTE' : 'DRY RUN'} (core phases)`);
+    if (fillSnapshot !== undefined) {
+      console.log(
+        `Filled-since-defrag: ${fillSnapshot.size} markets pending from the live feed`,
+      );
+    }
     const coreResult = await runCoreCollections(
       {
         rpc,
@@ -902,6 +1093,19 @@ Environment:
       {
         execute,
         sweepMarkets,
+        sweepMarketPubkeys:
+          fillSnapshot === undefined
+            ? undefined
+            : new Set(fillSnapshot.keys()),
+        onMarketsSwept:
+          fillSnapshot === undefined
+            ? undefined
+            : (markets) => {
+                acknowledgedFills += fillWatcher!.acknowledge(
+                  markets,
+                  fillSnapshot,
+                );
+              },
         globalClean,
         cleanUnbacked,
         maxUnbackedSims,
@@ -923,7 +1127,15 @@ Environment:
           : '') +
         `)`,
     );
-    if (coreOnly) return;
+    if (fillSnapshot !== undefined) {
+      console.log(
+        `Fill queue: ${acknowledgedFills} confirmed markets cleared; ${fillWatcher!.pendingCount()} pending`,
+      );
+    }
+    if (coreOnly) {
+      process.off('SIGINT', onInterrupt);
+      return;
+    }
   }
 
   console.log(`Mode: ${execute ? 'EXECUTE' : 'DRY RUN'}`);
@@ -1267,14 +1479,29 @@ Environment:
 }
 
 // Optionally run forever on an interval instead of once, so the collector can
-// be left running without an external cron. Each pass is an independent full
-// collection (the script keeps no state between passes), so a pass that throws
-// is logged and the loop simply continues to the next one rather than dying.
+// be left running without an external cron. A normal pass is a full collection;
+// fill-filtered mode carries only its in-memory pending market set between
+// passes. A pass that throws is logged and the loop continues rather than dying.
 // run() installs and removes its own SIGINT handler per pass; the loop adds its
 // own flag so Ctrl-C stops it between passes and during the interval sleep too.
 async function main(): Promise<void> {
   loadUnbackedState();
+  if (process.argv.includes('--help')) {
+    await run();
+    return;
+  }
   const loopArg = process.argv.find((a) => a.startsWith('--loop='))?.slice(7);
+  const filledSinceDefrag = process.argv.includes('--filled-since-defrag');
+  if (filledSinceDefrag && loopArg === undefined) {
+    throw new Error(
+      '--filled-since-defrag requires --loop=SECONDS so fills can be observed between passes',
+    );
+  }
+  if (filledSinceDefrag && !process.argv.includes('--markets')) {
+    throw new Error(
+      '--filled-since-defrag filters the market sweep; pass --markets as well',
+    );
+  }
   if (loopArg === undefined) {
     await run();
     saveUnbackedState();
@@ -1286,13 +1513,16 @@ async function main(): Promise<void> {
       `invalid --loop: ${loopArg} (interval in seconds, must be > 0)`,
     );
   }
+  const fillWatcher = filledSinceDefrag ? createFillWatcher() : undefined;
   let stopLoop = false;
-  process.on('SIGINT', () => {
+  const onLoopInterrupt = () => {
     stopLoop = true;
+    fillWatcher?.close();
     console.error(
       '\nStop requested; finishing the current pass, then exiting the loop.',
     );
-  });
+  };
+  process.on('SIGINT', onLoopInterrupt);
   // Fixed-rate schedule: a pass starts every `loopSeconds` measured from the
   // PREVIOUS pass's start, not from its end, so run time does not stack on top
   // of the interval. If a pass runs longer than the interval, the next starts
@@ -1300,37 +1530,51 @@ async function main(): Promise<void> {
   // sequential, so there is no overlap), and the schedule simply stops drifting
   // further behind rather than trying to catch up with back-to-back passes.
   const intervalMs = loopSeconds * 1000;
-  for (let pass = 1; !stopLoop; pass += 1) {
-    const startedAt = Date.now();
-    console.log(
-      `\n===== collection pass ${pass} @ ${new Date().toISOString()} =====`,
-    );
-    try {
-      await run();
-    } catch (error) {
-      console.error(
-        `pass ${pass} failed:`,
-        error instanceof Error ? error.message : error,
-      );
-    }
-    // Persist after every pass (even a failed one), so a restart resumes from
-    // the latest baseline rather than re-establishing it from scratch.
-    saveUnbackedState();
-    if (stopLoop) break;
-    const elapsedMs = Date.now() - startedAt;
-    const waitMs = intervalMs - elapsedMs;
-    if (waitMs > 0) {
+  try {
+    for (let pass = 1; !stopLoop; pass += 1) {
+      if (fillWatcher !== undefined) {
+        console.log('Waiting for the fill feed before the next pass...');
+        try {
+          await fillWatcher.waitUntilConnected();
+        } catch (error) {
+          if (stopLoop) break;
+          throw error;
+        }
+      }
+      const startedAt = Date.now();
       console.log(
-        `pass took ${(elapsedMs / 1000).toFixed(1)}s; sleeping ${(waitMs / 1000).toFixed(1)}s ` +
-          `to keep the ${loopSeconds}s interval (Ctrl-C to stop)`,
+        `\n===== collection pass ${pass} @ ${new Date().toISOString()} =====`,
       );
-      await sleep(waitMs, () => stopLoop);
-    } else {
-      console.log(
-        `pass took ${(elapsedMs / 1000).toFixed(1)}s, over the ${loopSeconds}s interval; ` +
-          `starting the next pass immediately`,
-      );
+      try {
+        await run(fillWatcher);
+      } catch (error) {
+        console.error(
+          `pass ${pass} failed:`,
+          error instanceof Error ? error.message : error,
+        );
+      }
+      // Persist after every pass (even a failed one), so a restart resumes from
+      // the latest unbacked-order baseline. Fill state stays memory-only.
+      saveUnbackedState();
+      if (stopLoop) break;
+      const elapsedMs = Date.now() - startedAt;
+      const waitMs = intervalMs - elapsedMs;
+      if (waitMs > 0) {
+        console.log(
+          `pass took ${(elapsedMs / 1000).toFixed(1)}s; sleeping ${(waitMs / 1000).toFixed(1)}s ` +
+            `to keep the ${loopSeconds}s interval (Ctrl-C to stop)`,
+        );
+        await sleep(waitMs, () => stopLoop);
+      } else {
+        console.log(
+          `pass took ${(elapsedMs / 1000).toFixed(1)}s, over the ${loopSeconds}s interval; ` +
+            `starting the next pass immediately`,
+        );
+      }
     }
+  } finally {
+    fillWatcher?.close();
+    process.off('SIGINT', onLoopInterrupt);
   }
   console.log('loop stopped.');
 }
