@@ -21,7 +21,7 @@ RPC_URL=<url> KEYPAIR_PATH=<collector.json> \
 node scripts/defrag/defrag.mjs --help    # full flag reference
 ```
 
-Dependencies are the repo's own (`@solana/web3.js`, `@solana/kit`, `bs58`);
+Dependencies are the repo's own (`@solana/web3.js`, `@solana/kit`, `bs58`, `ws`);
 nothing extra to install.
 
 ## What it does, and what's safe
@@ -47,24 +47,32 @@ free blocks) are never selected — that would cost the collector rent for no
 gain. Market closure is double-gated (`--allow-close` **and**
 `--yes-destroy-market-addresses`) and off by default.
 
-## Limiting a sweep to markets that traded
+## Continuously sweeping markets that traded
 
-`--filled-since-defrag` keeps only markets the fill feed saw trade since the
-last defrag recorded for them, so a pass touches books that are actually
-trading.
+`--loop=SECONDS` is the existing long-running sweep control. By itself it
+repeats ordinary, unfiltered sweep-only passes. Add the explicit
+`--filled-since-defrag` flag to open the fill-feed WebSocket, retain each
+market's newest fill slot in memory, and filter later passes to markets filled
+since their last sweep. There is no second process, fill state file, or shared
+watcher state directory.
 
-Fills come from the feed, which is a live broadcaster — no history, no replay,
-no per-market query — so something has to be listening between sweeps.
-`fill-watcher.mjs` does that, and must be running wherever the sweep is
-scheduled, pointed at the same `--state-dir`:
+`--loop=SECONDS` is the start-to-start interval between passes in this mode,
+matching the collector's existing fixed-rate loop convention. If a pass takes
+longer than the interval, the next pass starts immediately. `--pace=MS` retains
+its existing meaning as the delay between transactions within a pass. For
+example, an hourly production loop is:
 
 ```bash
-node scripts/defrag/fill-watcher.mjs --state-dir=./defrag-state
+RPC_URL=<url> KEYPAIR_PATH=<collector.json> \
+  node scripts/defrag/defrag.mjs \
+    --sweep-only --all --v1 --execute \
+    --loop=3600 --filled-since-defrag
 ```
 
-It keeps `fill-state.json` (market → newest fill slot) written atomically, and
-reloads it on start, so a restart only loses fills that happened while it was
-down.
+`--loop` requires `--sweep-only` and keeps the process alive.
+`--filled-since-defrag` is opt-in and requires `--loop`; it never changes a
+one-shot run. Without `--execute`, the loop continuously performs dry runs
+until stopped.
 
 How the comparison works:
 
@@ -78,22 +86,16 @@ How the comparison works:
 - A market with no logged defrag is **kept** — there is no "since" to measure.
   So a fresh `--state-dir`, or a new `--log=` file, keeps everything and the
   filter appears to do nothing.
-- If the watcher's recorded slot is more than ~5,000 slots behind the chain, the
-  run **fails** rather than filtering. A dead watcher makes every market look
-  unfilled, which is the one failure mode here that quietly shrinks the sweep,
-  so it is made loud.
-- The state records `coverageFrom`, the slot from which observation has been
-  continuous. A market whose last sweep predates that is **kept**: the watcher
-  was not listening then, so its silence says nothing. Restarting after more
-  than ~150 slots of downtime resets the window, and a state file written before
-  this field existed is treated as covering nothing.
-- Brief WebSocket disconnects within a watcher process are accepted and do not
-  reset `coverageFrom`. A fill broadcast only during such a gap can be missed;
-  that market becomes eligible when another fill is observed. The stale-state
-  gate still rejects a watcher that remains materially behind when a sweep
-  starts.
+- Coverage starts when the process first connects. A market whose last sweep
+  predates that is **kept** because the process cannot judge fills it did not
+  observe. The first pass after each process start is therefore conservative
+  and establishes fresh baselines for the markets it sweeps.
+- The process waits for the WebSocket to reconnect before starting another
+  pass. Brief disconnects during its lifetime are accepted without resetting
+  coverage; a fill broadcast only during such a gap can be missed, and that
+  market becomes eligible when another fill is observed.
 
-A consequence: the filter does little until the watcher has been up longer than
+A consequence: the filter does little until the process has been up longer than
 the usual gap since a market was last swept. Early on most markets come back
 unobserved and are kept; it tightens as coverage grows. That is deliberate — the
 alternative is dropping markets the watcher simply never saw.
@@ -110,16 +112,18 @@ Two things worth knowing before using it:
 - `--quiet-only` selects the opposite set and is rejected in combination.
 - `--use-cached-plan` is rejected because cached membership can include markets
   already completed by a partial run or omit markets that filled afterward.
-  Filtered runs rebuild membership from current fill state and do not overwrite
-  the ordinary plan cache.
+  Looped passes rebuild membership from current state and do not overwrite the
+  ordinary plan cache.
 
 ## State
 
 Logs, the plan cache, and any abort record are written under `--state-dir`
-(default `./defrag-state`, created on demand). The run is resumable: a market
-recorded confirmed is skipped on the next run with the same parameters, so a
-paced rollout is just the same command again. State is keyed by operation, so a
-sweep and a relocation of the same market don't shadow each other.
+(default `./defrag-state`, created on demand). An ordinary one-shot run is
+resumable: a market recorded confirmed is skipped on the next run with the same
+parameters. Continuous fill mode instead uses each confirmation slot as that
+market's next fill baseline; an unfiltered loop re-evaluates every market each
+pass. State is keyed by operation, so a sweep and a relocation of the same
+market don't shadow each other.
 
 ## Safety rails built in
 
