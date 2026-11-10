@@ -33,8 +33,9 @@
 //   --execute                submit; omit for a read-only dry run
 //   --v1                     pack as v1 transactions (up to 19 markets/tx)
 //   --batch / --no-batch     force or forbid batching (sweep-only batches by default)
-//   --pace=MS                delay between transactions (default 3000); required
-//                            as the sweep interval in --filled-since-defrag mode
+//   --pace=MS                delay between transactions (default 3000)
+//   --loop=SECONDS           fixed-rate interval between continuous sweeps;
+//                            required with --filled-since-defrag
 //   --health-every=N         sample program health every N transactions (0 disables)
 //   --state-dir=DIR          where logs/plan cache/abort state live (default ./defrag-state)
 //   --use-cached-plan        reuse a recent unfiltered plan cache instead of re-simulating
@@ -532,16 +533,19 @@ const CU_BUDGET = 1_300_000;
 const QUIET_SLOTS = 216_000; // ~1 day
 const paceArg = process.argv.find((a) => a.startsWith('--pace='))?.slice(7);
 const PACE_MS = paceArg === undefined ? 3_000 : Number(paceArg);
-if (filledSinceDefrag && paceArg === undefined) {
-  throw new Error('--filled-since-defrag requires --pace=MS as its sweep interval');
+if (!Number.isFinite(PACE_MS) || PACE_MS < 0) throw new Error(`invalid --pace: ${paceArg}`);
+const loopArg = process.argv.find((a) => a.startsWith('--loop='))?.slice(7);
+if (filledSinceDefrag && loopArg === undefined) {
+  throw new Error('--filled-since-defrag requires --loop=SECONDS as its sweep frequency');
 }
-if (!Number.isFinite(PACE_MS) || PACE_MS < 0 || (filledSinceDefrag && PACE_MS === 0)) {
-  throw new Error(`invalid --pace: ${paceArg}`);
+if (!filledSinceDefrag && loopArg !== undefined) {
+  throw new Error('--loop=SECONDS is only supported with --filled-since-defrag');
 }
-// In continuous mode --pace is the sweep cadence. Transactions inside a pass
-// keep the ordinary three-second gap so an hourly cadence does not also make an
-// hourly gap between transactions.
-const TRANSACTION_DELAY_MS = filledSinceDefrag ? 3_000 : PACE_MS;
+const LOOP_SECONDS = loopArg === undefined ? undefined : Number(loopArg);
+if (LOOP_SECONDS !== undefined && (!Number.isFinite(LOOP_SECONDS) || LOOP_SECONDS <= 0)) {
+  throw new Error(`invalid --loop: ${loopArg} (interval in seconds, must be > 0)`);
+}
+const LOOP_INTERVAL_MS = LOOP_SECONDS === undefined ? undefined : LOOP_SECONDS * 1_000;
 
 // A market's lamports grow from `pay_advanced_order_fee` (5000 lamports per
 // batch that PLACES a global or reverse order) and its free tail grows when any
@@ -1221,7 +1225,7 @@ while (queue.length) {
       process.exit(2);
     }
   }
-  if (queue.length) await new Promise((r) => setTimeout(r, TRANSACTION_DELAY_MS));
+  if (queue.length) await new Promise((r) => setTimeout(r, PACE_MS));
 }
 console.log(`\nDefragged ${doneCount}/${selected.length} markets in ${sent} transactions, recovered ${(recoveredTotal / 1e9).toFixed(3)} SOL (market lamports; vault excess sweeps additionally to collector token accounts).`);
 }
@@ -1236,10 +1240,10 @@ if (filledSinceDefrag) {
     console.log(`\n========== continuous sweep ${cycle} | ${new Date(startedAt).toISOString()} ==========`);
     await runSweep(fillTracker);
     const elapsed = Date.now() - startedAt;
-    const waitMs = Math.max(0, PACE_MS - elapsed);
+    const waitMs = Math.max(0, LOOP_INTERVAL_MS - elapsed);
     console.log(
       `\ncontinuous sweep ${cycle} finished in ${(elapsed / 60_000).toFixed(1)} min; ` +
-        `next start in ${(waitMs / 60_000).toFixed(1)} min (--pace=${PACE_MS})`,
+        `next start in ${(waitMs / 60_000).toFixed(1)} min (--loop=${LOOP_SECONDS})`,
     );
     await new Promise((resolve) => setTimeout(resolve, waitMs));
   }

@@ -54,20 +54,21 @@ opens the fill-feed WebSocket itself, retains each market's newest fill slot in
 memory, and repeatedly runs sweep-only passes. There is no second process, fill
 state file, or shared watcher state directory.
 
-`--pace=MS` is the start-to-start interval between passes in this mode. If a
-pass takes longer than the interval, the next pass starts immediately.
-Transactions within a pass remain three seconds apart. For example, an hourly
-production loop is:
+`--loop=SECONDS` is the start-to-start interval between passes in this mode,
+matching the collector's existing fixed-rate loop convention. If a pass takes
+longer than the interval, the next pass starts immediately. `--pace=MS` retains
+its existing meaning as the delay between transactions within a pass. For
+example, an hourly production loop is:
 
 ```bash
 RPC_URL=<url> KEYPAIR_PATH=<collector.json> \
   node scripts/defrag/defrag.mjs \
     --sweep-only --all --v1 --execute \
-    --filled-since-defrag --pace=3600000
+    --filled-since-defrag --loop=3600
 ```
 
-The flag requires `--sweep-only` and keeps the process alive. Without
-`--execute` it continuously performs dry runs until stopped.
+The flag requires `--sweep-only` and `--loop=SECONDS`, and keeps the process
+alive. Without `--execute` it continuously performs dry runs until stopped.
 
 How the comparison works:
 

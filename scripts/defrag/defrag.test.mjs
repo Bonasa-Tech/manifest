@@ -71,22 +71,22 @@ function waitForExit(child, timeoutMs = 8_000) {
   });
 }
 
-test('fill mode requires sweep-only and an explicit pace', async () => {
+test('fill mode requires sweep-only and an explicit loop frequency', async () => {
   const missingSweep = runDefrag(
-    ['--filled-since-defrag', '--all', '--pace=1000'],
+    ['--filled-since-defrag', '--all', '--loop=1'],
     { RPC_URL: 'http://127.0.0.1:1' },
   );
   const missingSweepResult = await waitForExit(missingSweep.child);
   assert.equal(missingSweepResult.code, 1);
   assert.match(missingSweep.getOutput(), /requires --sweep-only/);
 
-  const missingPace = runDefrag(
+  const missingLoop = runDefrag(
     ['--filled-since-defrag', '--sweep-only', '--all'],
     { RPC_URL: 'http://127.0.0.1:1' },
   );
-  const missingPaceResult = await waitForExit(missingPace.child);
-  assert.equal(missingPaceResult.code, 1);
-  assert.match(missingPace.getOutput(), /requires --pace=MS/);
+  const missingLoopResult = await waitForExit(missingLoop.child);
+  assert.equal(missingLoopResult.code, 1);
+  assert.match(missingLoop.getOutput(), /requires --loop=SECONDS/);
 });
 
 test('ordinary dry runs remain one-shot and write the ordinary plan cache', async (t) => {
@@ -139,7 +139,7 @@ test('fill mode owns one reconnecting socket and repeats without fill-state file
       '--all',
       '--v1',
       '--filled-since-defrag',
-      '--pace=250',
+      '--loop=0.25',
       `--state-dir=${stateDir}`,
     ],
     {
