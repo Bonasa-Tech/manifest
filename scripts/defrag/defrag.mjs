@@ -23,6 +23,10 @@
 // Scope / safety:
 //   --min-shrink=N           only markets whose free tail truncates >= N blocks
 //   --quiet-only             skip markets traded within ~1 day
+//   --filled-since-defrag    only markets the fill feed saw trade since their
+//                            last recorded defrag (needs fill-watcher.mjs running)
+//   --fill-state=NAME        fill-watcher state file in --state-dir
+//                            (default fill-state.json)
 //   --include-active         allow active markets (warn integrators first)
 //   --allow-close            permit closing emptied markets  (also needs --yes-destroy-market-addresses)
 //   --max-markets=N          cap per run, highest recovery first
@@ -34,7 +38,8 @@
 //   --pace=MS                delay between transactions (default 3000)
 //   --health-every=N         sample program health every N transactions (0 disables)
 //   --state-dir=DIR          where logs/plan cache/abort state live (default ./defrag-state)
-//   --use-cached-plan        reuse a recent plan cache instead of re-simulating
+//   --use-cached-plan        reuse a recent unfiltered plan cache instead of re-simulating
+//                            (not supported with --filled-since-defrag)
 //   --ignore-log             do not skip markets already recorded done
 //
 // Dry run first, always. A sweep-only run relocates nothing and is safe on any
@@ -441,6 +446,22 @@ const describeHealth = (h) =>
 // ===== runner =====
 const execute = process.argv.includes('--execute');
 const quietOnly = process.argv.includes('--quiet-only');
+const filledSinceDefrag = process.argv.includes('--filled-since-defrag');
+const useCachedPlan = process.argv.includes('--use-cached-plan');
+// --quiet-only wants markets with no trading in ~a day; --filled-since-defrag
+// wants markets that traded since the last sweep. On any sweep cadence shorter
+// than a day the two sets barely intersect, so asking for both is almost
+// certainly not what the operator meant.
+if (filledSinceDefrag && process.argv.includes('--quiet-only')) {
+  throw new Error(
+    '--quiet-only and --filled-since-defrag select opposite sets (untraded vs traded); choose one',
+  );
+}
+if (filledSinceDefrag && useCachedPlan) {
+  throw new Error(
+    '--use-cached-plan is not supported with --filled-since-defrag; rebuild the plan from current fill state',
+  );
+}
 const includeActive = process.argv.includes('--include-active');
 const all = process.argv.includes('--all');
 // Market closure is irreversible and destroys the address; opt in per run.
@@ -507,6 +528,71 @@ const WIRE_BUDGET = 1210;
 const CU_BUDGET = 1_300_000;
 const closures = [];
 const QUIET_SLOTS = 216_000; // ~1 day
+// A market's lamports grow from `pay_advanced_order_fee` (5000 lamports per
+// batch that PLACES a global or reverse order) and its free tail grows when any
+// order leaves, by cancel or expiry as much as by fill. So "had a fill" is
+// strictly narrower than "accrued something a sweep would collect": this filter
+// trades recovery for fewer transactions, it does not identify all the markets
+// worth sweeping. Measure before relying on it.
+// Fills come from the fill feed (wss://mfx-feed-mainnet.fly.dev), which is a
+// live broadcaster: it has no history and no replay, so a one-shot run cannot
+// ask it what traded since the last sweep. `fill-watcher.mjs` stays connected
+// between sweeps and records market -> last fill slot into the state dir; this
+// reads that file. Keep the watcher running wherever the sweep is scheduled.
+const fillStatePath = path.join(stateDir, flag('fill-state') ?? 'fill-state.json');
+// The watcher records the newest slot it has seen. If it died, that stalls
+// while the chain moves on, and every market then looks unfilled - the one
+// failure mode of this filter that loses money silently. Refuse to filter past
+// this much drift.
+const FILL_STATE_MAX_LAG_SLOTS = 5_000; // ~33 min
+let fillState;
+
+/// market -> newest fill slot the watcher has recorded, plus how far behind the
+/// chain the watcher itself is.
+function loadFillState() {
+  if (!fs.existsSync(fillStatePath)) {
+    throw new Error(
+      `--filled-since-defrag needs ${fillStatePath}, written by fill-watcher.mjs.\n` +
+        `  Start it first:  node scripts/defrag/fill-watcher.mjs --state-dir=${stateDir}`,
+    );
+  }
+  const raw = JSON.parse(fs.readFileSync(fillStatePath, 'utf8'));
+  if (!raw || typeof raw.lastSeenSlot !== 'number' || typeof raw.markets !== 'object') {
+    throw new Error(`${fillStatePath} is not a fill-watcher state file`);
+  }
+  // A state file from before coverageFrom existed cannot vouch for any window,
+  // so treat its whole history as unobserved rather than as silence.
+  if (typeof raw.coverageFrom !== 'number') raw.coverageFrom = Infinity;
+  return raw;
+}
+
+/// Slot of the last logged defrag for a market whose log entry predates the
+/// `slot` field, read from the recorded signature. Memoized into
+/// lastDefragSlot, and a signature too old to be served resolves to undefined,
+/// which the caller treats as "never defragged".
+async function resolveLoggedDefragSlot(pubkey) {
+  const sig = lastDefragSig.get(pubkey);
+  if (!sig) return undefined;
+  const st = await rpc('getSignatureStatuses', [[sig], { searchTransactionHistory: true }], { retries: 2 })
+    .then((r) => r.value[0])
+    .catch(() => null);
+  if (!st || typeof st.slot !== 'number') return undefined;
+  lastDefragSlot.set(pubkey, st.slot);
+  return st.slot;
+}
+
+/// Whether the feed saw a fill on `market` at or after `sinceSlot`.
+/// `unknown` means the watcher was not yet observing at `sinceSlot`, so its
+/// silence carries no information: the market may well have filled before the
+/// watcher started. Callers keep those, exactly as they keep markets that have
+/// never been defragged.
+function hadFillSince(pubkey, sinceSlot) {
+  const lastFill = fillState.markets[pubkey];
+  if (lastFill !== undefined && lastFill >= sinceSlot) return { filled: true, unknown: false };
+  if (sinceSlot < fillState.coverageFrom) return { filled: false, unknown: true };
+  return { filled: false, unknown: false };
+}
+
 const paceArg = process.argv.find((a) => a.startsWith('--pace='))?.slice(7);
 const DELAY_MS = paceArg === undefined ? 3_000 : Number(paceArg);
 if (!Number.isFinite(DELAY_MS) || DELAY_MS < 0) throw new Error(`invalid --pace: ${paceArg}`);
@@ -544,14 +630,38 @@ const modeKey = JSON.stringify({ budget, seatBudget, allowClose });
 // and are treated as done for any mode, which preserves the Stage 2 resume
 // behaviour its log was built under.
 const ignoreLog = process.argv.includes('--ignore-log');
+const logEntries = fs.existsSync(logPath)
+  ? fs.readFileSync(logPath, 'utf8').trim().split('\n').filter(Boolean).map((l) => JSON.parse(l))
+  : [];
+// A filtered recurring sweep uses prior confirmations as per-market baselines,
+// not as terminal "done" markers. The fill comparison below provides the
+// idempotence instead: no later fill skips the market, while a later fill makes
+// it eligible again. This also lets the same log span repeated scheduled runs.
 const done = new Set(
-  fs.existsSync(logPath) && !ignoreLog
-    ? fs.readFileSync(logPath, 'utf8').trim().split('\n').filter(Boolean)
-        .map((l) => JSON.parse(l))
+  ignoreLog || filledSinceDefrag
+    ? []
+    : logEntries
         .filter((e) => e.status === 'confirmed' && (e.mode === undefined || e.mode === modeKey))
-        .map((e) => e.market)
-    : [],
+        .map((e) => e.market),
 );
+// Last slot at which ANY defrag landed on each market, regardless of mode:
+// "fills since the last defrag" asks when the account was last swept, which a
+// sweep-only pass answers just as well as a relocation. Entries written before
+// the slot was recorded have only `at`; they are resolved from their signature
+// on demand, and a market with neither has never been defragged under this log.
+const lastDefragSlot = new Map();
+const lastDefragSig = new Map();
+for (const e of logEntries) {
+  if (e.status !== 'confirmed') continue;
+  if (typeof e.slot === 'number') {
+    if (!(lastDefragSlot.get(e.market) >= e.slot)) lastDefragSlot.set(e.market, e.slot);
+  } else if (e.sig) {
+    // A slot-bearing entry wins over a signature-only one even when the latter
+    // is newer. That can only widen the window, which keeps a market the
+    // filter might otherwise drop - the error that costs nothing.
+    lastDefragSig.set(e.market, e.sig);
+  }
+}
 
 let markets = await resolveTokenPrograms(rpc, await listMarkets(rpc));
 const modeLabel = budget === undefined
@@ -562,6 +672,14 @@ const modeLabel = budget === undefined
   ? `SEATS-ONLY (relocate nothing, reclaim ${seatBudget === undefined ? 'every' : seatBudget} empty seat${seatBudget === 1 ? '' : 's'})`
   : `BOUNDED run (relocations ${budget}${seatBudget === undefined ? '' : `, seats ${seatBudget}`})`;
 console.log(`mode: ${modeLabel} | ${execute ? 'EXECUTE' : 'DRY RUN'} | closures ${allowClose ? 'INCLUDED' : 'excluded'}`);
+if (filledSinceDefrag) {
+  console.log(
+    '--filled-since-defrag: only markets with a FillLog since their last logged defrag.\n' +
+      '  Accrued fees come from order PLACEMENT (5000 lamports per advanced-order batch) and the\n' +
+      '  free tail grows on cancels and expiries too, so this drops real recovery. It reduces\n' +
+      `  transactions, not planning cost. Baseline available for ${lastDefragSlot.size + lastDefragSig.size} markets in ${path.basename(logPath)}.`,
+  );
+}
 console.log(`markets on mainnet: ${markets.length}${done.size ? ` (${done.size} already done in log)` : ''}`);
 // An explicit market set, so a screened list can be run without pasting
 // hundreds of addresses. Accepts either a bare JSON array of addresses or the
@@ -591,6 +709,34 @@ if (listArg) {
 markets = markets.filter((m) => !done.has(m.pubkey));
 
 const currentSlot = await rpc('getSlot', [{ commitment: 'confirmed' }]);
+// Fail fast on a stale fill index. A feed that is behind reports "no fills" for
+// markets that have just traded, which would silently drop them from the sweep
+// - the one failure mode of this filter that loses money without saying so.
+if (filledSinceDefrag) {
+  fillState = loadFillState();
+  const lag = currentSlot - fillState.lastSeenSlot;
+  if (lag > FILL_STATE_MAX_LAG_SLOTS) {
+    throw new Error(
+      `${fillStatePath} is ${lag} slots behind chain (limit ${FILL_STATE_MAX_LAG_SLOTS}); ` +
+        'the fill watcher is probably not running, and every market would look unfilled. ' +
+        'Restart fill-watcher.mjs and let it catch up, or re-run without --filled-since-defrag',
+    );
+  }
+  const coverageSlots = Number.isFinite(fillState.coverageFrom)
+    ? currentSlot - fillState.coverageFrom
+    : 0;
+  console.log(
+    `fill state: ${Object.keys(fillState.markets).length} markets with fills, ` +
+      `watcher ${lag} slots behind chain, continuous coverage for the last ` +
+      `${coverageSlots} slots (~${(coverageSlots / 150).toFixed(0)} min) (recorded ${fillState.updatedAt})`,
+  );
+  if (coverageSlots < 9_000) {
+    console.log(
+      '  coverage is shorter than a few sweep intervals, so markets swept before the\n' +
+        '  watcher started are kept rather than judged. The filter tightens as it runs.',
+    );
+  }
+}
 
 // Simulating every candidate costs one RPC round trip per market, which is
 // around nine minutes over four thousand markets with nothing printed. That is
@@ -604,7 +750,6 @@ const currentSlot = await rpc('getSlot', [{ commitment: 'confirmed' }]);
 // keyed by the mode, since postSpace and recovered depend on the budgets.
 const planCachePath = path.join(stateDir, 'plan-cache.json');
 const PLAN_CACHE_MAX_AGE_MS = 60 * 60_000;
-const useCachedPlan = process.argv.includes('--use-cached-plan');
 const plan = [];
 let planFromCache = false;
 if (useCachedPlan) {
@@ -612,6 +757,11 @@ if (useCachedPlan) {
   const cache = JSON.parse(fs.readFileSync(planCachePath, 'utf8'));
   const ageMs = Date.now() - Date.parse(cache.at);
   if (cache.modeKey !== modeKey) throw new Error(`cached plan is for mode ${cache.modeKey}, this run is ${modeKey}`);
+  // Older versions could write fill-filtered caches. Such a cache has already
+  // dropped markets, so it cannot safely serve an ordinary unfiltered run.
+  if (!filledSinceDefrag && cache.filledSinceDefrag) {
+    throw new Error('cached plan was built with --filled-since-defrag and is missing markets; re-run without --use-cached-plan');
+  }
   if (ageMs > PLAN_CACHE_MAX_AGE_MS) {
     throw new Error(`cached plan is ${(ageMs / 60_000).toFixed(0)} min old (limit ${PLAN_CACHE_MAX_AGE_MS / 60_000}); re-run without --use-cached-plan`);
   }
@@ -678,11 +828,28 @@ if (!planFromCache) for (const [n, m] of markets.entries()) {
   const sigs = await rpc('getSignaturesForAddress', [m.pubkey, { limit: 1, commitment: 'confirmed' }]);
   const lastSlot = sigs[0]?.slot ?? 0;
   const active = currentSlot - lastSlot < QUIET_SLOTS;
-  plan.push({ ...m, postSpace, recovered, cu: sim.value.unitsConsumed, active });
+  // A map lookup per candidate: the feed watcher already did the work.
+  let filled, fillUnobserved = false;
+  if (filledSinceDefrag) {
+    const since = lastDefragSlot.get(m.pubkey) ?? await resolveLoggedDefragSlot(m.pubkey);
+    if (since === undefined) {
+      // Never defragged under this log, so there is no "since" to measure and
+      // nothing has ever been collected here. Include it.
+      filled = true;
+    } else if (lastSlot < since) {
+      filled = false; // no transaction at all since the sweep
+    } else {
+      const r = hadFillSince(m.pubkey, since);
+      filled = r.filled || r.unknown;
+      fillUnobserved = r.unknown;
+    }
+    if (!filled) continue;
+  }
+  plan.push({ ...m, postSpace, recovered, cu: sim.value.unitsConsumed, active, filled, fillUnobserved });
 }
 plan.sort((a, b) => b.recovered - a.recovered);
-if (!planFromCache) {
-  fs.writeFileSync(planCachePath, JSON.stringify({ at: new Date().toISOString(), slot: currentSlot, modeKey, plan }, null, 2));
+if (!planFromCache && !filledSinceDefrag) {
+  fs.writeFileSync(planCachePath, JSON.stringify({ at: new Date().toISOString(), slot: currentSlot, modeKey, filledSinceDefrag, plan }, null, 2));
   console.log(`wrote ${path.join(stateDir, 'plan-cache.json')} (${plan.length} markets); a resume within ${PLAN_CACHE_MAX_AGE_MS / 60_000} min can skip this phase with --use-cached-plan`);
 }
 
@@ -694,6 +861,15 @@ if (closures.length) {
     : '  excluded (default). Re-run with --allow-close to include them, after confirming none are in use.');
 }
 const eligible = plan.filter((p) => (quietOnly ? !p.active : true));
+if (filledSinceDefrag) {
+  const unobserved = plan.filter((p) => p.fillUnobserved).length;
+  console.log(
+    `\nfill filter kept ${plan.length} markets` +
+      (unobserved
+        ? ` (${unobserved} kept because their last sweep predates the watcher's coverage, not because a fill was seen)`
+        : ''),
+  );
+}
 const selected = maxMarkets === undefined ? eligible : eligible.slice(0, maxMarkets);
 const totalRecovery = selected.reduce((s, p) => s + p.recovered, 0);
 console.log(`\n${plan.length} markets have something to recover; selected ${selected.length}${quietOnly ? ' (quiet only)' : ''}`);
@@ -900,7 +1076,7 @@ while (queue.length) {
     console.log(`  ${label} simulated clean: ${probeSim.value.unitsConsumed} CU of ${units} requested, ${Buffer.from(probeB64, 'base64').length}B wire`);
   }
 
-  let landed = false, sig;
+  let landed = false, sig, landedSlot;
   for (let attempt = 1; attempt <= MAX_SEND_ATTEMPTS && !landed; attempt++) {
     const { blockhash, lastValidBlockHeight } = (await rpc('getLatestBlockhash', [{ commitment: 'confirmed' }])).value;
     let b64;
@@ -918,6 +1094,7 @@ while (queue.length) {
         if (st && (st.confirmationStatus === 'confirmed' || st.confirmationStatus === 'finalized')) {
           if (st.err) throw new Error(`landed with error: ${JSON.stringify(st.err)}`);
           landed = true;
+          landedSlot = st.slot;
           break;
         }
         const h = (await rpc('getBlockHeight', [{ commitment: 'confirmed' }]));
@@ -926,7 +1103,7 @@ while (queue.length) {
       }
       if (!landed && attempt < MAX_SEND_ATTEMPTS) {
         const st = (await rpc('getSignatureStatuses', [[sig], { searchTransactionHistory: true }])).value[0];
-        if (st && !st.err) { landed = true; break; }
+        if (st && !st.err) { landed = true; landedSlot = st.slot; break; }
         if (st && st.err) throw new Error(`landed with error: ${JSON.stringify(st.err)}`);
         console.warn(`  ${label}: expired without landing, retrying (${attempt + 1}/${MAX_SEND_ATTEMPTS})`);
         continue;
@@ -945,7 +1122,7 @@ while (queue.length) {
   const batchRecovery = batch.reduce((s, p) => s + p.recovered, 0);
   for (const p of batch) {
     doneCount++; recoveredTotal += p.recovered;
-    fs.appendFileSync(logPath, JSON.stringify({ market: p.pubkey, status: 'confirmed', sig, pre: p.space, post: p.postSpace, recovered: p.recovered, batch: batch.length, mode: modeKey, at: new Date().toISOString() }) + '\n');
+    fs.appendFileSync(logPath, JSON.stringify({ market: p.pubkey, status: 'confirmed', sig, slot: landedSlot, pre: p.space, post: p.postSpace, recovered: p.recovered, batch: batch.length, mode: modeKey, at: new Date().toISOString() }) + '\n');
   }
   console.log(
     `confirmed ${doneCount}/${selected.length} markets (tx ${sent}): ` +
