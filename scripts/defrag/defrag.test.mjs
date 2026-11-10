@@ -71,22 +71,21 @@ function waitForExit(child, timeoutMs = 8_000) {
   });
 }
 
-test('fill mode requires sweep-only and an explicit loop frequency', async () => {
-  const missingSweep = runDefrag(
-    ['--filled-since-defrag', '--all', '--loop=1'],
-    { RPC_URL: 'http://127.0.0.1:1' },
-  );
+test('loop mode requires sweep-only and rejects the redundant old flag', async () => {
+  const missingSweep = runDefrag(['--all', '--loop=1'], {
+    RPC_URL: 'http://127.0.0.1:1',
+  });
   const missingSweepResult = await waitForExit(missingSweep.child);
   assert.equal(missingSweepResult.code, 1);
   assert.match(missingSweep.getOutput(), /requires --sweep-only/);
 
-  const missingLoop = runDefrag(
-    ['--filled-since-defrag', '--sweep-only', '--all'],
+  const redundantFlag = runDefrag(
+    ['--filled-since-defrag', '--sweep-only', '--all', '--loop=1'],
     { RPC_URL: 'http://127.0.0.1:1' },
   );
-  const missingLoopResult = await waitForExit(missingLoop.child);
-  assert.equal(missingLoopResult.code, 1);
-  assert.match(missingLoop.getOutput(), /requires --loop=SECONDS/);
+  const redundantFlagResult = await waitForExit(redundantFlag.child);
+  assert.equal(redundantFlagResult.code, 1);
+  assert.match(redundantFlag.getOutput(), /is redundant/);
 });
 
 test('ordinary dry runs remain one-shot and write the ordinary plan cache', async (t) => {
@@ -134,14 +133,7 @@ test('fill mode owns one reconnecting socket and repeats without fill-state file
   });
 
   const { child, getOutput } = runDefrag(
-    [
-      '--sweep-only',
-      '--all',
-      '--v1',
-      '--filled-since-defrag',
-      '--loop=0.25',
-      `--state-dir=${stateDir}`,
-    ],
+    ['--sweep-only', '--all', '--v1', '--loop=0.25', `--state-dir=${stateDir}`],
     {
       RPC_URL: rpcUrl,
       FILL_FEED_URL: `ws://127.0.0.1:${wsServer.address().port}`,

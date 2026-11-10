@@ -49,10 +49,10 @@ gain. Market closure is double-gated (`--allow-close` **and**
 
 ## Continuously sweeping markets that traded
 
-`--filled-since-defrag` is an exclusive, long-running sweep mode. `defrag.mjs`
-opens the fill-feed WebSocket itself, retains each market's newest fill slot in
-memory, and repeatedly runs sweep-only passes. There is no second process, fill
-state file, or shared watcher state directory.
+`--loop=SECONDS` is an exclusive, long-running sweep mode. `defrag.mjs` opens
+the fill-feed WebSocket itself, retains each market's newest fill slot in
+memory, and repeatedly runs fill-filtered sweep-only passes. There is no second
+process, extra mode flag, fill state file, or shared watcher state directory.
 
 `--loop=SECONDS` is the start-to-start interval between passes in this mode,
 matching the collector's existing fixed-rate loop convention. If a pass takes
@@ -64,11 +64,11 @@ example, an hourly production loop is:
 RPC_URL=<url> KEYPAIR_PATH=<collector.json> \
   node scripts/defrag/defrag.mjs \
     --sweep-only --all --v1 --execute \
-    --filled-since-defrag --loop=3600
+    --loop=3600
 ```
 
-The flag requires `--sweep-only` and `--loop=SECONDS`, and keeps the process
-alive. Without `--execute` it continuously performs dry runs until stopped.
+`--loop` requires `--sweep-only` and keeps the process alive. Without
+`--execute` it continuously performs dry runs until stopped.
 
 How the comparison works:
 
