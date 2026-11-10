@@ -23,6 +23,8 @@
 // Scope / safety:
 //   --min-shrink=N           only markets whose free tail truncates >= N blocks
 //   --quiet-only             skip markets traded within ~1 day
+//   --filled-since-defrag    opt into filtering looped sweeps by fills observed
+//                            since each market's last recorded defrag
 //   --include-active         allow active markets (warn integrators first)
 //   --allow-close            permit closing emptied markets  (also needs --yes-destroy-market-addresses)
 //   --max-markets=N          cap per run, highest recovery first
@@ -32,8 +34,7 @@
 //   --v1                     pack as v1 transactions (up to 19 markets/tx)
 //   --batch / --no-batch     force or forbid batching (sweep-only batches by default)
 //   --pace=MS                delay between transactions (default 3000)
-//   --loop=SECONDS           exclusive continuous sweep mode: own the fill feed
-//                            and start a fill-filtered pass every SECONDS
+//   --loop=SECONDS           run sweep passes continuously every SECONDS
 //   --health-every=N         sample program health every N transactions (0 disables)
 //   --state-dir=DIR          where logs/plan cache/abort state live (default ./defrag-state)
 //   --use-cached-plan        reuse a recent unfiltered plan cache instead of re-simulating
@@ -444,22 +445,23 @@ const describeHealth = (h) =>
 // ===== runner =====
 const execute = process.argv.includes('--execute');
 const quietOnly = process.argv.includes('--quiet-only');
+const filledSinceDefrag = process.argv.includes('--filled-since-defrag');
 const loopArg = process.argv.find((a) => a.startsWith('--loop='))?.slice(7);
-const continuousFillMode = loopArg !== undefined;
+const loopMode = loopArg !== undefined;
 const useCachedPlan = process.argv.includes('--use-cached-plan');
-if (process.argv.includes('--filled-since-defrag')) {
-  throw new Error('--filled-since-defrag is redundant; use --loop=SECONDS for continuous fill-filtered sweeps');
+if (filledSinceDefrag && !loopMode) {
+  throw new Error('--filled-since-defrag requires --loop=SECONDS; it is not a one-shot mode');
 }
-// --quiet-only wants markets with no trading in ~a day; continuous mode wants
+// --quiet-only wants markets with no trading in ~a day; the fill filter wants
 // markets that traded since the last sweep. On any cadence shorter than a day
-// the two sets barely intersect, so asking for both is almost certainly not
-// what the operator meant.
-if (continuousFillMode && quietOnly) {
+// the two sets barely intersect, so asking for both is almost certainly not what
+// the operator meant.
+if (filledSinceDefrag && quietOnly) {
   throw new Error(
-    '--quiet-only and --loop select opposite sets (untraded vs traded); choose one',
+    '--quiet-only and --filled-since-defrag select opposite sets (untraded vs traded); choose one',
   );
 }
-if (continuousFillMode && useCachedPlan) {
+if (loopMode && useCachedPlan) {
   throw new Error(
     '--use-cached-plan is not supported with --loop; rebuild the plan from current fill state',
   );
@@ -484,8 +486,8 @@ const seatsOnly = process.argv.includes('--seats-only');
 // Sweep excess lamports and truncate the existing free tail, touching no
 // entry: both budgets zero. Needs the two-budget program release to be live.
 const sweepOnly = process.argv.includes('--sweep-only');
-if (continuousFillMode && !sweepOnly) {
-  throw new Error('--loop is an exclusive fill-filtered sweep mode and requires --sweep-only');
+if (loopMode && !sweepOnly) {
+  throw new Error('--loop is an unattended sweep mode and requires --sweep-only');
 }
 const budgetArg = process.argv.find((a) => a.startsWith('--budget='))?.slice(9);
 const seatBudgetArg = process.argv.find((a) => a.startsWith('--seat-budget='))?.slice(14);
@@ -706,12 +708,12 @@ const ignoreLog = process.argv.includes('--ignore-log');
 const logEntries = fs.existsSync(logPath)
   ? fs.readFileSync(logPath, 'utf8').trim().split('\n').filter(Boolean).map((l) => JSON.parse(l))
   : [];
-// A filtered recurring sweep uses prior confirmations as per-market baselines,
-// not as terminal "done" markers. The fill comparison below provides the
-// idempotence instead: no later fill skips the market, while a later fill makes
-// it eligible again. This also lets the same log span repeated scheduled runs.
+// A loop always re-evaluates markets instead of treating an earlier pass as
+// terminally done. In fill-filtered loops, confirmations are per-market
+// baselines: no later fill skips the market, while a later fill makes it
+// eligible again. Unfiltered loops simply re-evaluate current recovery.
 const done = new Set(
-  ignoreLog || continuousFillMode
+  ignoreLog || loopMode
     ? []
     : logEntries
         .filter((e) => e.status === 'confirmed' && (e.mode === undefined || e.mode === modeKey))
@@ -745,9 +747,9 @@ const modeLabel = budget === undefined
   ? `SEATS-ONLY (relocate nothing, reclaim ${seatBudget === undefined ? 'every' : seatBudget} empty seat${seatBudget === 1 ? '' : 's'})`
   : `BOUNDED run (relocations ${budget}${seatBudget === undefined ? '' : `, seats ${seatBudget}`})`;
 console.log(`mode: ${modeLabel} | ${execute ? 'EXECUTE' : 'DRY RUN'} | closures ${allowClose ? 'INCLUDED' : 'excluded'}`);
-if (continuousFillMode) {
+if (filledSinceDefrag) {
   console.log(
-    '--loop: continuous passes include only markets with a FillLog since their last logged defrag.\n' +
+    '--filled-since-defrag: looped passes include only markets with a FillLog since their last logged defrag.\n' +
       '  Accrued fees come from order PLACEMENT (5000 lamports per advanced-order batch) and the\n' +
       '  free tail grows on cancels and expiries too, so this drops real recovery. It reduces\n' +
       `  transactions, not planning cost. Baseline available for ${lastDefragSlot.size + lastDefragSig.size} markets in ${path.basename(logPath)}.`,
@@ -782,7 +784,7 @@ if (listArg) {
 markets = markets.filter((m) => !done.has(m.pubkey));
 
 const currentSlot = await rpc('getSlot', [{ commitment: 'confirmed' }]);
-if (continuousFillMode) {
+if (filledSinceDefrag) {
   const coverageSlots = Number.isFinite(fillState.coverageFrom)
     ? currentSlot - fillState.coverageFrom
     : 0;
@@ -819,7 +821,7 @@ if (useCachedPlan) {
   if (cache.modeKey !== modeKey) throw new Error(`cached plan is for mode ${cache.modeKey}, this run is ${modeKey}`);
   // Older versions could write fill-filtered caches. Such a cache has already
   // dropped markets, so it cannot safely serve an ordinary unfiltered run.
-  if (!continuousFillMode && cache.filledSinceDefrag) {
+  if (!loopMode && cache.filledSinceDefrag) {
     throw new Error('cached plan was built with --filled-since-defrag and is missing markets; re-run without --use-cached-plan');
   }
   if (ageMs > PLAN_CACHE_MAX_AGE_MS) {
@@ -890,7 +892,7 @@ if (!planFromCache) for (const [n, m] of markets.entries()) {
   const active = currentSlot - lastSlot < QUIET_SLOTS;
   // A map lookup per candidate: the feed watcher already did the work.
   let filled, fillUnobserved = false;
-  if (continuousFillMode) {
+  if (filledSinceDefrag) {
     const since = lastDefragSlot.get(m.pubkey) ?? await resolveLoggedDefragSlot(m.pubkey);
     if (since === undefined) {
       // Never defragged under this log, so there is no "since" to measure and
@@ -908,7 +910,7 @@ if (!planFromCache) for (const [n, m] of markets.entries()) {
   plan.push({ ...m, postSpace, recovered, cu: sim.value.unitsConsumed, active, filled, fillUnobserved });
 }
 plan.sort((a, b) => b.recovered - a.recovered);
-if (!planFromCache && !continuousFillMode) {
+if (!planFromCache && !loopMode) {
   fs.writeFileSync(planCachePath, JSON.stringify({ at: new Date().toISOString(), slot: currentSlot, modeKey, filledSinceDefrag: false, plan }, null, 2));
   console.log(`wrote ${path.join(stateDir, 'plan-cache.json')} (${plan.length} markets); a resume within ${PLAN_CACHE_MAX_AGE_MS / 60_000} min can skip this phase with --use-cached-plan`);
 }
@@ -921,7 +923,7 @@ if (closures.length) {
     : '  excluded (default). Re-run with --allow-close to include them, after confirming none are in use.');
 }
 const eligible = plan.filter((p) => (quietOnly ? !p.active : true));
-if (continuousFillMode) {
+if (filledSinceDefrag) {
   const unobserved = plan.filter((p) => p.fillUnobserved).length;
   console.log(
     `\nfill filter kept ${plan.length} markets` +
@@ -1224,11 +1226,11 @@ while (queue.length) {
 console.log(`\nDefragged ${doneCount}/${selected.length} markets in ${sent} transactions, recovered ${(recoveredTotal / 1e9).toFixed(3)} SOL (market lamports; vault excess sweeps additionally to collector token accounts).`);
 }
 
-if (continuousFillMode) {
-  const fillTracker = createIntegratedFillWatcher();
+if (loopMode) {
+  const fillTracker = filledSinceDefrag ? createIntegratedFillWatcher() : undefined;
   let cycle = 0;
   while (true) {
-    await fillTracker.waitUntilConnected();
+    if (fillTracker) await fillTracker.waitUntilConnected();
     const startedAt = Date.now();
     cycle++;
     console.log(`\n========== continuous sweep ${cycle} | ${new Date(startedAt).toISOString()} ==========`);

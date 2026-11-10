@@ -71,7 +71,7 @@ function waitForExit(child, timeoutMs = 8_000) {
   });
 }
 
-test('loop mode requires sweep-only and rejects the redundant old flag', async () => {
+test('loop mode requires sweep-only and the fill filter requires a loop', async () => {
   const missingSweep = runDefrag(['--all', '--loop=1'], {
     RPC_URL: 'http://127.0.0.1:1',
   });
@@ -79,13 +79,13 @@ test('loop mode requires sweep-only and rejects the redundant old flag', async (
   assert.equal(missingSweepResult.code, 1);
   assert.match(missingSweep.getOutput(), /requires --sweep-only/);
 
-  const redundantFlag = runDefrag(
-    ['--filled-since-defrag', '--sweep-only', '--all', '--loop=1'],
+  const missingLoop = runDefrag(
+    ['--filled-since-defrag', '--sweep-only', '--all'],
     { RPC_URL: 'http://127.0.0.1:1' },
   );
-  const redundantFlagResult = await waitForExit(redundantFlag.child);
-  assert.equal(redundantFlagResult.code, 1);
-  assert.match(redundantFlag.getOutput(), /is redundant/);
+  const missingLoopResult = await waitForExit(missingLoop.child);
+  assert.equal(missingLoopResult.code, 1);
+  assert.match(missingLoop.getOutput(), /requires --loop=SECONDS/);
 });
 
 test('ordinary dry runs remain one-shot and write the ordinary plan cache', async (t) => {
@@ -112,6 +112,44 @@ test('ordinary dry runs remain one-shot and write the ordinary plan cache', asyn
   ]);
 });
 
+test('loop mode repeats without opening the fill feed unless opted in', async (t) => {
+  const { server, url } = await startRpcServer();
+  const stateDir = fs.mkdtempSync(
+    path.join(os.tmpdir(), 'manifest-defrag-unfiltered-loop-'),
+  );
+  t.after(() => fs.rmSync(stateDir, { recursive: true, force: true }));
+  t.after(() => new Promise((resolve) => server.close(resolve)));
+
+  const { child, getOutput } = runDefrag(
+    ['--sweep-only', '--all', '--v1', '--loop=0.2', `--state-dir=${stateDir}`],
+    { RPC_URL: url, FILL_FEED_URL: 'ws://127.0.0.1:1' },
+  );
+  t.after(() => {
+    if (child.exitCode === null) child.kill('SIGKILL');
+  });
+
+  await new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      clearInterval(poll);
+      reject(new Error(getOutput()));
+    }, 5_000);
+    const poll = setInterval(() => {
+      if (getOutput().includes('continuous sweep 2 finished')) {
+        clearTimeout(timeout);
+        clearInterval(poll);
+        child.kill('SIGTERM');
+        resolve();
+      }
+    }, 25);
+  });
+  await waitForExit(child);
+
+  const output = getOutput();
+  assert.doesNotMatch(output, /fill feed/);
+  assert.match(output, /continuous sweep 2 finished/);
+  assert.deepEqual(fs.readdirSync(stateDir).sort(), ['inspect-payloads.json']);
+});
+
 test('fill mode owns one reconnecting socket and repeats without fill-state files', async (t) => {
   const { server: rpcServer, url: rpcUrl } = await startRpcServer();
   const stateDir = fs.mkdtempSync(
@@ -133,7 +171,14 @@ test('fill mode owns one reconnecting socket and repeats without fill-state file
   });
 
   const { child, getOutput } = runDefrag(
-    ['--sweep-only', '--all', '--v1', '--loop=0.25', `--state-dir=${stateDir}`],
+    [
+      '--sweep-only',
+      '--all',
+      '--v1',
+      '--filled-since-defrag',
+      '--loop=0.25',
+      `--state-dir=${stateDir}`,
+    ],
     {
       RPC_URL: rpcUrl,
       FILL_FEED_URL: `ws://127.0.0.1:${wsServer.address().port}`,

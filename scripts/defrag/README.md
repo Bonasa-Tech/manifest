@@ -49,10 +49,12 @@ gain. Market closure is double-gated (`--allow-close` **and**
 
 ## Continuously sweeping markets that traded
 
-`--loop=SECONDS` is an exclusive, long-running sweep mode. `defrag.mjs` opens
-the fill-feed WebSocket itself, retains each market's newest fill slot in
-memory, and repeatedly runs fill-filtered sweep-only passes. There is no second
-process, extra mode flag, fill state file, or shared watcher state directory.
+`--loop=SECONDS` is the existing long-running sweep control. By itself it
+repeats ordinary, unfiltered sweep-only passes. Add the explicit
+`--filled-since-defrag` flag to open the fill-feed WebSocket, retain each
+market's newest fill slot in memory, and filter later passes to markets filled
+since their last sweep. There is no second process, fill state file, or shared
+watcher state directory.
 
 `--loop=SECONDS` is the start-to-start interval between passes in this mode,
 matching the collector's existing fixed-rate loop convention. If a pass takes
@@ -64,11 +66,13 @@ example, an hourly production loop is:
 RPC_URL=<url> KEYPAIR_PATH=<collector.json> \
   node scripts/defrag/defrag.mjs \
     --sweep-only --all --v1 --execute \
-    --loop=3600
+    --loop=3600 --filled-since-defrag
 ```
 
-`--loop` requires `--sweep-only` and keeps the process alive. Without
-`--execute` it continuously performs dry runs until stopped.
+`--loop` requires `--sweep-only` and keeps the process alive.
+`--filled-since-defrag` is opt-in and requires `--loop`; it never changes a
+one-shot run. Without `--execute`, the loop continuously performs dry runs
+until stopped.
 
 How the comparison works:
 
@@ -85,7 +89,7 @@ How the comparison works:
 - Coverage starts when the process first connects. A market whose last sweep
   predates that is **kept** because the process cannot judge fills it did not
   observe. The first pass after each process start is therefore conservative
-  and establishes fresh baselines for later passes.
+  and establishes fresh baselines for the markets it sweeps.
 - The process waits for the WebSocket to reconnect before starting another
   pass. Brief disconnects during its lifetime are accepted without resetting
   coverage; a fill broadcast only during such a gap can be missed, and that
@@ -108,8 +112,8 @@ Two things worth knowing before using it:
 - `--quiet-only` selects the opposite set and is rejected in combination.
 - `--use-cached-plan` is rejected because cached membership can include markets
   already completed by a partial run or omit markets that filled afterward.
-  Continuous passes rebuild membership from current fill state and do not
-  overwrite the ordinary plan cache.
+  Looped passes rebuild membership from current state and do not overwrite the
+  ordinary plan cache.
 
 ## State
 
@@ -117,8 +121,9 @@ Logs, the plan cache, and any abort record are written under `--state-dir`
 (default `./defrag-state`, created on demand). An ordinary one-shot run is
 resumable: a market recorded confirmed is skipped on the next run with the same
 parameters. Continuous fill mode instead uses each confirmation slot as that
-market's next fill baseline. State is keyed by operation, so a sweep and a
-relocation of the same market don't shadow each other.
+market's next fill baseline; an unfiltered loop re-evaluates every market each
+pass. State is keyed by operation, so a sweep and a relocation of the same
+market don't shadow each other.
 
 ## Safety rails built in
 
