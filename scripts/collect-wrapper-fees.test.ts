@@ -130,6 +130,44 @@ const tests: [string, () => void | Promise<void>][] = [
     },
   ],
   [
+    'a large wrapper does not strand the small ones in front of it',
+    () => {
+      // The shape that wasted transactions on mainnet: wrappers arrive ordered
+      // by lamports recovered, so cheap and expensive ones interleave. A
+      // forward-only pass closed a transaction at every large wrapper and left
+      // each small one alone, sending this as five transactions.
+      const wrappers = [
+        wrapper(0, 1_600),
+        wrapper(1, MEASURED_LARGEST_WRAPPER_SPACE),
+        wrapper(2, 1_600),
+        wrapper(3, MEASURED_LARGEST_WRAPPER_SPACE),
+        wrapper(4, 1_600),
+      ];
+      const batches = packCollectTransactions(
+        wrappers,
+        COLLECTOR,
+        undefined,
+        true,
+      );
+      assert.equal(batches.length, 3, 'the three small wrappers should share');
+      assert.deepEqual(
+        batches.map((batch) => batch.length),
+        [3, 1, 1],
+      );
+      assert.deepEqual(
+        batches[0].map(({ space }) => space),
+        [1_600, 1_600, 1_600],
+      );
+      // Still in value order within the transaction that collects them.
+      assert.deepEqual(
+        batches[0].map(({ pubkey }) => pubkey.toBase58()),
+        [wrappers[0], wrappers[2], wrappers[4]].map(({ pubkey }) =>
+          pubkey.toBase58(),
+        ),
+      );
+    },
+  ],
+  [
     'no batch is packed past the compute budget',
     () => {
       const sizes = [928, 1_600, 4_288, 8_128, 36_352, 290_752, 618_304];

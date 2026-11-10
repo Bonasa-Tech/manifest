@@ -577,7 +577,23 @@ function serializedSize(
   }
 }
 
-/** Greedily packs the maximum number of Collect instructions into v1 transactions. */
+/**
+ * Packs Collect instructions into the fewest v1 transactions.
+ *
+ * Each wrapper goes into the earliest transaction that still has room for it,
+ * not merely the one being filled. With --defrag the per-wrapper compute cost
+ * spans three orders of magnitude (an already-packed wrapper measured 1,155 CU,
+ * the 618KB outlier 566,509), and the caller orders wrappers by lamports
+ * recovered, which is uncorrelated with that cost. A single forward pass
+ * therefore closed a transaction every time a large wrapper came up and
+ * stranded whatever small ones happened to sit in front of it: a 2026-11-10
+ * mainnet pass sent 20 wrappers as 12 + 5 + 1 + 2, and three of those four
+ * transactions used under 6% of the compute budget they were given.
+ *
+ * Trying earliest-first keeps the highest-value wrappers in the earliest
+ * transactions, which is what the amount ordering is for - a run that stops on
+ * an error has still collected the most it could.
+ */
 export function packCollectTransactions(
   wrappers: CollectableWrapper[],
   collector: PublicKey,
@@ -596,38 +612,45 @@ export function packCollectTransactions(
     maxWrappersPerTransaction ?? V1_MAX_WRAPPERS,
     V1_MAX_WRAPPERS,
   );
-  const batches: CollectableWrapper[][] = [];
-  let current: CollectableWrapper[] = [];
-  let currentCu = 0;
+  // Compute budget is carried per batch so the cheap checks can reject a batch
+  // before paying to compile a candidate message for it.
+  const batches: { items: CollectableWrapper[]; cu: number }[] = [];
 
   for (const wrapper of wrappers) {
     const wrapperCu: number = withDefrag
       ? (wrapper.defragCu ?? estimateDefragCu(wrapper.space))
       : 0;
-    const candidate = [...current, wrapper];
-    if (
-      candidate.length <= configuredCap &&
-      (!withDefrag || currentCu + wrapperCu <= CU_BUDGET_PER_TRANSACTION) &&
-      (serializedSize(candidate, collector, withDefrag) ?? Infinity) <=
-        V1_MAX_TRANSACTION_SIZE
-    ) {
-      current = candidate;
-      currentCu += wrapperCu;
+    const batch = batches.find(
+      (candidate) =>
+        candidate.items.length < configuredCap &&
+        (!withDefrag ||
+          candidate.cu + wrapperCu <= CU_BUDGET_PER_TRANSACTION) &&
+        (serializedSize(
+          [...candidate.items, wrapper],
+          collector,
+          withDefrag,
+        ) ?? Infinity) <= V1_MAX_TRANSACTION_SIZE,
+    );
+    if (batch !== undefined) {
+      batch.items.push(wrapper);
+      batch.cu += wrapperCu;
       continue;
     }
 
-    if (current.length === 0) {
+    // Nothing open can take it, so it opens a transaction of its own. One that
+    // does not fit even alone is a real error rather than a full batch.
+    if (
+      (serializedSize([wrapper], collector, withDefrag) ?? Infinity) >
+      V1_MAX_TRANSACTION_SIZE
+    ) {
       throw new Error(
         `A single Collect instruction exceeds ${V1_MAX_TRANSACTION_SIZE} bytes`,
       );
     }
-    batches.push(current);
-    current = [wrapper];
-    currentCu = wrapperCu;
+    batches.push({ items: [wrapper], cu: wrapperCu });
   }
 
-  if (current.length > 0) batches.push(current);
-  return batches;
+  return batches.map(({ items }) => items);
 }
 
 function optionValue(name: string): string | undefined {
