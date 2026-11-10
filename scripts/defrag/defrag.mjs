@@ -38,7 +38,8 @@
 //   --pace=MS                delay between transactions (default 3000)
 //   --health-every=N         sample program health every N transactions (0 disables)
 //   --state-dir=DIR          where logs/plan cache/abort state live (default ./defrag-state)
-//   --use-cached-plan        reuse a recent plan cache instead of re-simulating
+//   --use-cached-plan        reuse a recent unfiltered plan cache instead of re-simulating
+//                            (not supported with --filled-since-defrag)
 //   --ignore-log             do not skip markets already recorded done
 //
 // Dry run first, always. A sweep-only run relocates nothing and is safe on any
@@ -446,6 +447,7 @@ const describeHealth = (h) =>
 const execute = process.argv.includes('--execute');
 const quietOnly = process.argv.includes('--quiet-only');
 const filledSinceDefrag = process.argv.includes('--filled-since-defrag');
+const useCachedPlan = process.argv.includes('--use-cached-plan');
 // --quiet-only wants markets with no trading in ~a day; --filled-since-defrag
 // wants markets that traded since the last sweep. On any sweep cadence shorter
 // than a day the two sets barely intersect, so asking for both is almost
@@ -453,6 +455,11 @@ const filledSinceDefrag = process.argv.includes('--filled-since-defrag');
 if (filledSinceDefrag && process.argv.includes('--quiet-only')) {
   throw new Error(
     '--quiet-only and --filled-since-defrag select opposite sets (untraded vs traded); choose one',
+  );
+}
+if (filledSinceDefrag && useCachedPlan) {
+  throw new Error(
+    '--use-cached-plan is not supported with --filled-since-defrag; rebuild the plan from current fill state',
   );
 }
 const includeActive = process.argv.includes('--include-active');
@@ -743,11 +750,6 @@ if (filledSinceDefrag) {
 // keyed by the mode, since postSpace and recovered depend on the budgets.
 const planCachePath = path.join(stateDir, 'plan-cache.json');
 const PLAN_CACHE_MAX_AGE_MS = 60 * 60_000;
-// Version the fill-filtered selection because older caches were built after
-// removing every same-mode market recorded in the log. Reusing one would
-// preserve that empty/incomplete selection after the resume behavior changed.
-const FILL_FILTER_CACHE_VERSION = 1;
-const useCachedPlan = process.argv.includes('--use-cached-plan');
 const plan = [];
 let planFromCache = false;
 if (useCachedPlan) {
@@ -755,19 +757,10 @@ if (useCachedPlan) {
   const cache = JSON.parse(fs.readFileSync(planCachePath, 'utf8'));
   const ageMs = Date.now() - Date.parse(cache.at);
   if (cache.modeKey !== modeKey) throw new Error(`cached plan is for mode ${cache.modeKey}, this run is ${modeKey}`);
-  // The fill filter is applied while the plan is built, by dropping markets
-  // before they are pushed - so a plan cached without it has already baked in
-  // the wider market set, and reusing it here would silently ignore the flag.
-  // modeKey deliberately does not cover this (it keys the resume log, and
-  // widening it would invalidate existing logs), so check the plan itself.
-  if (filledSinceDefrag && !cache.filledSinceDefrag) {
-    throw new Error('cached plan was built without --filled-since-defrag; re-run without --use-cached-plan');
-  }
+  // Older versions could write fill-filtered caches. Such a cache has already
+  // dropped markets, so it cannot safely serve an ordinary unfiltered run.
   if (!filledSinceDefrag && cache.filledSinceDefrag) {
     throw new Error('cached plan was built with --filled-since-defrag and is missing markets; re-run without --use-cached-plan');
-  }
-  if (filledSinceDefrag && cache.fillFilterVersion !== FILL_FILTER_CACHE_VERSION) {
-    throw new Error('cached fill-filtered plan predates the current resume semantics; re-run without --use-cached-plan');
   }
   if (ageMs > PLAN_CACHE_MAX_AGE_MS) {
     throw new Error(`cached plan is ${(ageMs / 60_000).toFixed(0)} min old (limit ${PLAN_CACHE_MAX_AGE_MS / 60_000}); re-run without --use-cached-plan`);
@@ -855,12 +848,8 @@ if (!planFromCache) for (const [n, m] of markets.entries()) {
   plan.push({ ...m, postSpace, recovered, cu: sim.value.unitsConsumed, active, filled, fillUnobserved });
 }
 plan.sort((a, b) => b.recovered - a.recovered);
-if (!planFromCache) {
-  fs.writeFileSync(planCachePath, JSON.stringify({
-    at: new Date().toISOString(), slot: currentSlot, modeKey, filledSinceDefrag,
-    fillFilterVersion: filledSinceDefrag ? FILL_FILTER_CACHE_VERSION : undefined,
-    plan,
-  }, null, 2));
+if (!planFromCache && !filledSinceDefrag) {
+  fs.writeFileSync(planCachePath, JSON.stringify({ at: new Date().toISOString(), slot: currentSlot, modeKey, filledSinceDefrag, plan }, null, 2));
   console.log(`wrote ${path.join(stateDir, 'plan-cache.json')} (${plan.length} markets); a resume within ${PLAN_CACHE_MAX_AGE_MS / 60_000} min can skip this phase with --use-cached-plan`);
 }
 

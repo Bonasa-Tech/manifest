@@ -107,8 +107,11 @@ Two things worth knowing before using it:
 
 - It runs *after* simulation, because the fill scan is the most expensive check
   in the run. It shortens the execution phase, not planning.
-- `--quiet-only` selects the opposite set and is rejected in combination. A plan
-  cache built with a different setting for this flag is also rejected.
+- `--quiet-only` selects the opposite set and is rejected in combination.
+- `--use-cached-plan` is rejected because cached membership can include markets
+  already completed by a partial run or omit markets that filled afterward.
+  Filtered runs rebuild membership from current fill state and do not overwrite
+  the ordinary plan cache.
 
 ## State
 
