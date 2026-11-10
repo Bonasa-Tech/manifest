@@ -1584,7 +1584,11 @@ Environment:
     );
   }
   if (stopRequested) console.log('Stopped by operator request.');
-  if (failed) process.exitCode = 1;
+  // A skipped wrapper no longer ends the sweep, but it still has to be visible
+  // to whatever ran the sweep: before splitting existed, any such failure left
+  // a non-zero exit, and a cron that only reads the status would otherwise stop
+  // noticing a wrapper that fails on every single pass.
+  if (failed || skipped.length > 0) process.exitCode = 1;
 }
 
 // Optionally run forever on an interval instead of once, so the collector can
