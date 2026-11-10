@@ -13,6 +13,7 @@ import {
   estimateBatchDefragCu,
   estimateDefragCu,
   packCollectTransactions,
+  splitBatch,
 } from './collect-wrapper-fees';
 
 // Mirrors the script's own constants; a copy here fails the test if either
@@ -196,6 +197,41 @@ const tests: [string, () => void | Promise<void>][] = [
         wrappers.length,
         'packing dropped wrappers',
       );
+    },
+  ],
+  [
+    'a failed batch halves instead of ending the run',
+    () => {
+      // Packing backfills low-value wrappers into earlier transactions, so a
+      // simulation failure must not be fatal: a cheap wrapper that always
+      // fails would otherwise sit in the first transaction of every pass and
+      // block every wrapper behind it, high-value ones included. Halving
+      // isolates one bad wrapper and also shrinks a batch whose compute
+      // estimate was too low, without having to tell those apart.
+      const batch = Array.from({ length: 7 }, (_, at) => wrapper(at, 1_600));
+      const [first, second] = splitBatch(batch);
+      assert.equal(first.length, 4);
+      assert.equal(second.length, 3);
+      assert.deepEqual(
+        [...first, ...second].map(({ pubkey }) => pubkey.toBase58()),
+        batch.map(({ pubkey }) => pubkey.toBase58()),
+        'halving must preserve order and lose nothing',
+      );
+
+      // Halving a pair isolates each one, which is what bottoms out at a
+      // single wrapper the run can report and skip.
+      assert.deepEqual(
+        splitBatch(batch.slice(0, 2)).map((half) => half.length),
+        [1, 1],
+      );
+      // Repeated halving terminates: every split is strictly smaller.
+      let longest = batch;
+      for (let step = 0; step < 10 && longest.length > 1; step += 1) {
+        const [half] = splitBatch(longest);
+        assert.ok(half.length < longest.length, 'split did not shrink');
+        longest = half;
+      }
+      assert.equal(longest.length, 1);
     },
   ],
   [
