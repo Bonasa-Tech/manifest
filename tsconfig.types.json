@@ -3,8 +3,10 @@
     "compilerOptions": {
         "noEmit": false,
         "outDir": "./dist/types",
+        "rootDir": "./client/ts",
         "declaration": true,
         "declarationMap": true,
         "emitDeclarationOnly": true
-    }
+    },
+    "include": ["client/ts/src/**/*.ts"]
 }
