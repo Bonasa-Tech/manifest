@@ -990,6 +990,8 @@ export class ManifestClient {
         wrapperState: this.wrapper.address,
         mint,
         tokenProgram: is22 ? TOKEN_2022_PROGRAM_ID : TOKEN_PROGRAM_ID,
+        // Funds the seat claim if defrag reclaimed this trader's seat.
+        systemProgram: SystemProgram.programId,
       },
       {
         params: {
@@ -1055,6 +1057,8 @@ export class ManifestClient {
         wrapperState: this.wrapper.address,
         mint,
         tokenProgram: is22 ? TOKEN_2022_PROGRAM_ID : TOKEN_PROGRAM_ID,
+        // Funds the seat claim if defrag reclaimed this trader's seat.
+        systemProgram: SystemProgram.programId,
       },
       {
         params: {

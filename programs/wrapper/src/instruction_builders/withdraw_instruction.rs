@@ -27,6 +27,8 @@ pub fn withdraw_instruction(
             AccountMeta::new(token_program, false),
             AccountMeta::new(*wrapper_state, false),
             AccountMeta::new(*mint, false),
+            // Lets the withdraw restore a seat defrag reclaimed.
+            AccountMeta::new_readonly(solana_sdk_ids::system_program::id(), false),
         ],
         data: [
             ManifestWrapperInstruction::Withdraw.to_vec(),

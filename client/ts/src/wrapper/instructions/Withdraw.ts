@@ -60,6 +60,7 @@ export type WithdrawInstructionAccounts = {
   tokenProgram?: web3.PublicKey;
   wrapperState: web3.PublicKey;
   mint: web3.PublicKey;
+  systemProgram?: web3.PublicKey;
 };
 
 export const withdrawInstructionDiscriminator = 3;
@@ -121,6 +122,11 @@ export function createWithdrawInstruction(
     },
     {
       pubkey: accounts.mint,
+      isWritable: false,
+      isSigner: false,
+    },
+    {
+      pubkey: accounts.systemProgram ?? web3.SystemProgram.programId,
       isWritable: false,
       isSigner: false,
     },

@@ -27,7 +27,7 @@ use solana_compute_budget_interface::ComputeBudgetInstruction;
 use solana_keypair::Keypair;
 use solana_program::{instruction::Instruction, pubkey::Pubkey, rent::Rent};
 use solana_program_test::{tokio, ProgramTestContext};
-use solana_transaction::Transaction;
+use solana_transaction::{InstructionError, Transaction, TransactionError};
 use wrapper::{
     instruction_builders::batch_update_instruction,
     market_info::MarketInfo,
@@ -955,8 +955,8 @@ async fn defrag_wrapper_claim_and_deposit_share_one_transaction_without_duplicat
     );
     assert_eq!(
         deposit.accounts.len(),
-        8,
-        "deposit retains its original account list"
+        9,
+        "deposit carries the trailing optional system program"
     );
 
     // The same composition works for both an initial seat and a harvested one.
@@ -964,17 +964,6 @@ async fn defrag_wrapper_claim_and_deposit_share_one_transaction_without_duplicat
         if harvested {
             f.withdraw(Token::SOL, SOL_UNIT_SIZE).await?;
             defrag_fixture(&f).await?;
-            assert!(
-                send_tx_with_retry(
-                    Rc::clone(&f.context),
-                    &[deposit.clone()],
-                    Some(&f.payer()),
-                    &[&f.payer_keypair()],
-                )
-                .await
-                .is_err(),
-                "deposit alone must not recreate a harvested seat"
-            );
         }
         send_tx_with_retry(
             Rc::clone(&f.context),
@@ -1002,6 +991,168 @@ async fn defrag_wrapper_claim_and_deposit_share_one_transaction_without_duplicat
                 .iter::<MarketInfo>()
                 .count(),
             1
+        );
+    }
+    Ok(())
+}
+
+/// The seat the core actually holds. Not the wrapper's cached `trader_index`,
+/// which keeps naming a reclaimed seat until something syncs.
+async fn core_trader_index(f: &TestFixture) -> DataIndex {
+    let market: MarketValue = get_dynamic_value_or(market_data(f).await.as_slice()).unwrap();
+    market.get_trader_index(&f.payer())
+}
+
+/// Deposit restores a seat defrag reclaimed, funded by the trailing system
+/// program account. Without that account it must still behave as it always
+/// did - fail on the core for want of a seat, not on the account list.
+#[tokio::test]
+async fn defrag_wrapper_deposit_restores_a_harvested_seat() -> anyhow::Result<()> {
+    let mut f = TestFixture::new().await;
+    // Unsolicited tokens keep the otherwise empty market open across defrag.
+    let vault: Pubkey = manifest::validation::get_vault_address(&f.market.key, &f.sol_mint.key).0;
+    f.sol_mint.mint_to(&vault, 1).await;
+
+    f.claim_seat().await?;
+    f.deposit(Token::SOL, SOL_UNIT_SIZE).await?;
+    f.withdraw(Token::SOL, SOL_UNIT_SIZE).await?;
+    defrag_fixture(&f).await?;
+    assert_eq!(
+        core_trader_index(&f).await,
+        NIL,
+        "defrag did not reclaim the empty seat"
+    );
+
+    f.sol_mint.mint_to(&f.payer_sol.key, SOL_UNIT_SIZE).await;
+    let deposit: Instruction = wrapper::instruction_builders::deposit_instruction(
+        &f.market.key,
+        &f.payer(),
+        &f.sol_mint.key,
+        SOL_UNIT_SIZE,
+        &f.payer_sol.key,
+        &f.wrapper.key,
+        spl_token::id(),
+    );
+    assert_eq!(
+        deposit.accounts.len(),
+        9,
+        "deposit carries the trailing optional system program"
+    );
+
+    // Old-style, and old-style with an unrelated extra account. Neither
+    // restores the seat and neither leaves the market larger.
+    let market_len: usize = market_data(&f).await.len();
+    let mut legacy: Instruction = deposit.clone();
+    legacy.accounts.truncate(8);
+    let mut foreign_tail: Instruction = legacy.clone();
+    foreign_tail
+        .accounts
+        .push(solana_program::instruction::AccountMeta::new_readonly(
+            spl_token::id(),
+            false,
+        ));
+    for (name, instruction) in [("truncated", legacy), ("foreign tail", foreign_tail)] {
+        assert!(
+            send_tx_with_retry(
+                Rc::clone(&f.context),
+                &[instruction],
+                Some(&f.payer()),
+                &[&f.payer_keypair()],
+            )
+            .await
+            .is_err(),
+            "a {name} deposit restored a harvested seat"
+        );
+        assert_eq!(core_trader_index(&f).await, NIL);
+        assert_eq!(
+            market_data(&f).await.len(),
+            market_len,
+            "a rejected {name} deposit expanded the market"
+        );
+    }
+
+    send_tx_with_retry(
+        Rc::clone(&f.context),
+        &[deposit],
+        Some(&f.payer()),
+        &[&f.payer_keypair()],
+    )
+    .await?;
+    let (info, orders) = wrapper_view(&f).await;
+    assert_ne!(info.trader_index, NIL, "deposit did not restore the seat");
+    assert_eq!(info.base_balance, BaseAtoms::new(SOL_UNIT_SIZE));
+    assert!(orders.is_empty());
+
+    // The claim funds its own block instead of eating defrag's two spares.
+    let market: MarketValue = get_dynamic_value_or(market_data(&f).await.as_slice()).unwrap();
+    assert_eq!(
+        market.free_blocks_short_of_n(2),
+        Some(0),
+        "restoring the seat ate the spare reserve"
+    );
+    Ok(())
+}
+
+/// Withdraw restores a reclaimed seat too, but cannot make the withdraw
+/// succeed: the restored seat is empty, so the balance check still fails and
+/// rolls the claim back. The two different errors are what prove it ran.
+#[tokio::test]
+async fn defrag_wrapper_withdraw_from_a_harvested_seat_fails_cleanly() -> anyhow::Result<()> {
+    let mut f = TestFixture::new().await;
+    let vault: Pubkey = manifest::validation::get_vault_address(&f.market.key, &f.sol_mint.key).0;
+    f.sol_mint.mint_to(&vault, SOL_UNIT_SIZE).await;
+
+    f.claim_seat().await?;
+    f.deposit(Token::SOL, SOL_UNIT_SIZE).await?;
+    f.withdraw(Token::SOL, SOL_UNIT_SIZE).await?;
+    defrag_fixture(&f).await?;
+    assert_eq!(core_trader_index(&f).await, NIL);
+
+    let withdraw: Instruction = wrapper::instruction_builders::withdraw_instruction(
+        &f.market.key,
+        &f.payer(),
+        &f.sol_mint.key,
+        SOL_UNIT_SIZE,
+        &f.payer_sol.key,
+        &f.wrapper.key,
+        spl_token::id(),
+    );
+    assert_eq!(
+        withdraw.accounts.len(),
+        9,
+        "withdraw carries the trailing optional system program"
+    );
+
+    let market_len: usize = market_data(&f).await.len();
+    let mut legacy: Instruction = withdraw.clone();
+    legacy.accounts.truncate(8);
+    // Without it the wrapper stops before the CPI, so the error is its own
+    // and does not depend on the core. With it, the core's balance check.
+    let cases: [(&str, Instruction, InstructionError); 2] = [
+        ("without", legacy, InstructionError::UninitializedAccount),
+        ("with", withdraw, InstructionError::InsufficientFunds),
+    ];
+    for (name, instruction, expected) in cases {
+        let error: TransactionError = send_tx_with_retry(
+            Rc::clone(&f.context),
+            &[instruction],
+            Some(&f.payer()),
+            &[&f.payer_keypair()],
+        )
+        .await
+        .unwrap_err()
+        .unwrap();
+        assert_eq!(
+            error,
+            TransactionError::InstructionError(0, expected),
+            "withdraw {name} the system program failed the wrong way"
+        );
+        // Rolled back, so neither the seat nor its block survived.
+        assert_eq!(core_trader_index(&f).await, NIL);
+        assert_eq!(
+            market_data(&f).await.len(),
+            market_len,
+            "a failed withdraw left the market expanded"
         );
     }
     Ok(())

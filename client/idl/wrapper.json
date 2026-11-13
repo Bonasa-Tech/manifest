@@ -152,6 +152,14 @@
           "docs": [
             "Mint, needed for token 22"
           ]
+        },
+        {
+          "name": "systemProgram",
+          "isMut": false,
+          "isSigner": false,
+          "docs": [
+            "System program, funds the seat claim when defrag reclaimed one"
+          ]
         }
       ],
       "args": [
@@ -232,6 +240,14 @@
           "isSigner": false,
           "docs": [
             "Mint, needed for token 22"
+          ]
+        },
+        {
+          "name": "systemProgram",
+          "isMut": false,
+          "isSigner": false,
+          "docs": [
+            "System program, funds the seat claim when defrag reclaimed one"
           ]
         }
       ],

@@ -566,6 +566,26 @@ pub(crate) fn get_trader_index_hint_for_market(
     Ok(trader_index_hint)
 }
 
+/// Restores a reclaimed core seat and re-syncs, returning the trader index to
+/// hint with. `None` when there is no system program to fund the claim.
+///
+/// Only call once a sync resolved the index to NIL, so a seat that merely
+/// moved never pays for the tree lookup [`ensure_market_seat`] repeats.
+pub(crate) fn restore_seat_if_reclaimed<'a>(
+    wrapper_state: &WrapperStateAccountInfo<'a>,
+    market: &ManifestAccountInfo<'a, MarketFixed>,
+    owner: &Signer<'a>,
+    manifest_program: &Program<'a>,
+    system_program: Option<&Program<'a>>,
+) -> Result<Option<DataIndex>, ProgramError> {
+    let Some(system_program) = system_program else {
+        return Ok(None);
+    };
+    ensure_market_seat(market, owner, manifest_program, system_program)?;
+    sync(wrapper_state, market)?;
+    get_trader_index_hint_for_market(wrapper_state, market.info.pubkey())
+}
+
 /// Restore a harvested core seat without changing the wrapper market entry.
 pub(crate) fn ensure_market_seat<'a>(
     market: &ManifestAccountInfo<'a, MarketFixed>,
