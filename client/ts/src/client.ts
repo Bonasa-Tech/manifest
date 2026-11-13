@@ -596,10 +596,10 @@ export class ManifestClient {
       address: userWrapper.pubkey,
     });
     // Deliberately looser than getSetupIxs. A seat that defrag moved leaves
-    // the wrapper's cached trader index stale, but every wrapper instruction
-    // syncs that index on chain before using it, so the client is still
-    // usable (withdraw in particular must keep working). Only a missing
-    // market entry or a harvested seat needs ClaimSeat first.
+    // the wrapper's cached trader index stale, but deposit, withdraw and
+    // batch update re-sync that index on chain before using it, so the
+    // client is still usable (withdraw in particular must keep working).
+    // Only a missing market entry or a harvested seat needs ClaimSeat first.
     const hasMarketInfo: boolean =
       wrapper.marketInfoForMarket(marketPk) !== null;
     const hasSeat: boolean = marketObject
