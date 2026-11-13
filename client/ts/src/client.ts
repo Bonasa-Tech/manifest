@@ -561,15 +561,6 @@ export class ManifestClient {
     marketPk: PublicKey,
     trader: PublicKey,
   ): Promise<ManifestClient> {
-    const { setupNeeded } = await this.getSetupIxs(
-      connection,
-      marketPk,
-      trader,
-    );
-    if (setupNeeded) {
-      throw new Error('setup ixs need to be executed first');
-    }
-
     const marketObject: Market = await Market.loadFromAddress({
       connection: connection,
       address: marketPk,
@@ -597,15 +588,26 @@ export class ManifestClient {
     );
 
     if (!userWrapper) {
-      throw new Error(
-        'userWrapper is null even though setupNeeded is false. This should never happen.',
-      );
+      throw new Error('setup ixs need to be executed first');
     }
 
     const wrapper = await Wrapper.loadFromAddress({
       connection,
       address: userWrapper.pubkey,
     });
+    // Deliberately looser than getSetupIxs. A seat that defrag moved leaves
+    // the wrapper's cached trader index stale, but every wrapper instruction
+    // syncs that index on chain before using it, so the client is still
+    // usable (withdraw in particular must keep working). Only a missing
+    // market entry or a harvested seat needs ClaimSeat first.
+    const hasMarketInfo: boolean =
+      wrapper.marketInfoForMarket(marketPk) !== null;
+    const hasSeat: boolean = marketObject
+      .claimedSeats()
+      .some((seat) => seat.publicKey.equals(trader));
+    if (!hasMarketInfo || !hasSeat) {
+      throw new Error('setup ixs need to be executed first');
+    }
     const baseGlobal: Global | null = await Global.loadFromAddress({
       connection,
       address: getGlobalAddress(baseMint.address),
