@@ -2,6 +2,10 @@ use num_enum::TryFromPrimitive;
 use shank::ShankInstruction;
 
 /// Instructions available for the Manifest wrapper program
+///
+/// Deposit/Withdraw declare `system_program` required so new clients always
+/// pass it, while the processors read it optionally so older ones still work.
+/// Deliberate; do not mark it `optional` here to match the loader.
 #[repr(u8)]
 #[derive(TryFromPrimitive, Debug, Copy, Clone, ShankInstruction, PartialEq, Eq)]
 #[rustfmt::skip]
@@ -31,6 +35,7 @@ pub enum ManifestWrapperInstruction {
     #[account(5, name = "token_program", desc = "Token program")]
     #[account(6, writable, name = "wrapper_state", desc = "Wrapper state")]
     #[account(7, name = "mint", desc = "Mint, needed for token 22")]
+    #[account(8, name = "system_program", desc = "System program, funds the seat claim when defrag reclaimed one")]
     Deposit = 2,
 
     /// Withdraw
@@ -42,6 +47,7 @@ pub enum ManifestWrapperInstruction {
     #[account(5, name = "token_program", desc = "Token program")]
     #[account(6, writable, name = "wrapper_state", desc = "Wrapper state")]
     #[account(7, name = "mint", desc = "Mint, needed for token 22")]
+    #[account(8, name = "system_program", desc = "System program, funds the seat claim when defrag reclaimed one")]
     Withdraw = 3,
     
     /// All global or not, optional. Only reason the separate instructions exist

@@ -1,8 +1,8 @@
 use manifest::validation::{next_account_info, AccountViewExt};
-use pinocchio::{account::Ref, ProgramResult};
+use pinocchio::{account::Ref, error::ProgramError, ProgramResult};
 
 use borsh::{BorshDeserialize, BorshSerialize};
-use hypertree::DataIndex;
+use hypertree::{DataIndex, NIL};
 use manifest::{
     program::{invoke, withdraw_instruction},
     state::MarketFixed,
@@ -12,10 +12,11 @@ use manifest::{
 use manifest::validation::{Program, Signer};
 use pinocchio::account::AccountView;
 use solana_program::pubkey::Pubkey;
+use solana_sdk_ids::system_program;
 
 use crate::loader::{check_signer, WrapperStateAccountInfo};
 
-use super::shared::{get_trader_index_hint_for_market, sync};
+use super::shared::{get_trader_index_hint_for_market, restore_seat_if_reclaimed, sync};
 
 #[derive(BorshDeserialize, BorshSerialize)]
 pub struct WrapperWithdrawParams {
@@ -47,6 +48,14 @@ pub(crate) fn process_withdraw(
     check_signer(&wrapper_state, owner.pubkey());
     let mint_account_info: MintAccountInfo =
         MintAccountInfo::new(next_account_info(account_iter)?)?;
+    // Optional so withdraws from older clients still work. Anything else in
+    // this slot is ignored rather than rejected, since it used to be.
+    let system_program_opt: Option<Program> = match next_account_info(account_iter) {
+        Ok(account) if account.pubkey() == &system_program::id() => {
+            Some(Program::new(account, &system_program::id())?)
+        }
+        _ => None,
+    };
 
     let mint: Pubkey = {
         let market_fixed: Ref<MarketFixed> = market.get_fixed()?;
@@ -63,12 +72,33 @@ pub(crate) fn process_withdraw(
     let WrapperWithdrawParams { amount_atoms } = WrapperWithdrawParams::try_from_slice(data)
         .map_err(manifest::validation::io_to_program_error)?;
 
+    // Defrag moves seats and truncates the freed tail, so the cached index is
+    // only a hint. Sync re-derives it through `resolve_trader_index` first.
     sync(&wrapper_state, &market)?;
     if amount_atoms == 0 {
         return Ok(());
     }
-    let trader_index_hint: Option<DataIndex> =
+    let mut trader_index_hint: Option<DataIndex> =
         get_trader_index_hint_for_market(&wrapper_state, &market.info.pubkey())?;
+
+    // NIL means the seat was reclaimed, so restore it as deposit does. Defrag
+    // only reclaims empty seats, so the withdraw still fails on the balance
+    // check and rolls the claim back; this is for uniformity, not for funds.
+    if trader_index_hint == Some(NIL) {
+        match restore_seat_if_reclaimed(
+            &wrapper_state,
+            &market,
+            &owner,
+            &manifest_program,
+            system_program_opt.as_ref(),
+        )? {
+            Some(restored) => trader_index_hint = Some(restored),
+            // Never forward NIL: the core's withdraw has no nil check, so it
+            // indexes the seat tree off the end and panics. Deposit does not
+            // need this - the core's deposit checks nil itself.
+            None => return Err(ProgramError::UninitializedAccount),
+        }
+    }
 
     // Call the withdraw CPI
     invoke(
