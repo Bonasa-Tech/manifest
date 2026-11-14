@@ -9,6 +9,7 @@ env:
   MANIFEST_NAME: manifest
   WRAPPER_NAME: wrapper
   UI_WRAPPER_NAME: ui_wrapper
+  LIQUIDITY_WRAPPER_NAME: liquidity_wrapper
   # solana-verify 0.5.1's locked dependencies require Rust 1.89 or newer.
   RUST_TOOLCHAIN: '1.89.0'
   SOLANA_TOOLCHAIN: '4.2.2'
@@ -131,6 +132,26 @@ jobs:
           format: 'cyclonedx'
           output: '${{ env.UI_WRAPPER_NAME }}-${{ github.ref_name }}-sbom.json'
 
+      - name: Verifiable build liquidity wrapper
+        run: |
+          solana-verify build --arch=${{ env.SVM_ARCH }} --cargo-build-sbf-args="--tools-version ${{ env.PLATFORM_TOOLS }}" --base-image ${{ env.SOLANA_VERIFIABLE_BUILD_IMAGE }} --library-name ${{ env.LIQUIDITY_WRAPPER_NAME }}
+          ./scripts/assert-sbpf-v3.sh target/deploy/${{ env.LIQUIDITY_WRAPPER_NAME }}.so
+
+      - name: Get hash liquidity wrapper
+        run: |
+          solana-verify get-executable-hash target/deploy/${{ env.LIQUIDITY_WRAPPER_NAME }}.so
+
+      - name: Generate Checksum liquidity wrapper
+        run: |
+          echo "LIQUIDITY_WRAPPER_CHECKSUM=$(sha256sum ./target/deploy/${{ env.LIQUIDITY_WRAPPER_NAME }}.so | head -c 64)" >> $GITHUB_ENV
+
+      - name: Generate SBOM liquidity wrapper
+        uses: aquasecurity/trivy-action@2736533278103862a861f4a35ebac3e97854d956 # master at review time
+        with:
+          scan-type: 'fs'
+          format: 'cyclonedx'
+          output: '${{ env.LIQUIDITY_WRAPPER_NAME }}-${{ github.ref_name }}-sbom.json'
+
       - name: Create Release
         id: create_release
         uses: softprops/action-gh-release@de2c0eb89ae2a093876385947365aca7b0e5f844 # v1
@@ -141,6 +162,7 @@ jobs:
             manifest sha256 checksum: ${{ env.MANIFEST_CHECKSUM }}
             wrapper sha256 checksum: ${{ env.WRAPPER_CHECKSUM }}
             ui_wrapper sha256 checksum: ${{ env.UI_WRAPPER_CHECKSUM }}
+            liquidity_wrapper sha256 checksum: ${{ env.LIQUIDITY_WRAPPER_CHECKSUM }}
             github commit: ${{ github.sha }}
 
             built with platform-tools ${{ env.PLATFORM_TOOLS }}
@@ -161,3 +183,5 @@ jobs:
             ./${{ env.WRAPPER_NAME }}-${{ github.ref_name }}-sbom.json
             ./target/deploy/${{ env.UI_WRAPPER_NAME }}.so
             ./${{ env.UI_WRAPPER_NAME }}-${{ github.ref_name }}-sbom.json
+            ./target/deploy/${{ env.LIQUIDITY_WRAPPER_NAME }}.so
+            ./${{ env.LIQUIDITY_WRAPPER_NAME }}-${{ github.ref_name }}-sbom.json
