@@ -204,20 +204,50 @@ describe('client setup after defrag', () => {
     });
   }
 
-  it('requires setup before creating a client without a private key for a harvested seat', async () => {
-    const { connection, sent } = fixture(null);
-    try {
-      await ManifestClient.getClientForMarketNoPrivateKey(
+  for (const scenario of [
+    { name: 'harvested seat', index: null },
+    {
+      name: 'old index reused by another trader',
+      index: 80,
+      seatOwner: Keypair.generate().publicKey,
+    },
+  ]) {
+    it(`requires setup before creating a client without a private key for a ${scenario.name}`, async () => {
+      const { connection, sent } = fixture(scenario.index, scenario.seatOwner);
+      try {
+        await ManifestClient.getClientForMarketNoPrivateKey(
+          connection,
+          market,
+          trader.publicKey,
+        );
+        expect.fail('expected setup to be required');
+      } catch (error) {
+        expect((error as Error).message).to.equal(
+          'setup ixs need to be executed first',
+        );
+      }
+      expect(sent).to.have.length(0);
+    });
+  }
+
+  // A moved seat only leaves the wrapper's cached index stale, which every
+  // wrapper instruction re-syncs on chain, so a UI client must still load
+  // (e.g. to withdraw) without a ClaimSeat round trip.
+  for (const scenario of [
+    { name: 'moved seat', index: 0 },
+    { name: 'current seat', index: 80 },
+  ]) {
+    it(`creates a client without a private key for a ${scenario.name}`, async () => {
+      const { connection, sent } = fixture(scenario.index);
+      const client = await ManifestClient.getClientForMarketNoPrivateKey(
         connection,
         market,
         trader.publicKey,
       );
-      expect.fail('expected setup to be required');
-    } catch (error) {
-      expect((error as Error).message).to.equal(
-        'setup ixs need to be executed first',
-      );
-    }
-    expect(sent).to.have.length(0);
-  });
+      expect(sent).to.have.length(0);
+      expect(client.wrapper?.address.equals(wrapper)).to.equal(true);
+      // Writable, not read only: this throws 'Read only' without a payer.
+      expect(client.withdrawAllIx()).to.deep.equal([]);
+    });
+  }
 });
