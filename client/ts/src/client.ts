@@ -112,7 +112,7 @@ export class ManifestClient {
     // First try the stats server API for faster lookup
     try {
       const response = await fetch(
-        `https://mfx-stats-mainnet.fly.dev/wrapper?owner=${payerPub.toBase58()}`,
+        `https://mfx-stats-mainnet-bonasa.fly.dev/wrapper?owner=${payerPub.toBase58()}`,
         { signal: AbortSignal.timeout(5_000) },
       );
       if (response.ok) {
@@ -205,7 +205,7 @@ export class ManifestClient {
   ): Promise<PublicKey[]> {
     if (useApi) {
       const responseJson = (await (
-        await fetch('https://mfx-stats-mainnet.fly.dev/tickers')
+        await fetch('https://mfx-stats-mainnet-bonasa.fly.dev/tickers')
       ).json()) as any[];
       const tickers: PublicKey[] = responseJson
         .filter((ticker) => {

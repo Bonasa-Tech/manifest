@@ -85,7 +85,7 @@ type FillWatcher = {
 /** One in-process, reconnecting subscription to the live Manifest fill feed. */
 export function createFillWatcher(
   feedUrl =
-    process.env.FILL_FEED_URL ?? 'wss://mfx-feed-mainnet.fly.dev',
+    process.env.FILL_FEED_URL ?? 'wss://mfx-feed-mainnet-bonasa.fly.dev',
 ): FillWatcher {
   const pending = new PendingFillMarkets();
   let activeSocket: WebSocket | undefined;
@@ -933,7 +933,7 @@ Environment:
   UNBACKED_STATE_PATH        If set, persist the unbacked-order baseline here so
                              a restart keeps "unchanged since last run" state.
   FILL_FEED_URL              Fill feed override for --filled-since-defrag
-                             (default wss://mfx-feed-mainnet.fly.dev).`);
+                             (default wss://mfx-feed-mainnet-bonasa.fly.dev).`);
     return;
   }
 

@@ -7,7 +7,7 @@ import { Market } from '../client/ts/src';
 import { getVaultAddress } from '../client/ts/src/utils';
 
 const {
-  STATS_SERVER_URL = 'https://mfx-stats-mainnet.fly.dev',
+  STATS_SERVER_URL = 'https://mfx-stats-mainnet-bonasa.fly.dev',
   PRIMARY_RPC_URL,
   FALLBACK_RPC_URL,
 } = process.env;

@@ -899,7 +899,7 @@ export class ManifestStatsServer {
     // availability a failure mode for live stats ingestion. Transport limits
     // remain enforced by WebSocketManager to bound resource consumption.
     this.wsManager = new WebSocketManager({
-      url: 'wss://mfx-feed-mainnet.fly.dev',
+      url: 'wss://mfx-feed-mainnet-bonasa.fly.dev',
       reconnectDelay: 1000,
       maxReconnectDelay: 30000,
       heartbeatInterval: 30000,

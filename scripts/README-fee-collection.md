@@ -135,7 +135,7 @@ market behavior.
 - `KEYPAIR_PATH` — authorized collector keypair; required with `--execute`.
   Defaults to `~/.config/solana/id.json`.
 - `FILL_FEED_URL` — optional fill-feed override for
-  `--filled-since-defrag`; defaults to `wss://mfx-feed-mainnet.fly.dev`.
+  `--filled-since-defrag`; defaults to `wss://mfx-feed-mainnet-bonasa.fly.dev`.
 
 ## Recipes
 
