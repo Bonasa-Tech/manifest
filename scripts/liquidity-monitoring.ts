@@ -212,7 +212,9 @@ export class LiquidityMonitor {
    */
   async fetchMarketVolumes(): Promise<Map<string, number>> {
     try {
-      const response = await fetch('https://mfx-stats-mainnet.fly.dev/tickers');
+      const response = await fetch(
+        'https://mfx-stats-mainnet-bonasa.fly.dev/tickers',
+      );
       if (!response.ok) {
         throw new Error(`Ticker request failed with HTTP ${response.status}`);
       }
@@ -283,7 +285,7 @@ export class LiquidityMonitor {
   private async fetchSolPriceUsd(): Promise<SolPriceResult> {
     try {
       const response: Response = await fetch(
-        'https://mfx-stats-mainnet.fly.dev/tickers',
+        'https://mfx-stats-mainnet-bonasa.fly.dev/tickers',
       );
       if (!response.ok) {
         throw new Error(`Ticker request failed with HTTP ${response.status}`);

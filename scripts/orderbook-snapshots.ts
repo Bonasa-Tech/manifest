@@ -129,7 +129,9 @@ export class MarketMakerLeaderboard {
    */
   async fetchMarketVolumes(): Promise<Map<string, number>> {
     try {
-      const response = await fetch('https://mfx-stats-mainnet.fly.dev/tickers');
+      const response = await fetch(
+        'https://mfx-stats-mainnet-bonasa.fly.dev/tickers',
+      );
       const tickers = await response.json();
 
       const volumeMap = new Map<string, number>();
