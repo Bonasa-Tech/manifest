@@ -15,6 +15,9 @@ idl/yarn.lock
 client/nyc_output
 **nyc_output
 **coverage
+scripts/benchmarking/*txt
+scripts/benchmarking/*csv
+/output.txt
 
 .certora_internal
 certora_out

@@ -1,21 +1,13 @@
 # Compute unit benchmark.
 #
 # Replays real mainnet order flow (recorded from another Solana CLOB) through
-# the manifest and wrapper programs with the benchmarking harness that lives
-# in the private Bonasa-Tech/manifest-private repository, then records the CU
-# per order percentiles with github-action-benchmark. Results for `main` are
+# the manifest and wrapper programs with the benchmarking harness in this
+# repository, then records the CU per order percentiles with
+# github-action-benchmark. Results for `main` are
 # published to the `gh-pages` branch; pull requests get a comparison against
 # `main` in the job summary (and a comment if a regression trips the alert
 # threshold) without publishing anything.
 #
-# Requirements:
-#   * secret  MANIFEST_PAT: token that can read manifest-private.
-#   * variable MANIFEST_PRIVATE_BENCHMARK_V3_SHA: full SHA of the published,
-#     reviewed v3 harness (including the cancel-all adapter and order accounting).
-#
-# The harness expects this repository at manifest-private/deps/manifest; that
-# directory is populated from the commit being benchmarked, so the private
-# repository's own submodule pointer is never used.
 name: Benchmark
 on:
   push:
@@ -26,6 +18,7 @@ on:
         'programs/**',
         'Cargo.toml',
         'Cargo.lock',
+        'scripts/benchmarking/**',
         'scripts/assert-sbpf-v3.sh',
         '.github/workflows/ci-benchmark.yml',
       ]
@@ -36,6 +29,7 @@ on:
         'programs/**',
         'Cargo.toml',
         'Cargo.lock',
+        'scripts/benchmarking/**',
         'scripts/assert-sbpf-v3.sh',
         '.github/workflows/ci-benchmark.yml',
       ]
@@ -51,16 +45,10 @@ env:
   # builds this checkout from its workspace, so the workspace pin is what
   # selects this SBF compiler for the measured programs.
   PLATFORM_TOOLS: 'v1.57'
-  # Keep the v3 build driver and Agave 4.2.2 harness on a separate reviewed pin
-  # so preparing this migration does not change main's existing v2 harness.
-  BENCHMARK_REPOSITORY_SHA: ${{ vars.MANIFEST_PRIVATE_BENCHMARK_V3_SHA }}
 
 jobs:
   benchmark:
     name: Benchmark CU
-    # The private harness needs MANIFEST_PAT, which pull requests from forks
-    # cannot access.
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -69,48 +57,6 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
-          # The benchmark's copy of this repository is fetched out of this
-          # checkout below, and git refuses to serve a fetch from a shallow
-          # repository, so take the full history here.
-          fetch-depth: 0
-
-      - name: Validate pinned benchmark revision
-        shell: bash
-        run: |
-          if [[ ! "$BENCHMARK_REPOSITORY_SHA" =~ ^[0-9a-f]{40}$ ]]; then
-            echo 'Set repository variable MANIFEST_PRIVATE_BENCHMARK_V3_SHA to the full SHA of the published, reviewed v3 harness' >&2
-            exit 1
-          fi
-
-      - name: Checkout benchmarking repo
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          repository: Bonasa-Tech/manifest-private
-          token: ${{ secrets.MANIFEST_PAT }}
-          path: manifest-private
-          ref: ${{ env.BENCHMARK_REPOSITORY_SHA }}
-          submodules: false
-          persist-credentials: false
-
-      - name: Use this commit as the benchmark's manifest dependency
-        # Initialize only the reviewed public dependency, from the commit that
-        # was just checked out (no network, and independent of the private
-        # repository's submodule URL). Other private-repo submodules remain
-        # disabled.
-        shell: bash
-        run: |
-          set -euo pipefail
-          DEP="$GITHUB_WORKSPACE/manifest-private/deps/manifest"
-          mkdir -p "$DEP"
-          git -C "$DEP" init --quiet
-          git -C "$DEP" fetch --quiet --depth 1 "file://$GITHUB_WORKSPACE" HEAD
-          git -C "$DEP" checkout --quiet --detach FETCH_HEAD
-          test "$(git -C "$DEP" rev-parse HEAD)" = "$GITHUB_SHA"
-          echo "Benchmarking manifest commit $(git -C "$DEP" rev-parse HEAD)"
-
-      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
-        with:
-          python-version: '3.9'
 
       - name: Cache dependencies
         uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
@@ -118,8 +64,7 @@ jobs:
           shared-key: 'solana-${{ env.SOLANA_VERSION }}-platform-tools-${{ env.PLATFORM_TOOLS }}-arch-${{ env.SVM_ARCH }}-${{ github.job }}'
           workspaces: |
             . -> target
-            manifest-private/deps/manifest -> target
-            manifest-private/benchmarking -> target
+            scripts/benchmarking -> target
 
       - name: Set Rust version
         run: rustup toolchain install ${{ env.RUST_TOOLCHAIN }}
@@ -183,7 +128,7 @@ jobs:
           cargo build-sbf --tools-version ${{ env.PLATFORM_TOOLS }} --version
 
       - name: Run benchmark
-        run: cd $GITHUB_WORKSPACE/manifest-private; RUSTUP_TOOLCHAIN=${{ env.RUST_TOOLCHAIN }} SVM_ARCH=${{ env.SVM_ARCH }} SBF_ARCH=${{ env.SVM_ARCH }} ./benchmarking/benchmark.sh
+        run: RUSTUP_TOOLCHAIN=${{ env.RUST_TOOLCHAIN }} SVM_ARCH=${{ env.SVM_ARCH }} SBF_ARCH=${{ env.SVM_ARCH }} ./scripts/benchmarking/benchmark.sh
 
       - name: Verify replay accounting
         # These describe the pinned input corpus, not a Manifest CU baseline.
@@ -192,28 +137,20 @@ jobs:
         run: |
           python3 - <<'PY'
           import csv
-          with open('manifest-private/benchmarking/benchmark_results.csv', newline='') as file:
+          with open('scripts/benchmarking/benchmark_results.csv', newline='') as file:
               rows = list(csv.DictReader(file))
           counts = [int(row['num_orders']) for row in rows]
           if (len(rows), len({row['signature'] for row in rows}), counts.count(0), sum(counts)) != (4158, 4158, 1, 101618):
-              raise SystemExit('Replay corpus/accounting mismatch: check the cancel-all adapter and private harness pin')
+              raise SystemExit('Replay corpus/accounting mismatch: check the cancel-all adapter and fixtures')
           PY
 
       - name: Verify benchmark program architecture
         shell: bash
         run: |
           set -euo pipefail
-          mapfile -t manifest_artifacts < <(find "$GITHUB_WORKSPACE/manifest-private" -type f -path '*/target/deploy/manifest.so' -print)
-          mapfile -t wrapper_artifacts < <(find "$GITHUB_WORKSPACE/manifest-private" -type f -path '*/target/deploy/wrapper.so' -print)
-          if (( ${#manifest_artifacts[@]} == 0 || ${#wrapper_artifacts[@]} == 0 )); then
-            echo 'benchmark did not leave manifest.so and wrapper.so artifacts to validate' >&2
-            exit 1
-          fi
-          ./scripts/assert-sbpf-v3.sh "${manifest_artifacts[@]}" "${wrapper_artifacts[@]}"
-
-      - name: Move benchmark results
-        run: |
-          mv $GITHUB_WORKSPACE/manifest-private/output.txt $GITHUB_WORKSPACE/output.txt
+          ./scripts/assert-sbpf-v3.sh \
+            scripts/benchmarking/target/deploy/manifest.so \
+            scripts/benchmarking/target/deploy/wrapper.so
 
       - name: Validate benchmark output
         shell: bash
