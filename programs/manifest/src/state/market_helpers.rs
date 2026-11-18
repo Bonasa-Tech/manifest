@@ -1517,6 +1517,119 @@ mod place_order_equivalence_tests {
         assert_eq!(matched.as_u64(), 1);
     }
 
+    /// Exercise the quote-denominated sizing walk against the actual matcher,
+    /// including both full and partial fills at fractional prices. Each order
+    /// has independent rounding; aggregating the book before rounding is not
+    /// an equivalent oracle.
+    #[test]
+    fn test_impact_base_atoms_exact_in_execution_respects_quote_budget() {
+        for mantissa in [1, 5, 10, 15, 19, 25, 31] {
+            for budget in 0..=12 {
+                let (mut market, maker_index, taker_index, _, _) = new_market_with_seats();
+                for size in [1, 2, 3, 5] {
+                    place_exact_checked(
+                        &mut market,
+                        maker_index,
+                        size,
+                        mantissa,
+                        -1,
+                        false,
+                        OrderType::Limit,
+                        NO_EXPIRATION_LAST_VALID_SLOT,
+                    )
+                    .unwrap();
+                }
+
+                let quoted = market
+                    .impact_base_atoms_with_slot(
+                        true,
+                        QuoteAtoms::new(budget),
+                        &[None, None],
+                        NOW_SLOT,
+                    )
+                    .unwrap();
+                // Do not let an always-zero quote satisfy only the upper
+                // budget bound. This conservative budget can buy the book.
+                if budget >= (11 * u64::from(mantissa)).div_ceil(10) {
+                    assert_eq!(quoted.as_u64(), 11);
+                }
+                let result = place_exact_checked(
+                    &mut market,
+                    taker_index,
+                    quoted.as_u64(),
+                    mantissa,
+                    -1,
+                    true,
+                    OrderType::ImmediateOrCancel,
+                    NO_EXPIRATION_LAST_VALID_SLOT,
+                )
+                .unwrap();
+                assert_eq!(result.base_atoms_traded, quoted);
+                assert!(
+                    result.quote_atoms_traded.as_u64() <= budget,
+                    "exact-in exceeded budget: price={mantissa}e-1 budget={budget}"
+                );
+            }
+        }
+    }
+
+    /// Exact-out may overshoot a quote target due to per-order rounding. A
+    /// second resting order makes walking past an already reached target
+    /// observable, including the equality boundary as well as overshoot.
+    #[test]
+    fn test_impact_base_atoms_exact_out_execution_reaches_quote_target() {
+        for mantissa in [10, 15, 19, 25, 31] {
+            for target in 1..=8 {
+                let (mut market, maker_index, taker_index, _, _) = new_market_with_seats();
+                for size in [1, 2, 3, 5, 8] {
+                    place_exact_checked(
+                        &mut market,
+                        maker_index,
+                        size,
+                        mantissa,
+                        -1,
+                        true,
+                        OrderType::Limit,
+                        NO_EXPIRATION_LAST_VALID_SLOT,
+                    )
+                    .unwrap();
+                }
+
+                let quoted = market
+                    .impact_base_atoms_with_slot(
+                        false,
+                        QuoteAtoms::new(target),
+                        &[None, None],
+                        NOW_SLOT,
+                    )
+                    .unwrap();
+                // At these prices (all >= 1), selling the entire book is
+                // unnecessary. In particular, stop at the first order when
+                // its rounded proceeds already satisfy the target.
+                assert!(quoted.as_u64() <= target);
+                if target <= u64::from(mantissa).div_ceil(10) {
+                    assert_eq!(quoted.as_u64(), 1);
+                }
+                let result = place_exact_checked(
+                    &mut market,
+                    taker_index,
+                    quoted.as_u64(),
+                    mantissa,
+                    -1,
+                    false,
+                    OrderType::ImmediateOrCancel,
+                    NO_EXPIRATION_LAST_VALID_SLOT,
+                )
+                .unwrap();
+                assert_eq!(result.base_atoms_traded, quoted);
+                assert!(
+                    result.quote_atoms_traded.as_u64() >= target,
+                    "exact-out missed target: price={mantissa}e-1 target={target}"
+                );
+            }
+        }
+    }
+
     /// A come-back bid coalescing into an existing order whose combined size
     /// overflows u64 must cap the growth at what the fill proceeds can back
     /// instead of failing the taker's fill.
