@@ -481,12 +481,8 @@ async function main() {
   console.log('Waiting for slots to pass');
   await new Promise((f) => setTimeout(f, Number(SLOTS ?? DEFAULT_SLOTS) * 400));
 
-  console.log('Loading final state');
+  console.log('Loading ending slot');
   const phoenixMktResFinal = await conn.getAccountInfoAndContext(phoenixMktPk);
-  const finalState = parsePhoenixMarket(
-    phoenixMktPk,
-    phoenixMktResFinal.value?.data!,
-  );
 
   const startSlot = phoenixMktResInitial.context.slot;
   const endSlot = phoenixMktResFinal.context.slot;
@@ -522,7 +518,6 @@ async function main() {
     `${dir}/initial.json`,
     JSON.stringify({ initialState }, null, 2),
   );
-  writeFileSync(`${dir}/final.json`, JSON.stringify({ finalState }, null, 2));
 }
 
 main();

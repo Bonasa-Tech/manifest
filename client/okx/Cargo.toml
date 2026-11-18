@@ -3,7 +3,7 @@ name = "manifest-okx"
 version = "0.3.0"
 edition = "2021"
 repository = "https://github.com/Bonasa-Tech/manifest"
-authors = ["Britt Cyr <britt@cks.systems>"]
+authors = ["Bonasa Tech"]
 description = "OKX AMM interface for Manifest exchange"
 license-file = "LICENSE"
 

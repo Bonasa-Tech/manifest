@@ -3,7 +3,7 @@ name = "hypertree"
 version = "1.2.0"
 edition = "2021"
 repository = "https://github.com/Bonasa-Tech/manifest"
-authors = ["Britt Cyr <britt@cks.systems>"]
+authors = ["Bonasa Tech"]
 description = "Data structures for Manifest"
 license-file = "LICENSE"
 

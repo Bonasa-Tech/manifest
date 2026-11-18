@@ -18,7 +18,8 @@ as testdata.
 RPC_URL=<RPC_URL> yarn ts-node scripts/benchmarking/prepare.ts
 ```
 
-This outputs 3 json. Initial, transactions, and final.
+This outputs two JSON files: the initial market state and the transactions to
+replay.
 
 ### Initial
 ```
@@ -80,40 +81,4 @@ This outputs 3 json. Initial, transactions, and final.
     "logs": string[]
   },
 ]
-```
-
-### Final
-```
-{
-  finalState: {
-    market: String,
-    baseMint: String,
-    quoteMint: String
-    baseLotSize: number,
-    quoteLotSize: number,
-    baseDecimals: number,
-    quoteDecimals: number,
-    tradersByIndex: {
-      0: {
-        baseAtomsDeposited: number,
-        quoteAtomsDeposited: number,
-        quoteLotsFree: number,
-        baseLotsFree: number,
-        quoteLotsLocked: number,
-        baseLotsLocked: number,
-        key: String,
-      },
-      1: {
-        baseAtomsDeposited: number,
-        quoteAtomsDeposited: number,
-        quoteLotsFree: number,
-        baseLotsFree: number,
-        quoteLotsLocked: number,
-        baseLotsLocked: number,
-        key: String,
-      },
-      ...
-    },
-  }
-}
 ```

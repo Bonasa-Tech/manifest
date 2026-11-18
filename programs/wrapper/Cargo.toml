@@ -3,7 +3,7 @@ name = "wrapper"
 version = "0.1.4"
 edition = "2021"
 repository = "https://github.com/Bonasa-Tech/manifest"
-authors = ["Britt Cyr <britt@cks.systems>"]
+authors = ["Bonasa Tech"]
 description = "Wrapper for Manifest"
 license-file = "LICENSE"
 
