@@ -3,7 +3,7 @@
 *The Unlimited Orderbook*
 
 
-[![codecov](https://codecov.io/gh/Bonasa-Tech/manifest/graph/badge.svg?token=PJ3Y2BVMM8)](https://codecov.io/gh/Bonasa-Tech/manifest)
+[![codecov](https://codecov.io/gh/CKS-Systems/manifest/graph/badge.svg?token=PJ3Y2BVMM8)](https://codecov.io/gh/CKS-Systems/manifest)
 [![Code Review - Rust](https://github.com/Bonasa-Tech/manifest/actions/workflows/ci-code-review-rust.yml/badge.svg)](https://github.com/Bonasa-Tech/manifest/actions/workflows/ci-code-review-rust.yml)
 [![Code Review - Typescript](https://github.com/Bonasa-Tech/manifest/actions/workflows/ci-code-review-ts.yml/badge.svg)](https://github.com/Bonasa-Tech/manifest/actions/workflows/ci-code-review-ts.yml)
 
