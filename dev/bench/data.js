@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1794600775558,
+  "lastUpdate": 1795023834437,
   "repoUrl": "https://github.com/Bonasa-Tech/manifest",
   "entries": {
     "CU Benchmark": [
@@ -15605,6 +15605,72 @@ window.BENCHMARK_DATA = {
           {
             "name": "MFX_99",
             "value": 2385,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "cyrbritt@gmail.com",
+            "name": "Britt Cyr",
+            "username": "brittcyr"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "33c0dd3afca4483e6216d8633f35d0bb3caf1c5f",
+          "message": "Move benchmark harness into public repository (#797)\n\n* Move benchmark harness into public repository\n\n* Use runner Python for benchmark workflow\n\n* Trim unused benchmark snapshots and update authors\n\n* Remove benchmark harness README\n\n* Update CKS Systems branding to Bonasa Tech\n\n* Keep Codecov project slug unchanged",
+          "timestamp": "2026-11-18T12:33:19-05:00",
+          "tree_id": "55e80a66e94443fb499b8ac10acf5ba5ad7df7ac",
+          "url": "https://github.com/Bonasa-Tech/manifest/commit/33c0dd3afca4483e6216d8633f35d0bb3caf1c5f"
+        },
+        "date": 1795023832031,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "PHX_50",
+            "value": 6748,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "PHX_95",
+            "value": 8819,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "PHX_99",
+            "value": 10866,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_50",
+            "value": 1118,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_95",
+            "value": 1582,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_99",
+            "value": 2386,
             "range": "",
             "unit": "CU",
             "extra": ""
