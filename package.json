@@ -17,7 +17,7 @@
     "dex",
     "clob"
   ],
-  "author": "CKS Systems",
+  "author": "Bonasa Tech",
   "repository": "https://github.com/Bonasa-Tech/manifest",
   "main": "./dist/cjs/index.js",
   "module": "./dist/esm/index.js",

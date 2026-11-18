@@ -3,7 +3,7 @@ name = "benchmarking"
 version = "0.1.0"
 edition = "2021"
 repository = "https://github.com/Bonasa-Tech/manifest"
-authors = ["Bonasa Tech"]
+authors = ["Britt Cyr <britt@manifest.trade>"]
 description = "Benchmarking for Manifest"
 license-file = "../../LICENSE"
 
