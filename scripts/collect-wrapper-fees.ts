@@ -354,6 +354,26 @@ type SimulationResult = {
   };
 };
 
+/** undici collapses every transport failure into a bare `fetch failed`; the
+ * real reason (EAI_AGAIN, ECONNRESET, UND_ERR_BODY_TIMEOUT) lives only on the
+ * wrapped `cause`, so a pass that dies on the network is undiagnosable from
+ * the message alone. Walk the chain and name the codes. */
+export function describeError(error: unknown): string {
+  if (!(error instanceof Error)) return String(error);
+  const parts: string[] = [error.message];
+  for (
+    let cause: unknown = error.cause;
+    cause instanceof Error;
+    cause = cause.cause
+  ) {
+    const code: string | undefined = (cause as NodeJS.ErrnoException).code;
+    parts.push(
+      code === undefined ? cause.message : `${cause.message} (${code})`,
+    );
+  }
+  return parts.join(' <- ');
+}
+
 async function rpc<T>(method: string, params: unknown[]): Promise<T> {
   const response = await fetch(RPC_URL!, {
     method: 'POST',
@@ -910,9 +930,11 @@ Options:
                              immediately by the next - never concurrently - and
                              a pass that errors is logged and the loop continues.
   --filled-since-defrag      With --markets and --loop, keep one fill-feed socket
-                             in this process and sweep only markets filled since
-                             their last confirmed sweep. No state directory or
-                             separate watcher process is used.
+                             in this process and sweep markets filled since their
+                             last confirmed sweep, plus any market whose accrued
+                             fees clear the recovery floor (fees are paid on
+                             order placement, which emits no fill). No state
+                             directory or separate watcher process is used.
 
 Execution safety:
   Every transaction is simulated before submission. A batch that fails
@@ -1036,6 +1058,7 @@ Environment:
       ? fillWatcher!.snapshot()
       : undefined;
     let acknowledgedFills = 0;
+    let clearedUnsweepable = 0;
     console.log(`Mode: ${execute ? 'EXECUTE' : 'DRY RUN'} (core phases)`);
     if (fillSnapshot !== undefined) {
       console.log(
@@ -1167,6 +1190,15 @@ Environment:
                   fillSnapshot,
                 );
               },
+        onMarketsUnsweepable:
+          fillSnapshot === undefined
+            ? undefined
+            : (markets) => {
+                clearedUnsweepable += fillWatcher!.acknowledge(
+                  markets,
+                  fillSnapshot,
+                );
+              },
         globalClean,
         cleanUnbacked,
         maxUnbackedSims,
@@ -1190,7 +1222,11 @@ Environment:
     );
     if (fillSnapshot !== undefined) {
       console.log(
-        `Fill queue: ${acknowledgedFills} confirmed markets cleared; ${fillWatcher!.pendingCount()} pending`,
+        `Fill queue: ${acknowledgedFills} confirmed markets cleared` +
+          (clearedUnsweepable > 0
+            ? ` + ${clearedUnsweepable} unsweepable dropped`
+            : '') +
+          `; ${fillWatcher!.pendingCount()} pending`,
       );
     }
     if (coreOnly) {
@@ -1661,10 +1697,7 @@ async function main(): Promise<void> {
       try {
         await run(fillWatcher);
       } catch (error) {
-        console.error(
-          `pass ${pass} failed:`,
-          error instanceof Error ? error.message : error,
-        );
+        console.error(`pass ${pass} failed:`, describeError(error));
       }
       // Persist after every pass (even a failed one), so a restart resumes from
       // the latest unbacked-order baseline. Fill state stays memory-only.

@@ -14,6 +14,7 @@ import {
   GAS_DEPOSIT_LAMPORTS,
   MARKET_BLOCK_SIZE,
   MARKET_FIXED_SIZE,
+  admitSweepCandidates,
   cleanBatchIsProfitable,
   cleanRaceErrorCode,
   createUnbackedTracker,
@@ -187,6 +188,44 @@ test('min-shrink targets tail tightening and drops fee-only markets', () => {
   });
   assert.equal(tightened.length, 1);
   assert.equal(tightened[0].freeTailBlocks, 5);
+});
+
+test('fill-filtered admission also admits markets on accrued fees alone', () => {
+  // Fees are paid on order placement, which emits no fill, so a market can
+  // hold revenue without ever entering the fill queue.
+  const floor = 100_000n;
+  const filledNoFees = { ...planOf([O, 0, 0]), pubkey: 'A'.repeat(43) };
+  const unfilledWithFees = {
+    ...planOf([O, 0, 0], 250_000n),
+    pubkey: 'B'.repeat(43),
+  };
+  const unfilledDust = {
+    ...planOf([O, 0, 0], 99_999n),
+    pubkey: 'C'.repeat(43),
+  };
+  const { candidates, filled, feeAdmitted } = admitSweepCandidates(
+    [filledNoFees, unfilledWithFees, unfilledDust],
+    new Set([filledNoFees.pubkey]),
+    floor,
+  );
+  assert.deepEqual(
+    candidates.map((plan) => plan.pubkey),
+    [filledNoFees.pubkey, unfilledWithFees.pubkey],
+  );
+  assert.equal(filled, 1);
+  assert.equal(feeAdmitted, 1);
+});
+
+test('a filled market holding fees counts as filled, not fee-admitted', () => {
+  const plan = { ...planOf([O, 0, 0], 250_000n), pubkey: 'D'.repeat(43) };
+  const { candidates, filled, feeAdmitted } = admitSweepCandidates(
+    [plan],
+    new Set([plan.pubkey]),
+    100_000n,
+  );
+  assert.equal(candidates.length, 1);
+  assert.equal(filled, 1);
+  assert.equal(feeAdmitted, 0);
 });
 
 test('selection honours the dust floor and orders by recovery', () => {

@@ -74,9 +74,13 @@ One of `--wrapper`, `--all-public`, or `--markets` is required.
   worthwhile markets. `--min-shrink=3` typically selects ~90 markets.
 - `--max-markets=N` (env `MAX_MARKETS`) — process at most N markets, highest
   recovery first. Useful for a paced first run.
-- `--filled-since-defrag` — with `--markets --loop=SECONDS`, sweep only markets
-  observed on the live fill feed since their last confirmed sweep. This is an
-  explicit opt-in; wrapper collection and global cleaning remain unfiltered.
+- `--filled-since-defrag` — with `--markets --loop=SECONDS`, sweep markets
+  observed on the live fill feed since their last confirmed sweep, plus any
+  market whose accrued fees already clear the recovery floor. The fee
+  admission is not optional within this mode: advanced-order fees are paid
+  when orders are placed, which emits no fill, so a fills-only filter would
+  never sweep the markets where fees accumulate. This flag is an explicit
+  opt-in; wrapper collection and global cleaning remain unfiltered.
 
 ### Batching and pacing
 

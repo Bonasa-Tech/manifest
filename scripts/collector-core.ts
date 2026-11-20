@@ -438,6 +438,36 @@ export function selectMarkets(
 }
 
 /**
+ * Which markets a fill-filtered pass may consider at all.
+ *
+ * The fill queue alone cannot find fee revenue: the advanced-order fee is paid
+ * when orders are PLACED (a batch_update carrying global or reverse orders),
+ * which emits no fill, so a market can accumulate fees indefinitely without
+ * ever entering the queue. A market whose accrued excess already clears the
+ * recovery floor is therefore admitted regardless of fills; the queue adds the
+ * recently-filled markets whose recovery is mostly tail rent.
+ */
+export function admitSweepCandidates(
+  plans: readonly MarketPlan[],
+  filledMarkets: ReadonlySet<string>,
+  minRecoveryLamports: bigint,
+): { candidates: MarketPlan[]; filled: number; feeAdmitted: number } {
+  const candidates: MarketPlan[] = [];
+  let filled = 0;
+  let feeAdmitted = 0;
+  for (const plan of plans) {
+    if (filledMarkets.has(plan.pubkey)) {
+      candidates.push(plan);
+      filled += 1;
+    } else if (plan.excessLamports >= minRecoveryLamports) {
+      candidates.push(plan);
+      feeAdmitted += 1;
+    }
+  }
+  return { candidates, filled, feeAdmitted };
+}
+
+/**
  * Whether a batch of cleans pays for the transaction that carries it.
  *
  * Each clean returns one gas deposit and the transaction costs one signature,
@@ -822,13 +852,22 @@ export type CoreCollectionOptions = {
   /** Sweep markets for accrued fees (and any already-free tail). */
   sweepMarkets: boolean;
   /**
-   * When present, only these markets are eligible for a sweep. Other core
-   * phases still inspect every market; this filter is intentionally limited
-   * to the zero-relocation market defrag.
+   * When present, the sweep considers these (recently filled) markets plus any
+   * market whose accrued excess clears `minRecoveryLamports` — fees are paid on
+   * order placement, not fills, so they must not be gated on the fill queue
+   * (see {@link admitSweepCandidates}). Other core phases still inspect every
+   * market; this filter is intentionally limited to the zero-relocation market
+   * defrag.
    */
   sweepMarketPubkeys?: ReadonlySet<string>;
   /** Called immediately after a market sweep transaction is confirmed. */
   onMarketsSwept?: (markets: readonly string[]) => void;
+  /**
+   * Called with markets dropped from the sweep because a mint owner could not
+   * be read (typically a closed mint — permanent). Lets the caller clear them
+   * from its pending-fill queue instead of re-selecting them every pass.
+   */
+  onMarketsUnsweepable?: (markets: readonly string[]) => void;
   /**
    * Require the sweep to truncate at least this many blocks, i.e. target tail
    * tightening specifically rather than fee collection. See the note at the
@@ -979,13 +1018,19 @@ export async function runCoreCollections(
     `${plans.length} markets read; ${expanders} excluded because defrag would expand them at the collector's expense`,
   );
 
-  const sweepCandidates =
-    options.sweepMarketPubkeys === undefined
-      ? plans
-      : plans.filter((plan) => options.sweepMarketPubkeys!.has(plan.pubkey));
-  if (options.sweepMarketPubkeys !== undefined) {
+  let sweepCandidates: MarketPlan[];
+  if (options.sweepMarketPubkeys === undefined) {
+    sweepCandidates = plans;
+  } else {
+    const admitted = admitSweepCandidates(
+      plans,
+      options.sweepMarketPubkeys,
+      options.minRecoveryLamports,
+    );
+    sweepCandidates = admitted.candidates;
     console.log(
-      `Fill filter: ${sweepCandidates.length}/${plans.length} markets filled since their last confirmed sweep`,
+      `Fill filter: ${admitted.filled}/${plans.length} markets filled since their last confirmed sweep, ` +
+        `plus ${admitted.feeAdmitted} admitted on accrued fees`,
     );
   }
   let selected = options.sweepMarkets
@@ -1132,6 +1177,15 @@ export async function runCoreCollections(
   if (sweepable.length < selected.length) {
     console.warn(
       `Excluding ${selected.length - sweepable.length} markets whose mint owner could not be read`,
+    );
+    options.onMarketsUnsweepable?.(
+      selected
+        .filter(
+          (plan) =>
+            !tokenPrograms.has(plan.baseMint) ||
+            !tokenPrograms.has(plan.quoteMint),
+        )
+        .map((plan) => plan.pubkey),
     );
   }
 
