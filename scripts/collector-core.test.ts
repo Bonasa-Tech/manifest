@@ -9,21 +9,26 @@
  */
 import * as assert from 'node:assert/strict';
 import { PublicKey } from '@solana/web3.js';
+import { type Instruction } from '@solana/kit';
 import {
   CLEAN_EXPIRY_BUFFER_SLOTS,
   GAS_DEPOSIT_LAMPORTS,
   MARKET_BLOCK_SIZE,
   MARKET_FIXED_SIZE,
+  admitSweepCandidates,
   cleanBatchIsProfitable,
   cleanRaceErrorCode,
+  createMarketSweepInstruction,
   createUnbackedTracker,
   findCleanableOrders,
+  packInstructions,
   parseGlobalDeposits,
   planMarket,
   requiredGlobalAtoms,
   selectMarkets,
   selectStableUnbacked,
   sweepComputeUnits,
+  sweepSelectionBreakdown,
   type CleanableOrder,
   type GlobalAccount,
   type MarketPlan,
@@ -89,9 +94,16 @@ function market(
   return result;
 }
 
-const planOf = (layout: number[], extraLamports = 0n): MarketPlan => {
+const planOf = (
+  layout: number[],
+  extraLamports = 0n,
+  relocate = true,
+): MarketPlan => {
   const data = market(layout, extraLamports);
-  const plan = planMarket({ pubkey: MARKET, lamports: data.lamports, data });
+  const plan = planMarket(
+    { pubkey: MARKET, lamports: data.lamports, data },
+    { relocate },
+  );
   assert.ok(plan !== null, 'expected a plan');
   return plan;
 };
@@ -113,30 +125,65 @@ const S = NODE_TYPE_CLAIMED_SEAT;
 
 test('a packed market with a 5-block tail is cut to exactly 2 free blocks', () => {
   // The keep_count + 2 floor binds because there are no interior holes, so
-  // this is the 5 -> 2 case: three blocks of rent come back.
+  // this is the 5 -> 2 case: three blocks of rent come back and nothing needs
+  // to move, in either mode.
   const plan = planOf([O, O, O, O, O, 0, 0, 0, 0, 0]);
   assert.equal(plan.orders, 5);
   assert.equal(plan.freeTailBlocks, 5);
   assert.equal(plan.interiorHoles, 0);
+  assert.equal(plan.relocations, 0);
   assert.equal(plan.postSpace, MARKET_FIXED_SIZE + 7 * MARKET_BLOCK_SIZE);
   assert.equal(
-    plan.tailRentLamports,
+    plan.reclaimedRentLamports,
     BigInt(3 * MARKET_BLOCK_SIZE * LAMPORTS_PER_BYTE_YEAR_EXEMPT),
   );
 });
 
-test('interior holes survive a sweep because only relocation could gather them', () => {
-  // frontier dominates the floor here: the single tail block goes, the three
-  // holes between live blocks stay. This is why sweeping a large, churned
-  // market is almost pure fee collection.
-  const plan = planOf([O, 0, O, 0, O, 0, S, 0]);
-  assert.equal(plan.interiorHoles, 3);
-  assert.equal(plan.freeTailBlocks, 1);
-  assert.equal(plan.postSpace, MARKET_FIXED_SIZE + 7 * MARKET_BLOCK_SIZE);
+test('interior holes survive a sweep-only pass but are gathered by relocation', () => {
+  // Sweep-only: the frontier dominates the floor, the single tail block goes
+  // and the three holes between live blocks stay.
+  const sweepOnly = planOf([O, 0, O, 0, O, 0, S, 0], 0n, false);
+  assert.equal(sweepOnly.interiorHoles, 3);
+  assert.equal(sweepOnly.freeTailBlocks, 1);
+  assert.equal(sweepOnly.relocations, 0);
+  assert.equal(sweepOnly.postSpace, MARKET_FIXED_SIZE + 7 * MARKET_BLOCK_SIZE);
   assert.equal(
-    plan.tailRentLamports,
+    sweepOnly.reclaimedRentLamports,
     BigInt(MARKET_BLOCK_SIZE * LAMPORTS_PER_BYTE_YEAR_EXEMPT),
   );
+  // Relocation: the one live block above the live + 2 floor (the seat at
+  // index 6) moves down into a hole, so the account reaches the floor.
+  const relocating = planOf([O, 0, O, 0, O, 0, S, 0]);
+  assert.equal(relocating.relocations, 1);
+  assert.equal(
+    relocating.postSpace,
+    MARKET_FIXED_SIZE + 6 * MARKET_BLOCK_SIZE,
+  );
+  assert.equal(
+    relocating.reclaimedRentLamports,
+    BigInt(2 * MARKET_BLOCK_SIZE * LAMPORTS_PER_BYTE_YEAR_EXEMPT),
+  );
+});
+
+test('relocation budgets are exact: no node moves unless rent comes back', () => {
+  // The tail alone reaches the live + 2 floor, so relocation reclaims the
+  // block without moving anything - a pointless move would only invalidate a
+  // client's cached index.
+  const tailOnly = planOf([O, 0, O, 0, 0]);
+  assert.equal(tailOnly.relocations, 0);
+  assert.equal(tailOnly.postSpace, MARKET_FIXED_SIZE + 4 * MARKET_BLOCK_SIZE);
+  // Here sweep-only reclaims nothing (the frontier is the last block), while
+  // one relocation frees one block of rent.
+  const holeBound = planOf([O, 0, 0, 0, O]);
+  assert.equal(holeBound.relocations, 1);
+  assert.equal(holeBound.postSpace, MARKET_FIXED_SIZE + 4 * MARKET_BLOCK_SIZE);
+  assert.equal(
+    holeBound.reclaimedRentLamports,
+    BigInt(MARKET_BLOCK_SIZE * LAMPORTS_PER_BYTE_YEAR_EXEMPT),
+  );
+  const holeBoundSweepOnly = planOf([O, 0, 0, 0, O], 0n, false);
+  assert.equal(holeBoundSweepOnly.relocations, 0);
+  assert.equal(holeBoundSweepOnly.reclaimedRentLamports, 0n);
 });
 
 test('accrued excess above rent is counted, and a market at its minimum yields none', () => {
@@ -187,6 +234,81 @@ test('min-shrink targets tail tightening and drops fee-only markets', () => {
   });
   assert.equal(tightened.length, 1);
   assert.equal(tightened[0].freeTailBlocks, 5);
+});
+
+test('fill-filtered admission also admits markets on accrued fees alone', () => {
+  // Fees are paid on order placement, which emits no fill, so a market can
+  // hold revenue without ever entering the fill queue.
+  const floor = 100_000n;
+  const filledNoFees = { ...planOf([O, 0, 0]), pubkey: 'A'.repeat(43) };
+  const unfilledWithFees = {
+    ...planOf([O, 0, 0], 250_000n),
+    pubkey: 'B'.repeat(43),
+  };
+  const unfilledDust = {
+    ...planOf([O, 0, 0], 99_999n),
+    pubkey: 'C'.repeat(43),
+  };
+  const { candidates, filled, feeAdmitted } = admitSweepCandidates(
+    [filledNoFees, unfilledWithFees, unfilledDust],
+    new Set([filledNoFees.pubkey]),
+    floor,
+  );
+  assert.deepEqual(
+    candidates.map((plan) => plan.pubkey),
+    [filledNoFees.pubkey, unfilledWithFees.pubkey],
+  );
+  assert.equal(filled, 1);
+  assert.equal(feeAdmitted, 1);
+});
+
+test('a filled market holding fees counts as filled, not fee-admitted', () => {
+  const plan = { ...planOf([O, 0, 0], 250_000n), pubkey: 'D'.repeat(43) };
+  const { candidates, filled, feeAdmitted } = admitSweepCandidates(
+    [plan],
+    new Set([plan.pubkey]),
+    100_000n,
+  );
+  assert.equal(candidates.length, 1);
+  assert.equal(filled, 1);
+  assert.equal(feeAdmitted, 0);
+});
+
+test('the selection breakdown names why each candidate was passed over', () => {
+  const qualified = planOf([O, 0, 0], 500_000n);
+  const expands = planOf([O, O, O], 500_000n);
+  // An interior hole between live blocks and a tail already at the frontier's
+  // floor: a fill freed a block, but nothing is truncatable and no fees
+  // accrued.
+  const nothing = planOf([O, 0, O, 0]);
+  const belowFloor = planOf([O, 0, 0], 10n);
+  assert.deepEqual(
+    sweepSelectionBreakdown([qualified, expands, nothing, belowFloor], {
+      minRecoveryLamports: 100_000n,
+      minShrinkBlocks: 0,
+    }),
+    {
+      qualified: 1,
+      expands: 1,
+      nothingRecoverable: 1,
+      belowFloor: 1,
+      underMinShrink: 0,
+    },
+  );
+  // Tail-tighten mode reclassifies the fee-only market as under min-shrink.
+  assert.deepEqual(
+    sweepSelectionBreakdown([qualified], {
+      minRecoveryLamports: 100_000n,
+      minShrinkBlocks: 3,
+    }),
+    {
+      qualified: 0,
+      expands: 0,
+      nothingRecoverable: 0,
+      belowFloor: 0,
+      underMinShrink: 1,
+    },
+  );
 });
 
 test('selection honours the dust floor and orders by recovery', () => {
@@ -547,6 +669,43 @@ test('a clean batch must out-earn the signature it needs', () => {
   // Riding with a sweep, the signature is already paid for.
   assert.equal(cleanBatchIsProfitable(1, true), true);
   assert.equal(cleanBatchIsProfitable(0, true), false);
+});
+
+test('the sweep instruction carries the plan exact relocation budget', () => {
+  const SYSTEM = '11111111111111111111111111111111';
+  const plan = {
+    ...planOf([O, 0, 0, 0, O]),
+    pubkey: SYSTEM,
+    baseVault: SYSTEM,
+    quoteVault: SYSTEM,
+  };
+  assert.equal(plan.relocations, 1);
+  const instruction = createMarketSweepInstruction(
+    plan,
+    new PublicKey(SYSTEM),
+    SYSTEM,
+    SYSTEM,
+  );
+  const data = instruction.data!;
+  assert.equal(data.length, 9);
+  const view = new DataView(data.buffer, data.byteOffset);
+  assert.equal(view.getUint32(1, true), 1, 'relocation budget');
+  assert.equal(view.getUint32(5, true), 0, 'seats stay zero');
+});
+
+test('packing splits a batch when compute estimates would exceed the cap', () => {
+  // The measure stub reports every candidate as tiny, so only the compute
+  // estimate can force the split here.
+  const stub = { data: new Uint8Array() } as unknown as Instruction;
+  const batches = packInstructions(
+    ['a', 'b', 'c'],
+    () => stub,
+    19,
+    () => 100,
+    () => 600_000,
+    1_400_000,
+  );
+  assert.deepEqual(batches, [['a', 'b'], ['c']]);
 });
 
 test('sweep compute scales with account size', () => {

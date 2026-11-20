@@ -41,10 +41,26 @@ export type FillSnapshot = ReadonlyMap<string, number>;
 export class PendingFillMarkets {
   private readonly generations = new Map<string, number>();
   private nextGeneration = 1;
+  private fillsObserved = 0;
+  private marketsAdded = 0;
 
   record(market: string): void {
+    this.fillsObserved += 1;
+    if (!this.generations.has(market)) this.marketsAdded += 1;
     this.generations.set(market, this.nextGeneration);
     this.nextGeneration += 1;
+  }
+
+  /**
+   * Fills recorded and distinct markets added since the previous drain. Lets a
+   * pass tell a quiet feed from a dead one: a half-open socket raises no error,
+   * so a frozen pending count is ambiguous without this.
+   */
+  drainObservationStats(): { fills: number; marketsAdded: number } {
+    const stats = { fills: this.fillsObserved, marketsAdded: this.marketsAdded };
+    this.fillsObserved = 0;
+    this.marketsAdded = 0;
+    return stats;
   }
 
   snapshot(): FillSnapshot {
@@ -79,6 +95,8 @@ type FillWatcher = {
     snapshot: FillSnapshot,
   ) => number;
   pendingCount: () => number;
+  /** Fills and new markets observed since the previous call. */
+  observationStats: () => { fills: number; marketsAdded: number };
   close: () => void;
 };
 
@@ -86,6 +104,7 @@ type FillWatcher = {
 export function createFillWatcher(
   feedUrl =
     process.env.FILL_FEED_URL ?? 'wss://mfx-feed-mainnet-bonasa.fly.dev',
+  keepaliveMs = 30_000,
 ): FillWatcher {
   const pending = new PendingFillMarkets();
   let activeSocket: WebSocket | undefined;
@@ -111,6 +130,13 @@ export function createFillWatcher(
     activeSocket = ws;
     let opened = false;
     let closeReason = 'closed';
+    // A half-open socket (NAT timeout, suspended machine) raises neither error
+    // nor close; without a keepalive it silently starves the queue while the
+    // pending count freezes. Ping on an interval and terminate when a pong
+    // fails to arrive before the next ping, which routes through the one
+    // reconnect path above.
+    let pongReceived = true;
+    let keepaliveTimer: ReturnType<typeof setInterval> | undefined;
 
     ws.on('open', () => {
       if (activeSocket !== ws || stopped) return;
@@ -118,7 +144,20 @@ export function createFillWatcher(
       connected = true;
       backoffMs = 1_000;
       console.log(`Fill feed connected: ${feedUrl}`);
+      keepaliveTimer = setInterval(() => {
+        if (!pongReceived) {
+          closeReason = 'keepalive timed out (no pong)';
+          ws.terminate();
+          return;
+        }
+        pongReceived = false;
+        ws.ping();
+      }, keepaliveMs);
       releaseWaiters();
+    });
+
+    ws.on('pong', () => {
+      pongReceived = true;
     });
 
     ws.on('message', (data) => {
@@ -143,6 +182,10 @@ export function createFillWatcher(
     });
 
     ws.on('close', () => {
+      if (keepaliveTimer !== undefined) {
+        clearInterval(keepaliveTimer);
+        keepaliveTimer = undefined;
+      }
       if (activeSocket !== ws) return;
       activeSocket = undefined;
       connected = false;
@@ -176,6 +219,9 @@ export function createFillWatcher(
     },
     pendingCount() {
       return pending.size;
+    },
+    observationStats() {
+      return pending.drainObservationStats();
     },
     close() {
       if (stopped) return;
@@ -353,6 +399,26 @@ type SimulationResult = {
     loadedAccountsDataSize?: number;
   };
 };
+
+/** undici collapses every transport failure into a bare `fetch failed`; the
+ * real reason (EAI_AGAIN, ECONNRESET, UND_ERR_BODY_TIMEOUT) lives only on the
+ * wrapped `cause`, so a pass that dies on the network is undiagnosable from
+ * the message alone. Walk the chain and name the codes. */
+export function describeError(error: unknown): string {
+  if (!(error instanceof Error)) return String(error);
+  const parts: string[] = [error.message];
+  for (
+    let cause: unknown = error.cause;
+    cause instanceof Error;
+    cause = cause.cause
+  ) {
+    const code: string | undefined = (cause as NodeJS.ErrnoException).code;
+    parts.push(
+      code === undefined ? cause.message : `${cause.message} (${code})`,
+    );
+  }
+  return parts.join(' <- ');
+}
 
 async function rpc<T>(method: string, params: unknown[]): Promise<T> {
   const response = await fetch(RPC_URL!, {
@@ -902,6 +968,13 @@ Options:
                              stopped.
   --tail-tighten             Also take markets whose free tail can truncate.
   --min-shrink=N             With --tail-tighten, require N blocks of shrink.
+  --sweep-only               Relocate nothing: collect fees and truncate the
+                             existing free tail only. The market sweep
+                             relocates by default, gathering interior holes so
+                             they truncate with the tail; sweep-only is the
+                             mode that cannot move an order index a client may
+                             hold as a hint. Seats are never reclaimed in
+                             either mode.
   --max-markets=N            Cap markets per run, highest recovery first.
   --loop=SECONDS             Run continuously until Ctrl-C, starting a pass every
                              SECONDS measured from the previous pass's START (so
@@ -910,9 +983,11 @@ Options:
                              immediately by the next - never concurrently - and
                              a pass that errors is logged and the loop continues.
   --filled-since-defrag      With --markets and --loop, keep one fill-feed socket
-                             in this process and sweep only markets filled since
-                             their last confirmed sweep. No state directory or
-                             separate watcher process is used.
+                             in this process and sweep markets filled since their
+                             last confirmed sweep, plus any market whose accrued
+                             fees clear the recovery floor (fees are paid on
+                             order placement, which emits no fill). No state
+                             directory or separate watcher process is used.
 
 Execution safety:
   Every transaction is simulated before submission. A batch that fails
@@ -963,6 +1038,9 @@ Environment:
   const minShrinkBlocks = tailTighten
     ? (parsePositiveInteger('min-shrink', 'MIN_SHRINK_BLOCKS') ?? 1)
     : 0;
+  // Relocation is the default since the 2026-10-26 client retest; --sweep-only
+  // restores the zero-relocation sweep that cannot move an order index.
+  const sweepOnly = process.argv.includes('--sweep-only');
   const maxMarkets = parsePositiveInteger('max-markets', 'MAX_MARKETS');
   const wrapperOption = optionValue('wrapper');
   const coreOnly =
@@ -970,6 +1048,11 @@ Environment:
   if (tailTighten && !sweepMarkets) {
     throw new Error(
       '--tail-tighten applies to the market sweep; pass --markets as well',
+    );
+  }
+  if (sweepOnly && !sweepMarkets) {
+    throw new Error(
+      '--sweep-only applies to the market sweep; pass --markets as well',
     );
   }
   if (filledSinceDefrag && !sweepMarkets) {
@@ -1036,10 +1119,15 @@ Environment:
       ? fillWatcher!.snapshot()
       : undefined;
     let acknowledgedFills = 0;
-    console.log(`Mode: ${execute ? 'EXECUTE' : 'DRY RUN'} (core phases)`);
+    let clearedUnsweepable = 0;
+    console.log(
+      `Mode: ${execute ? 'EXECUTE' : 'DRY RUN'} (core phases, ${sweepOnly ? 'sweep-only' : 'relocation on'})`,
+    );
     if (fillSnapshot !== undefined) {
+      const observed = fillWatcher!.observationStats();
       console.log(
-        `Filled-since-defrag: ${fillSnapshot.size} markets pending from the live feed`,
+        `Filled-since-defrag: ${fillSnapshot.size} markets pending from the live feed ` +
+          `(${observed.fills} fills, ${observed.marketsAdded} new markets since last pass)`,
       );
     }
     const coreResult = await runCoreCollections(
@@ -1154,6 +1242,7 @@ Environment:
       {
         execute,
         sweepMarkets,
+        relocate: !sweepOnly,
         sweepMarketPubkeys:
           fillSnapshot === undefined
             ? undefined
@@ -1163,6 +1252,15 @@ Environment:
             ? undefined
             : (markets) => {
                 acknowledgedFills += fillWatcher!.acknowledge(
+                  markets,
+                  fillSnapshot,
+                );
+              },
+        onMarketsUnsweepable:
+          fillSnapshot === undefined
+            ? undefined
+            : (markets) => {
+                clearedUnsweepable += fillWatcher!.acknowledge(
                   markets,
                   fillSnapshot,
                 );
@@ -1190,7 +1288,11 @@ Environment:
     );
     if (fillSnapshot !== undefined) {
       console.log(
-        `Fill queue: ${acknowledgedFills} confirmed markets cleared; ${fillWatcher!.pendingCount()} pending`,
+        `Fill queue: ${acknowledgedFills} confirmed markets cleared` +
+          (clearedUnsweepable > 0
+            ? ` + ${clearedUnsweepable} unsweepable dropped`
+            : '') +
+          `; ${fillWatcher!.pendingCount()} pending`,
       );
     }
     if (coreOnly) {
@@ -1661,10 +1763,7 @@ async function main(): Promise<void> {
       try {
         await run(fillWatcher);
       } catch (error) {
-        console.error(
-          `pass ${pass} failed:`,
-          error instanceof Error ? error.message : error,
-        );
+        console.error(`pass ${pass} failed:`, describeError(error));
       }
       // Persist after every pass (even a failed one), so a restart resumes from
       // the latest unbacked-order baseline. Fill state stays memory-only.

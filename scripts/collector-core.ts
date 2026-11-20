@@ -110,17 +110,25 @@ export type MarketPlan = {
   quoteVault: string;
   orders: number;
   seats: number;
-  /** Blocks above the highest live block: the only ones a sweep can truncate. */
+  /** Blocks above the highest live block: all a relocation-free sweep can truncate. */
   freeTailBlocks: number;
-  /** Free blocks between live ones. Only relocation could gather these. */
+  /** Free blocks between live ones. Only relocation can gather these. */
   interiorHoles: number;
-  /** Account size after a sweep, honouring the keep_count + 2 floor. */
+  /**
+   * The u32 relocation budget this plan's sweep will carry: live blocks above
+   * the keep_count + 2 floor, which is exactly the set that must move for the
+   * account to reach that floor. Zero in sweep-only mode, and zero whenever
+   * the free tail alone already reaches the floor, so no node is ever moved
+   * without rent coming back for it.
+   */
+  relocations: number;
+  /** Account size after the sweep, honouring the keep_count + 2 floor. */
   postSpace: number;
   /** Lamports above this market's current rent minimum. */
   excessLamports: bigint;
-  /** Rent released by truncating the free tail. */
-  tailRentLamports: bigint;
-  /** excess + tail rent. Negative is impossible here: see expandsOnDefrag. */
+  /** Rent released by the shrink: the free tail, plus gathered holes when relocating. */
+  reclaimedRentLamports: bigint;
+  /** excess + reclaimed rent. Negative is impossible here: see expandsOnDefrag. */
   recoveredLamports: bigint;
   /**
    * The processor tops a market up to two free blocks BEFORE compacting
@@ -160,7 +168,10 @@ const rentMinimum = (space: number): bigint =>
  * locally. Batches are still simulated before they are sent, which is what
  * actually guards correctness.
  */
-export function planMarket(account: MarketAccount): MarketPlan | null {
+export function planMarket(
+  account: MarketAccount,
+  options: { relocate: boolean } = { relocate: true },
+): MarketPlan | null {
   const { data, lamports, pubkey } = account;
   if (data.length < MARKET_FIXED_SIZE) return null;
   const allocated = data.readUInt32LE(NUM_BYTES_ALLOCATED_OFFSET);
@@ -169,6 +180,7 @@ export function planMarket(account: MarketAccount): MarketPlan | null {
   let orders = 0;
   let seats = 0;
   let frontier = 0;
+  const liveBlocks: number[] = [];
   for (let block = 0; block < blocks; block += 1) {
     const at = MARKET_FIXED_SIZE + block * MARKET_BLOCK_SIZE;
     if (at + MARKET_BLOCK_SIZE > data.length) break;
@@ -176,19 +188,26 @@ export function planMarket(account: MarketAccount): MarketPlan | null {
     if (kind === NODE_TYPE_RESTING_ORDER) orders += 1;
     else if (kind === NODE_TYPE_CLAIMED_SEAT) seats += 1;
     else continue;
+    liveBlocks.push(block);
     frontier = block + 1;
   }
   const live = orders + seats;
   const freeTailBlocks = blocks - frontier;
   const interiorHoles = blocks - live - freeTailBlocks;
 
-  // Mirrors `frontier.max(keep_count + 2)` in market_defrag.rs. With interior
-  // holes the frontier dominates and the tail is all that can go; with none,
-  // the floor binds and the market lands on exactly two free blocks.
-  const newBlocks = Math.max(frontier, live + DEFRAG_SPARE_BLOCKS);
+  // Mirrors `frontier.max(keep_count + 2)` in market_defrag.rs. Without
+  // relocation the frontier dominates wherever interior holes exist and the
+  // tail is all that can go. Relocating moves exactly the live blocks above
+  // the keep_count + 2 floor down into holes, so the frontier lands at the
+  // floor and the gathered holes truncate with the tail.
+  const floor = live + DEFRAG_SPARE_BLOCKS;
+  const relocations = options.relocate
+    ? liveBlocks.filter((block) => block >= floor).length
+    : 0;
+  const newBlocks = options.relocate ? floor : Math.max(frontier, floor);
   const postSpace = MARKET_FIXED_SIZE + newBlocks * MARKET_BLOCK_SIZE;
   const excessLamports = lamports - rentMinimum(data.length);
-  const tailRentLamports = BigInt(
+  const reclaimedRentLamports = BigInt(
     Math.max(0, data.length - postSpace) * LAMPORTS_PER_BYTE_YEAR_EXEMPT,
   );
 
@@ -212,11 +231,12 @@ export function planMarket(account: MarketAccount): MarketPlan | null {
     seats,
     freeTailBlocks,
     interiorHoles,
+    relocations,
     postSpace,
     excessLamports: excessLamports > 0n ? excessLamports : 0n,
-    tailRentLamports,
+    reclaimedRentLamports,
     recoveredLamports:
-      (excessLamports > 0n ? excessLamports : 0n) + tailRentLamports,
+      (excessLamports > 0n ? excessLamports : 0n) + reclaimedRentLamports,
     expandsOnDefrag: blocks - live < DEFRAG_SPARE_BLOCKS,
   };
 }
@@ -362,10 +382,14 @@ export function createMarketSweepInstruction(
   baseTokenProgram: string,
   quoteTokenProgram: string,
 ): Instruction {
-  // [tag, relocations u32 = 0, seats u32 = 0]. The two zero budgets are what
-  // make this inert: no block moves, no seat is reclaimed.
+  // [tag, relocations u32, seats u32]. The relocation budget is the plan's
+  // exact count of live blocks above the keep_count + 2 floor (zero in
+  // sweep-only mode, making the defrag inert). The seat budget stays zero:
+  // reclaiming a seat out from under the deployed wrapper strands its trader
+  // until a wrapper with seat self-heal ships.
   const data = new Uint8Array(9);
   data[0] = DEFRAG_DISCRIMINANT;
+  new DataView(data.buffer).setUint32(1, plan.relocations, true);
   return {
     accounts: [
       {
@@ -435,6 +459,81 @@ export function selectMarkets(
       );
     })
     .sort((a, b) => Number(b.recoveredLamports - a.recoveredLamports));
+}
+
+/**
+ * Which markets a fill-filtered pass may consider at all.
+ *
+ * The fill queue alone cannot find fee revenue: the advanced-order fee is paid
+ * when orders are PLACED (a batch_update carrying global or reverse orders),
+ * which emits no fill, so a market can accumulate fees indefinitely without
+ * ever entering the queue. A market whose accrued excess already clears the
+ * recovery floor is therefore admitted regardless of fills; the queue adds the
+ * recently-filled markets whose recovery is mostly tail rent.
+ */
+export function admitSweepCandidates(
+  plans: readonly MarketPlan[],
+  filledMarkets: ReadonlySet<string>,
+  minRecoveryLamports: bigint,
+): { candidates: MarketPlan[]; filled: number; feeAdmitted: number } {
+  const candidates: MarketPlan[] = [];
+  let filled = 0;
+  let feeAdmitted = 0;
+  for (const plan of plans) {
+    if (filledMarkets.has(plan.pubkey)) {
+      candidates.push(plan);
+      filled += 1;
+    } else if (plan.excessLamports >= minRecoveryLamports) {
+      candidates.push(plan);
+      feeAdmitted += 1;
+    }
+  }
+  return { candidates, filled, feeAdmitted };
+}
+
+export type SelectionBreakdown = {
+  /** Pass every filter below. */
+  qualified: number;
+  /** Defrag would expand the account at the collector's expense. */
+  expands: number;
+  /** No excess and no truncatable tail — e.g. only interior holes freed. */
+  nothingRecoverable: number;
+  /** Recoverable, but under the dust floor. */
+  belowFloor: number;
+  /** Tail-tighten mode only: tail shrinks by fewer blocks than required. */
+  underMinShrink: number;
+};
+
+/**
+ * Why each candidate did or did not qualify, mirroring {@link selectMarkets}
+ * exactly. A pass that plans nothing is otherwise indistinguishable from a
+ * starved fill feed or a selection bug; this names the reason per market.
+ */
+export function sweepSelectionBreakdown(
+  plans: readonly MarketPlan[],
+  options: { minRecoveryLamports: bigint; minShrinkBlocks: number },
+): SelectionBreakdown {
+  const breakdown: SelectionBreakdown = {
+    qualified: 0,
+    expands: 0,
+    nothingRecoverable: 0,
+    belowFloor: 0,
+    underMinShrink: 0,
+  };
+  for (const plan of plans) {
+    if (plan.expandsOnDefrag) breakdown.expands += 1;
+    else if (plan.recoveredLamports === 0n) breakdown.nothingRecoverable += 1;
+    else if (plan.recoveredLamports < options.minRecoveryLamports)
+      breakdown.belowFloor += 1;
+    else if (
+      options.minShrinkBlocks > 0 &&
+      (plan.space - plan.postSpace) / MARKET_BLOCK_SIZE <
+        options.minShrinkBlocks
+    )
+      breakdown.underMinShrink += 1;
+    else breakdown.qualified += 1;
+  }
+  return breakdown;
 }
 
 /**
@@ -777,40 +876,58 @@ const MAX_COMPUTE_UNITS = 1_400_000;
 // Mandatory. Without it a multi-leg batch fails MaxLoadedAccountsDataSizeExceeded
 // having consumed zero compute units, which looks like a program bug.
 const MAX_LOADED_ACCOUNTS_DATA_SIZE = 64 * 1024 * 1024;
-const SWEEP_CU_BASE = 3_000;
+// Mirrors scripts/defrag/defrag.mjs, calibrated on the stage-3 mainnet runs:
+// ~1 CU/byte on the largest market, higher per byte on small relocation-heavy
+// ones, so 2.5/byte with a floor keeps headroom. The mark phase scans every
+// allocated block whatever the budgets say, which is why the floor is high and
+// why sweep-only is not materially cheaper to budget for.
+const SWEEP_CU_BASE = 80_000;
 const SWEEP_CU_PER_BYTE = 2.5;
 
 export const sweepComputeUnits = (plan: MarketPlan): number =>
-  Math.ceil(SWEEP_CU_BASE + SWEEP_CU_PER_BYTE * plan.space);
+  Math.min(
+    MAX_COMPUTE_UNITS,
+    Math.ceil(SWEEP_CU_BASE + SWEEP_CU_PER_BYTE * plan.space),
+  );
 
 /**
- * Greedily pack instructions into transactions, bounded by a leg cap and by
- * the real serialized size of the candidate. Size is measured rather than
- * estimated because a transaction that exceeds the limit is rejected outright.
+ * Greedily pack instructions into transactions, bounded by a leg cap, by the
+ * real serialized size of the candidate, and (when `unitsOf` is given) by the
+ * summed compute estimate. Size is measured rather than estimated because a
+ * transaction that exceeds the limit is rejected outright; compute is capped
+ * because a batch whose budget is clipped at the ceiling fails in simulation
+ * and takes the whole pass down with it.
  */
 export function packInstructions<T>(
   items: T[],
   toInstruction: (item: T) => Instruction,
   maxLegs: number,
   measure: (instructions: Instruction[]) => number | null,
+  unitsOf?: (item: T) => number,
+  maxUnits: number = MAX_COMPUTE_UNITS,
 ): T[][] {
   const batches: T[][] = [];
   let current: T[] = [];
+  let currentUnits = 0;
   for (const item of items) {
+    const itemUnits = unitsOf === undefined ? 0 : unitsOf(item);
     if (current.length === 0) {
       current = [item];
+      currentUnits = itemUnits;
       continue;
     }
     const candidate = [...current, item];
     const size =
-      candidate.length <= maxLegs
+      candidate.length <= maxLegs && currentUnits + itemUnits <= maxUnits
         ? measure(candidate.map(toInstruction))
         : null;
     if (size !== null && size <= V1_MAX_SIZE) {
       current = candidate;
+      currentUnits += itemUnits;
     } else {
       batches.push(current);
       current = [item];
+      currentUnits = itemUnits;
     }
   }
   if (current.length > 0) batches.push(current);
@@ -822,13 +939,31 @@ export type CoreCollectionOptions = {
   /** Sweep markets for accrued fees (and any already-free tail). */
   sweepMarkets: boolean;
   /**
-   * When present, only these markets are eligible for a sweep. Other core
-   * phases still inspect every market; this filter is intentionally limited
-   * to the zero-relocation market defrag.
+   * Relocate live blocks down into interior holes so the gathered space
+   * truncates with the tail (the exact per-market budget is computed by
+   * {@link planMarket}). Relocation moves resting-order indices that clients
+   * may hold as hints; the 2026-10-26 retest passed every known client, so it
+   * is the default. False restores the zero-relocation sweep. Seat
+   * reclamation stays off in both modes.
+   */
+  relocate: boolean;
+  /**
+   * When present, the sweep considers these (recently filled) markets plus any
+   * market whose accrued excess clears `minRecoveryLamports` — fees are paid on
+   * order placement, not fills, so they must not be gated on the fill queue
+   * (see {@link admitSweepCandidates}). Other core phases still inspect every
+   * market; this filter is intentionally limited to the zero-relocation market
+   * defrag.
    */
   sweepMarketPubkeys?: ReadonlySet<string>;
   /** Called immediately after a market sweep transaction is confirmed. */
   onMarketsSwept?: (markets: readonly string[]) => void;
+  /**
+   * Called with markets dropped from the sweep because a mint owner could not
+   * be read (typically a closed mint — permanent). Lets the caller clear them
+   * from its pending-fill queue instead of re-selecting them every pass.
+   */
+  onMarketsUnsweepable?: (markets: readonly string[]) => void;
   /**
    * Require the sweep to truncate at least this many blocks, i.e. target tail
    * tightening specifically rather than fee collection. See the note at the
@@ -969,7 +1104,7 @@ export async function runCoreCollections(
   console.log('Fetching core market accounts...');
   const accounts = await fetchMarketAccounts(rpc, bs58encode);
   const plans = accounts
-    .map(planMarket)
+    .map((account) => planMarket(account, { relocate: options.relocate }))
     .filter((plan): plan is MarketPlan => plan !== null);
   result.marketsPlanned = plans.length;
   const dataByMarket = new Map(accounts.map((a) => [a.pubkey, a.data]));
@@ -979,13 +1114,19 @@ export async function runCoreCollections(
     `${plans.length} markets read; ${expanders} excluded because defrag would expand them at the collector's expense`,
   );
 
-  const sweepCandidates =
-    options.sweepMarketPubkeys === undefined
-      ? plans
-      : plans.filter((plan) => options.sweepMarketPubkeys!.has(plan.pubkey));
-  if (options.sweepMarketPubkeys !== undefined) {
+  let sweepCandidates: MarketPlan[];
+  if (options.sweepMarketPubkeys === undefined) {
+    sweepCandidates = plans;
+  } else {
+    const admitted = admitSweepCandidates(
+      plans,
+      options.sweepMarketPubkeys,
+      options.minRecoveryLamports,
+    );
+    sweepCandidates = admitted.candidates;
     console.log(
-      `Fill filter: ${sweepCandidates.length}/${plans.length} markets filled since their last confirmed sweep`,
+      `Fill filter: ${admitted.filled}/${plans.length} markets filled since their last confirmed sweep, ` +
+        `plus ${admitted.feeAdmitted} admitted on accrued fees`,
     );
   }
   let selected = options.sweepMarkets
@@ -1001,14 +1142,33 @@ export async function runCoreCollections(
     (sum, plan) => sum + plan.recoveredLamports,
     0n,
   );
-  const tailTotal = selected.reduce(
-    (sum, plan) => sum + plan.tailRentLamports,
+  const reclaimedTotal = selected.reduce(
+    (sum, plan) => sum + plan.reclaimedRentLamports,
     0n,
   );
+  const relocationTotal = selected.reduce(
+    (sum, plan) => sum + plan.relocations,
+    0,
+  );
   if (options.sweepMarkets) {
+    const breakdown = sweepSelectionBreakdown(sweepCandidates, {
+      minRecoveryLamports: options.minRecoveryLamports,
+      minShrinkBlocks: options.minShrinkBlocks,
+    });
+    const capped = breakdown.qualified - selected.length;
+    console.log(
+      `  of ${sweepCandidates.length} candidates: ${breakdown.qualified} qualified` +
+        (capped > 0 ? ` (${capped} over --max-markets)` : '') +
+        `, ${breakdown.nothingRecoverable} nothing recoverable, ` +
+        `${breakdown.belowFloor} below floor, ${breakdown.expands} would expand` +
+        (options.minShrinkBlocks > 0
+          ? `, ${breakdown.underMinShrink} under min-shrink`
+          : ''),
+    );
     console.log(
       `Sweeping ${selected.length} markets: ${Number(sweepTotal) / 1e9} SOL ` +
-        `(${Number(sweepTotal - tailTotal) / 1e9} accrued fees, ${Number(tailTotal) / 1e9} tail rent` +
+        `(${Number(sweepTotal - reclaimedTotal) / 1e9} accrued fees, ${Number(reclaimedTotal) / 1e9} reclaimed rent, ` +
+        `${options.relocate ? `${relocationTotal} relocations` : 'sweep-only'}` +
         `${options.minShrinkBlocks > 0 ? `, min-shrink ${options.minShrinkBlocks} blocks` : ''})`,
     );
   }
@@ -1133,6 +1293,15 @@ export async function runCoreCollections(
     console.warn(
       `Excluding ${selected.length - sweepable.length} markets whose mint owner could not be read`,
     );
+    options.onMarketsUnsweepable?.(
+      selected
+        .filter(
+          (plan) =>
+            !tokenPrograms.has(plan.baseMint) ||
+            !tokenPrograms.has(plan.quoteMint),
+        )
+        .map((plan) => plan.pubkey),
+    );
   }
 
   const sweepInstruction = (plan: MarketPlan): Instruction =>
@@ -1150,6 +1319,7 @@ export async function runCoreCollections(
     sweepInstruction,
     MAX_SWEEPS_PER_TX,
     deps.measure,
+    sweepComputeUnits,
   );
   const cleanBatches = packInstructions(
     cleans,
