@@ -8,7 +8,7 @@ four distinct jobs, all signed by the authorized collector
 | ---------------------- | ----------------------------- | -------------------------------------------------------------------------- |
 | Wrapper fee collection | `--all-public` / `--wrapper=` | Fees accrued on wrapper state accounts                                     |
 | Wrapper compaction     | `--defrag`                    | Rent freed by packing a wrapper account                                    |
-| Core market sweep      | `--markets`                   | Advanced-order fees accrued on market accounts, plus any already-free tail |
+| Core market sweep      | `--markets`                   | Advanced-order fees accrued on market accounts, plus freed blocks: interior holes are relocated into the tail and truncated by default (`--sweep-only` restores the zero-relocation sweep); seats are never reclaimed |
 | Expired order cleaning | `--global-clean`              | One gas deposit (5,000 lamports) per expired order                         |
 
 Everything is read-only without `--execute`. Every transaction is simulated
@@ -55,6 +55,15 @@ already paid for. A typical pass finds ~180 cleanable orders, worth ~0.0009 SOL.
 - `--wrapper=ADDRESS` — exactly one wrapper. Use this before any public sweep.
 - `--all-public` — every initialized public wrapper with collectible fees.
 - `--markets` — core market sweep. Can run alone (no wrapper target needed).
+  Relocates by default: live blocks above the `keep_count + 2` floor are moved
+  down into interior holes (with an exact per-market budget, so no node moves
+  unless rent comes back for it) and the gathered space truncates with the
+  tail. Relocation moves resting-order indices that third-party clients may
+  hold as hints; the 2026-10-26 retest passed every known client. Seats are
+  never reclaimed: the deployed wrapper cannot yet self-heal a reclaimed seat.
+- `--sweep-only` — with `--markets`, relocate nothing: collect fees and
+  truncate the existing free tail only. This is the mode that cannot
+  invalidate a client's cached index.
 - `--global-clean` — also clean expired orders. **Requires `--markets`**; a
   clean-only run barely covers its own signature.
 

@@ -968,6 +968,13 @@ Options:
                              stopped.
   --tail-tighten             Also take markets whose free tail can truncate.
   --min-shrink=N             With --tail-tighten, require N blocks of shrink.
+  --sweep-only               Relocate nothing: collect fees and truncate the
+                             existing free tail only. The market sweep
+                             relocates by default, gathering interior holes so
+                             they truncate with the tail; sweep-only is the
+                             mode that cannot move an order index a client may
+                             hold as a hint. Seats are never reclaimed in
+                             either mode.
   --max-markets=N            Cap markets per run, highest recovery first.
   --loop=SECONDS             Run continuously until Ctrl-C, starting a pass every
                              SECONDS measured from the previous pass's START (so
@@ -1031,6 +1038,9 @@ Environment:
   const minShrinkBlocks = tailTighten
     ? (parsePositiveInteger('min-shrink', 'MIN_SHRINK_BLOCKS') ?? 1)
     : 0;
+  // Relocation is the default since the 2026-10-26 client retest; --sweep-only
+  // restores the zero-relocation sweep that cannot move an order index.
+  const sweepOnly = process.argv.includes('--sweep-only');
   const maxMarkets = parsePositiveInteger('max-markets', 'MAX_MARKETS');
   const wrapperOption = optionValue('wrapper');
   const coreOnly =
@@ -1038,6 +1048,11 @@ Environment:
   if (tailTighten && !sweepMarkets) {
     throw new Error(
       '--tail-tighten applies to the market sweep; pass --markets as well',
+    );
+  }
+  if (sweepOnly && !sweepMarkets) {
+    throw new Error(
+      '--sweep-only applies to the market sweep; pass --markets as well',
     );
   }
   if (filledSinceDefrag && !sweepMarkets) {
@@ -1105,7 +1120,9 @@ Environment:
       : undefined;
     let acknowledgedFills = 0;
     let clearedUnsweepable = 0;
-    console.log(`Mode: ${execute ? 'EXECUTE' : 'DRY RUN'} (core phases)`);
+    console.log(
+      `Mode: ${execute ? 'EXECUTE' : 'DRY RUN'} (core phases, ${sweepOnly ? 'sweep-only' : 'relocation on'})`,
+    );
     if (fillSnapshot !== undefined) {
       const observed = fillWatcher!.observationStats();
       console.log(
@@ -1225,6 +1242,7 @@ Environment:
       {
         execute,
         sweepMarkets,
+        relocate: !sweepOnly,
         sweepMarketPubkeys:
           fillSnapshot === undefined
             ? undefined
