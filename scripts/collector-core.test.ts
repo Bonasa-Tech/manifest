@@ -25,6 +25,7 @@ import {
   selectMarkets,
   selectStableUnbacked,
   sweepComputeUnits,
+  sweepSelectionBreakdown,
   type CleanableOrder,
   type GlobalAccount,
   type MarketPlan,
@@ -226,6 +227,43 @@ test('a filled market holding fees counts as filled, not fee-admitted', () => {
   assert.equal(candidates.length, 1);
   assert.equal(filled, 1);
   assert.equal(feeAdmitted, 0);
+});
+
+test('the selection breakdown names why each candidate was passed over', () => {
+  const qualified = planOf([O, 0, 0], 500_000n);
+  const expands = planOf([O, O, O], 500_000n);
+  // An interior hole between live blocks and a tail already at the frontier's
+  // floor: a fill freed a block, but nothing is truncatable and no fees
+  // accrued.
+  const nothing = planOf([O, 0, O, 0]);
+  const belowFloor = planOf([O, 0, 0], 10n);
+  assert.deepEqual(
+    sweepSelectionBreakdown([qualified, expands, nothing, belowFloor], {
+      minRecoveryLamports: 100_000n,
+      minShrinkBlocks: 0,
+    }),
+    {
+      qualified: 1,
+      expands: 1,
+      nothingRecoverable: 1,
+      belowFloor: 1,
+      underMinShrink: 0,
+    },
+  );
+  // Tail-tighten mode reclassifies the fee-only market as under min-shrink.
+  assert.deepEqual(
+    sweepSelectionBreakdown([qualified], {
+      minRecoveryLamports: 100_000n,
+      minShrinkBlocks: 3,
+    }),
+    {
+      qualified: 0,
+      expands: 0,
+      nothingRecoverable: 0,
+      belowFloor: 0,
+      underMinShrink: 1,
+    },
+  );
 });
 
 test('selection honours the dust floor and orders by recovery', () => {

@@ -467,6 +467,51 @@ export function admitSweepCandidates(
   return { candidates, filled, feeAdmitted };
 }
 
+export type SelectionBreakdown = {
+  /** Pass every filter below. */
+  qualified: number;
+  /** Defrag would expand the account at the collector's expense. */
+  expands: number;
+  /** No excess and no truncatable tail — e.g. only interior holes freed. */
+  nothingRecoverable: number;
+  /** Recoverable, but under the dust floor. */
+  belowFloor: number;
+  /** Tail-tighten mode only: tail shrinks by fewer blocks than required. */
+  underMinShrink: number;
+};
+
+/**
+ * Why each candidate did or did not qualify, mirroring {@link selectMarkets}
+ * exactly. A pass that plans nothing is otherwise indistinguishable from a
+ * starved fill feed or a selection bug; this names the reason per market.
+ */
+export function sweepSelectionBreakdown(
+  plans: readonly MarketPlan[],
+  options: { minRecoveryLamports: bigint; minShrinkBlocks: number },
+): SelectionBreakdown {
+  const breakdown: SelectionBreakdown = {
+    qualified: 0,
+    expands: 0,
+    nothingRecoverable: 0,
+    belowFloor: 0,
+    underMinShrink: 0,
+  };
+  for (const plan of plans) {
+    if (plan.expandsOnDefrag) breakdown.expands += 1;
+    else if (plan.recoveredLamports === 0n) breakdown.nothingRecoverable += 1;
+    else if (plan.recoveredLamports < options.minRecoveryLamports)
+      breakdown.belowFloor += 1;
+    else if (
+      options.minShrinkBlocks > 0 &&
+      (plan.space - plan.postSpace) / MARKET_BLOCK_SIZE <
+        options.minShrinkBlocks
+    )
+      breakdown.underMinShrink += 1;
+    else breakdown.qualified += 1;
+  }
+  return breakdown;
+}
+
 /**
  * Whether a batch of cleans pays for the transaction that carries it.
  *
@@ -1051,6 +1096,20 @@ export async function runCoreCollections(
     0n,
   );
   if (options.sweepMarkets) {
+    const breakdown = sweepSelectionBreakdown(sweepCandidates, {
+      minRecoveryLamports: options.minRecoveryLamports,
+      minShrinkBlocks: options.minShrinkBlocks,
+    });
+    const capped = breakdown.qualified - selected.length;
+    console.log(
+      `  of ${sweepCandidates.length} candidates: ${breakdown.qualified} qualified` +
+        (capped > 0 ? ` (${capped} over --max-markets)` : '') +
+        `, ${breakdown.nothingRecoverable} nothing recoverable, ` +
+        `${breakdown.belowFloor} below floor, ${breakdown.expands} would expand` +
+        (options.minShrinkBlocks > 0
+          ? `, ${breakdown.underMinShrink} under min-shrink`
+          : ''),
+    );
     console.log(
       `Sweeping ${selected.length} markets: ${Number(sweepTotal) / 1e9} SOL ` +
         `(${Number(sweepTotal - tailTotal) / 1e9} accrued fees, ${Number(tailTotal) / 1e9} tail rent` +

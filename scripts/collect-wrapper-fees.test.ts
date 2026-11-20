@@ -282,6 +282,67 @@ const tests: [string, () => void | Promise<void>][] = [
     },
   ],
   [
+    'observation stats drain counts fills and distinct new markets',
+    () => {
+      const pending = new PendingFillMarkets();
+      pending.record('market-a');
+      pending.record('market-a');
+      pending.record('market-b');
+      assert.deepEqual(pending.drainObservationStats(), {
+        fills: 3,
+        marketsAdded: 2,
+      });
+      // Draining resets the window; a re-fill of a still-pending market is a
+      // fill but not a new market.
+      pending.record('market-a');
+      assert.deepEqual(pending.drainObservationStats(), {
+        fills: 1,
+        marketsAdded: 0,
+      });
+    },
+  ],
+  [
+    'a silent socket is terminated by the keepalive and reconnects',
+    async () => {
+      // autoPong: false makes the server swallow pings, which is exactly what
+      // a half-open connection looks like from the client's side.
+      const server = new WebSocketServer({
+        port: 0,
+        host: '127.0.0.1',
+        autoPong: false,
+      });
+      await new Promise<void>((resolve) => server.once('listening', resolve));
+      const address = server.address();
+      assert.ok(address !== null && typeof address === 'object');
+
+      let connections = 0;
+      server.on('connection', () => {
+        connections += 1;
+      });
+
+      const watcher = createFillWatcher(`ws://127.0.0.1:${address.port}`, 100);
+      const waitFor = async (condition: () => boolean, timeoutMs = 4_000) => {
+        const deadline = Date.now() + timeoutMs;
+        while (!condition()) {
+          if (Date.now() >= deadline) throw new Error('condition timed out');
+          await new Promise((resolve) => setTimeout(resolve, 20));
+        }
+      };
+
+      try {
+        await watcher.waitUntilConnected();
+        assert.equal(connections, 1);
+        await waitFor(() => connections >= 2);
+      } finally {
+        watcher.close();
+        for (const socket of server.clients) socket.terminate();
+        await new Promise<void>((resolve, reject) => {
+          server.close((error) => (error ? reject(error) : resolve()));
+        });
+      }
+    },
+  ],
+  [
     'the integrated fill watcher owns one reconnecting socket',
     async () => {
       const server = new WebSocketServer({ port: 0, host: '127.0.0.1' });

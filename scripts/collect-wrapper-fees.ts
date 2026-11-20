@@ -41,10 +41,26 @@ export type FillSnapshot = ReadonlyMap<string, number>;
 export class PendingFillMarkets {
   private readonly generations = new Map<string, number>();
   private nextGeneration = 1;
+  private fillsObserved = 0;
+  private marketsAdded = 0;
 
   record(market: string): void {
+    this.fillsObserved += 1;
+    if (!this.generations.has(market)) this.marketsAdded += 1;
     this.generations.set(market, this.nextGeneration);
     this.nextGeneration += 1;
+  }
+
+  /**
+   * Fills recorded and distinct markets added since the previous drain. Lets a
+   * pass tell a quiet feed from a dead one: a half-open socket raises no error,
+   * so a frozen pending count is ambiguous without this.
+   */
+  drainObservationStats(): { fills: number; marketsAdded: number } {
+    const stats = { fills: this.fillsObserved, marketsAdded: this.marketsAdded };
+    this.fillsObserved = 0;
+    this.marketsAdded = 0;
+    return stats;
   }
 
   snapshot(): FillSnapshot {
@@ -79,6 +95,8 @@ type FillWatcher = {
     snapshot: FillSnapshot,
   ) => number;
   pendingCount: () => number;
+  /** Fills and new markets observed since the previous call. */
+  observationStats: () => { fills: number; marketsAdded: number };
   close: () => void;
 };
 
@@ -86,6 +104,7 @@ type FillWatcher = {
 export function createFillWatcher(
   feedUrl =
     process.env.FILL_FEED_URL ?? 'wss://mfx-feed-mainnet-bonasa.fly.dev',
+  keepaliveMs = 30_000,
 ): FillWatcher {
   const pending = new PendingFillMarkets();
   let activeSocket: WebSocket | undefined;
@@ -111,6 +130,13 @@ export function createFillWatcher(
     activeSocket = ws;
     let opened = false;
     let closeReason = 'closed';
+    // A half-open socket (NAT timeout, suspended machine) raises neither error
+    // nor close; without a keepalive it silently starves the queue while the
+    // pending count freezes. Ping on an interval and terminate when a pong
+    // fails to arrive before the next ping, which routes through the one
+    // reconnect path above.
+    let pongReceived = true;
+    let keepaliveTimer: ReturnType<typeof setInterval> | undefined;
 
     ws.on('open', () => {
       if (activeSocket !== ws || stopped) return;
@@ -118,7 +144,20 @@ export function createFillWatcher(
       connected = true;
       backoffMs = 1_000;
       console.log(`Fill feed connected: ${feedUrl}`);
+      keepaliveTimer = setInterval(() => {
+        if (!pongReceived) {
+          closeReason = 'keepalive timed out (no pong)';
+          ws.terminate();
+          return;
+        }
+        pongReceived = false;
+        ws.ping();
+      }, keepaliveMs);
       releaseWaiters();
+    });
+
+    ws.on('pong', () => {
+      pongReceived = true;
     });
 
     ws.on('message', (data) => {
@@ -143,6 +182,10 @@ export function createFillWatcher(
     });
 
     ws.on('close', () => {
+      if (keepaliveTimer !== undefined) {
+        clearInterval(keepaliveTimer);
+        keepaliveTimer = undefined;
+      }
       if (activeSocket !== ws) return;
       activeSocket = undefined;
       connected = false;
@@ -176,6 +219,9 @@ export function createFillWatcher(
     },
     pendingCount() {
       return pending.size;
+    },
+    observationStats() {
+      return pending.drainObservationStats();
     },
     close() {
       if (stopped) return;
@@ -1061,8 +1107,10 @@ Environment:
     let clearedUnsweepable = 0;
     console.log(`Mode: ${execute ? 'EXECUTE' : 'DRY RUN'} (core phases)`);
     if (fillSnapshot !== undefined) {
+      const observed = fillWatcher!.observationStats();
       console.log(
-        `Filled-since-defrag: ${fillSnapshot.size} markets pending from the live feed`,
+        `Filled-since-defrag: ${fillSnapshot.size} markets pending from the live feed ` +
+          `(${observed.fills} fills, ${observed.marketsAdded} new markets since last pass)`,
       );
     }
     const coreResult = await runCoreCollections(
