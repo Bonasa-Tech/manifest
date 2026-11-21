@@ -139,7 +139,8 @@ jobs:
           (cd programs/manifest && cargo build-sbf --arch=${{ env.SVM_ARCH }} --tools-version ${{ env.PLATFORM_TOOLS }})
           (cd programs/wrapper && cargo build-sbf --arch=${{ env.SVM_ARCH }} --tools-version ${{ env.PLATFORM_TOOLS }})
           (cd programs/ui-wrapper && cargo build-sbf --arch=${{ env.SVM_ARCH }} --tools-version ${{ env.PLATFORM_TOOLS }})
-          ./scripts/assert-sbpf-v3.sh target/deploy/manifest.so target/deploy/wrapper.so target/deploy/ui_wrapper.so
+          (cd programs/liquidity-wrapper && cargo build-sbf --arch=${{ env.SVM_ARCH }} --tools-version ${{ env.PLATFORM_TOOLS }})
+          ./scripts/assert-sbpf-v3.sh target/deploy/manifest.so target/deploy/wrapper.so target/deploy/ui_wrapper.so target/deploy/liquidity_wrapper.so
 
       - name: Build ProgramTest artifacts
         run: |
@@ -147,7 +148,8 @@ jobs:
           (cd programs/manifest && cargo build-sbf --arch=${{ env.SVM_ARCH }} --tools-version ${{ env.PLATFORM_TOOLS }} --sbf-out-dir "$GITHUB_WORKSPACE/target/program-test-deploy" --features test)
           (cd programs/wrapper && cargo build-sbf --arch=${{ env.SVM_ARCH }} --tools-version ${{ env.PLATFORM_TOOLS }} --sbf-out-dir "$GITHUB_WORKSPACE/target/program-test-deploy" --features test)
           (cd programs/ui-wrapper && cargo build-sbf --arch=${{ env.SVM_ARCH }} --tools-version ${{ env.PLATFORM_TOOLS }} --sbf-out-dir "$GITHUB_WORKSPACE/target/program-test-deploy" --features test)
-          ./scripts/assert-sbpf-v3.sh target/program-test-deploy/manifest.so target/program-test-deploy/wrapper.so target/program-test-deploy/ui_wrapper.so
+          (cd programs/liquidity-wrapper && cargo build-sbf --arch=${{ env.SVM_ARCH }} --tools-version ${{ env.PLATFORM_TOOLS }} --sbf-out-dir "$GITHUB_WORKSPACE/target/program-test-deploy" --features test)
+          ./scripts/assert-sbpf-v3.sh target/program-test-deploy/manifest.so target/program-test-deploy/wrapper.so target/program-test-deploy/ui_wrapper.so target/program-test-deploy/liquidity_wrapper.so
 
       - name: Run SBF regression tests
         env:
@@ -238,7 +240,8 @@ jobs:
           (cd programs/manifest && cargo build-sbf --arch=${{ env.SVM_ARCH }} --tools-version ${{ env.PLATFORM_TOOLS }} --sbf-out-dir "$GITHUB_WORKSPACE/target/program-test-deploy" --features test)
           (cd programs/wrapper && cargo build-sbf --arch=${{ env.SVM_ARCH }} --tools-version ${{ env.PLATFORM_TOOLS }} --sbf-out-dir "$GITHUB_WORKSPACE/target/program-test-deploy" --features test)
           (cd programs/ui-wrapper && cargo build-sbf --arch=${{ env.SVM_ARCH }} --tools-version ${{ env.PLATFORM_TOOLS }} --sbf-out-dir "$GITHUB_WORKSPACE/target/program-test-deploy" --features test)
-          ./scripts/assert-sbpf-v3.sh target/program-test-deploy/manifest.so target/program-test-deploy/wrapper.so target/program-test-deploy/ui_wrapper.so
+          (cd programs/liquidity-wrapper && cargo build-sbf --arch=${{ env.SVM_ARCH }} --tools-version ${{ env.PLATFORM_TOOLS }} --sbf-out-dir "$GITHUB_WORKSPACE/target/program-test-deploy" --features test)
+          ./scripts/assert-sbpf-v3.sh target/program-test-deploy/manifest.so target/program-test-deploy/wrapper.so target/program-test-deploy/ui_wrapper.so target/program-test-deploy/liquidity_wrapper.so
 
       # split coverage test runs to avoid enabling no-clock feature during unit tests
       # and to handle packages with/without test features separately.
