@@ -221,6 +221,10 @@ pub(crate) fn process_swap_core(
     // Use in_atoms_after_transfer_fees (post-fee) to account for Token-2022 transfer fees
     dynamic_account.deposit(trader_index, in_atoms_after_transfer_fees, is_base_in)?;
 
+    // Both exact-input modes match in one pass using the input budget.
+    // Exact-output swaps are deprecated. Exact base output also matches in
+    // one pass using the requested base size. Exact quote output first walks
+    // the bids to size the base input, then walks them again to execute.
     let (base_atoms, quote_budget) = match (is_exact_in, is_base_in) {
         (true, true) => (BaseAtoms::new(in_atoms_after_transfer_fees), None),
         (true, false) => (
