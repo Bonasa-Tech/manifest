@@ -877,13 +877,19 @@ impl QuoteAtomsPerBaseAtom {
         let Some(product) = inner.checked_mul(numerator as u128) else {
             return Err(PriceConversionError(0x4));
         };
-        let new_inner: u128 = if round_up {
-            product.div_ceil(denominator as u128)
-        } else {
-            product.div(denominator as u128)
-        };
+        // Divide the high word first, then carry its remainder through two
+        // 32-bit limbs. A u32 divisor keeps each partial dividend within u64.
+        let divisor = u64::from(denominator);
+        let [low, high] = u128_to_u64_slice(product);
+        let high_quotient = high / divisor;
+        let middle = ((high % divisor) << 32) | (low >> 32);
+        let middle_quotient = middle / divisor;
+        let bottom = ((middle % divisor) << 32) | (low & u64::from(u32::MAX));
+        let low_quotient = (middle_quotient << 32) | (bottom / divisor);
+        let round = u64::from(round_up && bottom % divisor != 0);
+        let (low_quotient, carry) = low_quotient.overflowing_add(round);
         Ok(QuoteAtomsPerBaseAtom {
-            inner: u128_to_u64_slice(new_inner),
+            inner: [low_quotient, high_quotient + u64::from(carry)],
         })
     }
 
@@ -1214,6 +1220,51 @@ fn test_wrapping_add() {
     let sum = base_atoms.wrapping_add(base_atoms);
     let expected = base_atoms - BaseAtoms::ONE;
     assert_eq!(sum, expected);
+}
+
+#[cfg(not(feature = "certora"))]
+#[test]
+fn reverse_price_rational_matches_full_width_arithmetic() {
+    for raw in [
+        0,
+        1,
+        u128::from(u64::MAX),
+        D18,
+        1 << 64,
+        (1 << 96) - 1,
+        u128::MAX / 100_000_000,
+        u128::MAX / 100_000_000 + 1,
+        u128::MAX - 1,
+        u128::MAX,
+    ] {
+        let price = QuoteAtomsPerBaseAtom {
+            inner: u128_to_u64_slice(raw),
+        };
+        for (numerator, denominator) in [
+            (0, 1),
+            (1, 1),
+            (1, u32::MAX),
+            (90_000, 100_000),
+            (100_000, 90_000),
+            (99_950_000, 100_000_000),
+            (100_000_000, 99_950_000),
+        ] {
+            for round_up in [false, true] {
+                let scaled = price
+                    .checked_multiply_rational(numerator, denominator, round_up)
+                    .ok()
+                    .map(|price| u64_slice_to_u128(price.inner));
+                let expected = raw.checked_mul(u128::from(numerator)).map(|product| {
+                    if round_up {
+                        product.div_ceil(u128::from(denominator))
+                    } else {
+                        product / u128::from(denominator)
+                    }
+                });
+                assert_eq!(scaled, expected);
+            }
+        }
+    }
 }
 
 #[test]

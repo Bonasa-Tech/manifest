@@ -170,7 +170,6 @@ impl RestingOrder {
         self.price
     }
 
-    #[cfg(any(test, feature = "no-clock"))]
     pub fn set_sequence_number(&mut self, sequence_number: u64) {
         self.sequence_number = sequence_number;
     }
