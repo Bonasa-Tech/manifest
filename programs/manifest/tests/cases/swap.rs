@@ -4550,47 +4550,28 @@ async fn ljitsps_test() -> anyhow::Result<()> {
 }
 */
 
-/// Compute-budget guard for filling a taker across many reverse orders.
-///
-/// A reverse maker re-rests on the opposite side after being filled, and that
-/// re-rest coalesces into the book via up to three bounded, logarithmic lookups
-/// (the exact reverse price plus the two adjacent prices; see
-/// `RestingOrder::with_price_offset`). A taker crossing many reverse orders pays
-/// that per fill, so this test checks a large sweep still fits a tight CU bound.
-///
-/// It builds the worst case: a single taker swap that crosses
-/// `NUM_REVERSE_ORDERS` reverse asks sitting at distinct prices, so every fill
-/// re-rests at a fresh reverse price with nothing to coalesce into -- all three
-/// probes run and miss on every single fill -- then asserts the whole swap lands
-/// under `CU_CEILING`, both by measuring it and by executing it under a matching
-/// `set_compute_unit_limit`.
-///
-/// Measured cost (`--features test-sbf`, real BPF metering): crossing 32 reverse
-/// orders is 222,407 CU (~6,950 CU/fill), comfortably under the ceiling and the
-/// 1,400,000 per-transaction maximum. Note the sweep does exceed the *default*
-/// 200,000 CU budget (~28 reverse fills), so a large reverse sweep must raise the
-/// compute budget, as swap aggregators already do (see the 1_400_000 limit in
-/// `reverse.rs`).
-///
-/// NOTE: the ceiling is asserted only with `--features test-sbf`, when CI loads
-/// the canonical v3 artifact and treats the measurement as a CU regression
-/// gate. The code path is exercised in the ordinary test set too.
+// Both 32-order sweeps exceeded 104,000 CU before block reuse and the
+// reverse-price arithmetic change. The sBPF v3 ceilings catch that regression.
 #[tokio::test]
 async fn swap_across_many_reverse_orders_cu_test() -> anyhow::Result<()> {
+    check_reverse_sweep_cu(OrderType::Reverse, 10_000, 100_000).await
+}
+
+#[tokio::test]
+async fn swap_across_many_reverse_tight_orders_cu_test() -> anyhow::Result<()> {
+    check_reverse_sweep_cu(OrderType::ReverseTight, 50_000, 100_000).await
+}
+
+/// Sweep full fills at distinct prices so each maker rests a fresh reverse bid.
+async fn check_reverse_sweep_cu(
+    order_type: OrderType,
+    spread: u32,
+    cu_ceiling: u32,
+) -> anyhow::Result<()> {
     use hypertree::HyperTreeValueIteratorTrait;
     use solana_compute_budget_interface::ComputeBudgetInstruction;
-    use solana_program::pubkey::Pubkey;
 
-    // Number of distinct-price reverse asks the single taker swap will cross.
-    // 32 is far more reverse levels than a realistic book carries at one price
-    // point, so it is a comfortable upper bound on real fills.
     const NUM_REVERSE_ORDERS: u32 = 32;
-    // Tight ceiling. Crossing all 32 reverse orders in the full three-probe
-    // worst case measured 222,407 CU; this leaves ~12% headroom for cross-version
-    // drift while staying far under the 1_400_000 per-transaction maximum. If a
-    // future change regresses reverse-fill CU, this fails loudly instead of
-    // silently eating into headroom.
-    const CU_CEILING: u32 = 250_000;
 
     let mut test_fixture: TestFixture = TestFixture::new().await;
     test_fixture.claim_seat().await?;
@@ -4604,9 +4585,8 @@ async fn swap_across_many_reverse_orders_cu_test() -> anyhow::Result<()> {
         .deposit(Token::USDC, 1_000_000 * USDC_UNIT_SIZE)
         .await?;
 
-    // Each reverse ask needs a block, and each fill re-rests into a fresh bid
-    // price that needs another. Expand generously so block scarcity is never
-    // what limits the fill.
+    // Reserve arena space for the initial book. The re-rested bids land at
+    // distinct prices, so every fill exercises opposite-side lookup and insert.
     crate::expand_market(
         Rc::clone(&test_fixture.context),
         &test_fixture.market_fixture.key,
@@ -4614,21 +4594,9 @@ async fn swap_across_many_reverse_orders_cu_test() -> anyhow::Result<()> {
     )
     .await?;
 
-    // Reverse asks at distinct ascending prices (price = 1, 2, ... quote atoms per
-    // base atom). Ascending so a single taker buy sweeps every level; distinct so
-    // each re-rested reverse bid lands at its own price with nothing to coalesce
-    // into -> all three probes execute and miss on every fill (the worst case for
-    // the added lookups).
     for i in 0..NUM_REVERSE_ORDERS {
         test_fixture
-            .place_order(
-                Side::Ask,
-                1 * SOL_UNIT_SIZE,
-                1 + i,
-                0,
-                10_000, // 10% reverse spread
-                OrderType::Reverse,
-            )
+            .place_order(Side::Ask, 1 * SOL_UNIT_SIZE, 1 + i, 0, spread, order_type)
             .await?;
     }
 
@@ -4666,10 +4634,8 @@ async fn swap_across_many_reverse_orders_cu_test() -> anyhow::Result<()> {
         false,
     );
 
-    // Measure the actual compute consumed by simulating the fill first. Give the
-    // simulation the full per-transaction budget so it runs to completion and we
-    // can read the true cost (the default 200k budget is smaller than this whole
-    // sweep).
+    // Measure with the maximum transaction budget so regressions report the
+    // actual CU cost even when the sweep exceeds the regression ceiling.
     let measure_limit_ix: Instruction = ComputeBudgetInstruction::set_compute_unit_limit(1_400_000);
     let units_consumed: u64 = {
         let mut context: RefMut<ProgramTestContext> = test_fixture.context.borrow_mut();
@@ -4699,25 +4665,24 @@ async fn swap_across_many_reverse_orders_cu_test() -> anyhow::Result<()> {
     };
 
     println!(
-        "swap across {} reverse orders consumed {} CU ({} CU/order)",
+        "swap across {} {order_type:?} orders consumed {} CU ({} CU/order)",
         NUM_REVERSE_ORDERS,
         units_consumed,
         units_consumed / u64::from(NUM_REVERSE_ORDERS),
     );
 
     assert!(
-        units_consumed < u64::from(CU_CEILING),
-        "crossing {} reverse orders consumed {} CU, over the {} CU ceiling; the bounded \
-         reverse-order probe may have regressed",
+        units_consumed < u64::from(cu_ceiling),
+        "crossing {} {order_type:?} orders consumed {} CU, over the {} CU ceiling",
         NUM_REVERSE_ORDERS,
         units_consumed,
-        CU_CEILING,
+        cu_ceiling,
     );
 
     // Now prove it actually lands on-chain under a tight compute-unit limit: the
-    // transaction is rejected if it exceeds CU_CEILING, so success is a hard
+    // transaction is rejected if it exceeds cu_ceiling, so success is a hard
     // guarantee the fill fits the budget.
-    let limit_ix: Instruction = ComputeBudgetInstruction::set_compute_unit_limit(CU_CEILING);
+    let limit_ix: Instruction = ComputeBudgetInstruction::set_compute_unit_limit(cu_ceiling);
     send_tx_with_retry(
         Rc::clone(&test_fixture.context),
         &[limit_ix, swap_ix],
@@ -4726,8 +4691,7 @@ async fn swap_across_many_reverse_orders_cu_test() -> anyhow::Result<()> {
     )
     .await?;
 
-    // Sanity: the taker really did sweep the whole ask side, so every fill paid
-    // the full three-probe worst case (otherwise the CU number is meaningless).
+    // Verify each ask filled and re-rested as a separate bid.
     test_fixture.market_fixture.reload().await;
     let asks_left: usize = test_fixture
         .market_fixture
@@ -4736,6 +4700,15 @@ async fn swap_across_many_reverse_orders_cu_test() -> anyhow::Result<()> {
         .iter::<RestingOrder>()
         .count();
     assert_eq!(asks_left, 0, "taker should have consumed every reverse ask");
+
+    let bids = test_fixture.market_fixture.market.get_bids();
+    assert_eq!(
+        bids.iter::<RestingOrder>().count(),
+        NUM_REVERSE_ORDERS as usize
+    );
+    assert!(bids
+        .iter::<RestingOrder>()
+        .all(|(_, order)| order.get_order_type() == order_type));
 
     Ok(())
 }

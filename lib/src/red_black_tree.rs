@@ -1275,7 +1275,7 @@ impl<'a, V: Payload> HyperTreeWriteOperations<'a, V> for RedBlackTree<'a, V> {
 
 impl<'a, V: Payload> RedBlackTree<'a, V> {
     /// Insert and rebalance, initializing the payload tag with the node to
-    /// avoid a separate tag write. The data at index should be already zeroed.
+    /// avoid a separate tag write. The index must be detached from every tree.
     pub fn insert_with_payload_type<const PAYLOAD_TYPE: u8>(&mut self, index: DataIndex, value: V) {
         trace!("TREE insert {index}");
 

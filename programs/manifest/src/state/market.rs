@@ -1498,6 +1498,9 @@ impl<
                 _padding: [0; 14],
             })?;
 
+            // Keep a detached reverse maker block available for a fresh re-rest.
+            // The verifier models separate bid and ask blocks.
+            let mut reusable_order_index = NIL;
             if did_fully_match_resting_order {
                 // Get paid for removing a global order.
                 if is_global {
@@ -1508,12 +1511,17 @@ impl<
                     }
                 }
 
-                remove_order_from_tree_and_free(
-                    fixed,
-                    dynamic,
-                    current_maker_order_index,
-                    !is_bid,
-                )?;
+                if !cfg!(feature = "certora") && is_maker_reverse {
+                    remove_order_from_tree(fixed, dynamic, current_maker_order_index, !is_bid)?;
+                    reusable_order_index = current_maker_order_index;
+                } else {
+                    remove_order_from_tree_and_free(
+                        fixed,
+                        dynamic,
+                        current_maker_order_index,
+                        !is_bid,
+                    )?;
+                }
                 if remaining_quote_atoms.is_none() {
                     remaining_base_atoms = remaining_base_atoms.checked_sub(base_atoms_traded)?;
                 }
@@ -1596,24 +1604,26 @@ impl<
                     // Coalescing may cap this below num_base_atoms_reverse
                     // when the combined order would overflow.
                     let mut reverse_base_atoms_debited: BaseAtoms = num_base_atoms_reverse;
+                    let mut reverse_order = RestingOrder::new(
+                        maker_trader_index,
+                        num_base_atoms_reverse,
+                        price_reverse,
+                        0, // Size and sequence do not affect coalescing.
+                        NO_EXPIRATION_LAST_VALID_SLOT,
+                        is_bid,
+                        maker_order_type,
+                    )?;
                     {
-                        let other_tree: Bookside = if is_bid {
-                            Bookside::new(dynamic, fixed.bids_root_index, fixed.bids_best_index)
+                        let (root_index, best_index) = if is_bid {
+                            (fixed.bids_root_index, fixed.bids_best_index)
                         } else {
-                            Bookside::new(dynamic, fixed.asks_root_index, fixed.asks_best_index)
+                            (fixed.asks_root_index, fixed.asks_best_index)
                         };
-                        let lookup_resting_order: RestingOrder = RestingOrder::new(
-                            maker_trader_index,
-                            BaseAtoms::ZERO, // Size does not matter, just price.
-                            price_reverse,
-                            0, // Sequence number does not matter, just price
-                            NO_EXPIRATION_LAST_VALID_SLOT,
-                            is_bid,
-                            maker_order_type,
-                        )?;
-
-                        let lookup_index: DataIndex =
-                            other_tree.lookup_index(&lookup_resting_order);
+                        #[cfg(not(feature = "certora"))]
+                        let other_tree = BooksideReadOnly::new(dynamic, root_index, best_index);
+                        #[cfg(feature = "certora")]
+                        let other_tree = Bookside::new(dynamic, root_index, best_index);
+                        let lookup_index = other_tree.lookup_index(&reverse_order);
                         if lookup_index != NIL {
                             #[cfg(feature = "certora")]
                             remove_from_orderbook_balance(fixed, dynamic, lookup_index);
@@ -1663,38 +1673,18 @@ impl<
                         let reverse_order_sequence_number: u64 = fixed.order_sequence_number;
                         fixed.order_sequence_number = reverse_order_sequence_number.wrapping_add(1);
 
-                        // Put the remaining in an order on the other bookside.
-                        // There are 2 cases, either the maker was fully exhausted and
-                        // we know that we will be able to use their address, or they
-                        // were not fully exhausted and we know the order will not rest.
-                        // In the second case, that uses the free block that was
-                        // speculatively there for the current trader to rest.
-                        let free_address: DataIndex = if is_bid {
+                        let order_index = if reusable_order_index != NIL {
+                            std::mem::replace(&mut reusable_order_index, NIL)
+                        } else if is_bid {
                             get_free_address_on_market_fixed_for_bid_order(fixed, dynamic)
                         } else {
                             get_free_address_on_market_fixed_for_ask_order(fixed, dynamic)
                         };
-
-                        let mut new_reverse_resting_order: RestingOrder = RestingOrder::new(
-                            maker_trader_index,
-                            num_base_atoms_reverse,
-                            price_reverse,
-                            reverse_order_sequence_number,
-                            // Does not expire.
-                            NO_EXPIRATION_LAST_VALID_SLOT,
-                            is_bid,
-                            maker_order_type,
-                        )?;
-                        new_reverse_resting_order.set_reverse_spread(maker_reverse_spread);
-                        insert_order_into_tree(
-                            is_bid,
-                            fixed,
-                            dynamic,
-                            free_address,
-                            &new_reverse_resting_order,
-                        );
+                        reverse_order.set_sequence_number(reverse_order_sequence_number);
+                        reverse_order.set_reverse_spread(maker_reverse_spread);
+                        insert_order_into_tree(is_bid, fixed, dynamic, order_index, &reverse_order);
                         #[cfg(feature = "certora")]
-                        set_payload_order(dynamic, free_address);
+                        set_payload_order(dynamic, order_index);
                     }
 
                     update_balance(
@@ -1710,6 +1700,13 @@ impl<
                         },
                     )?;
                 }
+            }
+
+            // Coalescing, zero-sized reversals, and unrepresentable reverse
+            // prices leave the detached block available for other orders.
+            #[cfg(not(feature = "certora"))]
+            if reusable_order_index != NIL {
+                release_address_on_market_fixed(fixed, dynamic, reusable_order_index);
             }
 
             // Stop if the last resting order did not fully match since that
