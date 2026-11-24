@@ -1180,15 +1180,27 @@ impl<
         args: AddOrderToMarketArgs,
     ) -> Result<AddOrderToMarketResult, ProgramError> {
         if args.is_bid {
-            self.place_order_on_side::<true>(args)
+            self.place_order_on_side::<true>(args, None)
         } else {
-            self.place_order_on_side::<false>(args)
+            self.place_order_on_side::<false>(args, None)
         }
+    }
+
+    /// Execute an IOC bid sized by its quote budget, using live maker balances.
+    #[cfg(not(feature = "certora"))]
+    pub(crate) fn place_quote_budget_bid(
+        &mut self,
+        args: AddOrderToMarketArgs,
+        quote_budget: QuoteAtoms,
+    ) -> Result<AddOrderToMarketResult, ProgramError> {
+        debug_assert!(args.is_bid && args.order_type == OrderType::ImmediateOrCancel);
+        self.place_order_on_side::<true>(args, Some(quote_budget))
     }
 
     fn place_order_on_side<const IS_BID: bool>(
         &mut self,
         args: AddOrderToMarketArgs,
+        mut remaining_quote_atoms: Option<QuoteAtoms>,
     ) -> Result<AddOrderToMarketResult, ProgramError> {
         let AddOrderToMarketArgs {
             market,
@@ -1235,7 +1247,12 @@ impl<
         let mut global_atoms_to_transfer: GlobalAtoms = GlobalAtoms::ZERO;
 
         let mut remaining_base_atoms: BaseAtoms = num_base_atoms;
-        while remaining_base_atoms > BaseAtoms::ZERO && is_not_nil!(current_maker_order_index) {
+        while is_not_nil!(current_maker_order_index)
+            && match remaining_quote_atoms {
+                Some(quote_atoms) => quote_atoms > QuoteAtoms::ZERO,
+                None => remaining_base_atoms > BaseAtoms::ZERO,
+            }
+        {
             let maker_order: &RestingOrder =
                 get_helper::<RBNode<RestingOrder>>(dynamic, current_maker_order_index).get_value();
 
@@ -1276,15 +1293,24 @@ impl<
 
             let maker_sequence_number = maker_order.get_sequence_number();
             let maker_trader_index: DataIndex = maker_order.get_trader_index();
-            let did_fully_match_resting_order: bool =
-                remaining_base_atoms >= maker_order.get_num_base_atoms();
-            let base_atoms_traded: BaseAtoms = if did_fully_match_resting_order {
-                maker_order.get_num_base_atoms()
-            } else {
-                remaining_base_atoms
-            };
-
             let matched_price: QuoteAtomsPerBaseAtom = maker_order.get_price();
+            let base_atoms_limit = match remaining_quote_atoms {
+                Some(quote_atoms) => {
+                    // Round down so even a partial fill rounded up in quote fits.
+                    // A dust price can make the budget's base equivalent exceed u64.
+                    let affordable = matched_price
+                        .checked_base_for_quote(quote_atoms, false)
+                        .unwrap_or(BaseAtoms::new(u64::MAX));
+                    if affordable == BaseAtoms::ZERO {
+                        break;
+                    }
+                    affordable
+                }
+                None => remaining_base_atoms,
+            };
+            let did_fully_match_resting_order =
+                base_atoms_limit >= maker_order.get_num_base_atoms();
+            let base_atoms_traded = base_atoms_limit.min(maker_order.get_num_base_atoms());
             let maker_order_type: OrderType = maker_order.get_order_type();
             let maker_price_reverse: Result<QuoteAtomsPerBaseAtom, _> = maker_order.reverse_price();
 
@@ -1353,6 +1379,9 @@ impl<
                     global_atoms_to_transfer.checked_add(global_atoms_needed)?;
             }
 
+            if let Some(quote_atoms) = &mut remaining_quote_atoms {
+                *quote_atoms = quote_atoms.checked_sub(quote_atoms_traded)?;
+            }
             total_base_atoms_traded = total_base_atoms_traded.checked_add(base_atoms_traded)?;
             total_quote_atoms_traded = total_quote_atoms_traded.checked_add(quote_atoms_traded)?;
 
@@ -1485,7 +1514,9 @@ impl<
                     current_maker_order_index,
                     !is_bid,
                 )?;
-                remaining_base_atoms = remaining_base_atoms.checked_sub(base_atoms_traded)?;
+                if remaining_quote_atoms.is_none() {
+                    remaining_base_atoms = remaining_base_atoms.checked_sub(base_atoms_traded)?;
+                }
                 current_maker_order_index = if is_bid {
                     fixed.asks_best_index
                 } else {

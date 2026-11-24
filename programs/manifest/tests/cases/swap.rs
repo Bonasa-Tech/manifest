@@ -968,6 +968,114 @@ async fn swap_fail_insufficient_funds_buy() -> anyhow::Result<()> {
     Ok(())
 }
 
+#[tokio::test]
+async fn swap_quote_budget_with_repeated_global_maker() -> anyhow::Result<()> {
+    check_swap_quote_budget_with_repeated_global_maker(false).await
+}
+
+#[tokio::test]
+async fn swap_quote_budget_with_repeated_global_maker_and_seated_taker() -> anyhow::Result<()> {
+    check_swap_quote_budget_with_repeated_global_maker(true).await
+}
+
+async fn check_swap_quote_budget_with_repeated_global_maker(seated: bool) -> anyhow::Result<()> {
+    let mut fixture = TestFixture::new().await;
+    let maker = fixture.second_keypair.insecure_clone();
+    let maker_key = maker.pubkey();
+    fixture.claim_seat_for_keypair(&maker).await?;
+
+    let base_mint = fixture.sol_mint_fixture.key;
+    let maker_token_account = TokenAccountFixture::new_with_keypair(
+        Rc::clone(&fixture.context),
+        &base_mint,
+        &maker_key,
+        &Keypair::new(),
+    )
+    .await;
+    fixture
+        .sol_mint_fixture
+        .mint_to(&maker_token_account.key, 12)
+        .await;
+    send_tx_with_retry(
+        Rc::clone(&fixture.context),
+        &[
+            global_add_trader_instruction(&fixture.sol_global_fixture.key, &maker_key),
+            global_deposit_instruction(
+                &base_mint,
+                &maker_key,
+                &maker_token_account.key,
+                &spl_token::id(),
+                12,
+            ),
+        ],
+        Some(&maker_key),
+        &[&maker],
+    )
+    .await?;
+
+    fixture.deposit_for_keypair(Token::SOL, 20, &maker).await?;
+    let global_ask = PlaceOrderParams::new(
+        10,
+        10,
+        0,
+        false,
+        OrderType::Global,
+        NO_EXPIRATION_LAST_VALID_SLOT,
+    );
+    let local_ask = PlaceOrderParams::new(
+        20,
+        105,
+        -1,
+        false,
+        OrderType::Limit,
+        NO_EXPIRATION_LAST_VALID_SLOT,
+    );
+    fixture
+        .batch_update_with_global_for_keypair(
+            None,
+            vec![],
+            vec![global_ask.clone(), global_ask, local_ask],
+            &maker,
+        )
+        .await?;
+
+    if seated {
+        fixture.claim_seat().await?;
+        fixture.deposit(Token::USDC, 50).await?;
+    }
+    let in_atoms = 215;
+    fixture
+        .usdc_mint_fixture
+        .mint_to(&fixture.payer_usdc_fixture.key, in_atoms)
+        .await;
+    fixture.swap_with_global(in_atoms, 1, false, true).await?;
+
+    // One Global fill for 100 quote, then a partial local fill for 105 quote.
+    assert_eq!(fixture.payer_sol_fixture.balance_atoms().await, 20);
+    assert_eq!(fixture.payer_usdc_fixture.balance_atoms().await, 10);
+    fixture.sol_global_fixture.reload().await;
+    assert_eq!(
+        fixture
+            .sol_global_fixture
+            .global
+            .get_balance_atoms(&maker_key)
+            .as_u64(),
+        2
+    );
+    let orders = fixture.market_fixture.get_resting_orders().await;
+    assert_eq!(orders.len(), 1);
+    assert_eq!(orders[0].get_order_type(), OrderType::Limit);
+    assert_eq!(orders[0].get_num_base_atoms().as_u64(), 10);
+    if seated {
+        let taker = fixture.payer();
+        assert_eq!(
+            fixture.market_fixture.get_quote_balance_atoms(&taker).await,
+            50
+        );
+    }
+    Ok(())
+}
+
 // Global is on the USDC, taker is sending in SOL.
 #[tokio::test]
 async fn swap_global() -> anyhow::Result<()> {
