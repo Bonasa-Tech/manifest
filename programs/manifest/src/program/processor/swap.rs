@@ -221,40 +221,26 @@ pub(crate) fn process_swap_core(
     // Use in_atoms_after_transfer_fees (post-fee) to account for Token-2022 transfer fees
     dynamic_account.deposit(trader_index, in_atoms_after_transfer_fees, is_base_in)?;
 
-    // 4 cases:
-    // 1. Exact in base. Simplest case, just use the base atoms given.
-    // 2. Exact in quote. Search the asks for the number of base atoms in bids to match.
-    // 3. Exact out quote. Search the bids for the number of base atoms needed to match to get the right quote out.
-    // 4. Exact out base. Use the number of out atoms as the number of atoms to place_order against.
-    // Note: For exact_in cases, we use in_atoms_after_transfer_fees (post-fee) since that's what's available to trade.
-    let base_atoms: BaseAtoms = if is_exact_in {
-        if is_base_in {
-            // input=desired(base) output=min(quote)
-            BaseAtoms::new(in_atoms_after_transfer_fees)
-        } else {
-            // input=desired(quote)* output=min(base)
-            // round down base amount to not cross quote limit
-            dynamic_account.impact_base_atoms(
-                true,
-                QuoteAtoms::new(in_atoms_after_transfer_fees),
-                &global_trade_accounts_opts,
-            )?
-        }
-    } else {
-        if is_base_in {
-            // input=max(base) output=desired(quote)
-            // round up base amount to ensure not staying below quote limit
-            // Use out_atoms_after_transfer_fees to account for transfer fees on output
+    // Both exact-input modes match in one pass using the input budget.
+    // Exact-output swaps are deprecated. Exact base output also matches in
+    // one pass using the requested base size. Exact quote output first walks
+    // the bids to size the base input, then walks them again to execute.
+    let (base_atoms, quote_budget) = match (is_exact_in, is_base_in) {
+        (true, true) => (BaseAtoms::new(in_atoms_after_transfer_fees), None),
+        (true, false) => (
+            BaseAtoms::ZERO,
+            Some(QuoteAtoms::new(in_atoms_after_transfer_fees)),
+        ),
+        // Round up the size for exact quote out, using the gross output target.
+        (false, true) => (
             dynamic_account.impact_base_atoms(
                 false,
                 QuoteAtoms::new(out_atoms_after_transfer_fees),
                 &global_trade_accounts_opts,
-            )?
-        } else {
-            // input=max(quote) output=desired(base)
-            // Use out_atoms_after_transfer_fees to account for transfer fees on output
-            BaseAtoms::new(out_atoms_after_transfer_fees)
-        }
+            )?,
+            None,
+        ),
+        (false, false) => (BaseAtoms::new(out_atoms_after_transfer_fees), None),
     };
 
     // Exact-in may exhaust the book before consuming the requested input; that
@@ -270,7 +256,7 @@ pub(crate) fn process_swap_core(
     let last_valid_slot: u32 = NO_EXPIRATION_LAST_VALID_SLOT;
     let order_type: OrderType = OrderType::ImmediateOrCancel;
 
-    trace!("swap in:{in_atoms} out:{out_atoms} base/quote:{is_base_in} in/out:{is_exact_in} base:{base_atoms} price:{price}",);
+    trace!("swap in:{in_atoms} out:{out_atoms} base/quote:{is_base_in} in/out:{is_exact_in} base:{base_atoms} quote_budget:{quote_budget:?} price:{price}");
 
     let AddOrderToMarketResult {
         base_atoms_traded,
@@ -291,6 +277,7 @@ pub(crate) fn process_swap_core(
             global_trade_accounts_opts: &global_trade_accounts_opts,
             current_slot: None,
         },
+        quote_budget,
     )?;
 
     let gross_out_atoms_traded: u64 = if is_base_in {
@@ -491,7 +478,11 @@ pub(crate) fn process_swap_core(
         market: *market.pubkey(),
         trader: *owner.pubkey(),
         payer: *payer.pubkey(),
-        base_atoms,
+        base_atoms: if quote_budget.is_some() {
+            base_atoms_traded
+        } else {
+            base_atoms
+        },
         price,
         order_type,
         is_bid: (!is_base_in).into(),
@@ -517,15 +508,25 @@ pub(crate) fn process_swap_core(
 fn place_order(
     dynamic_account: &mut MarketRefMut,
     args: AddOrderToMarketArgs,
+    quote_budget: Option<QuoteAtoms>,
 ) -> Result<AddOrderToMarketResult, ProgramError> {
-    dynamic_account.place_order(args)
+    match quote_budget {
+        Some(budget) => dynamic_account.place_quote_budget_bid(args, budget),
+        None => dynamic_account.place_order(args),
+    }
 }
 
 #[cfg(feature = "certora")]
 fn place_order(
     market: &mut MarketRefMut,
-    args: AddOrderToMarketArgs,
+    mut args: AddOrderToMarketArgs,
+    quote_budget: Option<QuoteAtoms>,
 ) -> Result<AddOrderToMarketResult, ProgramError> {
+    // The verification summary assumes a 1:1 price, so a quote budget
+    // implies the same cap on base atoms.
+    if let Some(budget) = quote_budget {
+        args.num_base_atoms = BaseAtoms::new(budget.as_u64());
+    }
     place_fully_match_order_with_same_base_and_quote(market, args)
 }
 

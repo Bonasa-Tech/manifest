@@ -908,10 +908,8 @@ impl QuoteAtomsPerBaseAtom {
         quote_atoms: QuoteAtoms,
         round_up: bool,
     ) -> Result<BaseAtoms, ProgramError> {
-        // prevents division by zero further down the line. zero is not an
-        // ideal answer, but this is only used in impact_base_atoms, which
-        // is used to calculate error free order sizes and for that purpose
-        // it works well.
+        // A zero price has no finite quote-to-base conversion. Return a
+        // zero size so callers stop sizing fills at that price.
         if self == Self::ZERO {
             return Ok(BaseAtoms::ZERO);
         }
