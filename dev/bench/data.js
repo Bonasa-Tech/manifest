@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1795545469837,
+  "lastUpdate": 1795550210071,
   "repoUrl": "https://github.com/Bonasa-Tech/manifest",
   "entries": {
     "CU Benchmark": [
@@ -15737,6 +15737,72 @@ window.BENCHMARK_DATA = {
           {
             "name": "MFX_99",
             "value": 2396,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "cyrbritt@gmail.com",
+            "name": "Britt Cyr",
+            "username": "brittcyr"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "f2de803d7ac1bae14559609d4e4cb2007937a54e",
+          "message": "Reduce compute cost of reverse order fills (#800)",
+          "timestamp": "2026-11-24T14:52:57-05:00",
+          "tree_id": "2fbc218135930ac50c5b48632c7c44870d6e4634",
+          "url": "https://github.com/Bonasa-Tech/manifest/commit/f2de803d7ac1bae14559609d4e4cb2007937a54e"
+        },
+        "date": 1795550207485,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "PHX_50",
+            "value": 6748,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "PHX_95",
+            "value": 8819,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "PHX_99",
+            "value": 10866,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_50",
+            "value": 1131,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_95",
+            "value": 1590,
+            "range": "",
+            "unit": "CU",
+            "extra": ""
+          },
+          {
+            "name": "MFX_99",
+            "value": 2388,
             "range": "",
             "unit": "CU",
             "extra": ""
