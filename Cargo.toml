@@ -7,6 +7,7 @@ members = [
   "programs/manifest",
   "programs/wrapper",
   "programs/ui-wrapper",
+  "programs/liquidity-wrapper",
   "scripts/manifest-replay",
 ]
 # Retain the unused Jupiter adapter as legacy source. Its old SDK/API and tests

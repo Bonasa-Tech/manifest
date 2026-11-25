@@ -7,14 +7,21 @@ if (( $# == 0 )); then
   exit 2
 fi
 
-# LLVM's reader is available on macOS via LLVM; GNU binutils is not required.
+# readelf or llvm-readelf on PATH; failing both (macOS without LLVM), the
+# llvm-readelf of the platform-tools the workspace pins, which cargo-build-sbf
+# has installed.
 if command -v readelf >/dev/null 2>&1; then
   elf_reader=readelf
 elif command -v llvm-readelf >/dev/null 2>&1; then
   elf_reader=llvm-readelf
 else
-  echo 'Install GNU binutils or LLVM and put readelf or llvm-readelf on PATH' >&2
-  exit 1
+  root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+  tools_version="$(awk -F'"' '/^tools-version/{print $2}' "$root/Cargo.toml")"
+  elf_reader="$HOME/.cache/solana/$tools_version/platform-tools/llvm/bin/llvm-readelf"
+  if [[ -z "$tools_version" || ! -x "$elf_reader" ]]; then
+    echo "neither readelf nor llvm-readelf is on PATH, and platform-tools ${tools_version:-?} has no llvm-readelf at $elf_reader; install binutils or LLVM, or run cargo build-sbf first" >&2
+    exit 1
+  fi
 fi
 
 for program in "$@"; do
